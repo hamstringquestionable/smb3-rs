@@ -1,6 +1,7 @@
 //! Step 2 — stamp the per-world map tile grids.
 
 use super::*;
+use crate::randomize::lock_keys;
 
 pub(super) fn write_tile_grid<R: Rng>(
     rom: &mut Rom,
@@ -8,17 +9,45 @@ pub(super) fn write_tile_grid<R: Rng>(
     wa: &WorldAssignments,
     data: &OverworldData,
     sprite_mask: &HashSet<(usize, usize)>,
+    hints: crate::HintMode,
     rng: &mut R,
-) {
+) -> Grid {
     let pickup = data.pickup;
     let catalog = data.catalog;
     let wi = built.world_idx;
     let mut grid = built.grid.clone();
 
-    // Stamp fortress tiles — pick per-fortress from the game's fortress
-    // tile set (see rom_data::FORTRESS_TILES).
+    // Stamp fortress tiles. All three of `rom_data::FORTRESS_TILES` render a
+    // fortress, so the choice is free — it is cosmetic variety unless the
+    // player asked for map hints, in which case the tile says where the lock
+    // this fortress opens is. The maze supplies that fact as a `LockHint`; the
+    // byte, and whether to honour it, are decided here.
+    //
+    // A world-8 army sprite sits on some fortress cells, and the sprite pass
+    // below blanks those, so a hint there is silently dropped. That is correct:
+    // the sprite is the visual and there is nowhere to say it.
     for a in &wa.fortress {
-        let tile = rom_data::FORTRESS_TILES[rng.random_range(..rom_data::FORTRESS_TILES.len())];
+        // **Draw first, every time, and only then decide whether to use it.**
+        // The cosmetic pick and the hinted pick must consume the same RNG or
+        // turning hints on moves every later draw — the map itself would change,
+        // not just the colour of a fortress. Hints are a display option and must
+        // not be able to move the seed.
+        let cosmetic = rom_data::FORTRESS_TILES[rng.random_range(..rom_data::FORTRESS_TILES.len())];
+        let hint = if hints.hints_at_all() {
+            built
+                .slots
+                .iter()
+                .find(|s| s.kind == SlotKind::Fortress && s.pos == a.pos)
+                .map_or(LockHint::Unhinted, |s| s.lock_hint)
+        } else {
+            LockHint::Unhinted
+        };
+        let tile = match hint {
+            LockHint::OwnWorld => rom_data::TILE_FORTRESS,
+            LockHint::World8 => rom_data::TILE_FORTRESS_W8,
+            LockHint::Elsewhere => rom_data::TILE_FORTRESS_AWAY,
+            LockHint::Unhinted => cosmetic,
+        };
         grid.set(a.pos.0, a.pos.1, tile);
     }
 
@@ -133,9 +162,40 @@ pub(super) fn write_tile_grid<R: Rng>(
         }
     }
 
-    // Stamp lock gap tiles.
+    // Stamp lock tiles. **Which byte is decided here, not by the builder.**
+    // A lock blocks by being absent from `Map_Object_Valid_*`, and all four
+    // lock bytes are — so the walk cannot tell them apart and the builder has
+    // no reason to care. The orientation exists so the lock looks right against
+    // the path it stands on, which is why it is derived from that path tile.
+    //
+    // With hints on, the byte also says whether the key is in another world.
+    // The *fact* is the model's (`LockAssignment::fort` names the world); the
+    // vocabulary is `lock_keys`', which owns the metatile art and the removable
+    // pairing that must agree with it.
     for lock in &built.locks {
-        grid.set(lock.pos.0, lock.pos.1, lock.gap_tile);
+        let under = grid.get(lock.pos.0, lock.pos.1);
+        let plain = rom_data::gap_tile_for(under);
+        let away = lock.fort.world != wi;
+        let shown = if away { lock_keys::shown_world(rom, lock.fort.world) } else { 0 };
+        grid.set(lock.pos.0, lock.pos.1, lock_keys::lock_tile(plain, away, shown, hints));
+    }
+
+    // **A local sky lock takes its own tile, and this is a sweep, not a
+    // per-lock branch.** Sky's alternate colour IS its plain tile, so a remote
+    // sky lock changes no byte — a rule keyed on the tile alone would sweep the
+    // remote ones up with the local ones (measured: 10 seeds in 30 had a sky
+    // lock and every one came back local). So the away positions are held out
+    // by name, and everything else wearing the sky lock takes the local tile.
+    if let Some((plain_sky, local)) = lock_keys::local_sky_tile(hints) {
+        let remote: HashSet<(usize, usize)> =
+            built.locks.iter().filter(|l| l.fort.world != wi).map(|l| l.pos).collect();
+        for r in 0..grid.rows() {
+            for c in 0..grid.cols {
+                if grid.get(r, c) == plain_sky && !remote.contains(&(r, c)) {
+                    grid.set(r, c, local);
+                }
+            }
+        }
     }
 
     // Overwrite sprite-covered positions with connectivity-aware path nodes.
@@ -155,4 +215,9 @@ pub(super) fn write_tile_grid<R: Rng>(
             rom.write_byte(offset, grid.get(r, c));
         }
     }
+
+    // **And hand it back.** This is the finished map for this world, and it was
+    // built here and thrown away — so everything downstream that needed it read
+    // it back off the ROM a cell at a time. See `WrittenOverworld::grids`.
+    grid
 }

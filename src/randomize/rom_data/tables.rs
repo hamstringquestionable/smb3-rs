@@ -243,10 +243,24 @@ pub(crate) const TILE_PIPE: u8 = 0xBC;
 #[allow(dead_code)]
 pub(crate) const TILE_FORTRESS: u8 = 0x67;
 
+/// Fortress wearing the alternate colour. With map hints on it means "the lock
+/// this opens is in another world". `Map_Removable_Tiles` turns it into rubble
+/// `$E3`, the same as [`TILE_FORTRESS`]'s `$60`.
+pub(crate) const TILE_FORTRESS_AWAY: u8 = 0xEB;
+
+/// Fortress whose lock is in World 8 — the ones that open the way to the
+/// castle. In neither tile registry, so it comes back wearing the completion
+/// marker rather than rubble; it still claims a completion bit.
+pub(crate) const TILE_FORTRESS_W8: u8 = 0x6A;
+
 /// All map tiles the game treats as fortresses ($67, $EB, $6A —
 /// Map_Removable_Tiles + completion-unsafe). $6A's CHR animation is frozen
 /// by `patch_metatile_6a_freeze` so it can serve as a static variant.
-pub(crate) const FORTRESS_TILES: [u8; 3] = [TILE_FORTRESS, 0xEB, 0x6A];
+///
+/// With map hints off the writer picks among these at random, purely for
+/// variety. With hints on the choice carries meaning — see
+/// `overworld_build::LockHint`.
+pub(crate) const FORTRESS_TILES: [u8; 3] = [TILE_FORTRESS, TILE_FORTRESS_AWAY, TILE_FORTRESS_W8];
 
 /// Airship dock tile ID.
 pub(crate) const TILE_AIRSHIP: u8 = 0xC9;

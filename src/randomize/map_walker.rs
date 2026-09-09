@@ -79,6 +79,7 @@ fn canoes_reachable(
     pipe_pairs: &[TeleportEdge],
     start: (usize, usize),
     world_idx: usize,
+    blocked: &HashSet<(usize, usize)>,
 ) -> bool {
     // Mainland docks are the `a` side of each active canoe edge for this world.
     // `active_canoe_edges` applies both the world filter (the coordinates are
@@ -94,7 +95,8 @@ fn canoes_reachable(
 
     // Same BFS as the main walk, just with no canoe edges (a 9×64 grid, so
     // running it to completion instead of early-exiting at a dock is cheap).
-    let no_canoes = reach_from(grid, start, &teleport_lookup(pipe_pairs), &TeleportLookup::new());
+    let no_canoes =
+        reach_from(grid, start, &teleport_lookup(pipe_pairs), &TeleportLookup::new(), blocked);
     docks.iter().any(|&d| no_canoes.contains(d))
 }
 
@@ -109,6 +111,18 @@ pub(super) fn walk_map(
     pipe_pairs: &[TeleportEdge],
     start_pos: Option<(usize, usize)>,
     world_idx: usize,
+) -> WalkResult {
+    walk_map_blocked(grid, pipe_pairs, start_pos, world_idx, &HashSet::new())
+}
+
+/// [`walk_map`], with a set of path cells treated as impassable — the full-walk
+/// counterpart of [`walk_reachable_blocked`], and how a shut lock is expressed.
+pub(super) fn walk_map_blocked(
+    grid: &Grid,
+    pipe_pairs: &[TeleportEdge],
+    start_pos: Option<(usize, usize)>,
+    world_idx: usize,
+    blocked: &HashSet<(usize, usize)>,
 ) -> WalkResult {
     let start = match start_pos.or_else(|| rom_data::find_start(grid)) {
         Some(s) => s,
@@ -136,13 +150,13 @@ pub(super) fn walk_map(
     // we omit the edges entirely so the BFS reflects reality. This is the
     // structural fix for the SAS-W3 deadlock where the swap moves the start
     // into a region with no walking path to the dock.
-    let canoe_lookup = if canoes_reachable(grid, pipe_pairs, start, world_idx) {
+    let canoe_lookup = if canoes_reachable(grid, pipe_pairs, start, world_idx, blocked) {
         teleport_lookup(&rom_data::active_canoe_edges(world_idx, grid.eights_are_wild))
     } else {
         TeleportLookup::new()
     };
 
-    walk_from(grid, start, &pipe_lookup, &canoe_lookup)
+    walk_from(grid, start, &pipe_lookup, &canoe_lookup, blocked)
 }
 
 /// The BFS core shared by `walk_map` and the canoe first pass: walk from
@@ -152,6 +166,7 @@ fn walk_from(
     start: (usize, usize),
     pipe_lookup: &TeleportLookup,
     canoe_lookup: &TeleportLookup,
+    blocked: &HashSet<(usize, usize)>,
 ) -> WalkResult {
     let mut nodes = HashSet::new();
     let mut distances: HashMap<(usize, usize), usize> = HashMap::new();
@@ -189,6 +204,9 @@ fn walk_from(
                 continue;
             }
             let (pr, pc) = (pr as usize, pc as usize);
+            if blocked.contains(&(pr, pc)) {
+                continue;
+            }
 
             let path_tile = grid.get(pr, pc);
             let valid = if is_horz { VALID_HORZ } else { VALID_VERT };
@@ -295,6 +313,7 @@ fn reach_from(
     start: (usize, usize),
     pipe_lookup: &TeleportLookup,
     canoe_lookup: &TeleportLookup,
+    blocked: &HashSet<(usize, usize)>,
 ) -> Reach {
     let mut reach = Reach::new(grid.rows(), grid.cols);
     let mut queue = VecDeque::new();
@@ -314,6 +333,12 @@ fn reach_from(
                 continue;
             }
             let (pr, pc) = (pr as usize, pc as usize);
+            // A blocked path cell is impassable, exactly as a lock tile would
+            // be. See `walk_reachable_blocked` for why the two are the same
+            // thing, and why callers no longer paint tiles to say it.
+            if blocked.contains(&(pr, pc)) {
+                continue;
+            }
             let path_tile = grid.get(pr, pc);
             let valid = if is_horz { VALID_HORZ } else { VALID_VERT };
             if !valid.contains(&path_tile) {
@@ -355,17 +380,45 @@ pub(super) fn walk_reachable(
     start_pos: Option<(usize, usize)>,
     world_idx: usize,
 ) -> Reach {
+    walk_reachable_blocked(grid, pipe_pairs, start_pos, world_idx, &HashSet::new())
+}
+
+/// [`walk_reachable`], with a set of path cells treated as impassable.
+///
+/// **This is how a shut lock is expressed, and it replaces painting one onto a
+/// scratch grid.** The two are exactly equivalent, not approximately: a lock
+/// blocks by being absent from `Map_Object_Valid_Left/Right/Up/Down`, and none
+/// of the four lock bytes — `$54` vertical, `$56` horizontal, `$E4` sky, `$9D`
+/// water gap — appears in [`VALID_HORZ`] or [`VALID_VERT`]. All four therefore
+/// fail the same test in all four directions, and which one a lock wears
+/// changes nothing here.
+///
+/// That is the whole reason the builder no longer carries tile bytes. The
+/// orientation exists so the lock *looks* right against the path underneath,
+/// which is a rendering question, so `overworld_writer` answers it with
+/// `rom_data::gap_tile_for` at stamp time. The builder says only *where* the
+/// locks are and which are shut.
+///
+/// Cells are path cells — the intermediate square of a two-tile move — because
+/// that is where a lock stands.
+pub(super) fn walk_reachable_blocked(
+    grid: &Grid,
+    pipe_pairs: &[TeleportEdge],
+    start_pos: Option<(usize, usize)>,
+    world_idx: usize,
+    blocked: &HashSet<(usize, usize)>,
+) -> Reach {
     let start = match start_pos.or_else(|| rom_data::find_start(grid)) {
         Some(s) => s,
         None => return Reach::new(grid.rows(), grid.cols),
     };
     let pipe_lookup = teleport_lookup(pipe_pairs);
-    let canoe_lookup = if canoes_reachable(grid, pipe_pairs, start, world_idx) {
+    let canoe_lookup = if canoes_reachable(grid, pipe_pairs, start, world_idx, blocked) {
         teleport_lookup(&rom_data::active_canoe_edges(world_idx, grid.eights_are_wild))
     } else {
         TeleportLookup::new()
     };
-    reach_from(grid, start, &pipe_lookup, &canoe_lookup)
+    reach_from(grid, start, &pipe_lookup, &canoe_lookup, blocked)
 }
 
 // ---------------------------------------------------------------------------

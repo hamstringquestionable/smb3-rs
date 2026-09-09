@@ -72,7 +72,9 @@ use crate::rom::Rom;
 use super::map_objects::{self, RESTORE_OBJECTS_CPU};
 use super::maze_state;
 use super::overworld_build::is_completion_unsafe;
-use super::rom_data::{self, Grid, MAP_COMPLETE_BITS};
+#[cfg(test)]
+use super::rom_data::{self};
+use super::rom_data::{Grid, MAP_COMPLETE_BITS};
 
 /// One `Map_Completions` half — 64 columns, one byte of row-bits each.
 pub(crate) const HALF_LEN: usize = 64;
@@ -93,14 +95,19 @@ pub(crate) struct CompletionMap {
 }
 
 impl CompletionMap {
-    /// Read every world's grid and work out its owning cells.
+    /// Work out each world's owning cells from the finished map.
     ///
-    /// Reads the **ROM** grids, never `Tile_Mem`: the live copy mutates as you
-    /// play — a cleared level becomes an M/L tile, a busted lock becomes path —
-    /// so enumerating it would shift every bit after the first change.
-    pub(crate) fn from_rom(rom: &Rom) -> Self {
-        let masks: [Vec<u8>; 8] =
-            std::array::from_fn(|w| world_mask(&rom_data::read_tile_grid(rom, w)));
+    /// The grids must be the **ROM** grids, never `Tile_Mem`: the live copy
+    /// mutates as you play — a cleared level becomes an M/L tile, a busted lock
+    /// becomes path — so enumerating it would shift every bit after the first
+    /// change.
+    ///
+    /// A pipeline caller passes `WrittenOverworld::grids()`, which is the map
+    /// the writer just committed. [`Self::from_rom`] is the reader's entry
+    /// point, for a caller that has only a finished ROM.
+    pub(crate) fn from_grids(grids: &[Grid]) -> Self {
+        assert_eq!(grids.len(), 8, "the packed store covers all eight worlds");
+        let masks: [Vec<u8>; 8] = std::array::from_fn(|w| world_mask(&grids[w]));
 
         let mut bases = [0u8; 9];
         for w in 0..8 {
@@ -111,6 +118,18 @@ impl CompletionMap {
         }
 
         Self { masks, bases }
+    }
+
+    /// The same, read back off a finished ROM.
+    ///
+    /// **Nothing in the pipeline calls this any more.** Every consumer of the
+    /// finished map is handed it — `overworld_writer` returns what it wrote,
+    /// and the last read-back went when `lock_keys` stopped stamping map tiles.
+    /// What is left is tests and `testrom`, which patches a finished ROM with
+    /// no writer in the path, so there the ROM genuinely is the record.
+    #[cfg(test)]
+    pub(crate) fn from_rom(rom: &Rom) -> Self {
+        Self::from_grids(&rom_data::read_all_tile_grids(rom))
     }
 
     /// World `w`'s column mask — one byte per map column.
@@ -1008,8 +1027,8 @@ const RELOAD_CALL_VANILLA: [u8; 3] = [0x20, 0x5D, 0xA4];
 /// wasteful by this project's standards and deliberate here: `world_persist`
 /// writes its arrival restore into three of them, and a shipped version would
 /// restructure the surrounding init rather than pad it.
-pub(crate) fn apply(rom: &mut Rom) {
-    let bases = CompletionMap::from_rom(rom).base_table();
+pub(crate) fn apply(rom: &mut Rom, grids: &[Grid], retire_help_bubble: bool) {
+    let bases = CompletionMap::from_grids(grids).base_table();
 
     rom.push_tag("completion_bits");
     rom.write_range(FS_MASK_BUILD, &MASK_BUILD);
@@ -1029,7 +1048,7 @@ pub(crate) fn apply(rom: &mut Rom) {
     // orchestrator because the two are one mechanism seen from two sides: this
     // module persists what the map *grid* remembers, that one persists what the
     // map *objects* do, and `WIPE_REPLACEMENT` above calls into it.
-    map_objects::apply(rom);
+    map_objects::apply(rom, retire_help_bubble);
 
     // Hook 1: the wipe becomes a call to the replacement.
     let mut wipe = [0xEA_u8; WIPE_LEN];
@@ -1371,7 +1390,7 @@ mod tests {
         // silently come back short. Idempotent, so the randomized arms below are
         // unaffected.
         let mut owned = rom.clone();
-        let rows = super::super::lock_keys::removable_rows(&owned);
+        let rows = super::super::lock_keys::removable_rows(&rom_data::read_all_tile_grids(&owned));
         super::super::lock_keys::relocate_removable_tables(&mut owned, &rows);
         let rom = &owned;
 
@@ -1433,10 +1452,11 @@ mod tests {
         // because the builder asks before anything is stamped, while the ROM
         // carries rows only for obstacles this map actually wears. The two
         // claims that matter are both directional.
-        let table: Vec<u8> = super::super::lock_keys::removable_rows(&rom)
-            .into_iter()
-            .map(|(obstacle, _)| obstacle)
-            .collect();
+        let table: Vec<u8> =
+            super::super::lock_keys::removable_rows(&rom_data::read_all_tile_grids(&rom))
+                .into_iter()
+                .map(|(obstacle, _)| obstacle)
+                .collect();
 
         for tile in 0..=255u8 {
             cpu.registers.accumulator = tile;
@@ -2096,7 +2116,11 @@ mod tests {
                 maze_state::VISITED_TABLE + maze_state::VISITED_TABLE_LEN as u16,
                 "maze visited table",
             ),
-            (maze_state::WAND_COUNT, maze_state::WAND_COUNT + 1, "maze wand counter"),
+            (
+                maze_state::WANDS_TABLE,
+                maze_state::WANDS_TABLE + maze_state::WANDS_TABLE_LEN as u16,
+                "maze wand table",
+            ),
             (
                 maze_state::MAP_OBJ_DEAD,
                 maze_state::MAP_OBJ_DEAD + maze_state::MAP_OBJ_DEAD_LEN as u16,

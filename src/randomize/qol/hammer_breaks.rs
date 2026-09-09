@@ -1,7 +1,9 @@
 //! Hammer item also breaks fortress locks / water-gap bridges.
 
 use crate::randomize::lock_keys;
-use crate::randomize::rom_data::{self, FS_HAMMER_LOCKS, FS_HAMMER_TABLES, prg_bank_file_to_cpu};
+use crate::randomize::rom_data::{
+    self, FS_HAMMER_LOCKS, FS_HAMMER_TABLES, Grid, prg_bank_file_to_cpu,
+};
 use crate::rom::Rom;
 
 // Make the hammer item also break fortress lock tiles and/or water-gap
@@ -41,17 +43,16 @@ const HAMMER_TABLES_RESERVED: usize = 96;
 ///
 /// **Or the hammer refuses exactly the locks that carry a hint.** Those tiles
 /// are `lock_keys`' invention rather than vanilla's, so `LOCK_TILES` does not
-/// name them; they are read off the map instead, the same way the removable
-/// table is. Safe because this runs long after `lock_keys::apply`, which is what
-/// puts them there.
+/// name them; they are taken from the finished map instead, the same way the
+/// removable table is.
 fn push_numbered(
-    rom: &Rom,
+    grids: &[Grid],
     water: bool,
     breakable: &mut Vec<u8>,
     replace: &mut Vec<u8>,
     tilefix: &mut Vec<u8>,
 ) {
-    let present = lock_keys::tiles_on_map(rom);
+    let present = lock_keys::tiles_on_map(grids);
     for tile in 0..=255u8 {
         if !present[tile as usize] || lock_keys::numbered_lock_is_water(tile) != water {
             continue;
@@ -72,7 +73,7 @@ fn push_numbered(
     }
 }
 
-pub fn hammer_breaks_tiles(rom: &mut Rom, locks: bool, bridges: bool) {
+pub(crate) fn hammer_breaks_tiles(rom: &mut Rom, locks: bool, bridges: bool, grids: &[Grid]) {
     // Build tables dynamically based on which flags are set.
     // Always include rocks (2 entries), then conditionally add locks (3) and bridge (1).
     let mut breakable: Vec<u8> = vec![0x51, 0x52]; // rocks
@@ -90,7 +91,7 @@ pub fn hammer_breaks_tiles(rom: &mut Rom, locks: bool, bridges: bool) {
         }
         tilefix.extend_from_slice(&[0x01, 0x00, 0x00]);
 
-        push_numbered(rom, false, &mut breakable, &mut replace, &mut tilefix);
+        push_numbered(grids, false, &mut breakable, &mut replace, &mut tilefix);
     }
     if bridges {
         breakable.push(rom_data::WATER_GAP_TILE);
@@ -103,7 +104,7 @@ pub fn hammer_breaks_tiles(rom: &mut Rom, locks: bool, bridges: bool) {
         // A numbered water gap is still a water gap: it belongs to this switch,
         // not the lock one, or turning locks on would quietly start breaking
         // bridges.
-        push_numbered(rom, true, &mut breakable, &mut replace, &mut tilefix);
+        push_numbered(grids, true, &mut breakable, &mut replace, &mut tilefix);
     }
 
     let table_len = breakable.len();
@@ -205,7 +206,8 @@ mod tests {
             return (vec![], vec![], vec![]);
         };
         let mut rom = crate::rom::Rom::from_bytes_lax(&bytes, true).unwrap();
-        hammer_breaks_tiles(&mut rom, locks, bridges);
+        let grids = rom_data::read_all_tile_grids(&rom);
+        hammer_breaks_tiles(&mut rom, locks, bridges, &grids);
 
         // A vanilla ROM carries no numbered locks, so the table is the classic
         // rocks/locks/bridge shape — which is exactly what makes it a fair pin
@@ -286,7 +288,7 @@ mod tests {
         // hammer has to know both. It knew only one of them once already.
         for hints in [crate::HintMode::Full, crate::HintMode::Partial] {
             let rom = build(crate::Tri::On, crate::Tri::Off, hints);
-            let present = lock_keys::tiles_on_map(&rom);
+            let present = lock_keys::tiles_on_map(&rom_data::read_all_tile_grids(&rom));
             let numbered: Vec<u8> = (0..=255u8)
                 .filter(|&t| present[t as usize] && lock_keys::numbered_lock(t).is_some())
                 .collect();

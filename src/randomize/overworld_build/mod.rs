@@ -95,11 +95,10 @@ use rand::seq::{IndexedRandom, SliceRandom};
 
 use crate::rom::Rom;
 
-use super::map_walker::{Reach, walk_map, walk_reachable};
+use super::map_walker::{Reach, walk_map, walk_reachable, walk_reachable_blocked};
 use super::node_catalog::{NodeCatalog, NodeKind};
 use super::overworld_helpers::{LOCKABLE_TILES, find_target};
 use super::overworld_pickup::{PickupResult, blank_tile_for};
-use super::rom_data::gap_tile_for;
 use super::rom_data::{
     self, BACKGROUND_TILES, Grid, Pos, TILE_BONUS_GAME, TILE_FORTRESS, TILE_NODE, TILE_PIPE,
     TILE_TOAD_HOUSE, TeleportEdge,
@@ -146,16 +145,17 @@ pub(crate) use route_choice::{
     C1_FLOOR, COST_LEVEL, DEFAULT_SLACK, RouteChoice, SHAPING_SLACK, analyze_route_choice,
 };
 pub(crate) use types::{
-    BuildFlags, BuildResult, BuiltWorld, CapacityPrep, LockAssignment, OverworldData, stamp_slots,
+    BuildFlags, BuildResult, BuiltWorld, CapacityPrep, FortRef, LockAssignment, OverworldData,
+    stamp_slots,
 };
-pub use {types::SlotAssignment, types::SlotKind};
+pub use {types::LockHint, types::SlotAssignment, types::SlotKind};
 
 // The phase set and its harness surface.
 pub(crate) use connectivity::Connectivity;
 pub(crate) use forts::Forts;
 pub(crate) use hammer_bros::HammerBroFill;
 pub(crate) use levels::Levels;
-pub(crate) use locks::{Locks, ensure_secret_exit_safe};
+pub(crate) use locks::{Locks, SECRET_EXIT_SLOTS_NEEDED, ensure_secret_exit_safe};
 pub(crate) use metrics::measure_world;
 pub(crate) use shaping::Shaping;
 pub(crate) use sources::{allot_budgets, from_pickup};
@@ -342,6 +342,10 @@ fn renumber_fort_sections(state: &mut WorldState) {
         }
     }
     for lock in &mut state.locks {
-        lock.fort_section = remap[&lock.fort_section];
+        // Renumbering is this world's business. The guard is honest rather than
+        // load-bearing: the maze is the only thing that pairs a lock with a
+        // fortress elsewhere, and it runs long after the build.
+        debug_assert_eq!(lock.fort.world, state.world_idx, "a foreign fort during the build");
+        lock.fort.section = remap[&lock.fort.section];
     }
 }

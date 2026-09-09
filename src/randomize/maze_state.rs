@@ -32,11 +32,30 @@ pub(crate) const MAZE_STATE_END: u16 = 0x7ADF;
 pub(crate) const VISITED_TABLE: u16 = MAZE_STATE_START;
 pub(crate) const VISITED_TABLE_LEN: usize = 8;
 
-/// Wands collected, 0-7. The wand gate on World 8's bridge compares against
-/// this; it is the whole of the gate's state, which is why the gate needs no
-/// completion bit and no persistence of its own — it is re-derived on every
-/// map load.
-pub(crate) const WAND_COUNT: u16 = VISITED_TABLE + VISITED_TABLE_LEN as u16;
+/// Which worlds' airships the player has cleared, one byte per world: nonzero
+/// means that world's wand is held. The wand gate on World 8's bridge sums
+/// these and compares the sum against K; it is the whole of the gate's state,
+/// which is why the gate needs no completion bit and no persistence of its own
+/// — it is re-derived on every map load.
+///
+/// **A table rather than a counter, because a counter counted the wrong
+/// thing.** `TILE_AIRSHIP` is in neither `Map_Removable_Tiles` nor
+/// `Map_Completable_Tiles`, so the engine never marks an airship as beaten, and
+/// in the maze a world can be re-entered — so a player who walks back through a
+/// pad can clear the same airship again. A counter bumped on every clear made
+/// that a second wand, and K = 7 openable from one airship. Keyed by world,
+/// the second clear writes the 1 that is already there.
+///
+/// A byte per world rather than a bitmask, for the same reason
+/// [`VISITED_TABLE`] is one: the world index is already in `X` at the marking
+/// site, so `LDA #$01 / STA WANDS_TABLE,X` needs no mask table and no shift.
+///
+/// Eight slots because `World_Num` is 0-7 and indexing by it is what makes the
+/// marking free. Only seven of them are wands — World 8 holds the castle, not
+/// an airship, and its clear ends the game rather than passing the transition —
+/// so slot 7 is never expected to be set, and costs nothing if it is.
+pub(crate) const WANDS_TABLE: u16 = VISITED_TABLE + VISITED_TABLE_LEN as u16;
+pub(crate) const WANDS_TABLE_LEN: usize = 8;
 
 /// Which of a world's ROM-loaded map-object slots the player has already
 /// beaten: one byte per **slot**, one bit per **world**.
@@ -53,7 +72,7 @@ pub(crate) const WAND_COUNT: u16 = VISITED_TABLE + VISITED_TABLE_LEN as u16;
 /// The bit is **sticky**: only ever set, never cleared, except by the new-game
 /// signal. "Beaten" is monotone, and a runtime bonus spawn that lands in a
 /// freed slot must not read as the original object coming back to life.
-pub(crate) const MAP_OBJ_DEAD: u16 = WAND_COUNT + 1;
+pub(crate) const MAP_OBJ_DEAD: u16 = WANDS_TABLE + WANDS_TABLE_LEN as u16;
 
 /// Slots `Map_Init` reloads from ROM on every world entry — its loop counts
 /// `MAPOBJ_TOTALINIT` (8) down to 0, so nine. The five slots above them
@@ -84,8 +103,11 @@ const _: () = {
     assert!(MAZE_STATE_START > 0x7AC0, "maze SRAM must start after completion_bits' $7AC0");
     assert!(MAZE_STATE_NEXT <= MAZE_STATE_END + 1, "maze SRAM runs past the end of its free run");
     assert!(
-        VISITED_TABLE + VISITED_TABLE_LEN as u16 <= WAND_COUNT,
-        "the visited table overlaps the wand counter"
+        VISITED_TABLE + VISITED_TABLE_LEN as u16 <= WANDS_TABLE,
+        "the visited table overlaps the wand table"
     );
-    assert!(WAND_COUNT < MAP_OBJ_DEAD, "the wand counter overlaps the map-object store");
+    assert!(
+        WANDS_TABLE + WANDS_TABLE_LEN as u16 <= MAP_OBJ_DEAD,
+        "the wand table overlaps the map-object store"
+    );
 };

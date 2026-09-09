@@ -13,13 +13,12 @@ use crate::{DejaVuMode, PiranhaMode};
 use super::lock_keys::LockEntry;
 use super::node_catalog::NodeKind;
 use super::overworld_build::{
-    BuildResult, BuiltWorld, OverworldData, SlotKind, VANILLA_LEVEL_COUNT, bfs_ordered,
+    BuildResult, BuiltWorld, LockHint, OverworldData, SlotKind, VANILLA_LEVEL_COUNT, bfs_ordered,
 };
 use super::pipe_helpers;
-use super::rom_data::{self, FORTRESS_1F_OBJ_PTR, TILE_BONUS_GAME, TILE_PIPE, WORLDS};
+use super::rom_data::{self, FORTRESS_1F_OBJ_PTR, Grid, TILE_BONUS_GAME, TILE_PIPE, WORLDS};
 
 mod assign;
-mod fortress_fx;
 mod grid;
 mod march_veto;
 mod metatiles;
@@ -28,7 +27,6 @@ mod sprites;
 mod types;
 
 use assign::{assign_pool, interleave_hb_by_obj_ptr};
-use fortress_fx::collect_lock_entries;
 use grid::write_tile_grid;
 use pointers::{write_pipe_dests, write_pointer_entries};
 use sprites::{
@@ -51,7 +49,7 @@ pub(crate) fn write_overworld<R: Rng>(
     data: &OverworldData,
     rng: &mut R,
     flags: WriteFlags,
-) -> LockPairing {
+) -> WrittenOverworld {
     let assignments = assign_pool(rom, build, data, rng, flags);
 
     // Compute W8 army sprite target positions before writing tiles,
@@ -77,11 +75,12 @@ pub(crate) fn write_overworld<R: Rng>(
     let hb_fallback_levels = interleave_hb_by_obj_ptr(data.catalog.unique_hammer_bro_levels(), rng);
     let mut hb_fallback_iter = hb_fallback_levels.iter().cycle().cloned();
 
+    let mut grids: Vec<Grid> = Vec::with_capacity(8);
     for (wi, wa) in assignments.iter().enumerate() {
         let built = &build.worlds[wi];
         let sprite_mask = &sprite_masks[wi];
 
-        write_tile_grid(rom, built, wa, data, sprite_mask, rng);
+        grids.push(write_tile_grid(rom, built, wa, data, sprite_mask, flags.hints, rng));
         write_pointer_entries(rom, wi, built, wa, data, &mut hb_fallback_iter);
         write_pipe_dests(rom, wi, wa);
         // For swapped worlds, rewrite the Airship + Start entry coordinates
@@ -116,67 +115,121 @@ pub(crate) fn write_overworld<R: Rng>(
         super::start_airship_swap::write_engine_scaffolding(rom, data.catalog);
     }
 
-    LockPairing { assignments }
+    WrittenOverworld { grids }
 }
 
-/// A handle that answers "which fortress opens which lock" after the fact.
+/// **Every `(fortress, lock)` pair the build placed, one per lock.**
 ///
-/// **Why the answer is not simply written during the pass.** The world maze
-/// replaces this pairing wholesale, and it can only do so after
-/// [`write_overworld`] has finished: the maze's fill reads the grids this very
-/// pass lays down, so the decision cannot be made earlier without duplicating
-/// the writer's sprite-mask logic. Holding the assignments and producing the
-/// pairing on demand keeps that late decision cheap, and it takes no RNG, so
-/// nothing downstream shifts.
-///
-/// The pairing is *input* to [`super::lock_keys::apply`], which owns every byte
-/// the console reads. Nothing here writes ROM.
-pub(crate) struct LockPairing {
-    assignments: Vec<WorldAssignments>,
+/// A fact about the *build*, not about the writing, which is why it takes no
+/// `WrittenOverworld`: the pairing is decided before the writer runs, and in
+/// the world maze `maze::stamp_into` has already rewritten it — possibly across
+/// worlds. It is *input* to [`super::lock_keys::apply`], which owns every byte
+/// the console reads; nothing here writes ROM.
+pub(crate) fn lock_entries(build: &BuildResult) -> Vec<LockEntry> {
+    let mut out = Vec::new();
+    for (wi, built) in build.worlds.iter().enumerate() {
+        for lock in &built.locks {
+            let fort = lock.fort;
+            let pos = build.worlds[fort.world]
+                .slots
+                .iter()
+                .find(|s| s.section == fort.section && s.kind == SlotKind::Fortress)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "lock at W{} {:?} names fortress section {} in W{}, which is not on \
+                         the map — the lock would be permanently sealed",
+                        wi + 1,
+                        lock.pos,
+                        fort.section,
+                        fort.world + 1
+                    )
+                })
+                .pos;
+            out.push(LockEntry {
+                key_world: fort.world,
+                key_pos: pos,
+                target_world: wi,
+                target_pos: lock.pos,
+            });
+        }
+    }
+    out
 }
 
-impl LockPairing {
-    /// Every `(fortress, lock)` pair the build placed, one per lock.
-    ///
-    /// Injective in both directions: a lock names one fortress section, and no
-    /// two locks in a world share a section. In maze mode this is only the
-    /// *starting* assignment — `maze::fill` permutes it and
-    /// `maze::writer::lock_keys` emits the result instead of this.
-    /// Where the 1-F fortress ended up, as `(world, fort_section)`.
-    ///
-    /// 1-F's secret exit hands out an item and skips the crystal ball, so the
-    /// fortress is beaten and its lock stays shut. [`assign::assign_pool`]
-    /// parks it on a slot whose lock the builder marked `secret_exit_safe`, but
-    /// it chooses **uniformly among those slots with its own RNG** — so a later
-    /// pass that wants to honour the choice has to be told which slot it was.
-    /// Re-deriving it would just pick a different one.
-    ///
-    /// The world maze is that pass: `maze::fill` re-pairs every fortress with a
-    /// different lock, which throws away the verdict this slot was chosen for.
-    ///
-    /// `fortress` is indexed by section, the same key
-    /// `LockAssignment::fort_section` uses, so the index IS the answer.
-    pub(crate) fn one_f_slot(&self, data: &OverworldData) -> Option<(usize, usize)> {
-        for (wi, wa) in self.assignments.iter().enumerate() {
-            for (section, a) in wa.fortress.iter().enumerate() {
-                let entry = &data.catalog.entries[data.pickup.pool[a.pool_idx].catalog_idx];
-                let is_1f = entry.level_entry.as_ref().is_some_and(|le| {
-                    u16::from_le_bytes([le.obj_lo, le.obj_hi]) == FORTRESS_1F_OBJ_PTR
-                });
-                if is_1f {
-                    return Some((wi, section));
+/// Do the writer's grids still describe the bytes in the ROM?
+///
+/// The whole risk of handing the map over rather than re-reading it. Names the
+/// first disagreeing cell, because "they differ" is not a debuggable message.
+fn grids_agree_with_rom(grids: &[Grid], rom: &Rom) -> Result<(), String> {
+    for (wi, grid) in grids.iter().enumerate() {
+        for r in 0..grid.rows() {
+            for c in 0..grid.cols {
+                let on_rom = rom.read_byte(rom_data::map_tile_offset(wi, r, c));
+                if grid.get(r, c) != on_rom {
+                    return Err(format!(
+                        "the writer's map and the ROM disagree at W{} ({r},{c}): the writer says \
+                         {:#04X}, the ROM says {on_rom:#04X}. Something wrote a map tile straight \
+                         to the ROM after `write_overworld` — put it in the build instead, or the \
+                         packed completion store will be sized from a map that no longer exists.",
+                        wi + 1,
+                        grid.get(r, c),
+                    ));
                 }
             }
         }
-        None
     }
+    Ok(())
+}
 
-    pub(crate) fn lock_entries(&self, build: &BuildResult) -> Vec<LockEntry> {
-        let mut out = Vec::new();
-        for (wi, wa) in self.assignments.iter().enumerate() {
-            collect_lock_entries(wi, &build.worlds[wi], wa, &mut out);
-        }
-        out
+/// What the writer wrote: the map it committed, and the slot assignments behind
+/// it.
+///
+/// This is the writer's record of the ROM it produced, and it is the answer to
+/// "what does the finished map look like" for everything downstream. Nothing
+/// here writes ROM; the pairing is *input* to [`super::lock_keys::apply`],
+/// which owns every byte the console reads.
+///
+/// It was called `LockPairing` when locks were its only consumer.
+pub(crate) struct WrittenOverworld {
+    /// **The map as committed, world by world.**
+    ///
+    /// The writer is the last thing that touches a map grid, so this is the
+    /// finished article — what the console will read out of PRG012.
+    ///
+    /// It exists because three modules need it and none of them were given it:
+    /// `completion_bits` counts the cells that can be marked done, to size each
+    /// world's slice of the packed store; `world_travel` finds each world's
+    /// START cell; `lock_keys` looks up an away lock's completion bit. All
+    /// three used to read it back out of the ROM a cell at a time — which
+    /// worked, but made "run after every grid write" an unwritten rule whose
+    /// violation is silent (the slices shift, and completion marks land in the
+    /// wrong world). Handing the map over makes that rule a signature instead.
+    ///
+    /// `grids_match_the_rom` is the guard on the other half of the trade: two
+    /// copies of the map now exist, and they must not drift.
+    grids: Vec<Grid>,
+}
+
+impl WrittenOverworld {
+    /// The finished map for each world, in world order, checked against `rom`.
+    ///
+    /// Handing the map around means two copies of it now exist, and the failure
+    /// mode if they drift is silent — a world's packed-store slice comes out the
+    /// wrong size and completion marks land in the neighbouring world. Reading
+    /// the ROM back could not drift; this check is what makes not doing that a
+    /// fair trade. It costs one grid comparison in debug builds and nothing in
+    /// release, and `grids_match_the_rom` runs the same check over a full
+    /// randomize.
+    ///
+    /// Every caller already holds the ROM, so there is deliberately no
+    /// unchecked accessor to reach for.
+    pub(crate) fn grids(&self, rom: &Rom) -> &[Grid] {
+        debug_assert!(
+            grids_agree_with_rom(&self.grids, rom).is_ok(),
+            "{}",
+            grids_agree_with_rom(&self.grids, rom).unwrap_err()
+        );
+        &self.grids
     }
 }
 
@@ -197,4 +250,8 @@ pub(crate) struct WriteFlags {
     /// and `FRIENDLIER_BLOCKED_FORTS` from the fortress deck, refilling both
     /// with duplicates of what remains.
     pub friendlier_levels: bool,
+    /// Map hints. Resolved to `Off` without the world maze by
+    /// `randomizer::randomize_inner` — every hint is a claim about another
+    /// world, so there is nothing to say without one.
+    pub hints: crate::HintMode,
 }

@@ -70,6 +70,7 @@ impl Phase for Forts {
                 section: placed, // fort id — pairing only, no order semantics
                 is_hand_trap: false,
                 is_troll_pipe: false,
+                lock_hint: LockHint::default(),
             });
             placed += 1;
             candidates.retain(|&c| c != pos && Some(c) != row78_partner(pos));

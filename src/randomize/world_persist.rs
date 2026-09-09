@@ -90,7 +90,7 @@ use super::pipe_helpers;
 #[cfg(test)]
 use super::rom_data::NMI_SAFE_MAX;
 use super::rom_data::{
-    FS_PAD_ENTER, FS_PORTAL_ARRIVAL, FS_RESTORE_ARRIVAL, PLAYER_CURRENT, TILE_TELEPAD,
+    FS_PAD_ENTER, FS_PORTAL_ARRIVAL, FS_RESTORE_ARRIVAL, Grid, PLAYER_CURRENT, TILE_TELEPAD,
     WORLD_MAP_INIT_CPU, WORLD_MAP_TILE, WORLD_MAP_X, WORLD_MAP_XHI, WORLD_MAP_Y, WORLD_NUM,
     prg010_file_to_cpu, prg011_file_to_cpu,
 };
@@ -204,10 +204,10 @@ const RESTORE_ARRIVAL: [u8; 56] = [
 /// telepads that cross between them. The arrival restore is written into the
 /// padding `completion_bits` leaves at the wipe site, so it runs on the same
 /// pass and after `Map_Init` has had its say.
-pub(crate) fn apply(rom: &mut Rom, telepads: &[Telepad]) {
+pub(crate) fn apply(rom: &mut Rom, telepads: &[Telepad], grids: &[Grid], retire_help_bubble: bool) {
     // Must come first: it owns the wipe site, and the arrival restore below
     // writes into the padding it leaves.
-    completion_bits::apply(rom);
+    completion_bits::apply(rom, grids, retire_help_bubble);
 
     if telepads.is_empty() {
         return;
@@ -600,7 +600,8 @@ mod asm_checks {
         let Some(rom) = load_vanilla() else { return };
 
         let mut patched = rom.clone();
-        completion_bits::apply(&mut patched);
+        let grids = crate::randomize::rom_data::read_all_tile_grids(&patched);
+        completion_bits::apply(&mut patched, &grids, true);
         let wipe = patched.read_range(WIPE_OFFSET, WIPE_LEN).to_vec();
 
         assert_eq!(
@@ -630,9 +631,12 @@ mod asm_checks {
     fn the_wipe_site_calls_the_arrival_restore() {
         let Some(rom) = load_vanilla() else { return };
         let mut patched = rom.clone();
+        let grids = crate::randomize::rom_data::read_all_tile_grids(&patched);
         apply(
             &mut patched,
             &[Telepad { world: 1, dest_world: 6, dest_pos: (5, 12), src_pos: (0, 4) }],
+            &grids,
+            true,
         );
         let wipe = patched.read_range(WIPE_OFFSET, WIPE_LEN);
         assert_eq!(wipe[3], 0x20, "the arrival restore must be called, not fallen into");
@@ -807,7 +811,8 @@ mod asm_checks {
             Telepad { world: 4, dest_world: 0, dest_pos: (4, 8), src_pos: (6, 6) },
         ];
         let mut patched = rom.clone();
-        apply(&mut patched, &pads);
+        let grids = crate::randomize::rom_data::read_all_tile_grids(&patched);
+        apply(&mut patched, &pads, &grids, true);
 
         use crate::randomize::rom_data::{PIPE_MAP_SCRL_XHI, PIPE_MAP_X, PIPE_MAP_XHI, PIPE_MAP_Y};
         for (base, name) in [
@@ -860,7 +865,8 @@ mod asm_checks {
         let pad = Telepad { world: 1, dest_world: 6, dest_pos: (5, 12), src_pos: (0, 4) };
 
         let mut patched = rom.clone();
-        apply(&mut patched, &[pad]);
+        let grids = crate::randomize::rom_data::read_all_tile_grids(&patched);
+        apply(&mut patched, &[pad], &grids, true);
         assert_eq!(
             patched.read_range(MAP_INIT_CALL_OFFSET, MAP_INIT_CALL_LEN),
             [0x20, STASH_ARRIVAL_CPU as u8, (STASH_ARRIVAL_CPU >> 8) as u8],
@@ -868,7 +874,8 @@ mod asm_checks {
         );
 
         let mut patched = rom.clone();
-        apply(&mut patched, &[]);
+        let grids = crate::randomize::rom_data::read_all_tile_grids(&patched);
+        apply(&mut patched, &[], &grids, true);
         assert_eq!(
             patched.read_range(MAP_INIT_CALL_OFFSET, MAP_INIT_CALL_LEN),
             [0x20, MAP_INIT_CPU as u8, (MAP_INIT_CPU >> 8) as u8],
@@ -881,7 +888,8 @@ mod asm_checks {
     fn telepads_are_opt_in() {
         let Some(rom) = load_vanilla() else { return };
         let mut patched = rom.clone();
-        apply(&mut patched, &[]);
+        let grids = crate::randomize::rom_data::read_all_tile_grids(&patched);
+        apply(&mut patched, &[], &grids, true);
         assert_eq!(
             patched.read_range(PAD_HOOK_OFFSET, PAD_HOOK_LEN),
             PAD_HOOK_VANILLA,
@@ -953,7 +961,8 @@ mod asm_checks {
             let pad =
                 Telepad { world: world as u8, dest_world: 0, dest_pos: (2, 2), src_pos: start };
             let mut patched = rom.clone();
-            apply(&mut patched, &[pad]);
+            let grids = crate::randomize::rom_data::read_all_tile_grids(&patched);
+            apply(&mut patched, &[pad], &grids, true);
             let key = patched.read_byte(FS_PAD_ENTER + PAD_TABLE_OFF + PORTAL_MAX);
             let engine = rom.read_byte(crate::randomize::rom_data::MAP_Y_STARTS_OFF + world);
 

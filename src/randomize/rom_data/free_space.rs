@@ -114,7 +114,7 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
         0x3DFA0,
         16,
         &["wand_gate"],
-        "world-maze: bump the wand count on an airship clear (16 reserved, 16 used — \
+        "world-maze: mark this world's wand on an airship clear (16 reserved, 14 used — \
          the $FF run here is exactly 16 bytes, so this cannot grow in place)",
     ),
     fs(
@@ -191,7 +191,7 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
         0x19E40,
         128,
         &["wand_gate"],
-        "world-maze: the wand gate's opener, two entry points (128 reserved, 29 used)",
+        "world-maze: the wand gate's opener, two entry points (128 reserved, 37 used)",
     ),
     fs(
         0x19EC0,
@@ -281,10 +281,11 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
     ),
     fs(
         0x17CC3,
-        36,
+        48,
         &["map_objects"],
         "world-maze: empty the runtime slot pool + re-clear beaten map objects \
-         after Map_Init (36 reserved, 34 used)",
+         after Map_Init, and retire the HELP bubble in a cleared world \
+         (48 reserved, 44 used; 34 with --keep-autoscroll)",
     ),
     fs(
         0x17D00,
@@ -478,9 +479,14 @@ pub(crate) const FS_SEED_STAMP: usize = 0x19DF0;
 /// check.
 pub(crate) const FS_MAZE_WAND_GATE: usize = 0x19E40;
 
-/// World-maze: bump the wand counter when an airship is cleared. PRG030, which
-/// is always mapped — the airship path runs there and `FS_WORLD_ORDER` next
-/// door is 28/28 full, so this needs its own row.
+/// World-maze: mark the cleared world's wand when an airship is cleared.
+/// PRG030, which is always mapped — the airship path runs there and
+/// `FS_WORLD_ORDER` next door is 28/28 full, so this needs its own row.
+///
+/// The routine is 14 bytes and the gap is exactly 16, which is why the wand
+/// state is a table the *gate* sums rather than a counter this site keeps: the
+/// per-world guard a counter needs did not fit here, and PRG012 (where the gate
+/// lives) has room to spare.
 pub(crate) const FS_MAZE_WAND_COUNT: usize = 0x3DFA0;
 
 /// `Map_Removable_Tiles` / `Map_RemoveTo_Tiles`, relocated out of their vanilla
@@ -548,7 +554,7 @@ pub(crate) const FS_MAZE_OBJ_MARK: usize = 0x17CAB; // 24 reserved, 22 used
 /// World-maze: re-clear the map objects a world has already lost, straight
 /// after `Map_Init` reloaded all nine of them from ROM. PRG011, CPU `$BCB3`,
 /// immediately after [`FS_MAZE_OBJ_MARK`] in the same run.
-pub(crate) const FS_MAZE_OBJ_RESTORE: usize = 0x17CC3; // 36 reserved, 34 used
+pub(crate) const FS_MAZE_OBJ_RESTORE: usize = 0x17CC3; // 48 reserved, 44 used
 
 pub(crate) const FS_STARTING_ITEMS: usize = 0x3E260; // 33 bytes
 

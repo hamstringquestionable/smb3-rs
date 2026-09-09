@@ -76,8 +76,7 @@ fn goal_open(state: &WorldState) -> bool {
     };
     let mut grid = state.grid.clone();
     stamp_slots(&mut grid, &state.slots);
-    for lock in &state.locks {
-        grid.set(lock.pos.0, lock.pos.1, lock.gap_tile);
-    }
-    walk_reachable(&grid, &state.pipe_pairs, state.start, state.world_idx).contains(target)
+    let shut: HashSet<Pos> = state.locks.iter().map(|l| l.pos).collect();
+    walk_reachable_blocked(&grid, &state.pipe_pairs, state.start, state.world_idx, &shut)
+        .contains(target)
 }

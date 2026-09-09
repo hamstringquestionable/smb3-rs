@@ -93,9 +93,9 @@ use super::maze_state::{VISITED_TABLE, VISITED_TABLE_LEN};
 #[cfg(test)]
 use super::rom_data::NMI_SAFE_MAX;
 use super::rom_data::{
-    FS_MAZE_TRAVEL, FS_MAZE_VISITED, MAP_Y_STARTS_OFF, PLAYER_CURRENT, WORLD_MAP_INIT_CPU,
+    FS_MAZE_TRAVEL, FS_MAZE_VISITED, Grid, MAP_Y_STARTS_OFF, PLAYER_CURRENT, WORLD_MAP_INIT_CPU,
     WORLD_MAP_X, WORLD_MAP_XHI, WORLD_MAP_Y, WORLD_NUM, find_start, prg010_file_to_cpu,
-    prg011_file_to_cpu, prg030_file_to_cpu, read_tile_grid,
+    prg011_file_to_cpu, prg030_file_to_cpu,
 };
 
 // --- Addresses ----------------------------------------------------------
@@ -237,11 +237,11 @@ fn start_xkey(col: usize) -> u8 {
 /// Returns the eight key bytes. Panics if a world has no START tile, or if the
 /// row it sits on disagrees with `Map_Y_Starts` — which is what "you called
 /// this before the overworld writer" looks like.
-fn build_start_keys(rom: &Rom) -> [u8; 8] {
+fn build_start_keys(rom: &Rom, grids: &[Grid]) -> [u8; 8] {
     let mut keys = [0u8; 8];
     for (world, key) in keys.iter_mut().enumerate() {
-        let grid = read_tile_grid(rom, world);
-        let (row, col) = find_start(&grid)
+        let grid = &grids[world];
+        let (row, col) = find_start(grid)
             .unwrap_or_else(|| panic!("W{} has no START tile on its map", world + 1));
         *key = start_xkey(col);
 
@@ -398,8 +398,8 @@ const WHISTLE_CONSUME_VANILLA: [u8; 3] = [0x20, 0x1B, 0xA6];
 /// transition rests on its `World_Num != LIVE_WORLD` hooks packing the
 /// outgoing world. Not asserted here: this module writes ROM, it cannot see
 /// what else the pipeline chose.
-pub fn apply(rom: &mut Rom) {
-    let keys = build_start_keys(rom);
+pub(crate) fn apply(rom: &mut Rom, grids: &[Grid]) {
+    let keys = build_start_keys(rom, grids);
 
     rom.push_tag("world_travel");
 
@@ -540,7 +540,8 @@ mod asm_checks {
     fn apply_installs_both_hooks() {
         let Some(rom) = load_vanilla() else { return };
         let mut patched = rom.clone();
-        apply(&mut patched);
+        let grids = crate::randomize::rom_data::read_all_tile_grids(&patched);
+        apply(&mut patched, &grids);
 
         assert_eq!(
             patched.read_range(MARK_HOOK_OFFSET, 3),
@@ -649,11 +650,12 @@ mod asm_checks {
             ("built + start/airship swap", true, built(0x5EED, true).unwrap()),
         ] {
             let mut patched = rom.clone();
-            apply(&mut patched);
+            let grids = crate::randomize::rom_data::read_all_tile_grids(&patched);
+            apply(&mut patched, &grids);
             let table = patched.read_range(FS_MAZE_VISITED + MARK_TABLE_OFF, 8).to_vec();
 
             for (world, &key) in table.iter().enumerate() {
-                let grid = read_tile_grid(&rom, world);
+                let grid = crate::randomize::rom_data::read_tile_grid(&rom, world);
                 let (_, col) = find_start(&grid).unwrap();
                 assert_eq!(
                     key,
@@ -699,7 +701,8 @@ mod asm_checks {
         broken.write_byte(MAP_Y_STARTS_OFF, 0x70);
         let err = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
             let mut b = broken;
-            apply(&mut b);
+            let grids = crate::randomize::rom_data::read_all_tile_grids(&b);
+            apply(&mut b, &grids);
         }));
         assert!(err.is_err(), "a stale Map_Y_Starts must not produce a silently wrong table");
     }
@@ -1080,8 +1083,8 @@ mod asm_checks {
             "a wrong loop-back displacement must break the cycle test"
         );
 
-        // 2. The scan reads one byte past the table (WAND_COUNT's byte, in the
-        //    real map) — an off-by-one in the table address.
+        // 2. The scan reads one byte past the table (the wand table's first
+        //    byte, in the real map) — an off-by-one in the table address.
         let mut wrong_index = WHISTLE_TRAVEL;
         wrong_index[11] = wrong_index[11].wrapping_add(1);
         asm::check(&wrong_index).origin(WHISTLE_TRAVEL_CPU).assert_ok();
@@ -1133,7 +1136,8 @@ mod whistle_reuse {
     fn the_maze_whistle_is_not_consumed() {
         let Some(rom) = vanilla() else { return };
         let mut patched = rom.clone();
-        apply(&mut patched);
+        let grids = crate::randomize::rom_data::read_all_tile_grids(&patched);
+        apply(&mut patched, &grids);
         assert_eq!(
             patched.read_range(WHISTLE_CONSUME_OFFSET, 3),
             [0xEA, 0xEA, 0xEA],

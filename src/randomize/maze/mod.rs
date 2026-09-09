@@ -33,10 +33,12 @@
 
 use rand::Rng;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
-use super::map_walker::walk_reachable;
-use super::overworld_build::{BuildResult, SlotKind, WorldState, from_built, stamp_slots};
+use super::map_walker::walk_reachable_blocked;
+use super::overworld_build::{
+    BuildResult, FortRef, LockHint, SlotKind, WorldState, from_built, stamp_slots,
+};
 use super::rom_data::{self, Grid, Pos};
 use walk::{MazePos, MazeWorld, walk_maze};
 
@@ -64,23 +66,11 @@ pub(crate) enum MazeEdge {
     Airship { from_world: usize, to_world: usize },
 }
 
-/// Which fortress opens a lock. `section` is the fort's per-world section
-/// index — the same key `LockAssignment::fort_section` uses, so no new fort
-/// numbering has to be invented (and the ROM-side foreign-lock hook keys on
-/// position, not on an id, for the same reason).
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub(crate) struct FortRef {
-    pub world: usize,
-    pub section: usize,
-}
-
 /// A lock in the maze. Unlike `LockAssignment` its fort may live in any world.
 #[derive(Clone, Debug)]
 pub(crate) struct MazeLock {
     pub world: usize,
     pub pos: Pos,
-    pub gap_tile: u8,
-    pub replace_tile: u8,
     /// The fort that opens it.
     ///
     /// `None` means **the lock is not installed** — the tile is left as open
@@ -173,9 +163,7 @@ impl GlobalState {
                 w.locks.iter().map(|l| MazeLock {
                     world: w.world_idx,
                     pos: l.pos,
-                    gap_tile: l.gap_tile,
-                    replace_tile: l.replace_tile,
-                    fort: Some(FortRef { world: w.world_idx, section: l.fort_section }),
+                    fort: Some(l.fort),
                 })
             })
             .collect();
@@ -310,45 +298,53 @@ impl GlobalState {
             .collect()
     }
 
-    /// [`Self::base_grids`] with every lock stamped as `open` leaves it. The
-    /// fixpoint and [`metrics::completion_cost`] both step through the same
-    /// sequence of these, one per fort set, and they have to agree about what
-    /// a given set of beaten forts makes walkable. The constructive fill steps
+    /// Which path cells are shut, per world, given the forts beaten so far.
+    ///
+    /// The fixpoint and [`metrics::completion_cost`] both step through the same
+    /// sequence of these, one per fort set, and they have to agree about what a
+    /// given set of beaten forts makes walkable. The constructive fill steps
     /// through the same sequence a third time.
-    pub(crate) fn locked_grids(&self, bases: &[Grid], open: &HashSet<FortRef>) -> Vec<Grid> {
-        self.locked_grids_sealed(bases, open, None)
+    pub(crate) fn shut_locks(&self, open: &HashSet<FortRef>) -> Vec<HashSet<Pos>> {
+        self.shut_locks_sealed(open, None)
     }
 
     /// [`Self::locked_grids`] with one lock held shut whatever opens it — the
     /// counterfactual [`Self::winnable_with_lock_sealed`] asks.
-    pub(crate) fn locked_grids_sealed(
+    pub(crate) fn shut_locks_sealed(
         &self,
-        bases: &[Grid],
         open: &HashSet<FortRef>,
         sealed: Option<usize>,
-    ) -> Vec<Grid> {
-        bases
-            .iter()
-            .enumerate()
-            .map(|(wi, base)| {
-                let mut g = base.clone();
-                for (li, lock) in self.locks.iter().enumerate().filter(|(_, l)| l.world == wi) {
-                    // An uninstalled lock (`fort: None`) is open path.
-                    let opens = Some(li) != sealed && lock.fort.is_none_or(|f| open.contains(&f));
-                    let tile = if opens { lock.replace_tile } else { lock.gap_tile };
-                    g.set(lock.pos.0, lock.pos.1, tile);
-                }
-                g
+    ) -> Vec<HashSet<Pos>> {
+        (0..self.worlds.len())
+            .map(|wi| {
+                self.locks
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, l)| l.world == wi)
+                    .filter(|(li, lock)| {
+                        // An uninstalled lock (`fort: None`) is open path.
+                        let opens =
+                            Some(*li) != sealed && lock.fort.is_none_or(|f| open.contains(&f));
+                        !opens
+                    })
+                    .map(|(_, lock)| lock.pos)
+                    .collect()
             })
             .collect()
     }
 
-    /// The eight grids as the maze walkers take them.
-    pub(crate) fn view<'a>(&'a self, grids: &'a [Grid]) -> Vec<MazeWorld<'a>> {
+    /// The eight worlds as the maze walkers take them: a grid, its pipes, and
+    /// which of its path cells are shut.
+    pub(crate) fn view<'a>(
+        &'a self,
+        grids: &'a [Grid],
+        shut: &'a [HashSet<Pos>],
+    ) -> Vec<MazeWorld<'a>> {
         grids
             .iter()
             .zip(&self.worlds)
-            .map(|(grid, w)| MazeWorld { grid, pipe_pairs: &w.pipe_pairs })
+            .zip(shut)
+            .map(|((grid, w), blocked)| MazeWorld { grid, pipe_pairs: &w.pipe_pairs, blocked })
             .collect()
     }
 
@@ -383,8 +379,8 @@ impl GlobalState {
         let mut wands_at_goal = 0;
 
         loop {
-            let grids = self.locked_grids_sealed(&bases, &open, sealed);
-            let reach = walk_maze(&self.view(&grids), &links, self.start);
+            let shut = self.shut_locks_sealed(&open, sealed);
+            let reach = walk_maze(&self.view(&bases, &shut), &links, self.start);
 
             let reached: Vec<MazePos> = content
                 .iter()
@@ -530,13 +526,16 @@ impl GlobalState {
             .collect();
         let mut open: HashSet<usize> = HashSet::new();
         loop {
-            let mut g = base.clone();
-            for lock in self.locks.iter().filter(|l| l.world == world) {
-                let opens = lock.fort.is_none_or(|f| f.world == world && open.contains(&f.section));
-                let tile = if opens { lock.replace_tile } else { lock.gap_tile };
-                g.set(lock.pos.0, lock.pos.1, tile);
-            }
-            let reach = walk_reachable(&g, &w.pipe_pairs, w.start, world);
+            let shut: HashSet<Pos> = self
+                .locks
+                .iter()
+                .filter(|l| l.world == world)
+                .filter(|lock| {
+                    !lock.fort.is_none_or(|f| f.world == world && open.contains(&f.section))
+                })
+                .map(|lock| lock.pos)
+                .collect();
+            let reach = walk_reachable_blocked(&base, &w.pipe_pairs, w.start, world, &shut);
             if exits.iter().any(|&e| reach.contains(e)) {
                 return true;
             }
@@ -570,10 +569,9 @@ impl GlobalState {
         let w = &self.worlds[world];
         let mut g = w.grid.clone();
         stamp_slots(&mut g, &w.slots);
-        for lock in self.locks.iter().filter(|l| l.world == world) {
-            g.set(lock.pos.0, lock.pos.1, lock.gap_tile);
-        }
-        let reach = walk_reachable(&g, &w.pipe_pairs, w.start, world);
+        let shut: HashSet<Pos> =
+            self.locks.iter().filter(|l| l.world == world).map(|l| l.pos).collect();
+        let reach = walk_reachable_blocked(&g, &w.pipe_pairs, w.start, world, &shut);
         if w.target.is_some_and(|t| reach.contains(t)) {
             return true;
         }
@@ -668,9 +666,9 @@ impl Spheres {
 #[derive(Clone, Debug)]
 pub(crate) struct GenReport {
     pub spheres: Spheres,
-    /// Whether 1-F's lock can be left shut — see
-    /// [`fill::keep_one_f_sealable`].
-    pub one_f: fill::OneF,
+    /// How many locks can be left shut forever, against how many the writer
+    /// asked for — see [`fill::keep_n_sealable`].
+    pub sealable: fill::Sealable,
     pub fill: fill::FillReport,
     pub pads: Vec<graph::PlacedPad>,
     /// Worlds whose start region cannot be escaped with what the player
@@ -687,12 +685,17 @@ pub(crate) struct GenReport {
 /// Anything still unsafe afterwards gets a hub pad out of whatever budget is
 /// left — the last claim on the 16 ids, because by then it is the only one
 /// that can make a seed unplayable.
+///
+/// `sealable_locks` is the writer's invariant, passed in rather than assumed:
+/// how many locks must still be ones the player can decline to open, so a
+/// secret-exit fortress level has somewhere safe to land. See
+/// [`fill::keep_n_sealable`].
 pub(crate) fn generate<R: Rng>(
     result: &BuildResult,
     spine: &[usize],
     wands_required: u8,
     knobs: &graph::Knobs,
-    one_f: Option<FortRef>,
+    sealable_locks: usize,
     rng: &mut R,
 ) -> (GlobalState, GenReport) {
     let mut state = GlobalState::from_build(result, spine, wands_required);
@@ -700,7 +703,7 @@ pub(crate) fn generate<R: Rng>(
     let pads = graph::plan_pads(&state, knobs, rng);
     state.add_pads(pads.iter().map(|p| p.edge).collect());
 
-    let fill = fill::assign_keys(&mut state, spine, knobs, one_f, rng);
+    let fill = fill::assign_keys(&mut state, spine, knobs, rng);
 
     // A world whose start region has no walk-out still gets offered a pad,
     // because an extra edge can only help — but it is **no longer a reason to
@@ -758,7 +761,105 @@ pub(crate) fn generate<R: Rng>(
 
     // Last, and after the fallback above, so it judges the assignment that
     // actually ships. Consumes no RNG.
-    let one_f = fill::keep_one_f_sealable(&mut state, one_f);
+    let sealable = fill::keep_n_sealable(&mut state, sealable_locks);
+    // Opening a gate changes reachability, so the log has to describe the map
+    // that ships rather than the one measured before the repair.
+    if sealable.opened > 0 {
+        spheres = state.spheres();
+    }
 
-    (state, GenReport { spheres, fill, pads, unsafe_worlds, one_f })
+    (state, GenReport { spheres, fill, pads, unsafe_worlds, sealable })
+}
+
+/// Fold the maze's decisions back into the build, for the writer to write.
+///
+/// **This is why the maze runs before the writer.** Everything here used to be
+/// a ROM patch laid over grids the writer had already committed, which is what
+/// made the ordering in `randomize_inner` load-bearing and forced later steps
+/// to read the cartridge back to discover what had happened. As model edits
+/// they are picked up by `overworld_writer::grid`, which starts from
+/// `built.grid.clone()` and stamps on top, so one write pass emits the finished
+/// map and nothing has to re-derive it afterwards.
+///
+/// Three things travel:
+///
+/// * **Pad tiles.** The cell keeps its pointer-table entry; that entry becomes
+///   unreachable, which is why [`roles::pad_sites`] only ever offers Hammer Bro
+///   filler slots and bare blanks.
+/// * **Uninstalled locks** ([`MazeLock::fort`] `== None`) are dropped, so the
+///   writer never stamps a `gap_tile` there and the path tile underneath
+///   stands. Previously the writer stamped the gate from the builder's list and
+///   the maze had to paint over it — a gate with no key in the window between.
+/// * **`secret_exit_safe`**, restamped with the maze-grade verdict. The
+///   builder's is a per-world question and over-promises (19% of locks at K=3,
+///   43% at K=7), because sealing a lock can strand an airship the wand count
+///   needs.
+///
+/// Consumes no RNG.
+pub(crate) fn stamp_into(build: &mut BuildResult, state: &GlobalState) {
+    // The wand gate's masonry. `wand_gate::apply` installs the opener and its
+    // hooks; the cell it stands on is a map tile like any other, and `W8`'s
+    // builder reserved it (`WorldState::wand_gate_reserved`) so nothing else
+    // claimed it.
+    if state.wands_required > 0 {
+        let (row, col) = rom_data::W8_WAND_GATE_POS;
+        build.worlds[rom_data::W8_IDX].grid.set(row, col, rom_data::WAND_GATE_TILE);
+    }
+
+    for (world, built) in build.worlds.iter_mut().enumerate() {
+        for ((pad_world, (row, col)), _) in state.pad_edges() {
+            if pad_world == world {
+                built.grid.set(row, col, rom_data::TILE_TELEPAD);
+            }
+        }
+
+        // Uninstalled locks are dropped; the rest take the maze's fortress,
+        // which may be in another world. This is the whole of what used to be
+        // `maze::writer::lock_keys` — the pairing travels in the model now, so
+        // the writer emits the rows for both modes.
+        let installed: HashMap<Pos, FortRef> = state
+            .locks
+            .iter()
+            .filter(|l| l.world == world)
+            .filter_map(|l| l.fort.map(|f| (l.pos, f)))
+            .collect();
+        built.locks.retain(|l| installed.contains_key(&l.pos));
+        for lock in &mut built.locks {
+            lock.fort = installed[&lock.pos];
+            // **Restamp the verdict, do not inherit it.** `secret_exit_safe` as
+            // the builder left it asks a per-world question, and the maze asks a
+            // bigger one: with this lock sealed forever, is the castle still
+            // reachable *and* are K airship docks still reachable, across all
+            // eight worlds. The per-world flag over-promises on 19% of locks at
+            // K=3 and 43% at K=7, so shipping it unchanged hands the writer
+            // slots that would strand the player who takes 1-F's secret exit.
+            let li = state
+                .locks
+                .iter()
+                .position(|l| l.world == world && l.pos == lock.pos)
+                .expect("the lock came from this list");
+            lock.secret_exit_safe = state.winnable_with_lock_sealed(li);
+        }
+
+        // Say on each fortress where the lock it opens is. Own world wins,
+        // then World 8, then elsewhere — so a World 8 fortress opening a World
+        // 8 lock reads OwnWorld, not World8. Whether the player is told, and
+        // which tile says it, is the writer's call.
+        for slot in built.slots.iter_mut().filter(|s| s.kind == SlotKind::Fortress) {
+            let Some(lock) = state
+                .locks
+                .iter()
+                .find(|l| l.fort == Some(FortRef { world, section: slot.section }))
+            else {
+                continue;
+            };
+            slot.lock_hint = if lock.world == world {
+                LockHint::OwnWorld
+            } else if lock.world == rom_data::W8_IDX {
+                LockHint::World8
+            } else {
+                LockHint::Elsewhere
+            };
+        }
+    }
 }

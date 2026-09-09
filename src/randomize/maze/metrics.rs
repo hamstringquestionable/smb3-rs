@@ -93,8 +93,8 @@ pub(crate) fn completion_cost(state: &GlobalState) -> CompletionCost {
     let mut out = CompletionCost::default();
 
     loop {
-        let grids = state.locked_grids(&bases, &beaten);
-        let view = state.view(&grids);
+        let shut = state.shut_locks(&beaten);
+        let view = state.view(&bases, &shut);
         let reach = walk_maze(&view, &links, state.start);
         let cost = walk_maze_cost(&view, &links, state.start, &reach, |p| {
             u32::from(charged.contains(&p) && !cleared.contains(&p))

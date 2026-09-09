@@ -299,61 +299,42 @@ fn randomize_inner(
         // its own bytes and leak the name onto everything the writer emits.
         randomize::troll_pipes::mark_troll_pipes(&mut build, &mut rng);
     }
-    // --- OVERWORLD CAPTURE POINT ---
-    // Hand a clone of the finalized BuildResult (post hands/troll mutations,
-    // pre-writer) to any caller that asked for it. Used by the progression
-    // analyzer to inspect the topology the player will actually see, with
-    // RNG consumed exactly as in a real playthrough. Keep this immediately
-    // before `write_overworld` so future randomization steps inserted after
-    // the writer don't pollute the snapshot.
-    if let Some(slot) = overworld_capture {
-        *slot = Some(build.clone());
-    }
-    rom.set_tag("overworld_writer");
-    let lock_pairing = randomize::overworld_writer::write_overworld(
-        rom,
-        &build,
-        &data,
-        &mut rng,
-        randomize::overworld_writer::WriteFlags {
-            shuffle_hammer_bros: options.shuffle_hammer_bros,
-            piranha: options.piranha_shuffle,
-            friendlier_levels: options.friendlier_levels,
-            deja_vu: options.deja_vu,
-            deja_vu_forts: options.deja_vu_forts,
-        },
-    );
 
-    // Set by the world maze, read by `lock_keys` below. When the maze runs it
-    // owns the WHOLE lock/fortress assignment, not just the cross-world half —
-    // its fill starts from the builder's pairing and swaps from there, so the
-    // two cannot be mixed. `None` means no maze ran and the builder's pairing
-    // stands.
-    let mut maze_lock_keys: Option<Vec<randomize::lock_keys::LockEntry>> = None;
+    // **Hints describe a maze, so they are off without one.**
+    //
+    // Both things a hint can say are maze-only: a fortress design says which
+    // world its lock is in, and outside the maze that is always "this one"; a
+    // lock's colour says its key is elsewhere, which cannot happen. The web
+    // form already greys the control out (`enabledWhen: { world_maze: true }`),
+    // but a flag key or a CLI run can still carry `hints: some` with the mode
+    // off — and `some` is the default.
+    //
+    // Both consumers are no-ops there anyway: nothing sets `SlotAssignment::
+    // lock_hint` outside the maze, and `lock_keys::stamp_hint_locks` only
+    // touches away locks. That is an accident of two other modules rather than
+    // a decision, though, and the day either changes it would switch a
+    // maze-only feature on in standard mode with nothing to say it should not.
+    // Say it here instead. The key still encodes what the player chose; this
+    // only decides what the run does with it.
+    let hints = if options.world_maze { options.hints } else { crate::HintMode::Off };
 
     // World maze: the eight world maps stop being a sequence and become the
     // rooms of one Metroidvania — telepads between them, a fortress that can
     // bust a lock in another world, and map progress that survives leaving.
     //
-    // **The order inside this block is the whole of its correctness.** The
-    // packed completion store derives its stencil from the map grids as they
-    // finally stand, so every write that changes a grid runs first — the pad
-    // tiles and the wand gate — and `lock_keys` runs last (just past the end of
-    // this block), because it asks the packer where a given cell's bit lives
-    // rather than re-deriving that arithmetic.
+    // **A model pass, like the two above.** `maze::generate` takes a
+    // `BuildResult` and no `&Rom` — it is a pure function of the builder's
+    // model — and `stamp_into` folds its decisions back in as grid and lock
+    // edits. The writer then emits the finished map in one pass. Its ROM-side
+    // patches are installed after the writer, further down.
     //
-    // Today the two grid writers are in fact bit-neutral, so only the tail of
-    // that order is load-bearing. A cell claims a completion bit by being in
-    // `Map_Removable_Tiles` or `Map_Completable_Tiles`, and `TILE_TELEPAD` and
-    // `WAND_GATE_TILE` are in neither — `the_pad_tile_is_in_no_registry` and
-    // `the_gate_tile_is_in_no_registry` pin that — while the cells they
-    // overwrite are hammer-bro slots, blanks and the W8 bridge, which are in
-    // neither either. The head of the order is kept anyway: it costs nothing,
-    // and the day someone picks a tile that does claim a bit, the alternative
-    // is a stencil that disagrees with the map by one bit somewhere past the
-    // world it happened in.
-    if options.world_maze {
-        rom.set_tag("world_maze");
+    // It used to run *after* the writer, patching tiles over grids already on
+    // the cartridge. That is what made the ordering here load-bearing, forced
+    // `completion_bits` and `world_travel` to read the ROM back to discover
+    // what had happened, and left the builder's placement guarantees
+    // un-repairable because the map was committed before the fill permuted the
+    // array those guarantees live in.
+    let maze = options.world_maze.then(|| {
         // The spine IS `world_order`'s table, which is why the mode forces it
         // on. With `world_count < 7` it is shorter than eight, and the worlds
         // it leaves out are reachable only by telepad — see the design doc.
@@ -366,71 +347,72 @@ fn randomize_inner(
         // K cannot exceed the airships the spine offers: a shorter spine means
         // fewer than seven wands exist in the game at all.
         let wands = options.maze_wands.min(spine.len().saturating_sub(1) as u8);
-        // Which fortress slot `assign_pool` gave 1-F, so the fill leaves that
-        // one pairing alone. It picks uniformly among the slots the builder
-        // marked `secret_exit_safe`, with its own RNG, so this has to be read
-        // back rather than re-derived — and without it the fill re-pairs the
-        // fortress with a lock nobody ever vetted (measured: the lock moved in
-        // 55 of 60 seeds, and in 7 of 60 the secret exit ended the run).
-        let one_f = lock_pairing
-            .one_f_slot(&data)
-            .map(|(world, section)| randomize::maze::FortRef { world, section });
         let (state, _report) = randomize::maze::generate(
             &build,
             &spine,
             wands,
             &randomize::maze::graph::Knobs::default(),
-            one_f,
+            // The writer needs one fortress slot it can park a secret-exit
+            // level on. The maze re-pairs forts and locks, which invalidates
+            // the builder's answer, so it restores the invariant rather than
+            // being told which slot to protect.
+            randomize::overworld_build::SECRET_EXIT_SLOTS_NEEDED,
             &mut rng,
         );
-        // **The maze owns the whole lock/fortress assignment, not half of it.**
-        //
-        // `fill` starts from the overworld builder's pairing — every lock opened
-        // by a fortress in its own world — and moves by *swapping* the forts of
-        // two locks, keeping a swap only while the maze stays solvable. So the
-        // result is a permutation of the builder's, and it is a bijection at
-        // every step: one lock per fortress, the charter's map-legibility rule.
-        //
-        // Taking only the cross-world half of that and leaving the rest to the
-        // builder's original pairing loses every swap that happened to leave
-        // both locks in their own worlds — 33.1% of same-world locks over 60
-        // seeds — and lets a fortress that kept a stale local lock while gaining
-        // a foreign one open two. Both halves travel together or neither does.
-        //
-        // **`maze::generate` does not need to be here.** It takes a
-        // `BuildResult` and no `&Rom` — it is a pure function of the builder's
-        // model — so the decision could be made before `write_overworld` runs.
-        // What forces this block to sit *after* the writer is the writing:
-        // `stamp_pad_tiles` and `wand_gate::apply` lay tiles over the grids the
-        // writer just committed, and `world_persist` derives the packed store's
-        // stencil from the result. The decision is only here because it is next
-        // to its own writes.
-        //
-        // That is worth revisiting, because it is what makes the builder's
-        // placement guarantees un-repairable: the map is already on the
-        // cartridge by the time the fill permutes the array those guarantees
-        // live in (see the 1-F secret-exit case). It consumes no RNG, so
-        // nothing downstream shifts either way.
-        maze_lock_keys = Some(randomize::maze::writer::lock_keys(&state));
+        randomize::maze::stamp_into(&mut build, &state);
+        (state, wands)
+    });
+    // --- OVERWORLD CAPTURE POINT ---
+    // Hand a clone of the finalized BuildResult (post hands/troll mutations,
+    // pre-writer) to any caller that asked for it. Used by the progression
+    // analyzer to inspect the topology the player will actually see, with
+    // RNG consumed exactly as in a real playthrough. Keep this immediately
+    // before `write_overworld` so future randomization steps inserted after
+    // the writer don't pollute the snapshot.
+    if let Some(slot) = overworld_capture {
+        *slot = Some(build.clone());
+    }
+    rom.set_tag("overworld_writer");
+    let written = randomize::overworld_writer::write_overworld(
+        rom,
+        &build,
+        &data,
+        &mut rng,
+        randomize::overworld_writer::WriteFlags {
+            shuffle_hammer_bros: options.shuffle_hammer_bros,
+            piranha: options.piranha_shuffle,
+            friendlier_levels: options.friendlier_levels,
+            hints,
+            deja_vu: options.deja_vu,
+            deja_vu_forts: options.deja_vu_forts,
+        },
+    );
 
-        // Before `world_persist` for the same reason as every other grid
-        // writer: the packed store's stencil is derived from the finished
-        // grids.
-        randomize::maze::writer::open_uninstalled_locks(rom, &state);
-        randomize::maze::writer::stamp_pad_tiles(rom, &state);
-        // And the same question from the fortress's end: which of the three
-        // fortress tiles it wears says where the lock it opens is.
-        if options.hints.hints_at_all() {
-            randomize::maze::writer::stamp_fort_tiles(rom, &state);
-        }
+    // The world maze's ROM side. The map itself is already written — the maze
+    // was a model pass before the writer — so what is left is the engine
+    // scaffolding the mode needs, and none of it touches a map grid.
+    //
+    // `lock_keys` (just past the end of this block) still runs last, because it
+    // asks the packed store where a given cell's completion bit lives rather
+    // than re-deriving that arithmetic, and `world_persist` is what installs
+    // the store.
+    if let Some((state, wands)) = maze {
+        rom.set_tag("world_maze");
+        randomize::maze::writer::install_pad_metatile(rom, &state);
         rom.set_tag("wand_gate");
         randomize::wand_gate::apply(rom, wands);
-        // Last of the grid writers, and the first thing that reads them: this
-        // installs the packed store and the telepads themselves.
         rom.set_tag("world_persist");
-        randomize::world_persist::apply(rom, &randomize::maze::writer::telepad_specs(&state));
+        randomize::world_persist::apply(
+            rom,
+            &randomize::maze::writer::telepad_specs(&state),
+            written.grids(rom),
+            // The HELP bubble is only ours to retire once the airship cutscene
+            // is gone — with `--keep-autoscroll` slot 0 still gates the dock
+            // tile's chain into the airship. See `map_objects`.
+            options.disable_autoscroll,
+        );
         rom.set_tag("world_travel");
-        randomize::world_travel::apply(rom);
+        randomize::world_travel::apply(rom, written.grids(rom));
     }
 
     // Every lock in the game, home and away, in one table — and with it the
@@ -451,8 +433,13 @@ fn randomize_inner(
     // still open. `lock_keys::the_digit_is_the_world_the_player_sees` asserts
     // the table is a permutation, which is what catches the wrong order.
     rom.set_tag("lock_keys");
-    let lock_entries = maze_lock_keys.unwrap_or_else(|| lock_pairing.lock_entries(&build));
-    randomize::lock_keys::apply(rom, &lock_entries, options.hints);
+    // One source, both modes: `stamp_into` wrote the maze's pairing into the
+    // build, so the writer's rows already carry it.
+    randomize::lock_keys::apply(
+        rom,
+        &randomize::overworld_writer::lock_entries(&build),
+        written.grids(rom),
+    );
 
     // Big [?] bonus-room shuffle: every level with a Big [?] pipe draws from a
     // pool of 19 rooms (11 vanilla + 8 in the otherwise-dead "Unused Level 5").
@@ -640,7 +627,12 @@ fn randomize_inner(
     // Hammer breaks tiles on the overworld map (locks, bridges, or both).
     if hammer_breaks_locks || hammer_breaks_bridges {
         rom.set_tag("qol/hammer_breaks_tiles");
-        randomize::qol::hammer_breaks_tiles(rom, hammer_breaks_locks, hammer_breaks_bridges);
+        randomize::qol::hammer_breaks_tiles(
+            rom,
+            hammer_breaks_locks,
+            hammer_breaks_bridges,
+            written.grids(rom),
+        );
     }
 
     // MaCobra52's "Early Sun" — Angry Sun begins attacking immediately.

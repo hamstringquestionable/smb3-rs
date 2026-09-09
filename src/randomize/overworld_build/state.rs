@@ -14,7 +14,7 @@ pub(crate) struct WorldState {
     pub grid: Grid,
     /// What occupies each placeable node: level / fortress / pipe / filler.
     pub slots: Vec<SlotAssignment>,
-    /// Lock overlay. `fort_section` pairs each lock to the fortress that
+    /// Lock overlay. `LockAssignment::fort` pairs each lock to the fortress that
     /// opens it.
     pub locks: Vec<LockAssignment>,
     /// Teleport pipe endpoint pairs.
@@ -187,6 +187,7 @@ impl WorldState {
                 section: 0,
                 is_hand_trap: false,
                 is_troll_pipe: false,
+                lock_hint: LockHint::default(),
             });
         }
         self.pipe_pairs.push((a, b));
@@ -203,9 +204,9 @@ impl WorldState {
         self.locks
             .iter()
             .filter(|lock| {
-                let mut g = open.clone();
-                g.set(lock.pos.0, lock.pos.1, lock.gap_tile);
-                !walk_reachable(&g, &self.pipe_pairs, self.start, self.world_idx).contains(target)
+                let shut = HashSet::from([lock.pos]);
+                !walk_reachable_blocked(&open, &self.pipe_pairs, self.start, self.world_idx, &shut)
+                    .contains(target)
             })
             .count()
     }
@@ -225,9 +226,10 @@ impl WorldState {
         let open_len = walk_reachable(&open, &self.pipe_pairs, self.start, self.world_idx).len();
         let mut out = Vec::new();
         for (li, lock) in self.locks.iter().enumerate() {
-            let mut g = open.clone();
-            g.set(lock.pos.0, lock.pos.1, lock.gap_tile);
-            let closed_len = walk_reachable(&g, &self.pipe_pairs, self.start, self.world_idx).len();
+            let shut = HashSet::from([lock.pos]);
+            let closed_len =
+                walk_reachable_blocked(&open, &self.pipe_pairs, self.start, self.world_idx, &shut)
+                    .len();
             if closed_len == open_len {
                 out.push(li);
             }
@@ -301,11 +303,11 @@ impl WorldState {
         const WALL: u8 = BACKGROUND_TILES[0];
 
         let Some(target) = self.target else { return Vec::new() };
+        // Every lock open. Locks are an overlay and are never stamped on the
+        // grid, so the path tile under each one is already what it reverts to
+        // — nothing to restore, and no blocked set to pass.
         let mut g = self.grid.clone();
         stamp_slots(&mut g, &self.slots);
-        for lock in &self.locks {
-            g.set(lock.pos.0, lock.pos.1, lock.replace_tile);
-        }
 
         let mut out = Vec::new();
         for &pos in candidates {
@@ -347,13 +349,15 @@ impl WorldState {
 
         let mut open: HashSet<usize> = HashSet::new();
         loop {
-            let mut g = base.clone();
-            for (li, lock) in self.locks.iter().enumerate() {
-                let opens = open.contains(&lock.fort_section) && Some(li) != sealed;
-                let tile = if opens { lock.replace_tile } else { lock.gap_tile };
-                g.set(lock.pos.0, lock.pos.1, tile);
-            }
-            let reach = walk_reachable(&g, &self.pipe_pairs, self.start, self.world_idx);
+            let shut: HashSet<Pos> = self
+                .locks
+                .iter()
+                .enumerate()
+                .filter(|(li, lock)| !(open.contains(&lock.fort.section) && Some(*li) != sealed))
+                .map(|(_, lock)| lock.pos)
+                .collect();
+            let reach =
+                walk_reachable_blocked(&base, &self.pipe_pairs, self.start, self.world_idx, &shut);
             let mut progressed = false;
             for &(fort_id, pos) in &forts {
                 if !open.contains(&fort_id) && reach.contains(pos) {
