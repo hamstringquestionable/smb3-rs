@@ -324,6 +324,8 @@
 
 .lock { border-color: #c9a26a; color: #e2c493; background: #241d12; }
 .lock.away { border-color: #6aa2c9; color: #a6d2ee; background: #12202a; }
+.lock.unattributed { border-style: dashed; }
+
 .lock .src {
     display: flex;
     align-items: center;
@@ -444,6 +446,11 @@
             <dt><span class="chip lock away"><span class="body">Lock</span></span></dt>
             <dd>Tinted lock — its fortress is somewhere else. On Full hints it also
                 wears the world number to go to.</dd>
+            <dt><span class="chip lock unattributed"><span class="body">Lock</span></span></dt>
+            <dd>Dashed: a lock you have seen but cannot yet pin on a fortress. Say
+                which world its key is in and it joins up with one. Every world has
+                as many locks as it has fortresses, so a lock you cannot account for
+                means there is a fortress here you have not found.</dd>
             <dt><span class="help" style="display:inline-block">HELP</span></dt>
             <dd>A world calls for help until you clear its castle and take its wand.
                 Click the balloon to cross it off. Dark Land has none — that is where
@@ -1096,6 +1103,14 @@ function deduceLast() {
 	flash(`World ${empty[0] + 1} has to be ${left[0].name} — it is the only one left.`);
 }
 
+// Every fortress already draws its own lock, so the Locks button needs to say
+// what it is for: a lock seen in the world before its fortress was.
+const ADD_TIPS = {
+	Forts: "A fortress you have found here",
+	Locks: "A lock you have seen here but cannot pin on a fortress yet",
+	Pads: "A warp pad you have found here",
+};
+
 function renderRow(label, chips, onAdd, addDisabled) {
 	const row = el("div", { class: "row" },
 		el("span", { class: "rowlabel" }, label),
@@ -1104,7 +1119,7 @@ function renderRow(label, chips, onAdd, addDisabled) {
 		row.appendChild(el("button", {
 			class: "add",
 			type: "button",
-			title: `Add a ${label.slice(0, -1).toLowerCase()}`,
+			title: ADD_TIPS[label] ?? `Add a ${label.slice(0, -1).toLowerCase()}`,
 			disabled: addDisabled,
 			onclick: ev => { ev.stopPropagation(); onAdd(); },
 		}, "+"));
@@ -1254,8 +1269,16 @@ function renderOwnLock(fort) {
 	return chip;
 }
 
+// A lock the player has walked up to but cannot yet pin on a fortress — the
+// normal way round early in a run, when you are standing in a world you have
+// barely explored.
+//
+// It is not a duplicate of the fortress locks above it. Those are drawn from
+// fortresses you have found; this is the other direction, and it claims one of
+// the world's lock sections until you can say which fortress opens it, at which
+// point `claimKeyWorld` spends it.
 function renderFreeLock(w, lock) {
-	const chip = el("span", { class: "chip lock" + (lock.done ? " done" : "") });
+	const chip = el("span", { class: "chip lock unattributed" + (lock.done ? " done" : "") });
 	chip.appendChild(el("button", {
 		class: "body",
 		type: "button",
