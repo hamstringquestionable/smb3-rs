@@ -32,10 +32,12 @@ deploys.
 
 ### Changed
 
-- **Generating a ROM is about 12% faster.** In the browser, a seed went from
-  ~98ms to ~86ms with the default settings and from ~123ms to ~108ms in World
-  Maze. Nothing about what gets generated changed — the same seed still produces
-  exactly the same ROM.
+- **Generating a ROM is about 30% faster.** In the browser a seed went from
+  ~98ms to ~70ms with the default settings, and from ~123ms to ~87ms in World
+  Maze. Part of that is a build setting and changes nothing at all; the rest is
+  a faster route finder, which does mean **a given seed produces a different map
+  than it did in the last release**. Seeds have never carried across versions,
+  and the maps are the same quality by every measure we track.
 
 - **Friendlier Levels drops 7F2 and 8F1 for real.** They used to be made
   *optional* — still on the map, still beatable, just parked behind a lock the

@@ -34,6 +34,41 @@ hashes they describe are gone; the reasoning is not.
 
 ## Entries
 
+### 2026-09-09 — the route Dijkstra's frontier becomes a radix heap
+
+**Intended.** `route_choice`'s `CostHeap` went from `BinaryHeap<Reverse<(u32,
+PackedState)>>` to `radix_heap::RadixHeapMap<Reverse<u32>, PackedState>`, for
+speed: WASM `generate_patch` 86.2 -> 69.5 ms with the maze off, 109.5 -> 86.7
+with it on. A binary heap of `(cost, state)` broke ties on the packed state; a
+radix heap orders by cost and says nothing about equal keys, so the pop sequence
+moves and with it every decision downstream of it.
+
+**Five of the twenty seeds moved** — indices 2, 3, 5, 9 and 15. The other
+fifteen are unchanged, which is the shape a tie-order change should have: it
+only bites where two routes actually cost the same.
+
+**The distribution did not move, and that was checked rather than assumed.**
+`test_route_census` at 4000 seeds, before and after:
+
+| | before | after |
+|---|---|---|
+| mean routes/world | 2.591 | 2.589 |
+| overall linear% | 5.95% | **6.24%** |
+| C1 | 19.2 | 19.2 |
+| below dealt floor | 0.33% | 0.33% |
+| W1 (the sensitive one) | 2.38 / 4% / 18.2 / 1.7% | identical |
+
+Three worlds (W4, W6, W7) each gain a point of linearity and none lose one, so
+the overall rate rises ~0.3pp — about one world-instance in 350 becoming
+single-route. Real, small, and accepted deliberately for a fifth of the run
+time; the decision and its terms are `docs/seed_stability.md`. The move
+reproduced in the same direction at 1000 seeds (6.19% -> 6.54%), which is why it
+is recorded as systematic rather than sampling noise.
+
+`all_world_targets_reachable` passes at `CENSUS_SEEDS=500` (8 arms), so nothing
+about completability moved.
+
+
 ### 2026-09-08 — the fingerprint replaces the whole-ROM hash
 
 First capture of the narrowed fingerprint, and it inherits real drift rather
