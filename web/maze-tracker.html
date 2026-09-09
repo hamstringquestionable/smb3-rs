@@ -153,7 +153,46 @@
 .wcard.droppable { outline: 3px dashed #f0c040; outline-offset: 3px; }
 .wcard.dragover { background: #1e1e3e; }
 
-.wcard-head { display: flex; align-items: center; gap: 0.6rem; }
+.wcard-head { display: flex; align-items: flex-start; gap: 0.6rem; }
+.wcol { display: flex; flex-direction: column; align-items: center; gap: 0.4rem; }
+
+/* The king's balloon, as it sits on the map: a world calls for help until its
+   castle is cleared and its wand is in hand. Struck through rather than removed,
+   so a finished world still shows that it once had one. */
+.help {
+    position: relative;
+    width: 3.2rem;
+    background: #e8e8f0;
+    color: #1a1a34;
+    border: none;
+    border-radius: 6px;
+    padding: 0.25rem 0;
+    font-family: inherit;
+    font-size: 0.68rem;
+    font-weight: bold;
+    letter-spacing: 0.08em;
+    cursor: pointer;
+}
+.help::before {
+    content: "";
+    position: absolute;
+    top: -5px;
+    left: 50%;
+    transform: translateX(-50%);
+    border-left: 5px solid transparent;
+    border-right: 5px solid transparent;
+    border-bottom: 5px solid #e8e8f0;
+}
+.help:hover { background: #fff; }
+.help.done {
+    background: #2a2a44;
+    color: #6a6a86;
+    text-decoration: line-through;
+    text-decoration-color: #e44434;
+    text-decoration-thickness: 2px;
+}
+.help.done::before { border-bottom-color: #2a2a44; }
+
 .wnum {
     flex: none;
     width: 2.3rem;
@@ -379,6 +418,10 @@
             <dt><span class="chip lock away"><span class="body">Lock</span></span></dt>
             <dd>Tinted lock — its fortress is somewhere else. On Full hints it also
                 wears the world number to go to.</dd>
+            <dt><span class="help" style="display:inline-block">HELP</span></dt>
+            <dd>A world calls for help until you clear its castle and take its wand.
+                Click the balloon to cross it off. Dark Land has none — that is where
+                the wands get spent.</dd>
             <dt><span class="chip pad"><span class="body">Warp pad</span></span></dt>
             <dd>Pads come in pairs and work both ways, so linking one here draws
                 its partner on the other world too.</dd>
@@ -438,6 +481,7 @@ const FORTS_MAX = 3;        // per world, worlds 1-7
 const FORTS_ROAMING = 13;   // whole game, worlds 1-7
 const FORTS_TOTAL = 17;     // those 13 plus Dark Land's 4
 const LOCKS_TOTAL = FORTS_TOTAL; // one lock per fortress
+const WANDS_TOTAL = 7;      // one per world 1-7, held once its castle falls
 const W8 = 7;               // index of the Dark Land slot
 
 const STORE_KEY = "smb3r-maze-tracker-v1";
@@ -449,6 +493,7 @@ function blankState() {
 	for (let w = 0; w < 8; w++) {
 		worlds.push({
 			terrain: null,
+			wand: false,
 			forts: [],
 			locks: [],
 			pads: [],
@@ -550,6 +595,12 @@ function locksIn(target) {
 }
 
 // --- Counting against the budgets -------------------------------------
+
+// Out of seven, not out of the seed's K: the tracker cannot know what the
+// castle was set to open at, and seven is the number that is actually out there.
+function countWands() {
+	return state.worlds.slice(0, 7).filter(world => world.wand).length;
+}
 
 function countForts(from = 0, to = 8) {
 	return state.worlds.slice(from, to).reduce((n, world) => n + world.forts.length, 0);
@@ -812,6 +863,7 @@ function svg(tag, attrs) {
 function renderCounts() {
 	countsEl.textContent = "";
 	const rows = [
+		["Wands", countWands(), WANDS_TOTAL],
 		["Fortresses", countForts(), FORTS_TOTAL],
 		["Locks found", countLockChips(), LOCKS_TOTAL],
 		["Pad tiles", countPadTiles(), PAD_TILES_MAX],
@@ -858,7 +910,25 @@ function renderWorld(w) {
 }
 
 function renderHead(w) {
-	const head = el("div", { class: "wcard-head" }, el("span", { class: "wnum" }, String(w + 1)));
+	const col = el("div", { class: "wcol" }, el("span", { class: "wnum" }, String(w + 1)));
+	// Dark Land has no king and no wand of its own — it is where the wands get
+	// spent — so it carries no balloon.
+	if (w !== W8) {
+		const held = !!state.worlds[w].wand;
+		col.appendChild(el("button", {
+			class: "help" + (held ? " done" : ""),
+			type: "button",
+			title: held
+				? "Castle cleared, wand held — click if that was wrong"
+				: "Still calling for help. Click once you have cleared its castle.",
+			onclick: ev => {
+				ev.stopPropagation();
+				state.worlds[w].wand = !held;
+				render();
+			},
+		}, "HELP"));
+	}
+	const head = el("div", { class: "wcard-head" }, col);
 	if (w === W8) {
 		head.appendChild(el("span", { class: "fixed-name" }, DARK_LAND.name));
 		return head;

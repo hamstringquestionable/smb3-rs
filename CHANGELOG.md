@@ -21,7 +21,8 @@ deploys.
   game can contain. It also joins things up: telling it which world a lock's key
   is in puts that fortress on the board, and if that world has no fortress that
   could open the lock and no room for one, it says so rather than accepting a
-  map that cannot exist. It fills itself in as you explore and keeps what you typed
+  map that cannot exist. Each world wears the king's HELP balloon until you
+  cross it off, which counts your wands for you. It fills itself in as you explore and keeps what you typed
   in your browser.
 
 - **Deja Vu counts fortresses.** A fourth pill on the Deja Vu row, toggling on
