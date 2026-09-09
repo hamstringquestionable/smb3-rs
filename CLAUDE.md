@@ -59,6 +59,20 @@ When clippy flags new code:
 
 Never silence a lint by deleting the warning text or globally disabling — the goal is "every warning was considered," not "no warnings emitted."
 
+## Seeds Are Stable Within A Version, Never Across
+
+A change may move generated output. **Byte identity is an instrument, not a
+policy** — it answers "I intended to change nothing, prove it"
+(`tests/rom_identity.rs`) and is the wrong gate for anything else. What an
+intentional-output change owes instead is **census equivalence**: run
+`test_route_census` before and after and account for every figure that moved
+beyond noise, reading the per-world columns and not just the overall (W1 and W7
+are the sensitive ones; a global mean hides a world going flat).
+
+The policy, the current baseline, the three instruments and the rules for
+recapturing one are in `docs/seed_stability.md`. Read it before arguing that a
+change cannot land because it moves seeds.
+
 ## ROM Free Space Is Scarce — Optimize Every Patch for Size
 
 **Treat bytes of ROM free space as the project's scarcest resource.** Every new
