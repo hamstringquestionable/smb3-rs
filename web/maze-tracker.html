@@ -103,6 +103,34 @@
 .count.full { border-color: #5eb85e; }
 .count.full .v { color: #7ad47a; }
 
+/* --- Pad links ---
+   A faint curve between the two halves of each pair. It sits over the cards
+   rather than behind them, because the cards are opaque and a line behind them
+   would only survive in the gutters. `screen` blending keeps it a glow over the
+   dark card rather than a stripe through the text. */
+.worlds-wrap { position: relative; }
+.pad-links {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    overflow: visible;
+    z-index: 5;
+    mix-blend-mode: screen;
+}
+.pad-links path {
+    fill: none;
+    stroke: #a05cff;
+    stroke-width: 2;
+    stroke-linecap: round;
+    opacity: 0.45;
+}
+/* A pair inside one world is a short hop, and reads better dashed than as a
+   near-invisible stub. */
+.pad-links path.same-world { stroke-dasharray: 5 5; opacity: 0.55; }
+.pad-links circle { fill: #a05cff; opacity: 0.55; }
+
 /* --- World cards --- */
 .worlds {
     display: grid;
@@ -327,7 +355,13 @@
          full count means the thing you are looking for is not out there. -->
     <div id="counts" class="counts"></div>
 
-    <div id="worlds" class="worlds"></div>
+    <!-- The curves are drawn from the pad chips' own positions after every
+         render, so they follow the grid however it wraps. Purely decorative:
+         pointer-events off, and the tracker works identically without them. -->
+    <div class="worlds-wrap">
+        <svg id="pad-links" class="pad-links" aria-hidden="true"></svg>
+        <div id="worlds" class="worlds"></div>
+    </div>
 
     <div class="legend section">
         <h2>What the map is telling you</h2>
@@ -664,6 +698,7 @@ const worldsEl = document.getElementById("worlds");
 const aimingEl = document.getElementById("aiming");
 const aimingText = document.getElementById("aiming-text");
 const countsEl = document.getElementById("counts");
+const linksEl = document.getElementById("pad-links");
 
 function el(tag, attrs = {}, ...children) {
 	const node = document.createElement(tag);
@@ -714,6 +749,64 @@ function render() {
 	}
 	if (aiming || !message) aimingEl.className = "aiming";
 	save();
+	drawPadLinks(); // last: the chips have to be placed before they can be measured
+}
+
+// Join each pair with a curve, measured from where the chips actually landed.
+//
+// Bows perpendicular to the run so several pairs crossing the same space stay
+// apart instead of stacking into one thick line. Silently does nothing where
+// there is no layout to measure — headless, or before first paint — because it
+// is decoration and must never be able to break the tracker.
+function drawPadLinks() {
+	if (!linksEl || typeof worldsEl.getBoundingClientRect !== "function") return;
+	linksEl.textContent = "";
+	const base = worldsEl.getBoundingClientRect();
+	if (!base.width) return;
+
+	const centreOf = padId => {
+		const node = worldsEl.querySelector(`[data-pad="${padId}"]`);
+		if (!node) return null;
+		const r = node.getBoundingClientRect();
+		return { x: r.left - base.left + r.width / 2, y: r.top - base.top + r.height / 2 };
+	};
+
+	const drawn = new Set();
+	for (const world of state.worlds) {
+		for (const pad of world.pads) {
+			if (pad.partner == null || drawn.has(pad.id)) continue;
+			drawn.add(pad.id);
+			drawn.add(pad.partner);
+			const a = centreOf(pad.id);
+			const b = centreOf(pad.partner);
+			if (!a || !b) continue;
+
+			const dx = b.x - a.x;
+			const dy = b.y - a.y;
+			const len = Math.hypot(dx, dy) || 1;
+			const bow = Math.min(70, Math.max(18, len * 0.18));
+			const cx = (a.x + b.x) / 2 - (dy / len) * bow;
+			const cy = (a.y + b.y) / 2 + (dx / len) * bow;
+
+			linksEl.appendChild(svg("path", {
+				class: pad.dest === worldOf(pad.id) ? "same-world" : "",
+				d: `M${a.x} ${a.y} Q${cx} ${cy} ${b.x} ${b.y}`,
+			}));
+			for (const p of [a, b]) {
+				linksEl.appendChild(svg("circle", { cx: p.x, cy: p.y, r: 3 }));
+			}
+		}
+	}
+}
+
+function worldOf(padId) {
+	return findPad(padId)?.world ?? null;
+}
+
+function svg(tag, attrs) {
+	const node = document.createElementNS("http://www.w3.org/2000/svg", tag);
+	for (const [k, v] of Object.entries(attrs)) if (v !== "") node.setAttribute(k, v);
+	return node;
 }
 
 function renderCounts() {
@@ -1014,6 +1107,7 @@ function renderPads(w) {
 			title: "Remove (takes its partner with it)",
 			onclick: ev => { ev.stopPropagation(); deletePad(w, pad.id); render(); },
 		}, "×"));
+		chip.setAttribute("data-pad", String(pad.id)); // where drawPadLinks aims
 		return chip;
 	});
 }
@@ -1058,6 +1152,13 @@ document.getElementById("reset-btn").addEventListener("click", () => {
 	aiming = null;
 	render();
 });
+
+// The curves are measured from the laid-out grid, so anything that reflows it
+// has to redraw them. Guarded because none of this exists headlessly.
+if (typeof window !== "undefined") {
+	window.addEventListener("resize", drawPadLinks);
+	if (typeof ResizeObserver === "function") new ResizeObserver(drawPadLinks).observe(worldsEl);
+}
 
 stampIds();
 render();
