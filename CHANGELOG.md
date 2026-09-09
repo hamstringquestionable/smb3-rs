@@ -22,7 +22,7 @@ deploys.
   is in puts that fortress on the board, and if that world has no fortress that
   could open the lock and no room for one, it says so rather than accepting a
   map that cannot exist. Each world wears the king's HELP balloon until you
-  cross it off, which counts your wands for you. It fills itself in as you explore and keeps what you typed
+  cross it off, which counts your wands for you. And when the board says something the game could not have built — more locks in a world than it has room for, a lock whose key is in a world with nothing that could open it — it says so, and keeps saying so until you fix it. It fills itself in as you explore and keeps what you typed
   in your browser.
 
 - **Deja Vu counts fortresses.** A fourth pill on the Deja Vu row, toggling on

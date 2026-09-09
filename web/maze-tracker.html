@@ -82,6 +82,28 @@
     cursor: pointer;
 }
 
+/* --- Contradictions --- */
+.problems {
+    margin-bottom: 1rem;
+    padding: 0.75rem 1rem;
+    border: 2px solid #e44434;
+    border-radius: 8px;
+    background: #2a1210;
+    color: #ff9a8a;
+    font-size: 0.92rem;
+    line-height: 1.45;
+}
+.problems p { margin-bottom: 0.35rem; }
+.problems p:last-child { margin-bottom: 0; }
+.problems .lead {
+    font-weight: bold;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    font-size: 0.8rem;
+}
+.wcard.overfull { border-color: #e44434; }
+.card-warn { color: #ff9a8a; font-size: 0.82rem; line-height: 1.4; }
+
 /* --- Counters --- */
 .counts {
     display: flex;
@@ -390,6 +412,10 @@
         <button id="aiming-cancel" type="button">Cancel (Esc)</button>
     </div>
 
+    <!-- Contradictions on the board. Stays up until the player resolves it,
+         unlike the message bar above, which times out. -->
+    <div id="problems" class="problems" hidden></div>
+
     <!-- What the seed is allowed to contain, against what you have found. A
          full count means the thing you are looking for is not out there. -->
     <div id="counts" class="counts"></div>
@@ -626,6 +652,41 @@ function countLockChips() {
 	return n;
 }
 
+// A world holds exactly one lock per fortress — `WorldState::fort_count` is
+// "also the number of lock sections" — so a world can never hold more locks
+// than it can hold fortresses: three for worlds 1-7, four for Dark Land.
+//
+// Counted against the *ceiling* rather than against the fortresses the player
+// has actually logged. Finding a lock before its fortress is the normal way
+// round, and warning about that would cry wolf all run.
+function lockCapacity(w) {
+	return w === W8 ? 4 : FORTS_MAX;
+}
+
+function worldName(w) {
+	if (w === W8) return DARK_LAND.name;
+	const t = TERRAINS.find(t => t.id === state.worlds[w].terrain);
+	return t ? `World ${w + 1} (${t.name})` : `World ${w + 1}`;
+}
+
+// Every contradiction on the board, as sentences. Not thrown as a flash: this
+// is a state that stays wrong until the player fixes it, and a message that
+// times out is one they can scroll past and forget.
+function problems() {
+	const out = [];
+	for (let w = 0; w < 8; w++) {
+		const have = locksIn(w).length;
+		const max = lockCapacity(w);
+		if (have <= max) continue;
+		out.push(w === W8
+			? `${have} locks in ${DARK_LAND.name}, which only ever has ${max}. `
+				+ "Count the special fortresses in the other worlds plus the plain ones here — "
+				+ "together they cannot come to more than four."
+			: `${have} locks in ${worldName(w)}, which can hold at most ${max}.`);
+	}
+	return out;
+}
+
 function padById(world, padId) {
 	return state.worlds[world].pads.find(p => p.id === padId) ?? null;
 }
@@ -750,6 +811,7 @@ const aimingEl = document.getElementById("aiming");
 const aimingText = document.getElementById("aiming-text");
 const countsEl = document.getElementById("counts");
 const linksEl = document.getElementById("pad-links");
+const problemsEl = document.getElementById("problems");
 
 function el(tag, attrs = {}, ...children) {
 	const node = document.createElement(tag);
@@ -777,6 +839,7 @@ function render() {
 	worldsEl.textContent = "";
 	for (let w = 0; w < 8; w++) worldsEl.appendChild(renderWorld(w));
 	renderCounts();
+	renderProblems();
 
 	// The bar carries either the current aim or a one-off message, and aiming
 	// wins. Rendering owns it: a message set during a mutation would otherwise
@@ -860,6 +923,16 @@ function svg(tag, attrs) {
 	return node;
 }
 
+function renderProblems() {
+	const found = problems();
+	problemsEl.textContent = "";
+	problemsEl.hidden = found.length === 0;
+	if (!found.length) return;
+	problemsEl.appendChild(el("p", { class: "lead" },
+		found.length === 1 ? "Something does not add up" : "Some things do not add up"));
+	for (const line of found) problemsEl.appendChild(el("p", {}, line));
+}
+
 function renderCounts() {
 	countsEl.textContent = "";
 	const rows = [
@@ -903,6 +976,11 @@ function renderWorld(w) {
 	card.appendChild(renderRow("Locks", renderLocks(w),
 		() => { world.locks.push({ id: id(), keyWorld: null, done: false }); render(); },
 		countLockChips() >= LOCKS_TOTAL));
+	if (locksIn(w).length > lockCapacity(w)) {
+		card.classList.add("overfull");
+		card.appendChild(el("p", { class: "card-warn" },
+			`${locksIn(w).length} locks here — at most ${lockCapacity(w)} can be.`));
+	}
 	card.appendChild(renderRow("Pads", renderPads(w),
 		() => { world.pads.push({ id: id(), dest: null, partner: null }); render(); },
 		world.pads.length >= PADS_MAX || countPadTiles() >= PAD_TILES_MAX));
