@@ -44,10 +44,12 @@ use walk::{MazePos, MazeWorld, walk_maze};
 
 pub(crate) mod fill;
 pub(crate) mod graph;
-/// How long a generated maze is, in levels. A measurement instrument: the
-/// censuses are its only readers, and a shipped run has nowhere to put the
-/// answer.
-#[cfg(test)]
+/// How long a generated maze is, in levels.
+///
+/// It began as a measurement instrument and [`CONTENT_FLOOR`] promoted it:
+/// [`generate`] now prices every deal with [`metrics::completion_cost`] and
+/// redeals the short ones, so this runs on the shipping path. The rest of the
+/// module is still census-only.
 pub(crate) mod metrics;
 pub(crate) mod roles;
 #[cfg(test)]
@@ -116,6 +118,52 @@ pub(crate) const IDENTITY_SPINE: [usize; 8] = [0, 1, 2, 3, 4, 5, 6, 7];
 /// which point the median has climbed to 33 and 38. So 3 is where the dial
 /// stops buying and starts charging.
 pub(crate) const DEFAULT_WANDS_REQUIRED: u8 = 3;
+
+/// The shortest run the mode will ship, in levels and fortresses beaten.
+///
+/// **Measured** (`maze_content_floor_census`, 300 grids). Without a floor the
+/// length of a run is very nearly unmanaged: at K=0 it ran from **2** to 48,
+/// and the wand gate only lifts the bottom of that — K is a floor, not a
+/// length dial, and K=0 is a setting players like.
+///
+/// The floor exists because of what the spread is made of. Redealing the maze
+/// on the *same* eight worlds moves `content` far more than changing worlds
+/// does: the between-grid share of the variance is **12%** (sd 2.95 between
+/// grids against 8.08 within one), and the median grid's twenty deals spanned
+/// **28 levels**. A grid whose first deal came out under 14 has a per-grid mean
+/// of 20.3 against 21.8 overall — it is an ordinary grid that got a bad deal,
+/// not a grid that cannot produce a long game. So a redeal is the right lever,
+/// and it is aimed at the maze layer rather than at the terrain.
+///
+/// 14 is where the cost curve is still cheap and the grids still clear it
+/// easily:
+///
+/// | floor | K=0 redeal % | mean deals | K=0 min → | median → |
+/// |---|---|---|---|---|
+/// | 12 | 15% | 1.18 | 12 | 23 → 24 |
+/// | **14** | **20%** | **1.26** | **14** | **23 → 25** |
+/// | 16 | 26% | 1.36 | 16 | 23 → 26 |
+/// | 18 | 33% | 1.50 | 18 | 23 → 26 |
+///
+/// 18 is where the terrain starts to bite — 3 grids of 200 cleared it twice or
+/// less in twenty deals, so [`MAX_DEALS`] would begin shipping under-floor
+/// seeds. At 14 no grid of 200 ever failed to clear it.
+///
+/// The redeal deliberately does **not** condition on landing just above the
+/// floor: a rejected deal is redrawn from the whole distribution, so it lands
+/// at a typical length. That is why the floor moves K=0's minimum from 2 to 14
+/// while the median moves only 23 → 25, and the maximum not at all.
+pub(crate) const CONTENT_FLOOR: usize = 14;
+
+/// How many deals [`generate`] will pay for before keeping the best it saw.
+///
+/// The cap is a cost bound, not a correctness one — the loop keeps the longest
+/// deal it has seen, so a seed that never clears [`CONTENT_FLOOR`] ships the
+/// best available rather than failing. Worst observed at the shipping floor was
+/// 6 deals in 300 seeds; 8 leaves margin without letting a pathological grid
+/// spend 100 ms of a WASM budget that is already tight (a deal costs ~9.5 ms in
+/// the browser, measured).
+pub(crate) const MAX_DEALS: usize = 8;
 
 /// Eight worlds and the edges between them. A thin wrapper: the per-world
 /// state is the existing [`WorldState`], untouched.
@@ -675,6 +723,27 @@ pub(crate) struct GenReport {
     /// carries on arrival. **Must be empty**: each one is a seed that can
     /// strand a player.
     pub unsafe_worlds: Vec<usize>,
+    /// Deals this seed paid for, 1..=[`MAX_DEALS`]. Anything above 1 is the
+    /// content floor rejecting a short maze.
+    pub deals: usize,
+    /// What the kept deal priced at, in levels and fortresses beaten. Below
+    /// [`CONTENT_FLOOR`] only when [`MAX_DEALS`] ran out.
+    pub content: usize,
+}
+
+/// One deal of the maze layer: everything [`generate`] draws in a single
+/// attempt, plus what that attempt priced at.
+///
+/// It exists because the content floor deals more than once and has to choose
+/// between attempts. Nothing outside `generate` sees one.
+struct Deal {
+    /// Levels and fortresses a play-through beats, or 0 when the castle was
+    /// never reached. See [`metrics::completion_cost`].
+    content: usize,
+    state: GlobalState,
+    fill: fill::FillReport,
+    pads: Vec<graph::PlacedPad>,
+    unsafe_worlds: Vec<usize>,
 }
 
 /// Build a maze from eight finished worlds.
@@ -690,6 +759,12 @@ pub(crate) struct GenReport {
 /// how many locks must still be ones the player can decline to open, so a
 /// secret-exit fortress level has somewhere safe to land. See
 /// [`fill::keep_n_sealable`].
+///
+/// **That whole sequence is one deal, and a short deal is dealt again.** The
+/// pads and the key assignment together move a run's length far more than the
+/// eight worlds under them do, so a maze that prices below [`CONTENT_FLOOR`]
+/// is redrawn rather than shipped. The loop keeps the longest deal it saw, so
+/// it cannot fail; see [`CONTENT_FLOOR`] for the measurement that chose 14.
 pub(crate) fn generate<R: Rng>(
     result: &BuildResult,
     spine: &[usize],
@@ -698,54 +773,101 @@ pub(crate) fn generate<R: Rng>(
     sealable_locks: usize,
     rng: &mut R,
 ) -> (GlobalState, GenReport) {
-    let mut state = GlobalState::from_build(result, spine, wands_required);
+    // **One deal**: the pads, the key assignment, and the rescue pass.
+    // Everything that consumes RNG lives in here, which is what makes a redeal
+    // a different maze; nothing after the loop draws at all.
+    let deal = |rng: &mut R| {
+        let mut state = GlobalState::from_build(result, spine, wands_required);
 
-    let pads = graph::plan_pads(&state, knobs, rng);
-    state.add_pads(pads.iter().map(|p| p.edge).collect());
+        let pads = graph::plan_pads(&state, knobs, rng);
+        state.add_pads(pads.iter().map(|p| p.edge).collect());
 
-    let fill = fill::assign_keys(&mut state, spine, knobs, rng);
+        let fill = fill::assign_keys(&mut state, spine, knobs, rng);
 
-    // A world whose start region has no walk-out still gets offered a pad,
-    // because an extra edge can only help — but it is **no longer a reason to
-    // throw the assignment away**, and that change is the whole reason the
-    // constructive fill is usable.
+        // A world whose start region has no walk-out still gets offered a pad,
+        // because an extra edge can only help — but it is **no longer a reason
+        // to throw the assignment away**, and that change is the whole reason
+        // the constructive fill is usable.
+        //
+        // The rule existed because game over, airship arrival and whistle
+        // travel all deposit the player on a start tile. Two things retire it:
+        //
+        // * **The fill cannot strand anyone.** Every gate takes its key from a
+        //   fortress already reachable from the global start at the moment it
+        //   is placed, so every gate it writes is openable — which is strictly
+        //   stronger than the rule. `start_region_escapable` counts only a
+        //   world's OWN fortresses as openers, so it rejects the mode's own
+        //   formula: pad out, beat a fortress there, come back.
+        // * **The whistle is the escape hatch anyway.** It is never consumed,
+        //   survives a game over (nothing on that path clears
+        //   `Inventory_Items`), and the cycler always has the spine's first
+        //   world to return to.
+        //
+        // Enforced, it cost 2.1 crossings a seed and sent a third of seeds to
+        // the fallback; retired, cross-world locks go 51% -> 76% and the World
+        // 8 bridge 37% -> 73%, with nothing falling back.
+        let mut unsafe_worlds: Vec<usize> =
+            (0..state.worlds.len()).filter(|&wi| !state.start_region_escapable(wi)).collect();
+        if !unsafe_worlds.is_empty() {
+            let rescue = graph::rescue_pads(&state, &unsafe_worlds, knobs, rng);
+            state.add_pads(rescue.iter().map(|p| p.edge).collect());
+            unsafe_worlds.retain(|&wi| !state.start_region_escapable(wi));
+        }
+
+        Deal { content: 0, state, fill, pads, unsafe_worlds }
+    };
+
+    // **The content floor.** Deal until the maze is long enough, keeping the
+    // longest deal seen. See [`CONTENT_FLOOR`] for why a redeal is the right
+    // lever (88% of the variance in run length is in this layer, not in the
+    // eight worlds) and [`MAX_DEALS`] for why the loop is bounded.
     //
-    // The rule existed because game over, airship arrival and whistle travel
-    // all deposit the player on a start tile. Two things retire it:
+    // Keeping the best rather than the last is what makes this **unable to
+    // fail**, the same discipline the fill uses: the worst case is the longest
+    // maze of the eight dealt, never a short one shipped because the budget ran
+    // out.
     //
-    // * **The fill cannot strand anyone.** Every gate takes its key from a
-    //   fortress already reachable from the global start at the moment it is
-    //   placed, so every gate it writes is openable — which is strictly
-    //   stronger than the rule. `start_region_escapable` counts only a world's
-    //   OWN fortresses as openers, so it rejects the mode's own formula: pad
-    //   out, beat a fortress there, come back.
-    // * **The whistle is the escape hatch anyway.** It is never consumed,
-    //   survives a game over (nothing on that path clears `Inventory_Items`),
-    //   and the cycler always has the spine's first world to return to.
-    //
-    // Enforced, it cost 2.1 crossings a seed and sent a third of seeds to the
-    // fallback; retired, cross-world locks go 51% -> 76% and the World 8
-    // bridge 37% -> 73%, with nothing falling back.
-    let mut unsafe_worlds: Vec<usize> =
-        (0..state.worlds.len()).filter(|&wi| !state.start_region_escapable(wi)).collect();
-    if !unsafe_worlds.is_empty() {
-        let rescue = graph::rescue_pads(&state, &unsafe_worlds, knobs, rng);
-        state.add_pads(rescue.iter().map(|p| p.edge).collect());
-        unsafe_worlds.retain(|&wi| !state.start_region_escapable(wi));
+    // Deliberately measured on `content` and not on a proxy. A pad landing
+    // beside the castle, a lightly-gated goal and a cheap route are three
+    // different ways to produce a two-level run, and every proxy for them that
+    // was tried moved the *median* without moving the *minimum*.
+    let mut best: Option<Deal> = None;
+    let mut deals = 0usize;
+    while deals < MAX_DEALS {
+        deals += 1;
+        let mut dealt = deal(rng);
+        // A deal that never reaches the castle scores zero, so it can only win
+        // if every deal did — and the solvability guard below then catches it.
+        let cost = metrics::completion_cost(&dealt.state);
+        dealt.content = if cost.reached { cost.content } else { 0 };
+        let floor_met = dealt.content >= CONTENT_FLOOR;
+        if best.as_ref().is_none_or(|seen| dealt.content > seen.content) {
+            best = Some(dealt);
+        }
+        if floor_met {
+            break;
+        }
     }
+    let Deal { content, mut state, fill, pads, mut unsafe_worlds } =
+        best.expect("MAX_DEALS is non-zero, so at least one deal was kept");
 
     let mut spheres = state.spheres();
 
     // Defence in depth, and the one guard this mode cannot do without.
     //
     // Every accept test in the fill already checks solvability and start-region
-    // safety, so this should be unreachable. But "should be unreachable" is not
+    // safety, so this should be unreachable — measured 0 firings in 8000
+    // generations (1000 seeds x K=0..7). But "should be unreachable" is not
     // something a player can cash, and an unwinnable seed is the single failure
     // a maze cannot recover from — there is no way to notice it except by
     // playing to the wall. If it ever fires, fall back to the shape that is
     // solvable BY CONSTRUCTION: the per-world builder's own local locks, no
     // pads, the spine alone. `the_spine_alone_completes_the_maze` is what makes
     // that a guarantee rather than a hope.
+    //
+    // It outranks the content floor: a long maze nobody can finish is worse
+    // than a short one, so this runs after the loop and overrides whatever it
+    // kept.
     if !spheres.solvable {
         state = GlobalState::from_build(result, spine, wands_required);
         spheres = state.spheres();
@@ -761,6 +883,11 @@ pub(crate) fn generate<R: Rng>(
 
     // Last, and after the fallback above, so it judges the assignment that
     // actually ships. Consumes no RNG.
+    //
+    // **Outside the deal loop on purpose.** It is a third of the generator's
+    // cost (one global fixpoint per lock, ~3.4 ms of 9.7) and a deal that is
+    // about to be thrown away does not need repairing. Running it here instead
+    // of per-deal is what makes a redeal ~7 ms rather than ~11.
     let sealable = fill::keep_n_sealable(&mut state, sealable_locks);
     // Opening a gate changes reachability, so the log has to describe the map
     // that ships rather than the one measured before the repair.
@@ -768,7 +895,7 @@ pub(crate) fn generate<R: Rng>(
         spheres = state.spheres();
     }
 
-    (state, GenReport { spheres, fill, pads, unsafe_worlds, sealable })
+    (state, GenReport { spheres, fill, pads, unsafe_worlds, sealable, deals, content })
 }
 
 /// Fold the maze's decisions back into the build, for the writer to write.

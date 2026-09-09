@@ -466,6 +466,74 @@ instruments on purpose (`required_levels` re-runs the global fixpoint 62 times
 per seed; `completion_cost` simulates a player who beats exactly what they must),
 so a bug in one does not move the other.
 
+### The content floor — the length a seed will never fall below
+
+`maze_game_length_census` above measures a *typical* run. It says nothing about
+the bottom of the distribution, and the bottom was bad: without a floor, K=0
+produced runs as short as **2 levels** and K=3 as short as **7**, against a
+median of 23 for both.
+
+**The wand gate does not fix this, and cannot be asked to.** K is a floor, not a
+length dial (see [`DEFAULT_WANDS_REQUIRED`]) — it lifts the bottom of the
+distribution and leaves the median alone, which is exactly why K=0 has the same
+median as K=3. But K=0 is a setting players ask for, and telling them to raise K
+to avoid a two-level seed is charging them a mode they did not want.
+
+**The variance is in the maze layer, not in the terrain, and that is the whole
+reason a redeal works.** Redealing the maze on the *same* eight worlds, 200
+grids x 20 deals each:
+
+| | K=0 | K=3 |
+|---|---|---|
+| sd BETWEEN grids | 2.95 | 2.49 |
+| sd WITHIN one grid | 8.08 | 7.15 |
+| share of variance that is the grid | **12%** | **11%** |
+
+The median grid's twenty deals spanned **28 levels**, and the tightest grid in
+the sample still spanned 16. A grid whose first deal came out under 14 has a
+per-grid mean of 20.3 against 21.8 overall — **an ordinary grid that got a bad
+deal, not a grid that cannot produce a long game.** No grid of 200 ever failed
+to clear 14 in twenty deals.
+
+So `generate` deals again when a maze prices below `CONTENT_FLOOR`, keeping the
+longest deal it saw rather than failing. Measured over 300 seeds:
+
+| K | redeal % | mean deals | worst | min | median | shipped under floor |
+|---|---|---|---|---|---|---|
+| 0 | 20% | 1.26 | 6 | **14** | 25 | 0 |
+| 3 | 10% | 1.13 | 5 | **14** | 25 | 0 |
+| 7 | 0% | 1.00 | 1 | 20 | 35 | 0 |
+
+The shape is preserved because a rejected deal is redrawn from the whole
+distribution rather than conditioned to land just above the floor: K=0's minimum
+moves 2 → 14 while its median moves only 23 → 25 and its maximum not at all.
+
+**Two things were tried first and measured not to work.** Both moved the median
+and left the minimum where it was, which is the trap this whole section exists
+to record:
+
+- *Ban a pad near the castle.* A pad two tiles from Bowser's door is real and
+  worth fixing on legibility grounds, but as a length fix it is worthless: a
+  sweep of "no goal-world pad within D of the castle" for D = 4..24 left the
+  minimum at 7 at every threshold. One seed priced at 7 with its nearest pad 28
+  tiles away.
+- *Require the castle to sit N key-rounds deep.* `goal_sphere >= 2` and `>= 3`
+  both leave the minimum at 8. Only `>= 4` moves it (to 18), and it keeps 21% of
+  seeds — a rejection rate an order of magnitude worse than the floor's, for a
+  worse result.
+
+The lesson is that a short seed has several independent causes — a lightly
+gated castle, a cheap route, a lucky pad — and each proxy catches one of them.
+Pricing the thing itself catches all of them.
+
+**Cost.** A deal is ~10 ms native / ~13 ms WASM, so the floor adds under a
+millisecond to the mean (measured: WASM `generate_patch` with the maze on went
+122.1 → 122.9 ms over 40 seeds) and about 45 ms to the rare six-deal seed.
+`keep_n_sealable` is deliberately **outside** the deal loop: it is a third of
+the generator's cost, one global fixpoint per lock, and a deal about to be
+discarded does not need repairing. `MAX_DEALS` bounds the tail; because the loop
+keeps the best deal seen, exhausting it degrades length rather than failing.
+
 ### How the baselines get made
 
 No knob below has a measured value, and none can until something exists to

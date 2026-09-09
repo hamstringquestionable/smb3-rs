@@ -30,7 +30,6 @@
 //!   into, so activation is re-tested after each pass until it stops changing.
 //!   Enabling a canoe only ever grows the reachable set, so it is monotone.
 
-#[cfg(test)]
 use std::collections::BinaryHeap;
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -101,16 +100,15 @@ impl MazeReach {
 /// Minimum cost to reach each cell, in whatever unit the cost function
 /// charges. Unreachable cells are absent.
 ///
-/// Test-only, with [`walk_maze_cost`]: pricing a maze in levels is what the
-/// censuses do, and a shipped run never asks.
-#[cfg(test)]
+/// Shared with [`walk_maze_cost`]. Pricing a maze in levels began as a census
+/// question and is now one a shipped run asks too: `maze::generate` redeals a
+/// maze that prices below `maze::CONTENT_FLOOR`.
 pub(crate) struct MazeCost {
     per_world: Vec<Vec<u32>>,
     prev: Vec<Vec<Option<MazePos>>>,
     cols: Vec<usize>,
 }
 
-#[cfg(test)]
 impl MazeCost {
     pub(crate) fn get(&self, (world, (r, c)): MazePos) -> Option<u32> {
         match self.per_world[world][r * self.cols[world] + c] {
@@ -314,7 +312,6 @@ pub(crate) fn walk_maze(
 /// Dijkstra rather than BFS because the graph is mostly zero-weight; the grids
 /// are 9x64 so the heap is never the expensive part. Canoe state is taken from
 /// a prior [`walk_maze`] so the fixpoint is not paid twice.
-#[cfg(test)]
 pub(crate) fn walk_maze_cost(
     worlds: &[MazeWorld],
     links: &[(MazePos, MazePos)],

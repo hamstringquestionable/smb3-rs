@@ -2438,3 +2438,109 @@ fn a_fortress_tile_says_where_its_lock_is() {
     }
     println!("{checked} fortresses: {} local, {} elsewhere, {} World 8", seen[0], seen[1], seen[2],);
 }
+
+// ---------------------------------------------------------------------------
+// The content floor
+// ---------------------------------------------------------------------------
+
+/// **A maze that ships is either long enough or was dealt the maximum number
+/// of times.** That is the whole contract of [`super::CONTENT_FLOOR`], and it
+/// is stated as a disjunction on purpose: the loop keeps the longest deal it
+/// saw rather than failing, so an under-floor maze is legal *only* when the
+/// budget ran out.
+///
+/// K=0 is the arm that matters. It is the setting with no wand gate to lift
+/// the bottom of the distribution, so it is where short mazes come from — and
+/// it is a setting players ask for.
+#[test]
+fn a_shipped_maze_clears_the_content_floor() {
+    let Some(raw) = load_rom() else { return };
+    let knobs = Knobs::default();
+    let mut exhausted = 0usize;
+    let mut shortest = usize::MAX;
+    let seeds = census_seeds(30);
+
+    for seed in 0..seeds {
+        for k in [0u8, super::DEFAULT_WANDS_REQUIRED] {
+            let (_, state, report) = generated(&raw, seed, &knobs, k);
+            assert!(
+                report.content >= super::CONTENT_FLOOR || report.deals == super::MAX_DEALS,
+                "seed {seed} K={k} shipped {} levels after only {} deals\n{}",
+                report.content,
+                report.deals,
+                report.spheres.spoiler()
+            );
+            assert!(report.deals >= 1 && report.deals <= super::MAX_DEALS);
+            // The report must describe the maze that ships, not a deal that
+            // lost — the sealable repair can open a lock after the loop.
+            let cost = super::metrics::completion_cost(&state);
+            assert!(cost.reached, "seed {seed} K={k}: castle unreachable");
+            if report.deals < super::MAX_DEALS {
+                assert_eq!(
+                    cost.content, report.content,
+                    "seed {seed} K={k}: report says {} but the shipped maze prices at {}",
+                    report.content, cost.content
+                );
+            }
+            if report.deals == super::MAX_DEALS && report.content < super::CONTENT_FLOOR {
+                exhausted += 1;
+            }
+            shortest = shortest.min(report.content);
+        }
+    }
+    eprintln!(
+        "  shortest maze {shortest} (floor {}); budget exhausted on {exhausted} of {} arms",
+        super::CONTENT_FLOOR,
+        seeds * 2
+    );
+}
+
+/// **What the floor costs and what it buys.** The table in
+/// [`super::CONTENT_FLOOR`]'s docs comes from here.
+///
+/// ```sh
+/// CENSUS_SEEDS=300 cargo test --release --lib maze_content_floor_census \
+///     -- --ignored --nocapture
+/// ```
+#[test]
+#[ignore]
+fn maze_content_floor_census() {
+    let Some(raw) = load_rom() else { return };
+    let seeds = census_seeds(100);
+    let knobs = Knobs::default();
+
+    eprintln!(
+        "\n=== the content floor ({}), {seeds} seeds, max {} deals ===",
+        super::CONTENT_FLOOR,
+        super::MAX_DEALS
+    );
+    eprintln!(
+        "  {:>3} {:>8} {:>8} {:>7} {:>7} {:>7} {:>7} {:>7}",
+        "K", "redeal%", "meandeal", "worst", "min", "median", "mean", "under"
+    );
+    for k in [0u8, 3, 7] {
+        let mut content = Vec::new();
+        let mut deals = Vec::new();
+        let mut under = 0usize;
+        for seed in 0..seeds {
+            let (_, _, report) = generated(&raw, seed, &knobs, k);
+            content.push(report.content);
+            deals.push(report.deals);
+            if report.content < super::CONTENT_FLOOR {
+                under += 1;
+            }
+        }
+        content.sort_unstable();
+        eprintln!(
+            "  {k:>3} {:>7.0}% {:>8.2} {:>7} {:>7} {:>7} {:>7.1} {:>7}",
+            100.0 * deals.iter().filter(|&&d| d > 1).count() as f64 / deals.len() as f64,
+            deals.iter().sum::<usize>() as f64 / deals.len() as f64,
+            deals.iter().max().unwrap(),
+            content[0],
+            content[content.len() / 2],
+            content.iter().sum::<usize>() as f64 / content.len() as f64,
+            under,
+        );
+    }
+    eprintln!("  under = mazes shipped below the floor because the deal budget ran out");
+}
