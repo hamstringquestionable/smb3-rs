@@ -64,6 +64,12 @@
     gap: 1rem;
     align-items: center;
 }
+.aiming.warn {
+    border-color: #e44434;
+    background: #2a1210;
+    color: #ff9a8a;
+}
+.aiming.warn button { border-color: #ff9a8a; color: #ff9a8a; }
 .aiming button {
     flex: none;
     background: none;
@@ -331,9 +337,9 @@
             <dt><span class="chip fort hint-away"><span class="body">Fortress</span></span></dt>
             <dd>Fortress in the odd colour — its lock is in another world.</dd>
             <dt><span class="chip fort hint-w8"><span class="body">Fortress</span></span></dt>
-            <dd>The special fortress — its lock is in Dark Land, on the way to the
-                castle. You will never see it <em>in</em> Dark Land: there it would
-                only mean "here", so a Dark Land fortress is plain or tinted.</dd>
+            <dd>The special fortress — its lock is in Dark Land. You will never see
+                it <em>in</em> Dark Land: there it would only mean "here", so a Dark
+                Land fortress is plain or tinted.</dd>
             <dt><span class="chip lock"><span class="body">Lock</span></span></dt>
             <dd>Plain lock — the fortress that opens it is in this world.</dd>
             <dt><span class="chip lock away"><span class="body">Lock</span></span></dt>
@@ -476,6 +482,16 @@ function load() {
 
 // --- Derived ------------------------------------------------------------
 
+// The design a fortress in `fortWorld` must wear if its lock is in `lockWorld`
+// — `lockWorldOf` read backwards, and with the same precedence the generator
+// uses: own world wins, then World 8. A Dark Land fortress opening a Dark Land
+// lock is Here, never the special design.
+function hintForLockIn(fortWorld, lockWorld) {
+	if (lockWorld === fortWorld) return "here";
+	if (lockWorld === W8) return "w8";
+	return "away";
+}
+
 // Which world a fortress's lock sits in, or null when that is still unknown.
 // "Here" and "W8" answer themselves; "Away" waits for the player to find it.
 function lockWorldOf(world, fort) {
@@ -538,6 +554,49 @@ function findPad(padId) {
 }
 
 // --- Mutations ----------------------------------------------------------
+
+// A lock that names the world its key is in is asserting that a fortress over
+// there opens it. Make that fortress real rather than leaving the claim on a
+// chip nothing checks: take the one already standing for it, otherwise put one
+// on the board, and say so when the world cannot hold the claim at all.
+//
+// The free lock is then spent — the fortress draws the lock itself, in the same
+// row, now labelled with where its key is. Two chips for one lock would double
+// it in the counts and is the confusion this page exists to remove.
+function claimKeyWorld(lockWorld, lock, keyWorld) {
+	lock.keyWorld = keyWorld;
+	if (keyWorld == null) return;
+
+	const wanted = hintForLockIn(keyWorld, lockWorld);
+	const forts = state.worlds[keyWorld].forts;
+
+	// Already on the board, in one of the two shapes that can be this lock: a
+	// fortress that says exactly this, or one that has not said anything yet.
+	// A remote fortress still looking for its lock is the third.
+	let fort = forts.find(f => f.hint === wanted && lockWorldOf(keyWorld, f) === lockWorld)
+		?? forts.find(f => f.hint === "unknown")
+		?? (wanted === "away" ? forts.find(f => f.hint === "away" && f.lockWorld == null) : null);
+
+	if (!fort) {
+		// Dark Land's four are fixed, so there is never room to add one there.
+		const room = keyWorld !== W8
+			&& forts.length < FORTS_MAX
+			&& countForts(0, 7) < FORTS_ROAMING;
+		if (!room) {
+			flash(`World ${keyWorld + 1} has no fortress that could open this lock, `
+				+ "and no room for another. Something is off — check the world numbers.", "warn");
+			return;
+		}
+		fort = { ...newFort(), id: id(), auto: true };
+		forts.push(fort);
+		flash(`Added a fortress to World ${keyWorld + 1} — that is what opens this lock.`);
+	}
+
+	fort.hint = wanted;
+	fort.lockWorld = wanted === "away" ? lockWorld : null;
+	fort.done = fort.done || lock.done;
+	state.worlds[lockWorld].locks = state.worlds[lockWorld].locks.filter(l => l.id !== lock.id);
+}
 
 // Linking a pad draws its partner on the far side, because a pad is half of a
 // bidirectional pair — there is no such thing as a one-way pad.
@@ -643,12 +702,17 @@ function render() {
 			: "Click the world this pad leads to (its own world is allowed).";
 	} else if (message) {
 		aimingEl.hidden = false;
-		aimingText.textContent = message;
+		aimingEl.className = message.level === "warn" ? "aiming warn" : "aiming";
+		aimingText.textContent = message.text;
+		// A warning is a contradiction the player has to resolve, so it stays up
+		// long enough to read twice.
 		const shown = message;
-		setTimeout(() => { if (message === shown) { message = null; render(); } }, 2500);
+		setTimeout(() => { if (message === shown) { message = null; render(); } },
+			message.level === "warn" ? 8000 : 2500);
 	} else {
 		aimingEl.hidden = true;
 	}
+	if (aiming || !message) aimingEl.className = "aiming";
 	save();
 }
 
@@ -865,8 +929,20 @@ function renderLocks(w) {
 			chip.appendChild(el("button", {
 				class: "mini",
 				type: "button",
-				title: "Put this lock back",
-				onclick: ev => { ev.stopPropagation(); fort.lockWorld = null; render(); },
+				title: fort.auto ? "Take back this lock and the fortress it implied" : "Put this lock back",
+				onclick: ev => {
+					ev.stopPropagation();
+					// A fortress that exists only because a lock named its world
+					// goes away with that claim, the same way a pad's drawn half
+					// does. One the player put there stays; only its lock moves.
+					if (fort.auto) {
+						state.worlds[world].forts =
+							state.worlds[world].forts.filter(f => f.id !== fort.id);
+					} else {
+						fort.lockWorld = null;
+					}
+					render();
+				},
 			}, "×"));
 		}
 		return chip;
@@ -887,7 +963,10 @@ function renderFreeLock(w, lock) {
 		class: "src",
 		title: "Which world its fortress is in, if the lock says",
 		onclick: ev => ev.stopPropagation(),
-		onchange: ev => { lock.keyWorld = ev.target.value === "" ? null : Number(ev.target.value); render(); },
+		onchange: ev => {
+			claimKeyWorld(w, lock, ev.target.value === "" ? null : Number(ev.target.value));
+			render();
+		},
 	}, el("option", { value: "", selected: lock.keyWorld == null }, "key: ?"));
 	for (let i = 0; i < 8; i++) {
 		pick.appendChild(el("option", { value: String(i), selected: lock.keyWorld === i }, `key: W${i + 1}`));
@@ -957,8 +1036,8 @@ function place(target, world) {
 	render();
 }
 
-function flash(text) {
-	message = text;
+function flash(text, level = "info") {
+	message = { text, level };
 }
 
 // --- Wiring -------------------------------------------------------------
