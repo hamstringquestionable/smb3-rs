@@ -105,7 +105,11 @@ const OFF_DOUBLE_WILD = [
 export const GROUPS = [
 	{ id: "map", label: "Map" },
 	{ id: "maze", label: "World Maze",
-		note: "Only affects World Maze. With the mode off these are ignored, and they leave your flag key alone." },
+		note: "Only affects World Maze. With the mode off these are ignored, and they leave your flag key alone.",
+		// Relative on purpose: the /beta/ deploy is a copy of this whole folder,
+		// so the beta page links to the beta tracker and the root page to the
+		// root one, with no build-time knowledge of which it is.
+		link: { href: "maze-tracker.html", label: "Open the World Maze tracker →" } },
 	{ id: "enemies", label: "Enemies" },
 	{ id: "bosses", label: "Bosses" },
 	{ id: "items", label: "Items & Pickups" },
@@ -1148,6 +1152,10 @@ export function renderOptions(rootEl, hosts = {}) {
 		fieldset.appendChild(el("legend", {}, group.label));
 		if (group.note) {
 			fieldset.appendChild(el("p", { class: "note group-note" }, group.note));
+		}
+		if (group.link) {
+			fieldset.appendChild(el("p", { class: "note group-note" },
+				el("a", { href: group.link.href }, group.link.label)));
 		}
 		const entries = SCHEMA.filter(s => s.group === group.id && !s.host && !s.pillOf);
 		for (const entry of entries) {

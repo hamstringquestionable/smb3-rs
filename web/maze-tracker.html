@@ -1,0 +1,1315 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>World Maze Tracker</title>
+<link rel="stylesheet" href="style.css">
+<!-- Same trick index.html uses: the /beta/ deploy shares this file with the
+     root site, so key the beta look on the URL path rather than on the branch.
+     Inline in <head> so the class lands before first paint. -->
+<script>
+    if (location.pathname.split("/").includes("beta")) {
+        document.documentElement.classList.add("beta-build");
+        document.title = "🚧 World Maze Tracker (BETA)";
+    }
+</script>
+<style>
+/* Page-specific styles. The site palette comes from style.css; everything
+   here is the tracker's own furniture.
+
+   Sized to be used one-handed with a controller in the other: every control is
+   a real tap target and every chip is readable from arm's length, because this
+   gets glanced at mid-level rather than studied. */
+.tracker { max-width: 1400px; }
+.tracker .note { font-size: 0.82rem; color: #7a7a96; }
+
+.tracker-nav {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+    margin-bottom: 1rem;
+    flex-wrap: wrap;
+}
+.tracker-nav a { color: #5c94fc; text-decoration: none; font-size: 0.95rem; }
+.tracker-nav a:hover { text-decoration: underline; }
+.tracker-nav .tools { display: flex; gap: 0.5rem; }
+.tracker-nav button {
+    background: #1c1c38;
+    color: #9a9ab0;
+    border: 1px solid #2a2a50;
+    border-radius: 5px;
+    padding: 0.5rem 1rem;
+    font-family: inherit;
+    font-size: 0.9rem;
+    cursor: pointer;
+}
+.tracker-nav button:hover { color: #e0e0e0; border-color: #5c94fc; }
+
+/* --- The targeting bar: shown while a lock or pad is looking for a world --- */
+.aiming {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    margin-bottom: 0.75rem;
+    padding: 0.75rem 1rem;
+    border: 2px dashed #f0c040;
+    border-radius: 8px;
+    background: #2a2312;
+    color: #f0c040;
+    font-size: 1rem;
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    align-items: center;
+}
+.aiming.warn {
+    border-color: #e44434;
+    background: #2a1210;
+    color: #ff9a8a;
+}
+.aiming.warn button { border-color: #ff9a8a; color: #ff9a8a; }
+.aiming button {
+    flex: none;
+    background: none;
+    border: 1px solid #f0c040;
+    color: #f0c040;
+    border-radius: 5px;
+    padding: 0.4rem 0.8rem;
+    font-family: inherit;
+    font-size: 0.85rem;
+    cursor: pointer;
+}
+
+/* --- Contradictions --- */
+.problems {
+    margin-bottom: 1rem;
+    padding: 0.75rem 1rem;
+    border: 2px solid #e44434;
+    border-radius: 8px;
+    background: #2a1210;
+    color: #ff9a8a;
+    font-size: 0.92rem;
+    line-height: 1.45;
+}
+.problems p { margin-bottom: 0.35rem; }
+.problems p:last-child { margin-bottom: 0; }
+.problems .lead {
+    font-weight: bold;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    font-size: 0.8rem;
+}
+.wcard.overfull { border-color: #e44434; }
+.card-warn { color: #ff9a8a; font-size: 0.82rem; line-height: 1.4; }
+
+/* --- Counters --- */
+.counts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.6rem;
+    margin-bottom: 1rem;
+}
+.count {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    border: 1px solid #2a2a50;
+    border-radius: 6px;
+    background: #14142c;
+    padding: 0.5rem 0.8rem;
+}
+.count .k { font-size: 0.8rem; letter-spacing: 0.06em; color: #7a7a96; text-transform: uppercase; }
+.count .v { font-size: 1.15rem; font-weight: bold; color: #e0e0e0; }
+.count.full { border-color: #5eb85e; }
+.count.full .v { color: #7ad47a; }
+
+/* --- Pad links ---
+   A faint curve between the two halves of each pair. It sits over the cards
+   rather than behind them, because the cards are opaque and a line behind them
+   would only survive in the gutters. `screen` blending keeps it a glow over the
+   dark card rather than a stripe through the text. */
+.worlds-wrap { position: relative; }
+.pad-links {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    overflow: visible;
+    z-index: 5;
+    mix-blend-mode: screen;
+}
+.pad-links path {
+    fill: none;
+    stroke: #a05cff;
+    stroke-width: 2;
+    stroke-linecap: round;
+    opacity: 0.45;
+}
+/* A pair inside one world is a short hop, and reads better dashed than as a
+   near-invisible stub. */
+.pad-links path.same-world { stroke-dasharray: 5 5; opacity: 0.55; }
+.pad-links circle { fill: #a05cff; opacity: 0.55; }
+
+/* --- World cards --- */
+.worlds {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
+    gap: 1rem;
+}
+
+.wcard {
+    background: #101026;
+    border: 2px solid var(--accent, #2a2a50);
+    border-radius: 10px;
+    padding: 0.85rem 0.9rem 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.7rem;
+}
+/* Dark Land holds four fortresses and is where the run ends, so it gets the
+   whole row rather than being squeezed into a column with the rest. */
+.wcard.dark-land { grid-column: 1 / -1; }
+.wcard.droppable { outline: 3px dashed #f0c040; outline-offset: 3px; }
+.wcard.dragover { background: #1e1e3e; }
+
+.wcard-head { display: flex; align-items: flex-start; gap: 0.6rem; }
+.wcol { display: flex; flex-direction: column; align-items: center; gap: 0.4rem; }
+
+/* The king's balloon, as it sits on the map: a world calls for help until its
+   castle is cleared and its wand is in hand. Struck through rather than removed,
+   so a finished world still shows that it once had one. */
+.help {
+    position: relative;
+    width: 3.2rem;
+    background: #e8e8f0;
+    color: #1a1a34;
+    border: none;
+    border-radius: 6px;
+    padding: 0.25rem 0;
+    font-family: inherit;
+    font-size: 0.68rem;
+    font-weight: bold;
+    letter-spacing: 0.08em;
+    cursor: pointer;
+}
+.help::before {
+    content: "";
+    position: absolute;
+    top: -5px;
+    left: 50%;
+    transform: translateX(-50%);
+    border-left: 5px solid transparent;
+    border-right: 5px solid transparent;
+    border-bottom: 5px solid #e8e8f0;
+}
+.help:hover { background: #fff; }
+.help.done {
+    background: #2a2a44;
+    color: #6a6a86;
+    text-decoration: line-through;
+    text-decoration-color: #e44434;
+    text-decoration-thickness: 2px;
+}
+.help.done::before { border-bottom-color: #2a2a44; }
+
+.wnum {
+    flex: none;
+    width: 2.3rem;
+    height: 2.3rem;
+    display: grid;
+    place-items: center;
+    border-radius: 6px;
+    background: var(--accent, #2a2a50);
+    color: #0c0c1e;
+    font-weight: bold;
+    font-size: 1.3rem;
+}
+.wcard-head select {
+    flex: 1;
+    background: #1c1c38;
+    color: #e0e0e0;
+    border: 1px solid #2a2a50;
+    border-radius: 5px;
+    padding: 0.5rem 0.5rem;
+    font-family: inherit;
+    font-size: 1rem;
+    cursor: pointer;
+}
+.wcard-head .fixed-name {
+    flex: 1;
+    font-size: 1.1rem;
+    font-weight: bold;
+    color: var(--accent, #9a9ab0);
+    letter-spacing: 0.04em;
+}
+
+.row { display: flex; align-items: flex-start; gap: 0.5rem; min-height: 2.3rem; }
+.rowlabel {
+    flex: none;
+    width: 3.9rem;
+    padding-top: 0.6rem;
+    font-size: 0.78rem;
+    letter-spacing: 0.08em;
+    color: #7a7a96;
+    text-transform: uppercase;
+}
+.chips { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.chips:empty::before { content: "—"; color: #33334e; font-size: 1rem; padding-top: 0.4rem; }
+
+.add {
+    flex: none;
+    background: none;
+    border: 1px solid #2a2a50;
+    color: #8a8aa4;
+    border-radius: 5px;
+    width: 2.3rem;
+    height: 2.3rem;
+    line-height: 1;
+    font-family: inherit;
+    font-size: 1.4rem;
+    cursor: pointer;
+}
+.add:hover:not(:disabled) { color: #e0e0e0; border-color: #5c94fc; }
+.add:disabled { opacity: 0.25; cursor: default; }
+
+/* --- Chips (a fort, a lock, a pad) --- */
+.chip {
+    display: inline-flex;
+    align-items: stretch;
+    border: 2px solid #2a2a50;
+    border-radius: 6px;
+    background: #1a1a34;
+    font-size: 1rem;
+    white-space: nowrap;
+    overflow: hidden;
+}
+.chip .body {
+    background: none;
+    border: none;
+    color: inherit;
+    font-family: inherit;
+    font-size: inherit;
+    cursor: pointer;
+    padding: 0.45rem 0.6rem;
+    min-height: 2.3rem;
+}
+.chip .body:hover { background: rgba(255, 255, 255, 0.07); }
+.chip .body + .body { border-left: 1px solid #2a2a50; }
+/* Divider rather than a gap, so the whole chip stays one solid target with
+   unambiguous halves. */
+.chip .mini {
+    background: none;
+    border: none;
+    border-left: 1px solid #2a2a50;
+    color: #7a7a96;
+    font-family: inherit;
+    font-size: 1rem;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0 0.55rem;
+    min-width: 2rem;
+}
+.chip .mini:hover { color: #fff; background: rgba(228, 68, 52, 0.35); }
+.chip.done { opacity: 0.45; }
+.chip.done .body { text-decoration: line-through; }
+
+/* Fortress designs — the three map tiles, plus "not looked yet". */
+.fort.hint-unknown { border-color: #3a3a5c; color: #8a8aa4; }
+.fort.hint-here    { border-color: #c9a26a; color: #e2c493; background: #241d12; }
+.fort.hint-away    { border-color: #6aa2c9; color: #a6d2ee; background: #12202a; }
+.fort.hint-w8      { border-color: #e44434; color: #ff9a8a; background: #2a1210; }
+
+.lock { border-color: #c9a26a; color: #e2c493; background: #241d12; }
+.lock.away { border-color: #6aa2c9; color: #a6d2ee; background: #12202a; }
+.lock .src {
+    display: flex;
+    align-items: center;
+    padding: 0 0.55rem 0 0;
+    color: #8a8aa4;
+    font-size: 0.85rem;
+}
+.lock select.src {
+    background: none;
+    border: none;
+    border-left: 1px solid #2a2a50;
+    color: #8a8aa4;
+    font-family: inherit;
+    padding: 0 0.4rem;
+    cursor: pointer;
+}
+
+.pad { border-color: #a05cff; color: #cbaaff; background: #1c1230; }
+
+/* A token still looking for its world. */
+.token {
+    color: #f0c040;
+    background: rgba(240, 192, 64, 0.1);
+    box-shadow: inset 0 0 0 2px rgba(240, 192, 64, 0.5);
+    cursor: grab;
+}
+.token.aiming-now { background: rgba(240, 192, 64, 0.35); color: #fff; }
+
+/* --- Legend --- */
+.legend { margin-top: 2rem; }
+.legend h2 {
+    font-size: 0.95rem;
+    color: #5c94fc;
+    letter-spacing: 0.08em;
+    margin-bottom: 0.75rem;
+    text-transform: uppercase;
+}
+.legend dl {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 0.55rem 1rem;
+    align-items: center;
+    font-size: 0.9rem;
+    color: #9a9ab0;
+}
+.legend dt { white-space: nowrap; }
+.legend dd { color: #8a8aa4; line-height: 1.4; }
+
+/* --- Narrow screens: the container's own padding is most of the width --- */
+@media (max-width: 640px) {
+    body { padding: 0.5rem; }
+    .tracker { padding: 1rem; }
+    .rowlabel { width: 3.4rem; font-size: 0.7rem; }
+    .legend dl { grid-template-columns: 1fr; gap: 0.25rem; }
+    .legend dd { margin-bottom: 0.6rem; }
+}
+</style>
+</head>
+<body>
+<div class="page-wrapper">
+<div class="container tracker">
+
+    <header>
+        <h1>World Maze Tracker<span class="beta-badge">BETA</span></h1>
+        <div class="pipe-divider">
+            <span class="pipe"></span>
+            <span class="pipe-label">Where everything is, and what opens it</span>
+            <span class="pipe"></span>
+        </div>
+    </header>
+
+    <div class="tracker-nav">
+        <a href="index.html">&larr; Back to the randomizer</a>
+        <div class="tools">
+            <button id="reset-btn" type="button">Reset</button>
+        </div>
+    </div>
+
+    <p class="note" style="margin-bottom:1rem">
+        Fill this in as you explore. Worlds are numbered the way the game numbers
+        them — slot 8 is always Dark Land. Everything saves in this browser.
+    </p>
+
+    <div id="aiming" class="aiming" hidden>
+        <span id="aiming-text"></span>
+        <button id="aiming-cancel" type="button">Cancel (Esc)</button>
+    </div>
+
+    <!-- Contradictions on the board. Stays up until the player resolves it,
+         unlike the message bar above, which times out. -->
+    <div id="problems" class="problems" hidden></div>
+
+    <!-- What the seed is allowed to contain, against what you have found. A
+         full count means the thing you are looking for is not out there. -->
+    <div id="counts" class="counts"></div>
+
+    <!-- The curves are drawn from the pad chips' own positions after every
+         render, so they follow the grid however it wraps. Purely decorative:
+         pointer-events off, and the tracker works identically without them. -->
+    <div class="worlds-wrap">
+        <svg id="pad-links" class="pad-links" aria-hidden="true"></svg>
+        <div id="worlds" class="worlds"></div>
+    </div>
+
+    <div class="legend section">
+        <h2>What the map is telling you</h2>
+        <dl>
+            <dt><span class="chip fort hint-here"><span class="body">Fortress</span></span></dt>
+            <dd>Plain fortress — the lock it opens is in this same world.</dd>
+            <dt><span class="chip fort hint-away"><span class="body">Fortress</span></span></dt>
+            <dd>Fortress in the odd colour — its lock is in another world.</dd>
+            <dt><span class="chip fort hint-w8"><span class="body">Fortress</span></span></dt>
+            <dd>The special fortress — its lock is in Dark Land. You will never see
+                it <em>in</em> Dark Land: there it would only mean "here", so a Dark
+                Land fortress is plain or tinted.</dd>
+            <dt><span class="chip lock"><span class="body">Lock</span></span></dt>
+            <dd>Plain lock — the fortress that opens it is in this world.</dd>
+            <dt><span class="chip lock away"><span class="body">Lock</span></span></dt>
+            <dd>Tinted lock — its fortress is somewhere else. On Full hints it also
+                wears the world number to go to.</dd>
+            <dt><span class="help" style="display:inline-block">HELP</span></dt>
+            <dd>A world calls for help until you clear its castle and take its wand.
+                Click the balloon to cross it off. Dark Land has none — that is where
+                the wands get spent.</dd>
+            <dt><span class="chip pad"><span class="body">Warp pad</span></span></dt>
+            <dd>Pads come in pairs and work both ways, so linking one here draws
+                its partner on the other world too.</dd>
+        </dl>
+        <p class="note">
+            Fortress designs only mean this with Hints on Some or Full. With Hints
+            off the designs are picked at random and say nothing.
+        </p>
+    </div>
+
+    <footer>
+        <p>Nothing is uploaded. This page is just paper.</p>
+    </footer>
+</div>
+</div>
+
+<script type="module">
+// --- Vocabulary ---------------------------------------------------------
+
+// The seven maps that can land in slots 1-7, plus the fixed slot 8. Names are
+// the ones players use; the accent tints each card so a filled-in tracker is
+// scannable at a glance.
+const TERRAINS = [
+	{ id: "grass",  name: "Grass Land",  accent: "#5eb85e" },
+	{ id: "desert", name: "Desert Land", accent: "#d4a14e" },
+	{ id: "sea",    name: "Sea Side",    accent: "#4ea1d4" },
+	{ id: "giant",  name: "Giant Land",  accent: "#9a7ee0" },
+	{ id: "sky",    name: "Sky Land",    accent: "#8ab4fc" },
+	{ id: "ice",    name: "Ice Land",    accent: "#7ad4d4" },
+	{ id: "pipe",   name: "Pipe Maze",   accent: "#4ed48a" },
+];
+const DARK_LAND = { name: "Dark Land", accent: "#e44434" };
+
+// Where a fortress says its lock is. Cycled by clicking the chip.
+const HINTS = [
+	{ id: "unknown", label: "?" },
+	{ id: "here",    label: "Here" },
+	{ id: "away",    label: "Away" },
+	{ id: "w8",      label: "W8" },
+];
+
+// World 8 always fields exactly four fortresses, three of them wearing an army
+// sprite. The fourth is a plain one. (src/randomize/overworld_writer/sprites.rs)
+const W8_FORTS = ["Battleship", "Air Force", "Super Tank", "Fortress"];
+
+// The generator's budgets, and they are budgets for the whole game rather than
+// per world — which is the useful part for a tracker, because a total that is
+// full says the thing you are still looking for is not out there.
+//
+//   capacity.rs redistribute_fortresses: worlds 1-7 share 13 fortresses, one
+//   to three each, and Dark Land always keeps 4. Seventeen, and one lock each.
+//   graph.rs: 3 pads per world, and PAD_BUDGET = world_persist::PORTAL_MAX = 16
+//   pad tiles overall — a pair is two tiles, so eight pairs.
+const PADS_MAX = 3;         // per world
+const PAD_TILES_MAX = 16;   // whole game; 8 pairs
+const FORTS_MAX = 3;        // per world, worlds 1-7
+const FORTS_ROAMING = 13;   // whole game, worlds 1-7
+const FORTS_TOTAL = 17;     // those 13 plus Dark Land's 4
+const LOCKS_TOTAL = FORTS_TOTAL; // one lock per fortress
+const WANDS_TOTAL = 7;      // one per world 1-7, held once its castle falls
+const W8 = 7;               // index of the Dark Land slot
+
+const STORE_KEY = "smb3r-maze-tracker-v1";
+
+// --- State --------------------------------------------------------------
+
+function blankState() {
+	const worlds = [];
+	for (let w = 0; w < 8; w++) {
+		worlds.push({
+			terrain: null,
+			wand: false,
+			forts: [],
+			locks: [],
+			pads: [],
+		});
+	}
+	// Worlds 1-7 always hold at least one fortress; Dark Land holds its four.
+	for (let w = 0; w < 7; w++) worlds[w].forts.push(newFort());
+	worlds[W8].forts = W8_FORTS.map(label => newFort(label));
+	return { nextId: 1, worlds };
+}
+
+let state = load() ?? blankState();
+let aiming = null;   // { kind: "lock" | "pad", world, id }
+let message = null;  // one-off text for the bar, cleared by render's timer
+
+function newFort(label = null) {
+	return { id: 0, label, hint: "unknown", lockWorld: null, done: false };
+}
+
+function id() { return state.nextId++; }
+
+// Stamp ids on anything created before `state` existed (blankState runs first),
+// and repair the counter — a stored tracker from an older shape can arrive
+// without one, and ids minted from `undefined` collide on every chip.
+function stampIds() {
+	if (typeof state.nextId !== "number" || !Number.isFinite(state.nextId)) {
+		const ids = state.worlds.flatMap(w => [...w.forts, ...w.locks, ...w.pads].map(i => i.id ?? 0));
+		state.nextId = Math.max(0, ...ids) + 1;
+	}
+	for (const world of state.worlds) {
+		for (const list of [world.forts, world.locks, world.pads]) {
+			for (const item of list) if (!item.id) item.id = id();
+		}
+	}
+	// A stored tracker from before the Dark Land rule could hold a design the
+	// game cannot draw. Read it as the generator would have written it.
+	for (const fort of state.worlds[W8].forts) {
+		if (fort.hint === "w8") { fort.hint = "here"; fort.lockWorld = null; }
+	}
+}
+
+function save() {
+	try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch { /* private mode */ }
+}
+
+function load() {
+	try {
+		const raw = localStorage.getItem(STORE_KEY);
+		if (!raw) return null;
+		const parsed = JSON.parse(raw);
+		// Shape check rather than trust — a stale or hand-edited entry should
+		// give a fresh tracker, never a half-rendered one.
+		if (!parsed || !Array.isArray(parsed.worlds) || parsed.worlds.length !== 8) return null;
+		// Every world must carry its three lists. A stored tracker missing one
+		// throws in stampIds — before any of this is on screen — and the page
+		// stays blank on every reload after that, which is not a state the
+		// player can get themselves out of.
+		for (const world of parsed.worlds) {
+			if (!world || !Array.isArray(world.forts)
+				|| !Array.isArray(world.locks) || !Array.isArray(world.pads)) return null;
+		}
+		return parsed;
+	} catch { return null; }
+}
+
+// --- Derived ------------------------------------------------------------
+
+// The design a fortress in `fortWorld` must wear if its lock is in `lockWorld`
+// — `lockWorldOf` read backwards, and with the same precedence the generator
+// uses: own world wins, then World 8. A Dark Land fortress opening a Dark Land
+// lock is Here, never the special design.
+function hintForLockIn(fortWorld, lockWorld) {
+	if (lockWorld === fortWorld) return "here";
+	if (lockWorld === W8) return "w8";
+	return "away";
+}
+
+// Which world a fortress's lock sits in, or null when that is still unknown.
+// "Here" and "W8" answer themselves; "Away" waits for the player to find it.
+function lockWorldOf(world, fort) {
+	switch (fort.hint) {
+		case "here": return world;
+		case "w8":   return W8;
+		case "away": return fort.lockWorld;
+		default:     return null;
+	}
+}
+
+// Every lock standing in `target`: the free-standing ones the player logged,
+// plus every fortress anywhere whose lock has been placed there.
+function locksIn(target) {
+	const out = state.worlds[target].locks.map(lock => ({ kind: "free", lock, world: target }));
+	state.worlds.forEach((world, w) => {
+		for (const fort of world.forts) {
+			if (lockWorldOf(w, fort) === target) out.push({ kind: "fort", fort, world: w });
+		}
+	});
+	return out;
+}
+
+// --- Counting against the budgets -------------------------------------
+
+// Out of seven, not out of the seed's K: the tracker cannot know what the
+// castle was set to open at, and seven is the number that is actually out there.
+function countWands() {
+	return state.worlds.slice(0, 7).filter(world => world.wand).length;
+}
+
+function countForts(from = 0, to = 8) {
+	return state.worlds.slice(from, to).reduce((n, world) => n + world.forts.length, 0);
+}
+
+function countPadTiles() {
+	return state.worlds.reduce((n, world) => n + world.pads.length, 0);
+}
+
+function countPadPairs() {
+	return state.worlds.reduce((n, world) => n + world.pads.filter(p => p.dest != null).length, 0) / 2;
+}
+
+// Lock chips standing anywhere: the free ones the player logged, plus every
+// fortress whose lock has a home. A fortress still showing "?" has a lock out
+// there somewhere, but nothing to draw yet.
+function countLockChips() {
+	let n = 0;
+	state.worlds.forEach((world, w) => {
+		n += world.locks.length;
+		for (const fort of world.forts) if (lockWorldOf(w, fort) !== null) n++;
+	});
+	return n;
+}
+
+// A world holds exactly one lock per fortress — `WorldState::fort_count` is
+// "also the number of lock sections" — so a world can never hold more locks
+// than it can hold fortresses: three for worlds 1-7, four for Dark Land.
+//
+// Counted against the *ceiling* rather than against the fortresses the player
+// has actually logged. Finding a lock before its fortress is the normal way
+// round, and warning about that would cry wolf all run.
+function lockCapacity(w) {
+	return w === W8 ? 4 : FORTS_MAX;
+}
+
+function worldName(w) {
+	if (w === W8) return DARK_LAND.name;
+	const t = TERRAINS.find(t => t.id === state.worlds[w].terrain);
+	return t ? `World ${w + 1} (${t.name})` : `World ${w + 1}`;
+}
+
+// Every contradiction on the board, as sentences. Not thrown as a flash: this
+// is a state that stays wrong until the player fixes it, and a message that
+// times out is one they can scroll past and forget.
+function problems() {
+	const out = [];
+	for (let w = 0; w < 8; w++) {
+		const have = locksIn(w).length;
+		const max = lockCapacity(w);
+		if (have <= max) continue;
+		out.push(w === W8
+			? `${have} locks in ${DARK_LAND.name}, which only ever has ${max}. `
+				+ "Count the special fortresses in the other worlds plus the plain ones here — "
+				+ "together they cannot come to more than four."
+			: `${have} locks in ${worldName(w)}, which can hold at most ${max}.`);
+	}
+	return out;
+}
+
+function padById(world, padId) {
+	return state.worlds[world].pads.find(p => p.id === padId) ?? null;
+}
+
+function findPad(padId) {
+	for (let w = 0; w < 8; w++) {
+		const pad = padById(w, padId);
+		if (pad) return { world: w, pad };
+	}
+	return null;
+}
+
+// --- Mutations ----------------------------------------------------------
+
+// A lock that names the world its key is in is asserting that a fortress over
+// there opens it. Make that fortress real rather than leaving the claim on a
+// chip nothing checks: take the one already standing for it, otherwise put one
+// on the board, and say so when the world cannot hold the claim at all.
+//
+// The free lock is then spent — the fortress draws the lock itself, in the same
+// row, now labelled with where its key is. Two chips for one lock would double
+// it in the counts and is the confusion this page exists to remove.
+function claimKeyWorld(lockWorld, lock, keyWorld) {
+	lock.keyWorld = keyWorld;
+	if (keyWorld == null) return;
+
+	const wanted = hintForLockIn(keyWorld, lockWorld);
+	const forts = state.worlds[keyWorld].forts;
+
+	// Already on the board, in one of the two shapes that can be this lock: a
+	// fortress that says exactly this, or one that has not said anything yet.
+	// A remote fortress still looking for its lock is the third.
+	let fort = forts.find(f => f.hint === wanted && lockWorldOf(keyWorld, f) === lockWorld)
+		?? forts.find(f => f.hint === "unknown")
+		?? (wanted === "away" ? forts.find(f => f.hint === "away" && f.lockWorld == null) : null);
+
+	if (!fort) {
+		// Dark Land's four are fixed, so there is never room to add one there.
+		const room = keyWorld !== W8
+			&& forts.length < FORTS_MAX
+			&& countForts(0, 7) < FORTS_ROAMING;
+		if (!room) {
+			flash(`World ${keyWorld + 1} has no fortress that could open this lock, `
+				+ "and no room for another. Something is off — check the world numbers.", "warn");
+			return;
+		}
+		fort = { ...newFort(), id: id(), auto: true };
+		forts.push(fort);
+		flash(`Added a fortress to World ${keyWorld + 1} — that is what opens this lock.`);
+	}
+
+	fort.hint = wanted;
+	fort.lockWorld = wanted === "away" ? lockWorld : null;
+	fort.done = fort.done || lock.done;
+	state.worlds[lockWorld].locks = state.worlds[lockWorld].locks.filter(l => l.id !== lock.id);
+}
+
+// Linking a pad draws its partner on the far side, because a pad is half of a
+// bidirectional pair — there is no such thing as a one-way pad.
+//
+// If the far world already shows a pad the player logged but has not followed,
+// that one is adopted as the partner rather than a second one being drawn: two
+// chips for one pair is exactly the confusion this page exists to prevent.
+function linkPad(fromWorld, padId, toWorld) {
+	const pad = padById(fromWorld, padId);
+	if (!pad) return;
+	unlinkPad(fromWorld, padId);
+	const dest = state.worlds[toWorld];
+	let partner = dest.pads.find(p => p.dest == null && p.id !== pad.id);
+	if (!partner) {
+		if (dest.pads.length >= PADS_MAX) {
+			flash(`World ${toWorld + 1} already has ${PADS_MAX} pads.`);
+			return;
+		}
+		// Drawing the far half spends a pad tile, so the whole-game budget has
+		// to allow one more before the pair can be completed.
+		if (countPadTiles() >= PAD_TILES_MAX) {
+			flash(`All ${PAD_TILES_MAX} pad tiles are accounted for — that is the eight pairs.`);
+			return;
+		}
+		// `auto` records that this half exists only to complete the pair, so
+		// unlinking can take it away again without deleting a chip the player
+		// put there themselves.
+		partner = { id: id(), dest: null, partner: null, auto: true };
+		dest.pads.push(partner);
+	}
+	partner.dest = fromWorld;
+	partner.partner = pad.id;
+	pad.dest = toWorld;
+	pad.partner = partner.id;
+}
+
+function unlinkPad(world, padId) {
+	const pad = padById(world, padId);
+	if (!pad || pad.partner == null) return;
+	const found = findPad(pad.partner);
+	if (found) {
+		if (found.pad.auto) {
+			state.worlds[found.world].pads =
+				state.worlds[found.world].pads.filter(p => p.id !== found.pad.id);
+		} else {
+			found.pad.dest = null;
+			found.pad.partner = null;
+		}
+	}
+	pad.dest = null;
+	pad.partner = null;
+}
+
+// Deleting goes through the unlink so the far side is left in a state the game
+// could actually produce: the half we drew disappears with it, a half the
+// player logged themselves stays as a pad they have seen but not followed.
+function deletePad(world, padId) {
+	unlinkPad(world, padId);
+	state.worlds[world].pads = state.worlds[world].pads.filter(p => p.id !== padId);
+}
+
+// --- Rendering ----------------------------------------------------------
+
+const worldsEl = document.getElementById("worlds");
+const aimingEl = document.getElementById("aiming");
+const aimingText = document.getElementById("aiming-text");
+const countsEl = document.getElementById("counts");
+const linksEl = document.getElementById("pad-links");
+const problemsEl = document.getElementById("problems");
+
+function el(tag, attrs = {}, ...children) {
+	const node = document.createElement(tag);
+	for (const [k, v] of Object.entries(attrs)) {
+		if (v === false || v == null) continue;
+		if (k === "class") node.className = v;
+		else if (k.startsWith("on")) node.addEventListener(k.slice(2), v);
+		else if (v === true) node.setAttribute(k, "");
+		else node.setAttribute(k, v);
+	}
+	for (const c of children) {
+		if (c == null) continue;
+		node.appendChild(typeof c === "string" ? document.createTextNode(c) : c);
+	}
+	return node;
+}
+
+function accentOf(w) {
+	if (w === W8) return DARK_LAND.accent;
+	const t = TERRAINS.find(t => t.id === state.worlds[w].terrain);
+	return t ? t.accent : "#2a2a50";
+}
+
+function render() {
+	worldsEl.textContent = "";
+	for (let w = 0; w < 8; w++) worldsEl.appendChild(renderWorld(w));
+	renderCounts();
+	renderProblems();
+
+	// The bar carries either the current aim or a one-off message, and aiming
+	// wins. Rendering owns it: a message set during a mutation would otherwise
+	// be wiped by the render that mutation triggers.
+	if (aiming) {
+		aimingEl.hidden = false;
+		aimingText.textContent = aiming.kind === "lock"
+			? "Click the world this fortress's lock is in."
+			: "Click the world this pad leads to (its own world is allowed).";
+	} else if (message) {
+		aimingEl.hidden = false;
+		aimingEl.className = message.level === "warn" ? "aiming warn" : "aiming";
+		aimingText.textContent = message.text;
+		// A warning is a contradiction the player has to resolve, so it stays up
+		// long enough to read twice.
+		const shown = message;
+		setTimeout(() => { if (message === shown) { message = null; render(); } },
+			message.level === "warn" ? 8000 : 2500);
+	} else {
+		aimingEl.hidden = true;
+	}
+	if (aiming || !message) aimingEl.className = "aiming";
+	save();
+	drawPadLinks(); // last: the chips have to be placed before they can be measured
+}
+
+// Join each pair with a curve, measured from where the chips actually landed.
+//
+// Bows perpendicular to the run so several pairs crossing the same space stay
+// apart instead of stacking into one thick line. Silently does nothing where
+// there is no layout to measure — headless, or before first paint — because it
+// is decoration and must never be able to break the tracker.
+function drawPadLinks() {
+	if (!linksEl || typeof worldsEl.getBoundingClientRect !== "function") return;
+	linksEl.textContent = "";
+	const base = worldsEl.getBoundingClientRect();
+	if (!base.width) return;
+
+	const centreOf = padId => {
+		const node = worldsEl.querySelector(`[data-pad="${padId}"]`);
+		if (!node) return null;
+		const r = node.getBoundingClientRect();
+		return { x: r.left - base.left + r.width / 2, y: r.top - base.top + r.height / 2 };
+	};
+
+	const drawn = new Set();
+	for (const world of state.worlds) {
+		for (const pad of world.pads) {
+			if (pad.partner == null || drawn.has(pad.id)) continue;
+			drawn.add(pad.id);
+			drawn.add(pad.partner);
+			const a = centreOf(pad.id);
+			const b = centreOf(pad.partner);
+			if (!a || !b) continue;
+
+			const dx = b.x - a.x;
+			const dy = b.y - a.y;
+			const len = Math.hypot(dx, dy) || 1;
+			const bow = Math.min(70, Math.max(18, len * 0.18));
+			const cx = (a.x + b.x) / 2 - (dy / len) * bow;
+			const cy = (a.y + b.y) / 2 + (dx / len) * bow;
+
+			linksEl.appendChild(svg("path", {
+				class: pad.dest === worldOf(pad.id) ? "same-world" : "",
+				d: `M${a.x} ${a.y} Q${cx} ${cy} ${b.x} ${b.y}`,
+			}));
+			for (const p of [a, b]) {
+				linksEl.appendChild(svg("circle", { cx: p.x, cy: p.y, r: 3 }));
+			}
+		}
+	}
+}
+
+function worldOf(padId) {
+	return findPad(padId)?.world ?? null;
+}
+
+function svg(tag, attrs) {
+	const node = document.createElementNS("http://www.w3.org/2000/svg", tag);
+	for (const [k, v] of Object.entries(attrs)) if (v !== "") node.setAttribute(k, v);
+	return node;
+}
+
+function renderProblems() {
+	const found = problems();
+	problemsEl.textContent = "";
+	problemsEl.hidden = found.length === 0;
+	if (!found.length) return;
+	problemsEl.appendChild(el("p", { class: "lead" },
+		found.length === 1 ? "Something does not add up" : "Some things do not add up"));
+	for (const line of found) problemsEl.appendChild(el("p", {}, line));
+}
+
+function renderCounts() {
+	countsEl.textContent = "";
+	const rows = [
+		["Wands", countWands(), WANDS_TOTAL],
+		["Fortresses", countForts(), FORTS_TOTAL],
+		["Locks found", countLockChips(), LOCKS_TOTAL],
+		["Pad tiles", countPadTiles(), PAD_TILES_MAX],
+		["Pairs linked", countPadPairs(), PAD_TILES_MAX / 2],
+	];
+	for (const [label, have, max] of rows) {
+		countsEl.appendChild(el("div", { class: "count" + (have >= max ? " full" : "") },
+			el("span", { class: "k" }, label),
+			el("span", { class: "v" }, `${have}/${max}`)));
+	}
+}
+
+function renderWorld(w) {
+	const world = state.worlds[w];
+	const card = el("section", {
+		class: "wcard" + (w === W8 ? " dark-land" : "") + (aiming ? " droppable" : ""),
+		style: `--accent:${accentOf(w)}`,
+	});
+
+	// Dropping anywhere on the card is the same act as clicking it while aiming.
+	card.addEventListener("dragover", ev => { ev.preventDefault(); card.classList.add("dragover"); });
+	card.addEventListener("dragleave", () => card.classList.remove("dragover"));
+	card.addEventListener("drop", ev => {
+		ev.preventDefault();
+		card.classList.remove("dragover");
+		const payload = ev.dataTransfer.getData("text/plain");
+		if (payload) place(JSON.parse(payload), w);
+	});
+	card.addEventListener("click", () => { if (aiming) place(aiming, w); });
+
+	card.appendChild(renderHead(w));
+	// Dark Land's four are fixed, so it gets no add button at all. Everywhere
+	// else the button goes dead on whichever budget runs out first.
+	card.appendChild(renderRow("Forts", renderForts(w),
+		w === W8 ? null : () => { world.forts.push({ ...newFort(), id: id() }); render(); },
+		world.forts.length >= FORTS_MAX || countForts(0, 7) >= FORTS_ROAMING));
+	card.appendChild(renderRow("Locks", renderLocks(w),
+		() => { world.locks.push({ id: id(), keyWorld: null, done: false }); render(); },
+		countLockChips() >= LOCKS_TOTAL));
+	if (locksIn(w).length > lockCapacity(w)) {
+		card.classList.add("overfull");
+		card.appendChild(el("p", { class: "card-warn" },
+			`${locksIn(w).length} locks here — at most ${lockCapacity(w)} can be.`));
+	}
+	card.appendChild(renderRow("Pads", renderPads(w),
+		() => { world.pads.push({ id: id(), dest: null, partner: null }); render(); },
+		world.pads.length >= PADS_MAX || countPadTiles() >= PAD_TILES_MAX));
+	return card;
+}
+
+function renderHead(w) {
+	const col = el("div", { class: "wcol" }, el("span", { class: "wnum" }, String(w + 1)));
+	// Dark Land has no king and no wand of its own — it is where the wands get
+	// spent — so it carries no balloon.
+	if (w !== W8) {
+		const held = !!state.worlds[w].wand;
+		col.appendChild(el("button", {
+			class: "help" + (held ? " done" : ""),
+			type: "button",
+			title: held
+				? "Castle cleared, wand held — click if that was wrong"
+				: "Still calling for help. Click once you have cleared its castle.",
+			onclick: ev => {
+				ev.stopPropagation();
+				state.worlds[w].wand = !held;
+				render();
+			},
+		}, "HELP"));
+	}
+	const head = el("div", { class: "wcard-head" }, col);
+	if (w === W8) {
+		head.appendChild(el("span", { class: "fixed-name" }, DARK_LAND.name));
+		return head;
+	}
+	const select = el("select", {
+		// The card itself is a drop target while aiming, so the dropdown has to
+		// stop its own clicks reaching it.
+		onclick: ev => ev.stopPropagation(),
+		onchange: ev => { setTerrain(w, ev.target.value || null); render(); },
+	}, el("option", { value: "" }, "which world?"));
+	// A map is in exactly one slot, so one already placed is not on offer here.
+	// The slot holding it keeps it listed, or its own dropdown would show it as
+	// unset.
+	const taken = new Set(
+		state.worlds.filter((_, i) => i !== w).map(world => world.terrain).filter(Boolean));
+	for (const t of TERRAINS) {
+		if (taken.has(t.id)) continue;
+		select.appendChild(el("option", {
+			value: t.id,
+			selected: state.worlds[w].terrain === t.id,
+		}, t.name));
+	}
+	head.appendChild(select);
+	return head;
+}
+
+function setTerrain(w, terrain) {
+	state.worlds[w].terrain = terrain;
+	if (terrain) deduceLast();
+}
+
+// Seven maps for seven slots: naming six names the seventh, so fill it in.
+//
+// Only ever on a selection, never on a clear. Running it on a clear would put
+// back the map the player just took out, and the slot could never be emptied.
+function deduceLast() {
+	const empty = [];
+	for (let i = 0; i < 7; i++) if (!state.worlds[i].terrain) empty.push(i);
+	if (empty.length !== 1) return;
+	const claimed = new Set(state.worlds.map(world => world.terrain).filter(Boolean));
+	const left = TERRAINS.filter(t => !claimed.has(t.id));
+	if (left.length !== 1) return;
+	state.worlds[empty[0]].terrain = left[0].id;
+	flash(`World ${empty[0] + 1} has to be ${left[0].name} — it is the only one left.`);
+}
+
+function renderRow(label, chips, onAdd, addDisabled) {
+	const row = el("div", { class: "row" },
+		el("span", { class: "rowlabel" }, label),
+		el("div", { class: "chips" }, ...chips));
+	if (onAdd) {
+		row.appendChild(el("button", {
+			class: "add",
+			type: "button",
+			title: `Add a ${label.slice(0, -1).toLowerCase()}`,
+			disabled: addDisabled,
+			onclick: ev => { ev.stopPropagation(); onAdd(); },
+		}, "+"));
+	}
+	return row;
+}
+
+function renderForts(w) {
+	return state.worlds[w].forts.map(fort => {
+		// Fall back rather than index into undefined: one unrecognised value
+		// here would throw inside render() and leave the whole page blank.
+		const hint = HINTS.find(h => h.id === fort.hint) ?? HINTS[0];
+		const chip = el("span", {
+			class: `chip fort hint-${fort.hint}` + (fort.done ? " done" : ""),
+		});
+		chip.appendChild(el("button", {
+			class: "body",
+			type: "button",
+			title: "Where its lock is — click to change",
+			onclick: ev => { ev.stopPropagation(); cycleHint(w, fort); render(); },
+		}, fort.label ? `🏰 ${fort.label} · ${hint.label}` : `🏰 ${hint.label}`));
+
+		// An "away" fortress carries its lock around until the player finds it.
+		if (fort.hint === "away" && fort.lockWorld == null) {
+			chip.appendChild(lockToken(w, fort));
+		}
+		chip.appendChild(el("button", {
+			class: "mini",
+			type: "button",
+			title: fort.done ? "Mark not beaten" : "Mark beaten",
+			onclick: ev => { ev.stopPropagation(); fort.done = !fort.done; render(); },
+		}, fort.done ? "↺" : "✓"));
+		if (w !== W8) {
+			chip.appendChild(el("button", {
+				class: "mini",
+				type: "button",
+				title: "Remove",
+				onclick: ev => {
+					ev.stopPropagation();
+					state.worlds[w].forts = state.worlds[w].forts.filter(f => f.id !== fort.id);
+					render();
+				},
+			}, "×"));
+		}
+		return chip;
+	});
+}
+
+// A Dark Land fortress can only be Here or Away. "Its lock is in World 8" and
+// "its lock is in its own world" are the same sentence there, and the generator
+// resolves the tie towards Here — so the special design never appears on a Dark
+// Land fortress, and the tracker must not offer it. (maze/mod.rs, where the
+// hint is decided: "own world wins, then World 8".)
+function hintsFor(w) {
+	return w === W8 ? HINTS.filter(h => h.id !== "w8") : HINTS;
+}
+
+// Cycling past "away" drops any world the lock had been placed in, so the chip
+// never claims a placement its design no longer supports.
+function cycleHint(w, fort) {
+	const cycle = hintsFor(w);
+	const next = (cycle.findIndex(h => h.id === fort.hint) + 1) % cycle.length;
+	fort.hint = cycle[next].id;
+	if (fort.hint !== "away") fort.lockWorld = null;
+}
+
+function lockToken(w, fort) {
+	const active = aiming && aiming.kind === "lock" && aiming.id === fort.id;
+	const token = el("button", {
+		class: "body token" + (active ? " aiming-now" : ""),
+		type: "button",
+		draggable: "true",
+		title: "Which world is its lock in? Drag onto a world, or click and pick one.",
+		onclick: ev => {
+			ev.stopPropagation();
+			aiming = active ? null : { kind: "lock", world: w, id: fort.id };
+			render();
+		},
+		ondragstart: ev => {
+			ev.dataTransfer.setData("text/plain",
+				JSON.stringify({ kind: "lock", world: w, id: fort.id }));
+		},
+	}, "🔒?");
+	return token;
+}
+
+function renderLocks(w) {
+	return locksIn(w).map(entry => {
+		if (entry.kind === "free") return renderFreeLock(w, entry.lock);
+		const { fort, world } = entry;
+		const away = world !== w;
+		const chip = el("span", {
+			class: "chip lock" + (away ? " away" : "") + (fort.done ? " done" : ""),
+		});
+		chip.appendChild(el("button", {
+			class: "body",
+			type: "button",
+			title: fort.done ? "Mark shut again" : "Mark open",
+			onclick: ev => { ev.stopPropagation(); fort.done = !fort.done; render(); },
+		}, fort.done ? "🔓" : "🔒"));
+		chip.appendChild(el("span", { class: "src" },
+			away ? `W${world + 1}${fort.label ? " " + fort.label : ""}` : "here"));
+		// Only an "away" placement is a guess the player made, so only that one
+		// can be taken back from here.
+		if (fort.hint === "away") {
+			chip.appendChild(el("button", {
+				class: "mini",
+				type: "button",
+				title: fort.auto ? "Take back this lock and the fortress it implied" : "Put this lock back",
+				onclick: ev => {
+					ev.stopPropagation();
+					// A fortress that exists only because a lock named its world
+					// goes away with that claim, the same way a pad's drawn half
+					// does. One the player put there stays; only its lock moves.
+					if (fort.auto) {
+						state.worlds[world].forts =
+							state.worlds[world].forts.filter(f => f.id !== fort.id);
+					} else {
+						fort.lockWorld = null;
+					}
+					render();
+				},
+			}, "×"));
+		}
+		return chip;
+	});
+}
+
+function renderFreeLock(w, lock) {
+	const chip = el("span", { class: "chip lock" + (lock.done ? " done" : "") });
+	chip.appendChild(el("button", {
+		class: "body",
+		type: "button",
+		title: lock.done ? "Mark shut again" : "Mark open",
+		onclick: ev => { ev.stopPropagation(); lock.done = !lock.done; render(); },
+	}, lock.done ? "🔓" : "🔒"));
+	// Full hints stamp a world number on a lock whose fortress is elsewhere;
+	// this is where that number goes.
+	const pick = el("select", {
+		class: "src",
+		title: "Which world its fortress is in, if the lock says",
+		onclick: ev => ev.stopPropagation(),
+		onchange: ev => {
+			claimKeyWorld(w, lock, ev.target.value === "" ? null : Number(ev.target.value));
+			render();
+		},
+	}, el("option", { value: "", selected: lock.keyWorld == null }, "key: ?"));
+	for (let i = 0; i < 8; i++) {
+		pick.appendChild(el("option", { value: String(i), selected: lock.keyWorld === i }, `key: W${i + 1}`));
+	}
+	chip.appendChild(pick);
+	chip.appendChild(el("button", {
+		class: "mini",
+		type: "button",
+		title: "Remove",
+		onclick: ev => {
+			ev.stopPropagation();
+			state.worlds[w].locks = state.worlds[w].locks.filter(l => l.id !== lock.id);
+			render();
+		},
+	}, "×"));
+	return chip;
+}
+
+function renderPads(w) {
+	return state.worlds[w].pads.map(pad => {
+		const linked = pad.dest != null;
+		const active = aiming && aiming.kind === "pad" && aiming.id === pad.id;
+		const chip = el("span", { class: "chip pad" });
+		chip.appendChild(el("button", {
+			class: "body" + (linked ? "" : " token") + (active ? " aiming-now" : ""),
+			type: "button",
+			draggable: linked ? null : "true",
+			title: linked
+				? "Click to unlink"
+				: "Where does it come out? Drag onto a world, or click and pick one.",
+			onclick: ev => {
+				ev.stopPropagation();
+				if (linked) { unlinkPad(w, pad.id); aiming = null; }
+				else aiming = active ? null : { kind: "pad", world: w, id: pad.id };
+				render();
+			},
+			ondragstart: ev => {
+				ev.dataTransfer.setData("text/plain",
+					JSON.stringify({ kind: "pad", world: w, id: pad.id }));
+			},
+		}, linked ? `⇄ W${pad.dest + 1}` : "⇄ ?"));
+		chip.appendChild(el("button", {
+			class: "mini",
+			type: "button",
+			title: "Remove (takes its partner with it)",
+			onclick: ev => { ev.stopPropagation(); deletePad(w, pad.id); render(); },
+		}, "×"));
+		chip.setAttribute("data-pad", String(pad.id)); // where drawPadLinks aims
+		return chip;
+	});
+}
+
+// --- Placing ------------------------------------------------------------
+
+function place(target, world) {
+	if (target.kind === "lock") {
+		const fort = state.worlds[target.world].forts.find(f => f.id === target.id);
+		// An "away" fortress means the lock is somewhere else. Dropping it back
+		// on its own world is the player telling us the design said otherwise.
+		if (fort) {
+			if (world === target.world) fort.hint = "here";
+			else fort.lockWorld = world;
+		}
+	} else {
+		linkPad(target.world, target.id, world);
+	}
+	aiming = null;
+	render();
+}
+
+function flash(text, level = "info") {
+	message = { text, level };
+}
+
+// --- Wiring -------------------------------------------------------------
+
+document.getElementById("aiming-cancel").addEventListener("click", () => {
+	aiming = null;
+	render();
+});
+
+document.addEventListener("keydown", ev => {
+	if (ev.key === "Escape" && aiming) { aiming = null; render(); }
+});
+
+document.getElementById("reset-btn").addEventListener("click", () => {
+	if (!confirm("Clear the whole tracker?")) return;
+	state = blankState();
+	stampIds();
+	aiming = null;
+	render();
+});
+
+// The curves are measured from the laid-out grid, so anything that reflows it
+// has to redraw them. Guarded because none of this exists headlessly.
+if (typeof window !== "undefined") {
+	window.addEventListener("resize", drawPadLinks);
+	if (typeof ResizeObserver === "function") new ResizeObserver(drawPadLinks).observe(worldsEl);
+}
+
+stampIds();
+render();
+</script>
+</body>
+</html>
