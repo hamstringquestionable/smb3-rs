@@ -38,3 +38,21 @@ getrandom = { version = "0.3", features = ["wasm_js"] }
 [dev-dependencies]
 base32 = "0.5"
 mos6502 = "0.10.1"
+
+[profile.release]
+# One codegen unit instead of the default 16.
+#
+# **Measured, and it is not a small effect**: WASM `generate_patch` went from
+# 97.7 to 86.2 ms mean with the maze off, and 122.9 to 109.5 with it on (40
+# seeds, 2026-09-09). Everything is in one large crate, so what the default
+# costs is cross-module inlining *inside* it — the builder's hot loops call
+# across `map_walker`, `route_choice` and `overworld_build` constantly.
+#
+# LTO was measured on top of this and adds **nothing** (fat 86.0, thin 85.8,
+# neither distinguishable from 86.2), which is what you would expect when there
+# is essentially one crate to link. It is left off so the build stays as fast as
+# it can: this alone roughly doubles a wasm-pack release build, to ~30s.
+#
+# Output is unchanged — a codegen setting cannot alter program semantics, and
+# `output_matches_baseline` confirms it against the committed hash.
+codegen-units = 1
