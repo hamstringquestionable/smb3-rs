@@ -11,6 +11,13 @@ deploys.
 
 ### Added
 
+- **A World Maze tracker page.** Linked from the World Maze section, and a
+  paper aid rather than anything the ROM knows about: eight world slots, the
+  fortresses and locks in each, and the warp pads between them, which you link
+  by dragging one onto another world. Because a pad is half of a pair, linking
+  one draws its partner on the far side too. It fills itself in as you explore
+  and keeps what you typed in your browser.
+
 - **Deja Vu counts fortresses.** A fourth pill on the Deja Vu row, toggling on
   its own rather than as a fourth mode. Fortresses are then dealt the way levels
   are: Double gives every fort a second copy in the deck, so some turn up twice
