@@ -608,16 +608,43 @@ function lockWorldOf(world, fort) {
 	}
 }
 
-// Every lock standing in `target`: the free-standing ones the player logged,
-// plus every fortress anywhere whose lock has been placed there.
+// Every lock standing in `target`.
+//
+// One per fortress in that world, always — `WorldState::fort_count` is "also
+// the number of lock sections", so a world's locks are its own fortresses'
+// locks whatever those fortresses open. The design only decides whether the
+// lock is plain (this world's fortress opens it) or tinted (its key is
+// somewhere else).
+//
+// Then the ones a fortress elsewhere opens here: a W8-design fortress reaching
+// into Dark Land, or a remote one the player has placed.
 function locksIn(target) {
 	const out = state.worlds[target].locks.map(lock => ({ kind: "free", lock, world: target }));
+	for (const fort of state.worlds[target].forts) {
+		out.push({ kind: "own", fort, world: target });
+	}
 	state.worlds.forEach((world, w) => {
+		if (w === target) return;
 		for (const fort of world.forts) {
 			if (lockWorldOf(w, fort) === target) out.push({ kind: "fort", fort, world: w });
 		}
 	});
 	return out;
+}
+
+// Whether a fortress's own-world lock is open.
+//
+// For a local fortress that is the same fact as "have I beaten it" — it opens
+// the lock standing beside it. For every other design it is a separate fact,
+// because the lock in its world is opened by some fortress elsewhere, and the
+// two are cleared at different times.
+function ownLockOpen(fort) {
+	return fort.hint === "here" ? !!fort.done : !!fort.ownLockOpen;
+}
+
+function setOwnLockOpen(fort, open) {
+	if (fort.hint === "here") fort.done = open;
+	else fort.ownLockOpen = open;
 }
 
 // --- Counting against the budgets -------------------------------------
@@ -663,6 +690,22 @@ function lockCapacity(w) {
 	return w === W8 ? 4 : FORTS_MAX;
 }
 
+// How many fortresses open a lock in this world.
+//
+// This, not the number of chips on the card, is what the capacity is about. A
+// world's own fortresses each stand beside a lock whatever they open, so the
+// chips are always at least the fort count; what cannot exceed it is the number
+// of KEYS pointing here. For Dark Land that sum is exactly the one to watch —
+// the plain fortresses standing there plus every special fortress out in the
+// other worlds.
+function keysInto(target) {
+	let n = state.worlds[target].locks.length;
+	state.worlds.forEach((world, w) => {
+		for (const fort of world.forts) if (lockWorldOf(w, fort) === target) n++;
+	});
+	return n;
+}
+
 function worldName(w) {
 	if (w === W8) return DARK_LAND.name;
 	const t = TERRAINS.find(t => t.id === state.worlds[w].terrain);
@@ -675,14 +718,14 @@ function worldName(w) {
 function problems() {
 	const out = [];
 	for (let w = 0; w < 8; w++) {
-		const have = locksIn(w).length;
+		const have = keysInto(w);
 		const max = lockCapacity(w);
 		if (have <= max) continue;
 		out.push(w === W8
-			? `${have} locks in ${DARK_LAND.name}, which only ever has ${max}. `
-				+ "Count the special fortresses in the other worlds plus the plain ones here — "
-				+ "together they cannot come to more than four."
-			: `${have} locks in ${worldName(w)}, which can hold at most ${max}.`);
+			? `${have} fortresses open a lock in ${DARK_LAND.name}, which only ever has ${max}. `
+				+ "That sum is the special fortresses out in the other worlds plus the plain "
+				+ "ones standing here — together they cannot come to more than four."
+			: `${have} fortresses open a lock in ${worldName(w)}, which only has ${max}.`);
 	}
 	return out;
 }
@@ -938,7 +981,7 @@ function renderCounts() {
 	const rows = [
 		["Wands", countWands(), WANDS_TOTAL],
 		["Fortresses", countForts(), FORTS_TOTAL],
-		["Locks found", countLockChips(), LOCKS_TOTAL],
+		["Keys placed", countLockChips(), LOCKS_TOTAL],
 		["Pad tiles", countPadTiles(), PAD_TILES_MAX],
 		["Pairs linked", countPadPairs(), PAD_TILES_MAX / 2],
 	];
@@ -976,10 +1019,10 @@ function renderWorld(w) {
 	card.appendChild(renderRow("Locks", renderLocks(w),
 		() => { world.locks.push({ id: id(), keyWorld: null, done: false }); render(); },
 		countLockChips() >= LOCKS_TOTAL));
-	if (locksIn(w).length > lockCapacity(w)) {
+	if (keysInto(w) > lockCapacity(w)) {
 		card.classList.add("overfull");
 		card.appendChild(el("p", { class: "card-warn" },
-			`${locksIn(w).length} locks here — at most ${lockCapacity(w)} can be.`));
+			`${keysInto(w)} keys point here — this world only has ${lockCapacity(w)} locks.`));
 	}
 	card.appendChild(renderRow("Pads", renderPads(w),
 		() => { world.pads.push({ id: id(), dest: null, partner: null }); render(); },
@@ -1151,6 +1194,7 @@ function lockToken(w, fort) {
 function renderLocks(w) {
 	return locksIn(w).map(entry => {
 		if (entry.kind === "free") return renderFreeLock(w, entry.lock);
+		if (entry.kind === "own") return renderOwnLock(entry.fort);
 		const { fort, world } = entry;
 		const away = world !== w;
 		const chip = el("span", {
@@ -1188,6 +1232,26 @@ function renderLocks(w) {
 		}
 		return chip;
 	});
+}
+
+// The lock that stands beside a fortress, in its own world. Plain when that
+// fortress opens it, tinted when its key is somewhere else — which is what the
+// lock tile itself says on Some hints and above.
+function renderOwnLock(fort) {
+	const local = fort.hint === "here";
+	const open = ownLockOpen(fort);
+	const chip = el("span", {
+		class: "chip lock" + (local ? "" : " away") + (open ? " done" : ""),
+	});
+	chip.appendChild(el("button", {
+		class: "body",
+		type: "button",
+		title: open ? "Mark shut again" : "Mark open",
+		onclick: ev => { ev.stopPropagation(); setOwnLockOpen(fort, !open); render(); },
+	}, open ? "🔓" : "🔒"));
+	chip.appendChild(el("span", { class: "src" },
+		local ? "here" : (fort.hint === "unknown" ? "key: ?" : "key: elsewhere")));
+	return chip;
 }
 
 function renderFreeLock(w, lock) {
