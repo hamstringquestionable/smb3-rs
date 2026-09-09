@@ -15,8 +15,11 @@ deploys.
   paper aid rather than anything the ROM knows about: eight world slots, the
   fortresses and locks in each, and the warp pads between them, which you link
   by dragging one onto another world. Because a pad is half of a pair, linking
-  one draws its partner on the far side too. It fills itself in as you explore
-  and keeps what you typed in your browser.
+  one draws its partner on the far side too. It knows the seed's own budgets —
+  seventeen fortresses and their locks, eight pad pairs, one map per slot — so
+  it counts down what is still out there and stops you writing in more than the
+  game can contain. It fills itself in as you explore and keeps what you typed
+  in your browser.
 
 - **Deja Vu counts fortresses.** A fourth pill on the Deja Vu row, toggling on
   its own rather than as a fourth mode. Fortresses are then dealt the way levels

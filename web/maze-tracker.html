@@ -76,6 +76,27 @@
     cursor: pointer;
 }
 
+/* --- Counters --- */
+.counts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.6rem;
+    margin-bottom: 1rem;
+}
+.count {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    border: 1px solid #2a2a50;
+    border-radius: 6px;
+    background: #14142c;
+    padding: 0.5rem 0.8rem;
+}
+.count .k { font-size: 0.8rem; letter-spacing: 0.06em; color: #7a7a96; text-transform: uppercase; }
+.count .v { font-size: 1.15rem; font-weight: bold; color: #e0e0e0; }
+.count.full { border-color: #5eb85e; }
+.count.full .v { color: #7ad47a; }
+
 /* --- World cards --- */
 .worlds {
     display: grid;
@@ -296,6 +317,10 @@
         <button id="aiming-cancel" type="button">Cancel (Esc)</button>
     </div>
 
+    <!-- What the seed is allowed to contain, against what you have found. A
+         full count means the thing you are looking for is not out there. -->
+    <div id="counts" class="counts"></div>
+
     <div id="worlds" class="worlds"></div>
 
     <div class="legend section">
@@ -359,9 +384,21 @@ const HINTS = [
 // sprite. The fourth is a plain one. (src/randomize/overworld_writer/sprites.rs)
 const W8_FORTS = ["Battleship", "Air Force", "Super Tank", "Fortress"];
 
-const PADS_MAX = 3;   // graph.rs PADS_PER_WORLD_MAX
-const FORTS_MAX = 3;  // capacity.rs redistribute_fortresses, worlds 1-7
-const W8 = 7;         // index of the Dark Land slot
+// The generator's budgets, and they are budgets for the whole game rather than
+// per world — which is the useful part for a tracker, because a total that is
+// full says the thing you are still looking for is not out there.
+//
+//   capacity.rs redistribute_fortresses: worlds 1-7 share 13 fortresses, one
+//   to three each, and Dark Land always keeps 4. Seventeen, and one lock each.
+//   graph.rs: 3 pads per world, and PAD_BUDGET = world_persist::PORTAL_MAX = 16
+//   pad tiles overall — a pair is two tiles, so eight pairs.
+const PADS_MAX = 3;         // per world
+const PAD_TILES_MAX = 16;   // whole game; 8 pairs
+const FORTS_MAX = 3;        // per world, worlds 1-7
+const FORTS_ROAMING = 13;   // whole game, worlds 1-7
+const FORTS_TOTAL = 17;     // those 13 plus Dark Land's 4
+const LOCKS_TOTAL = FORTS_TOTAL; // one lock per fortress
+const W8 = 7;               // index of the Dark Land slot
 
 const STORE_KEY = "smb3r-maze-tracker-v1";
 
@@ -462,6 +499,32 @@ function locksIn(target) {
 	return out;
 }
 
+// --- Counting against the budgets -------------------------------------
+
+function countForts(from = 0, to = 8) {
+	return state.worlds.slice(from, to).reduce((n, world) => n + world.forts.length, 0);
+}
+
+function countPadTiles() {
+	return state.worlds.reduce((n, world) => n + world.pads.length, 0);
+}
+
+function countPadPairs() {
+	return state.worlds.reduce((n, world) => n + world.pads.filter(p => p.dest != null).length, 0) / 2;
+}
+
+// Lock chips standing anywhere: the free ones the player logged, plus every
+// fortress whose lock has a home. A fortress still showing "?" has a lock out
+// there somewhere, but nothing to draw yet.
+function countLockChips() {
+	let n = 0;
+	state.worlds.forEach((world, w) => {
+		n += world.locks.length;
+		for (const fort of world.forts) if (lockWorldOf(w, fort) !== null) n++;
+	});
+	return n;
+}
+
 function padById(world, padId) {
 	return state.worlds[world].pads.find(p => p.id === padId) ?? null;
 }
@@ -491,6 +554,12 @@ function linkPad(fromWorld, padId, toWorld) {
 	if (!partner) {
 		if (dest.pads.length >= PADS_MAX) {
 			flash(`World ${toWorld + 1} already has ${PADS_MAX} pads.`);
+			return;
+		}
+		// Drawing the far half spends a pad tile, so the whole-game budget has
+		// to allow one more before the pair can be completed.
+		if (countPadTiles() >= PAD_TILES_MAX) {
+			flash(`All ${PAD_TILES_MAX} pad tiles are accounted for — that is the eight pairs.`);
 			return;
 		}
 		// `auto` records that this half exists only to complete the pair, so
@@ -535,6 +604,7 @@ function deletePad(world, padId) {
 const worldsEl = document.getElementById("worlds");
 const aimingEl = document.getElementById("aiming");
 const aimingText = document.getElementById("aiming-text");
+const countsEl = document.getElementById("counts");
 
 function el(tag, attrs = {}, ...children) {
 	const node = document.createElement(tag);
@@ -561,6 +631,7 @@ function accentOf(w) {
 function render() {
 	worldsEl.textContent = "";
 	for (let w = 0; w < 8; w++) worldsEl.appendChild(renderWorld(w));
+	renderCounts();
 
 	// The bar carries either the current aim or a one-off message, and aiming
 	// wins. Rendering owns it: a message set during a mutation would otherwise
@@ -579,6 +650,21 @@ function render() {
 		aimingEl.hidden = true;
 	}
 	save();
+}
+
+function renderCounts() {
+	countsEl.textContent = "";
+	const rows = [
+		["Fortresses", countForts(), FORTS_TOTAL],
+		["Locks found", countLockChips(), LOCKS_TOTAL],
+		["Pad tiles", countPadTiles(), PAD_TILES_MAX],
+		["Pairs linked", countPadPairs(), PAD_TILES_MAX / 2],
+	];
+	for (const [label, have, max] of rows) {
+		countsEl.appendChild(el("div", { class: "count" + (have >= max ? " full" : "") },
+			el("span", { class: "k" }, label),
+			el("span", { class: "v" }, `${have}/${max}`)));
+	}
 }
 
 function renderWorld(w) {
@@ -600,14 +686,17 @@ function renderWorld(w) {
 	card.addEventListener("click", () => { if (aiming) place(aiming, w); });
 
 	card.appendChild(renderHead(w));
+	// Dark Land's four are fixed, so it gets no add button at all. Everywhere
+	// else the button goes dead on whichever budget runs out first.
 	card.appendChild(renderRow("Forts", renderForts(w),
 		w === W8 ? null : () => { world.forts.push({ ...newFort(), id: id() }); render(); },
-		world.forts.length >= FORTS_MAX));
+		world.forts.length >= FORTS_MAX || countForts(0, 7) >= FORTS_ROAMING));
 	card.appendChild(renderRow("Locks", renderLocks(w),
-		() => { world.locks.push({ id: id(), keyWorld: null, done: false }); render(); }, false));
+		() => { world.locks.push({ id: id(), keyWorld: null, done: false }); render(); },
+		countLockChips() >= LOCKS_TOTAL));
 	card.appendChild(renderRow("Pads", renderPads(w),
 		() => { world.pads.push({ id: id(), dest: null, partner: null }); render(); },
-		world.pads.length >= PADS_MAX));
+		world.pads.length >= PADS_MAX || countPadTiles() >= PAD_TILES_MAX));
 	return card;
 }
 
@@ -623,7 +712,13 @@ function renderHead(w) {
 		onclick: ev => ev.stopPropagation(),
 		onchange: ev => { setTerrain(w, ev.target.value || null); render(); },
 	}, el("option", { value: "" }, "which world?"));
+	// A map is in exactly one slot, so one already placed is not on offer here.
+	// The slot holding it keeps it listed, or its own dropdown would show it as
+	// unset.
+	const taken = new Set(
+		state.worlds.filter((_, i) => i !== w).map(world => world.terrain).filter(Boolean));
 	for (const t of TERRAINS) {
+		if (taken.has(t.id)) continue;
 		select.appendChild(el("option", {
 			value: t.id,
 			selected: state.worlds[w].terrain === t.id,
@@ -633,15 +728,24 @@ function renderHead(w) {
 	return head;
 }
 
-// A terrain can only be in one slot, so assigning one that is already placed
-// swaps the two rather than quietly duplicating it.
 function setTerrain(w, terrain) {
-	const previous = state.worlds[w].terrain;
-	if (terrain) {
-		const holder = state.worlds.findIndex((world, i) => i !== w && world.terrain === terrain);
-		if (holder >= 0) state.worlds[holder].terrain = previous;
-	}
 	state.worlds[w].terrain = terrain;
+	if (terrain) deduceLast();
+}
+
+// Seven maps for seven slots: naming six names the seventh, so fill it in.
+//
+// Only ever on a selection, never on a clear. Running it on a clear would put
+// back the map the player just took out, and the slot could never be emptied.
+function deduceLast() {
+	const empty = [];
+	for (let i = 0; i < 7; i++) if (!state.worlds[i].terrain) empty.push(i);
+	if (empty.length !== 1) return;
+	const claimed = new Set(state.worlds.map(world => world.terrain).filter(Boolean));
+	const left = TERRAINS.filter(t => !claimed.has(t.id));
+	if (left.length !== 1) return;
+	state.worlds[empty[0]].terrain = left[0].id;
+	flash(`World ${empty[0] + 1} has to be ${left[0].name} — it is the only one left.`);
 }
 
 function renderRow(label, chips, onAdd, addDisabled) {
