@@ -165,7 +165,10 @@ pub(crate) fn completion_cost(state: &GlobalState) -> CompletionCost {
 /// be beaten, that level was mandatory.
 ///
 /// Expensive: one global fixpoint per level, ~62 per seed. A census
-/// instrument, not something to call in a build.
+/// instrument, not something to call in a build — unlike its neighbour
+/// [`completion_cost`], which `maze::CONTENT_FLOOR` promoted to the shipping
+/// path.
+#[cfg(test)]
 pub(crate) fn required_levels(state: &GlobalState) -> usize {
     let levels: Vec<MazePos> = state
         .worlds

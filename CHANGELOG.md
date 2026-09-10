@@ -11,6 +11,20 @@ deploys.
 
 ### Added
 
+- **A World Maze tracker page.** Linked from the World Maze section, and a
+  paper aid rather than anything the ROM knows about: eight world slots, the
+  fortresses and locks in each, and the warp pads between them, which you link
+  by dragging one onto another world. Because a pad is half of a pair, linking
+  one draws its partner on the far side too. It knows the seed's own budgets —
+  seventeen fortresses and their locks, eight pad pairs, one map per slot — so
+  it counts down what is still out there and stops you writing in more than the
+  game can contain. It also joins things up: telling it which world a lock's key
+  is in puts that fortress on the board, and if that world has no fortress that
+  could open the lock and no room for one, it says so rather than accepting a
+  map that cannot exist. Each world wears the king's HELP balloon until you
+  cross it off, which counts your wands for you. And when the board says something the game could not have built — more locks in a world than it has room for, a lock whose key is in a world with nothing that could open it — it says so, and keeps saying so until you fix it. Every fortress stands beside a lock, so filling in the fortresses fills in the locks: plain where that fortress opens it, tinted where its key is somewhere else. It fills itself in as you explore and keeps what you typed
+  in your browser.
+
 - **Deja Vu counts fortresses.** A fourth pill on the Deja Vu row, toggling on
   its own rather than as a fourth mode. Fortresses are then dealt the way levels
   are: Double gives every fort a second copy in the deck, so some turn up twice
@@ -31,6 +45,14 @@ deploys.
   whistle is how you get around, and it can never take you anywhere new.
 
 ### Changed
+
+- **World Maze: no more two-level seeds.** A maze that could be finished in a
+  handful of levels now gets thrown out and dealt again. Nothing about how long
+  a *typical* seed runs has changed — fast seeds are still fast, and the longest
+  ones are untouched — but the bottom of the range is gone: with Wands To Enter
+  at 0 the shortest run went from 2 levels to 14. Worth having because 0 wands
+  is a setting people pick on purpose, and it should be a scramble rather than a
+  walk to the door.
 
 - **Generating a ROM is about 30% faster.** In the browser a seed went from
   ~98ms to ~70ms with the default settings, and from ~123ms to ~87ms in World
