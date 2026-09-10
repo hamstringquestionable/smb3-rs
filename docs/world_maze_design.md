@@ -504,6 +504,13 @@ longest deal it saw rather than failing. Measured over 300 seeds:
 | 3 | 10% | 1.13 | 5 | **14** | 25 | 0 |
 | 7 | 0% | 1.00 | 1 | 20 | 35 | 0 |
 
+**Re-measured 2026-09-10, after the route Dijkstra became a radix heap** (PR
+#234). Moving tie-breaks moves maps, so the floor's cost was re-checked rather
+than assumed, and it came out slightly cheaper: K=0 redeals **18%** of seeds
+(mean 1.22 deals, worst 4) against 20% / 1.26 / 6 before, K=3 **9%**, K=7 none,
+and nothing ships under the floor. The floor-sweep table above predates that
+change — read its 12 / 16 / 18 rows as relative rather than current.
+
 The shape is preserved because a rejected deal is redrawn from the whole
 distribution rather than conditioned to land just above the floor: K=0's minimum
 moves 2 → 14 while its median moves only 23 → 25 and its maximum not at all.
