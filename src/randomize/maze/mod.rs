@@ -149,6 +149,14 @@ pub(crate) const DEFAULT_WANDS_REQUIRED: u8 = 3;
 /// less in twenty deals, so [`MAX_DEALS`] would begin shipping under-floor
 /// seeds. At 14 no grid of 200 ever failed to clear it.
 ///
+///
+/// **Re-measured 2026-09-10, after the route Dijkstra became a radix heap**
+/// (PR #234). Moving tie-breaks moves maps, so the floor's cost had to be
+/// re-checked rather than assumed: at 14 it came out slightly *cheaper* —
+/// K=0 redeals 18% of seeds (mean 1.22 deals, worst 4) against 20% / 1.26 / 6
+/// before, K=3 9%, and nothing ships under the floor. The sweep table above
+/// still dates from before that change, so read its 12 / 16 / 18 rows as
+/// relative rather than current.
 /// The redeal deliberately does **not** condition on landing just above the
 /// floor: a rejected deal is redrawn from the whole distribution, so it lands
 /// at a typical length. That is why the floor moves K=0's minimum from 2 to 14

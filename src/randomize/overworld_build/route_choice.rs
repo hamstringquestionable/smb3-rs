@@ -29,7 +29,7 @@ use super::*;
 use crate::randomize::map_walker::WalkResult;
 
 use std::cmp::Reverse;
-use std::collections::{BTreeSet, BinaryHeap};
+use std::collections::BTreeSet;
 
 /// Weighted set-cost knobs, in plain points. Legible on purpose.
 pub(crate) const COST_PIPE: u32 = 1;
@@ -289,23 +289,56 @@ impl DistMap {
     }
 }
 
-/// Min-heap of (cost, packed state) — cost first so the heap orders by it;
-/// the packed state tie-breaks in the old tuple order (see `PackedState`).
-type CostHeap = BinaryHeap<Reverse<(u32, PackedState)>>;
+/// The Dijkstra frontier: a **radix heap** keyed on cost alone.
+///
+/// A radix heap buckets by the position of the highest differing bit between a
+/// key and the last key popped, which makes push and pop amortised O(1) for
+/// small integer costs instead of the binary heap's O(log n). Route costs here
+/// are levels beaten — single digits — which is the case it is built for.
+/// Measured: WASM `generate_patch` 86.2 -> 69.5 ms with the maze off and
+/// 109.5 -> 86.7 with it on (40 seeds, 2026-09-09), a fifth of the run.
+///
+/// **Its precondition is monotone pops, which Dijkstra gives for free**: every
+/// relaxed cost is `cost + edge_extra + node_charge`, and none of those three
+/// is negative, so a key smaller than the last popped one is never pushed. The
+/// crate panics rather than corrupting if that is ever violated.
+///
+/// **It does not preserve tie order, and that moved output.** A binary heap of
+/// `(cost, state)` broke ties on the packed state; a radix heap orders by cost
+/// and says nothing about equal keys. Measured over 4000 seeds the builder's
+/// product is unchanged — mean routes 2.591 -> 2.589, C1 19.2 both, the
+/// floor-miss rate 0.33% both, and W1 identical column for column — while three
+/// worlds gain a point of linearity and none lose one, moving the overall rate
+/// 5.95% -> 6.24%. That is roughly one world-instance in 350 becoming
+/// single-route, accepted deliberately for a fifth of the run time. See
+/// `docs/seed_stability.md`.
+///
+/// **There is no cheap way to have both.** Preserving the old order needs the
+/// frontier sorted by `(cost, state)` at every moment, and zero-cost edges — a
+/// step onto an already-cleared node — keep feeding the bucket currently being
+/// drained, so a bucket queue that sorted on open would still be wrong. Sorting
+/// on every insertion is a binary heap again.
+type CostHeap = radix_heap::RadixHeapMap<Reverse<u32>, PackedState>;
 
 thread_local! {
     /// Per-thread Dijkstra scratch (dist table + heap), reused across calls
     /// so the hot loop never allocates.
     static SCRATCH: std::cell::RefCell<(DistMap, CostHeap)> =
-        std::cell::RefCell::new((DistMap::with_pow2(13), BinaryHeap::with_capacity(1 << 10)));
+        std::cell::RefCell::new((DistMap::with_pow2(13), CostHeap::new()));
 }
 
-/// Packed Dijkstra state — (pos, cleared-mask, boat) in one `u128`, laid out
-/// so numeric order equals the old tuple order (row, then col, then mask,
-/// then boat with `None` < `Some`, `Some` ordered by (row, col)). The heap
-/// tie-breaks on the state after the cost, so the layout guarantees the pop
-/// sequence — and therefore every measured decision — is byte-identical to
-/// the unpacked representation.
+/// Packed Dijkstra state — (pos, cleared-mask, boat) in one `u128`.
+///
+/// The layout puts the fields in an order whose numeric comparison equals the
+/// old unpacked tuple order (row, then col, then mask, then boat with `None` <
+/// `Some`, `Some` ordered by (row, col)). **That property is no longer
+/// load-bearing** — it existed so a `BinaryHeap<(cost, state)>` would tie-break
+/// exactly as the unpacked representation did, and [`CostHeap`] is now a radix
+/// heap that orders on cost alone. Only the bijection matters today, since the
+/// value is a `DistMap` key.
+///
+/// It is kept as it is because changing the packing would move output again for
+/// no gain, not because anything still depends on the ordering.
 ///
 /// Bits (MSB→LSB): row 88..96, col 80..88, mask 16..80, boat code 0..16.
 type PackedState = u128;
@@ -566,18 +599,18 @@ impl WalkGraph {
         // mask says which levels/forts/rocks it used). dist + heap are borrowed
         // from the thread-local scratch — no allocation in the hot loop.
         let (mut dist, mut heap) =
-            SCRATCH.with(|s| s.replace((DistMap::placeholder(), BinaryHeap::new())));
+            SCRATCH.with(|s| s.replace((DistMap::placeholder(), CostHeap::new())));
         dist.reset();
         heap.clear();
 
         let init = pack(start, 0, initial_boat);
         dist.improve(init, 0, NO_PREV);
-        heap.push(Reverse((0, init)));
+        heap.push(Reverse(0), init);
 
         let mut best: Option<u32> = None;
         let mut goals: Vec<(PackedState, u32)> = Vec::new(); // (goal state, cost)
 
-        while let Some(Reverse((cost, state))) = heap.pop() {
+        while let Some((Reverse(cost), state)) = heap.pop() {
             if cost > dist.get(state).unwrap_or(u32::MAX) {
                 continue;
             }
@@ -610,7 +643,7 @@ impl WalkGraph {
                 let new_cost = cost + edge_extra + nc;
                 let key = pack(dest, nm, boat_after);
                 if dist.improve(key, new_cost, state) {
-                    heap.push(Reverse((new_cost, key)));
+                    heap.push(Reverse(new_cost), key);
                 }
             };
 
