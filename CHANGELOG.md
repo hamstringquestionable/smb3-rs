@@ -108,6 +108,12 @@ deploys.
 
 ### Fixed
 
+- **World Maze: a seed that could not be finished can no longer be handed out.**
+  Nothing was known to produce one, but nothing checked either — the game worked
+  out whether a maze was winnable and then threw the answer away. It now deals
+  again for a finishable maze rather than merely a long one, and says so loudly
+  instead of staying quiet if it ever runs out of ways to make one.
+
 - **World Maze: the same airship could be beaten for a second wand.** Nothing
   marks an airship as beaten, so a world you walk back into still has one — and
   each clear counted, which meant seven trips through one airship could open a

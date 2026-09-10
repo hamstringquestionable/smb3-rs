@@ -83,11 +83,34 @@ table — it absorbed what an earlier `foreign_locks.rs` did; see
   to need no new definition. `world_order::randomize` with `world_count < 7`
   returns a shorter order; the worlds it leaves out are still built, still on
   the ROM and still full of content, but no airship leads into them. In maze
-  mode that makes them **optional bonus content reachable only by telepad** —
-  which is as close as the terrain gets to the pad-only island the charter
-  wanted, and it costs nothing to support. Solvability is scoped to the worlds
-  the spine names (`GlobalState::in_maze`), exactly as a shorter game means
-  fewer worlds in standard mode. `a_short_spine_still_finishes` pins it.
+  mode that makes them **reachable only by telepad** — which is as close as the
+  terrain gets to the pad-only island the charter wanted, and it costs nothing
+  to support. Solvability is scoped to the worlds the spine names
+  (`GlobalState::in_maze`), exactly as a shorter game means fewer worlds in
+  standard mode.
+
+  **They are not merely optional, and this section used to say they were.**
+  `in_maze` scopes two things — which fortresses must be beatable, and what the
+  spoiler log counts. It does *not* scope the lock list or the fill's pool of
+  candidate keys, both of which span all eight worlds. So the fill can hand a
+  lock on the spine a fortress in a world the spine never names, and that world
+  becomes **required**, reachable only through a pad. That is arguably the best
+  version of the mode rather than a bug — it is the shape the charter wanted —
+  but "optional bonus content" is the wrong thing to tell a player deciding
+  whether a world is worth the detour.
+
+  It is safe because the fill only ever takes a key from a fortress already
+  reachable from the global start at the moment it places the gate, and the
+  fixpoint walks all eight grids. What is *not* covered is the other direction:
+  a fortress stranded in an off-spine world is invisible to `solvable`, so
+  nothing distinguishes "bonus content nobody can reach" from "bonus content
+  nobody needs". Deliberate for short spines; still worth knowing.
+
+  **Pinned by `a_short_spine_is_still_winnable`** (a cheap property test at
+  three spine lengths x two K values) and `maze_spine_length_census` (the whole
+  7x8 grid). This paragraph previously cited `a_short_spine_still_finishes`,
+  which never existed — so until 2026-09-10 **no test covered a spine shorter
+  than eight at all**, and every maze test used the full `IDENTITY_SPINE`.
 - **`maze_wands` (K) is a player-facing option**; the two generator biases are
   not. See "Knobs".
 
