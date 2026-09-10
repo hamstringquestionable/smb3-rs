@@ -168,8 +168,23 @@ pub(crate) fn completion_cost(state: &GlobalState) -> CompletionCost {
 /// instrument, not something to call in a build — unlike its neighbour
 /// [`completion_cost`], which `maze::CONTENT_FLOOR` promoted to the shipping
 /// path.
+///
+/// **Returns `None` when the maze was not winnable to begin with, and that
+/// guard is not paranoia — it is a bug this instrument actually caused.** The
+/// question asked per level is "block it; is the game still solvable?" On a
+/// maze that was never solvable the answer is "no" for every level, so the
+/// count comes back as *every level in the game* and reads as a map of pure
+/// corridors. Two seeds reported 62 of 62 that way and the figure reached a
+/// census table before anyone noticed the mazes behind it had unreachable
+/// castles and nine unbeatable fortresses between them.
+///
+/// A lying instrument is worst exactly when something upstream is already
+/// broken, which is when you are reading it most carefully.
 #[cfg(test)]
-pub(crate) fn required_levels(state: &GlobalState) -> usize {
+pub(crate) fn required_levels(state: &GlobalState) -> Option<usize> {
+    if !state.spheres().solvable {
+        return None;
+    }
     let levels: Vec<MazePos> = state
         .worlds
         .iter()
@@ -188,5 +203,5 @@ pub(crate) fn required_levels(state: &GlobalState) -> usize {
             count += 1;
         }
     }
-    count
+    Some(count)
 }

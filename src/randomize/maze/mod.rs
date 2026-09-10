@@ -679,9 +679,10 @@ pub(crate) struct Spheres {
 impl Spheres {
     /// The per-sphere spoiler log, the mode's primary debugging instrument.
     ///
-    /// Test-only: the censuses and every failing assertion print it, and
-    /// nothing in a shipped run has anywhere to put it.
-    #[cfg(test)]
+    /// Not gated, because [`generate`]'s unwinnable-maze `debug_assert!` prints
+    /// it and a `debug_assert!` type-checks its arguments in every profile. In
+    /// release the call sits inside `if false` and the whole thing — this
+    /// function included — is eliminated, so the binary does not carry it.
     pub(crate) fn spoiler(&self) -> String {
         let mut out = String::new();
         for (i, s) in self.spheres.iter().enumerate() {
@@ -745,13 +746,33 @@ pub(crate) struct GenReport {
 /// It exists because the content floor deals more than once and has to choose
 /// between attempts. Nothing outside `generate` sees one.
 struct Deal {
+    /// **The primary sort key, ahead of [`Deal::content`].** A maze nobody can
+    /// finish is worse than a short one, so a solvable deal beats an unsolvable
+    /// one however long the unsolvable one measures.
+    ///
+    /// Deliberately [`Spheres::solvable`] and not `completion_cost().reached`,
+    /// which is the weaker question. `reached` asks only whether the castle can
+    /// be entered; `solvable` also demands every fortress be beatable, because
+    /// content sealed out of the game is a bug in its own right. A deal can
+    /// satisfy the first and fail the second.
+    solvable: bool,
     /// Levels and fortresses a play-through beats, or 0 when the castle was
     /// never reached. See [`metrics::completion_cost`].
     content: usize,
     state: GlobalState,
+    /// The fixpoint this deal was judged on, kept so the winner does not have
+    /// to be re-measured after the loop.
+    spheres: Spheres,
     fill: fill::FillReport,
     pads: Vec<graph::PlacedPad>,
     unsafe_worlds: Vec<usize>,
+}
+
+impl Deal {
+    /// What the loop maximises: solvable first, then long.
+    fn rank(&self) -> (bool, usize) {
+        (self.solvable, self.content)
+    }
 }
 
 /// Build a maze from eight finished worlds.
@@ -822,7 +843,8 @@ pub(crate) fn generate<R: Rng>(
             unsafe_worlds.retain(|&wi| !state.start_region_escapable(wi));
         }
 
-        Deal { content: 0, state, fill, pads, unsafe_worlds }
+        let spheres = state.spheres();
+        Deal { solvable: spheres.solvable, content: 0, state, spheres, fill, pads, unsafe_worlds }
     };
 
     // **The content floor.** Deal until the maze is long enough, keeping the
@@ -844,22 +866,22 @@ pub(crate) fn generate<R: Rng>(
     while deals < MAX_DEALS {
         deals += 1;
         let mut dealt = deal(rng);
-        // A deal that never reaches the castle scores zero, so it can only win
-        // if every deal did — and the solvability guard below then catches it.
         let cost = metrics::completion_cost(&dealt.state);
         dealt.content = if cost.reached { cost.content } else { 0 };
-        let floor_met = dealt.content >= CONTENT_FLOOR;
-        if best.as_ref().is_none_or(|seen| dealt.content > seen.content) {
+        // Accept only a deal that is BOTH finishable and long enough. Ranking
+        // solvability above length is what makes an unsolvable deal impossible
+        // to keep while any solvable one has been seen — the fallback below is
+        // then a genuine last resort rather than the only guard.
+        let accept = dealt.solvable && dealt.content >= CONTENT_FLOOR;
+        if best.as_ref().is_none_or(|seen| dealt.rank() > seen.rank()) {
             best = Some(dealt);
         }
-        if floor_met {
+        if accept {
             break;
         }
     }
-    let Deal { content, mut state, fill, pads, mut unsafe_worlds } =
+    let Deal { content, mut state, mut spheres, fill, pads, mut unsafe_worlds, .. } =
         best.expect("MAX_DEALS is non-zero, so at least one deal was kept");
-
-    let mut spheres = state.spheres();
 
     // Defence in depth, and the one guard this mode cannot do without.
     //
@@ -875,7 +897,8 @@ pub(crate) fn generate<R: Rng>(
     //
     // It outranks the content floor: a long maze nobody can finish is worse
     // than a short one, so this runs after the loop and overrides whatever it
-    // kept.
+    // kept. The deal loop ranks the same way, so reaching here means EVERY deal
+    // was unsolvable, not merely the last one.
     if !spheres.solvable {
         state = GlobalState::from_build(result, spine, wands_required);
         spheres = state.spheres();
@@ -888,6 +911,28 @@ pub(crate) fn generate<R: Rng>(
         unsafe_worlds =
             (0..state.worlds.len()).filter(|&wi| !state.start_region_escapable(wi)).collect();
     }
+
+    // **And the fallback itself is checked, which it never used to be.**
+    //
+    // It resets to the per-world builder's own local locks with no pads, a
+    // shape `the_spine_alone_completes_the_maze` guarantees is solvable — but
+    // that guarantee rests on each world being completable, which is the
+    // builder's invariant and not this module's. If a world ships
+    // uncompletable, the fallback inherits the problem and there is nothing
+    // left below it to fall back to.
+    //
+    // Recomputing without looking was the real gap: an unwinnable maze then
+    // shipped in silence, and the only way to find out is to play to the wall.
+    // A `debug_assert` is the right weight for it — the censuses run thousands
+    // of seeds per arm, so this fires in testing long before it could reach a
+    // player, and it costs a shipped run nothing.
+    debug_assert!(
+        spheres.solvable,
+        "the maze is unwinnable and the spine-alone fallback did not save it — \
+         a world is uncompletable, which is the builder's invariant, not this \
+         module's\n{}",
+        spheres.spoiler()
+    );
 
     // Last, and after the fallback above, so it judges the assignment that
     // actually ships. Consumes no RNG.

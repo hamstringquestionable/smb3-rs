@@ -983,17 +983,30 @@ fn maze_game_length_census() {
     let mut played = Vec::new();
     let mut required = Vec::new();
     let mut total_levels = Vec::new();
+    let mut unwinnable = 0usize;
     let mut detours = Vec::new();
 
     for seed in 0..seeds {
         // At the SHIPPING wand requirement, not K=0. K=0 is a legal setting but
         // it is the one where a pad chain can finish a seed in a single level,
         // so measuring the game's length there answers a question nobody asked.
-        let (_, state, _) = generated(&raw, seed, &knobs, super::DEFAULT_WANDS_REQUIRED);
+        let (_, state, report) = generated(&raw, seed, &knobs, super::DEFAULT_WANDS_REQUIRED);
         let cost = super::metrics::completion_cost(&state);
+        // **A maze nobody can finish is not a game, and averaging it in makes
+        // the table lie.** It used to record `content` for a run that never
+        // reached the castle and take `required_levels` at its word on the
+        // same seed, where the honest answer is "every level" — which is how a
+        // required-count of 62 of 62 got into this census. Count them and say
+        // so instead.
+        let Some(req) = super::metrics::required_levels(&state) else {
+            unwinnable += 1;
+            continue;
+        };
+        assert!(cost.reached, "solvable but the castle was never reached, seed {seed}");
+        assert!(report.spheres.solvable);
         played.push(cost.content);
         detours.push(cost.detours);
-        required.push(super::metrics::required_levels(&state));
+        required.push(req);
         total_levels.push(
             state
                 .worlds
@@ -1015,6 +1028,7 @@ fn maze_game_length_census() {
         "\n=== how long is a maze game, {seeds} seeds, K={} ===",
         super::DEFAULT_WANDS_REQUIRED
     );
+    eprintln!("  UNWINNABLE, excluded      {unwinnable}  (must be 0)");
     eprintln!("  levels in the game        {:.0}", mean(&total_levels));
     eprintln!(
         "  BEATEN on a completion    mean {:.1}  min {pl}  median {pm}  max {ph}",
@@ -2475,6 +2489,15 @@ fn a_shipped_maze_clears_the_content_floor() {
             // lost — the sealable repair can open a lock after the loop.
             let cost = super::metrics::completion_cost(&state);
             assert!(cost.reached, "seed {seed} K={k}: castle unreachable");
+            // The strong property, and the one the deal loop's `(solvable,
+            // content)` ranking exists to guarantee: not merely that the castle
+            // can be entered, but that no fortress is sealed out of the game.
+            // `reached` alone would pass a maze that strands content.
+            assert!(
+                report.spheres.solvable,
+                "seed {seed} K={k}: reachable but not solvable\n{}",
+                report.spheres.spoiler()
+            );
             if report.deals < super::MAX_DEALS {
                 assert_eq!(
                     cost.content, report.content,
@@ -2543,4 +2566,110 @@ fn maze_content_floor_census() {
         );
     }
     eprintln!("  under = mazes shipped below the floor because the deal budget ran out");
+}
+
+// ---------------------------------------------------------------------------
+// Short spines
+// ---------------------------------------------------------------------------
+
+/// Build the spine `world_order` would hand the maze for a given `world_count`.
+///
+/// Mirrors `world_order::randomize`: shuffle worlds 0-6, take `world_count` of
+/// them, append World 8. So the spine is 2 to 8 worlds long, its last entry is
+/// always the castle, and the worlds it leaves out are in the game but off the
+/// required path.
+fn spine_for(world_count: usize, rng: &mut ChaCha8Rng) -> Vec<usize> {
+    let mut pool: Vec<usize> = (0..7).collect();
+    pool.shuffle(rng);
+    let mut spine: Vec<usize> = pool[..world_count.clamp(1, 7)].to_vec();
+    spine.push(7);
+    spine
+}
+
+/// **A maze on a short spine is still finishable.**
+///
+/// `world_count` is a player-facing setting and it makes the spine shorter than
+/// eight — a two-world maze is a legal configuration. Every other test in this
+/// file uses [`IDENTITY_SPINE`], so until this existed **no test covered a
+/// spine shorter than 8 at all**, and the shorter ones are exactly where the
+/// mode has least to work with: fewer worlds means fewer fortresses, so fewer
+/// keys, and `K` is clamped to the airships the spine offers.
+///
+/// Deliberately asserts the strong property. `Spheres::solvable` demands the
+/// castle be reachable *and* every fortress on the spine be beatable, which is
+/// what `completion_cost().reached` alone would miss.
+#[test]
+fn a_short_spine_is_still_winnable() {
+    let Some(raw) = load_rom() else { return };
+    let knobs = Knobs::default();
+    for seed in 0..census_seeds(4) {
+        let (_, result) = census_build(&raw, seed);
+        // 1 and 6 are the interesting ends: the smallest maze the mode can
+        // make, and one world short of the full spine.
+        for world_count in [1usize, 3, 6] {
+            let mut rng = ChaCha8Rng::seed_from_u64(seed ^ 0xABCD);
+            let spine = spine_for(world_count, &mut rng);
+            for k in [0u8, super::DEFAULT_WANDS_REQUIRED] {
+                let wands = k.min(spine.len().saturating_sub(1) as u8);
+                let mut grng = ChaCha8Rng::seed_from_u64(seed ^ 0x5EED_1234);
+                let (state, report) =
+                    super::generate(&result, &spine, wands, &knobs, SEALABLE_NEEDED, &mut grng);
+                assert!(
+                    report.spheres.solvable,
+                    "seed {seed}, spine {spine:?}, K={wands}: unwinnable\n{}",
+                    report.spheres.spoiler()
+                );
+                assert!(
+                    super::metrics::completion_cost(&state).reached,
+                    "seed {seed}, spine {spine:?}, K={wands}: castle never reached"
+                );
+            }
+        }
+    }
+}
+
+/// The whole spine-length x K grid, for when the cheap test above is not
+/// enough — a stranding bug on a rare short spine passes at 4 seeds.
+///
+/// ```sh
+/// CENSUS_SEEDS=60 cargo test --release --lib maze_spine_length_census \
+///     -- --ignored --nocapture
+/// ```
+#[test]
+#[ignore]
+fn maze_spine_length_census() {
+    let Some(raw) = load_rom() else { return };
+    let seeds = census_seeds(30);
+    let knobs = Knobs::default();
+
+    eprintln!("\n=== unwinnable mazes by spine length and K, {seeds} seeds each ===");
+    eprintln!("  {:>5} {:>6}  K=0   1   2   3   4   5   6   7", "count", "spine");
+    let mut worst = 0usize;
+    for world_count in 1..=7usize {
+        let mut row = Vec::new();
+        for k in 0..=7u8 {
+            let mut bad = 0usize;
+            for seed in 0..seeds {
+                let (_, result) = census_build(&raw, seed);
+                let mut rng = ChaCha8Rng::seed_from_u64(seed ^ 0xABCD);
+                let spine = spine_for(world_count, &mut rng);
+                let wands = k.min(spine.len().saturating_sub(1) as u8);
+                let mut grng = ChaCha8Rng::seed_from_u64(seed ^ 0x5EED_1234);
+                let (state, report) =
+                    super::generate(&result, &spine, wands, &knobs, SEALABLE_NEEDED, &mut grng);
+                if !report.spheres.solvable || !super::metrics::completion_cost(&state).reached {
+                    bad += 1;
+                }
+            }
+            worst = worst.max(bad);
+            row.push(bad);
+        }
+        eprintln!(
+            "  {world_count:>5} {:>6}  {}",
+            world_count + 1,
+            row.iter().map(|n| format!("{n:>3}")).collect::<Vec<_>>().join(" ")
+        );
+    }
+    eprintln!("  cells are seeds where the castle is unreachable or a spine fortress unbeatable");
+    assert_eq!(worst, 0, "a spine length shipped an unwinnable maze");
 }
