@@ -46,6 +46,14 @@ deploys.
 
 ### Changed
 
+- **World Maze: no more two-level seeds.** A maze that could be finished in a
+  handful of levels now gets thrown out and dealt again. Nothing about how long
+  a *typical* seed runs has changed — fast seeds are still fast, and the longest
+  ones are untouched — but the bottom of the range is gone: with Wands To Enter
+  at 0 the shortest run went from 2 levels to 14. Worth having because 0 wands
+  is a setting people pick on purpose, and it should be a scramble rather than a
+  walk to the door.
+
 - **Friendlier Levels drops 7F2 and 8F1 for real.** They used to be made
   *optional* — still on the map, still beatable, just parked behind a lock the
   world could be finished without. That was a workaround for not being able to
