@@ -54,6 +54,10 @@ deploys.
   is a setting people pick on purpose, and it should be a scramble rather than a
   walk to the door.
 
+- **Generating a ROM is faster again**, by about another 5%. Same output, same
+  maps — the map walker was working out whether the canoe was usable by walking
+  the whole world a second time, and now answers it on the way through.
+
 - **Generating a ROM is about 30% faster.** In the browser a seed went from
   ~98ms to ~70ms with the default settings, and from ~123ms to ~87ms in World
   Maze. Part of that is a build setting and changes nothing at all; the rest is
