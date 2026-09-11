@@ -95,8 +95,18 @@ fn canoes_reachable(
 
     // Same BFS as the main walk, just with no canoe edges (a 9×64 grid, so
     // running it to completion instead of early-exiting at a dock is cheap).
-    let no_canoes =
-        reach_from(grid, start, &teleport_lookup(pipe_pairs), &TeleportLookup::new(), blocked);
+    //
+    // Passing no docks stops [`reach_gated`] after its first phase, which is
+    // exactly this walk. Only [`walk_map_blocked`] still comes through here —
+    // the reachability path folds the two walks into one and does not.
+    let no_canoes = reach_gated(
+        grid,
+        start,
+        &teleport_lookup(pipe_pairs),
+        &[],
+        &TeleportLookup::new(),
+        blocked,
+    );
     docks.iter().any(|&d| no_canoes.contains(d))
 }
 
@@ -308,10 +318,32 @@ impl Reach {
 
 /// Reachability-only BFS core — mirrors [`walk_from`]'s traversal exactly but
 /// tracks only the reachable set, so it yields the identical `nodes` set.
-fn reach_from(
+///
+/// **It decides canoe usability on the way through rather than in a second
+/// walk.** A canoe is only usable once the player can *walk* to its mainland
+/// dock (see [`walk_map_blocked`]), which used to be answered by running the
+/// whole BFS a second time with the canoe edges removed. That doubled the cost
+/// of every walk in W3, and in W8 whenever `8s are Wild` — measured at 2,125
+/// extra walks a seed, a fifth of every BFS the builder runs.
+///
+/// One walk answers it because reachability is a closure. Expand with the
+/// canoe edges off and run to exhaustion: that set is exactly what the old
+/// pre-pass computed. If it contains a dock, put everything reached back on
+/// the queue and carry on with the canoe edges enabled — the closure of that
+/// set under moves-plus-canoes is the same set as the closure of `{start}`
+/// under moves-plus-canoes, so the answer is identical. If it contains no
+/// dock, the walk is already finished and the set is the answer.
+///
+/// **Only safe because a `Reach` is a set.** [`walk_from`] returns BFS hop
+/// counts as well, and those are order-dependent: turning the canoe edges on
+/// late would hand a cell a longer distance than a canoe-enabled walk would,
+/// and `capacity.rs` and `islands.rs` read those distances. So that path keeps
+/// the two-walk shape and only this one merges.
+fn reach_gated(
     grid: &Grid,
     start: (usize, usize),
     pipe_lookup: &TeleportLookup,
+    canoe_edges: &[TeleportEdge],
     canoe_lookup: &TeleportLookup,
     blocked: &HashSet<(usize, usize)>,
 ) -> Reach {
@@ -320,6 +352,51 @@ fn reach_from(
     reach.insert(start);
     queue.push_back(start);
 
+    // Phase 1: on foot and through pipes, no canoes. This set is exactly what
+    // the old pre-pass computed.
+    expand(grid, start, pipe_lookup, None, blocked, &mut reach, &mut queue);
+
+    // Phase 2, only when a dock was walked to. Six of the eight worlds have no
+    // canoe edge at all and stop here.
+    if !canoe_edges.iter().any(|&(dock, _)| reach.contains(dock)) {
+        return reach;
+    }
+
+    // **Seed only from cells that have a canoe edge, not from everything phase
+    // one reached.** Enabling the canoes cannot make a cell with no canoe edge
+    // expand any differently than it already did, so re-walking the whole set
+    // would redo phase one's work and save nothing — which is exactly what an
+    // earlier version of this did, and it measured 1.6% where the walk count
+    // said 4.6%. Seeding from the endpoints alone leaves phase two expanding
+    // only the territory the canoes actually open.
+    for &(a, b) in canoe_edges {
+        for p in [a, b] {
+            if reach.contains(p) {
+                queue.push_back(p);
+            }
+        }
+    }
+    expand(grid, start, pipe_lookup, Some(canoe_lookup), blocked, &mut reach, &mut queue);
+    reach
+}
+
+/// Drain `queue`, adding everything newly reachable to `reach`. Split out of
+/// [`reach_gated`] so both of its phases run the identical expansion, one with
+/// the canoe edges and one without.
+#[allow(clippy::too_many_arguments)]
+// Reason: every parameter is a distinct piece of BFS state that both phases
+// share and mutate. Bundling them into a struct would name no concept the
+// walker does not already have and would put the borrow checker between the
+// two calls for nothing.
+fn expand(
+    grid: &Grid,
+    start: (usize, usize),
+    pipe_lookup: &TeleportLookup,
+    canoe_lookup: Option<&TeleportLookup>,
+    blocked: &HashSet<(usize, usize)>,
+    reach: &mut Reach,
+    queue: &mut VecDeque<(usize, usize)>,
+) {
     while let Some((r, c)) = queue.pop_front() {
         let tile_here = grid.get(r, c);
         if (tile_here == TILE_AIRSHIP || tile_here == TILE_BOWSER) && (r, c) != start {
@@ -358,7 +435,7 @@ fn reach_from(
             }
         }
 
-        for lookup in [pipe_lookup, canoe_lookup] {
+        for lookup in [Some(pipe_lookup), canoe_lookup].into_iter().flatten() {
             if let Some(dests) = lookup.get(&(r, c)) {
                 for &dest in dests {
                     if reach.insert(dest) {
@@ -368,7 +445,6 @@ fn reach_from(
             }
         }
     }
-    reach
 }
 
 /// Reachability-only counterpart of [`walk_map`]: same start resolution and
@@ -412,13 +488,13 @@ pub(super) fn walk_reachable_blocked(
         Some(s) => s,
         None => return Reach::new(grid.rows(), grid.cols),
     };
+    // One walk, not two: `reach_gated` decides canoe usability from its own
+    // first phase instead of a separate pre-pass. The canoe lookup is now built
+    // unconditionally, which costs a small map on W3/W8 and saves a whole BFS.
     let pipe_lookup = teleport_lookup(pipe_pairs);
-    let canoe_lookup = if canoes_reachable(grid, pipe_pairs, start, world_idx, blocked) {
-        teleport_lookup(&rom_data::active_canoe_edges(world_idx, grid.eights_are_wild))
-    } else {
-        TeleportLookup::new()
-    };
-    reach_from(grid, start, &pipe_lookup, &canoe_lookup, blocked)
+    let canoe_edges = rom_data::active_canoe_edges(world_idx, grid.eights_are_wild);
+    let canoe_lookup = teleport_lookup(&canoe_edges);
+    reach_gated(grid, start, &pipe_lookup, &canoe_edges, &canoe_lookup, blocked)
 }
 
 // ---------------------------------------------------------------------------
@@ -479,6 +555,115 @@ pub(super) fn find_chokepoints(result: &WalkResult) -> HashSet<(usize, usize)> {
 mod tests {
     use super::rom_data;
     use super::*;
+
+    /// **The one-walk canoe gate agrees with the two-walk version it replaced.**
+    ///
+    /// [`reach_gated`] decides canoe usability from its own first phase and
+    /// then seeds the second from the canoe endpoints alone. That is only
+    /// correct because a cell with no canoe edge cannot expand differently once
+    /// the canoes are on — an easy thing to break while tuning, and nothing
+    /// else would notice until a W3 seed stranded a player.
+    ///
+    /// The oracle is the shape the walker used to have, written out here in
+    /// full: walk with no canoes, ask whether a dock was reached, then walk
+    /// again from the start with the canoes on if it was. Deliberately not
+    /// shared code with the thing under test.
+    fn two_walk_reference(
+        grid: &Grid,
+        start: (usize, usize),
+        pipe_pairs: &[TeleportEdge],
+        world_idx: usize,
+        blocked: &HashSet<(usize, usize)>,
+    ) -> Reach {
+        let pipe_lookup = teleport_lookup(pipe_pairs);
+        let edges = rom_data::active_canoe_edges(world_idx, grid.eights_are_wild);
+        let no_canoes =
+            reach_gated(grid, start, &pipe_lookup, &[], &TeleportLookup::new(), blocked);
+        if !edges.iter().any(|&(dock, _)| no_canoes.contains(dock)) {
+            return no_canoes;
+        }
+        // Everything reached, expanded again with the canoes on — the old
+        // second walk, seeded from the start exactly as it used to be.
+        let canoe_lookup = teleport_lookup(&edges);
+        let mut reach = Reach::new(grid.rows(), grid.cols);
+        let mut queue = VecDeque::new();
+        reach.insert(start);
+        queue.push_back(start);
+        expand(grid, start, &pipe_lookup, Some(&canoe_lookup), blocked, &mut reach, &mut queue);
+        reach
+    }
+
+    #[test]
+    fn canoe_gate_matches_the_two_walk_version() {
+        let Ok(bytes) = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes") else {
+            return;
+        };
+        let rom = Rom::from_bytes(&bytes).unwrap();
+        // W3 has canoes always; W8 only with `8s are Wild`, so both settings
+        // are exercised. The others are the no-dock path.
+        for wi in 0..8 {
+            for wild in [false, true] {
+                let mut grid = rom_data::read_tile_grid(&rom, wi);
+                grid.eights_are_wild = wild;
+                let Some(start) = rom_data::find_start(&grid) else { continue };
+
+                // No blocking, then with each lockable path cell blocked in
+                // turn — the shape `cut_set` uses, and the one that can make a
+                // dock unreachable and flip the gate.
+                let mut blocked = HashSet::new();
+                assert_eq!(
+                    reach_gated(
+                        &grid,
+                        start,
+                        &teleport_lookup(&[]),
+                        &rom_data::active_canoe_edges(wi, wild),
+                        &teleport_lookup(&rom_data::active_canoe_edges(wi, wild)),
+                        &blocked,
+                    )
+                    .len(),
+                    two_walk_reference(&grid, start, &[], wi, &blocked).len(),
+                    "W{} wild={wild}: unblocked walks disagree",
+                    wi + 1
+                );
+
+                for r in 0..grid.rows() {
+                    for c in 0..grid.cols {
+                        blocked.clear();
+                        blocked.insert((r, c));
+                        let edges = rom_data::active_canoe_edges(wi, wild);
+                        let got = reach_gated(
+                            &grid,
+                            start,
+                            &teleport_lookup(&[]),
+                            &edges,
+                            &teleport_lookup(&edges),
+                            &blocked,
+                        );
+                        let want = two_walk_reference(&grid, start, &[], wi, &blocked);
+                        assert_eq!(
+                            got.len(),
+                            want.len(),
+                            "W{} wild={wild}: blocking {:?} makes the walks disagree",
+                            wi + 1,
+                            (r, c)
+                        );
+                        for rr in 0..grid.rows() {
+                            for cc in 0..grid.cols {
+                                assert_eq!(
+                                    got.contains((rr, cc)),
+                                    want.contains((rr, cc)),
+                                    "W{} wild={wild}: blocking {:?} disagrees at {:?}",
+                                    wi + 1,
+                                    (r, c),
+                                    (rr, cc)
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn test_find_start_all_worlds() {
