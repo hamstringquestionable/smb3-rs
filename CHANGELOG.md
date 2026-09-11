@@ -47,6 +47,14 @@ deploys.
 
 ### Changed
 
+- **World Maze: a game over sends you back to World 1.** Vanilla drops you at
+  the start of whatever world you ran out of lives in, which in a maze can be a
+  world you were pad-hopped into and whose only way onward is a lock you have no
+  key for. Continuing now returns you to the world the run started in, where
+  everything you have not done yet is still reachable. Nothing else about a
+  game over changes: every world keeps the progress it already kept, and your
+  whistle and wands come with you.
+
 - **World Maze: a world no longer has as many fortresses as it has locks.** One
   or two fortresses a seed change places with a level in another world, so a
   world can hold three locks and one fortress, or locks with no fortress of its
