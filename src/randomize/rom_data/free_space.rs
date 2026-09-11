@@ -316,7 +316,8 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
         0x17EFB,
         128,
         &["world_travel"],
-        "world-maze: whistle fast travel to the next visited world (128 reserved, 34 used)",
+        "world-maze: whistle fast travel to the next visited world in play order \
+         (128 reserved, 41 used: 33 code + an 8-byte successor table)",
     ),
     fs(
         0x17F7B,

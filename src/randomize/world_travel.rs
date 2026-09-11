@@ -11,6 +11,18 @@
 //!
 //! **A world counts as visited once the player stands on its start tile.**
 //!
+//! Plus two pokes that are not routines at all, and are about the mode's pace
+//! rather than about the whistle: the warp wind sweeps four times faster
+//! ([`WIND_DELTA_OFFSET`]) and the motionless "WORLD n" card on the far side
+//! is halved ([`INTRO_DWELL_OFFSET`]). Vanilla priced both for a once-a-game
+//! event; the maze pays them on every hop.
+//!
+//! **The cycle runs in play order, not internal world order.** Which internal
+//! world is "WORLD 3" is `world_order`'s decision, so a cycler that stepped
+//! the internal index would visit the worlds in a sequence the player has no
+//! way to predict. [`build_next_world`] turns the spine into a successor
+//! table instead.
+//!
 //! **The dependency here inverted on 2026-09-07 and the old wording said the
 //! opposite.** It used to read that invariant 3 — every world's start region
 //! escapable — is what made a whistle destination safe to travel to. That rule
@@ -294,15 +306,45 @@ const TRAVEL_HOOK_VANILLA: [u8; TRAVEL_HOOK_LEN] = [
     0x8D, 0x27, 0x07,       // STA World_Num
 ];
 
-/// Go to the next visited world, wrapping; stay put if there is nowhere to go.
+/// Offset of [`NEXT_WORLD`] inside [`WHISTLE_TRAVEL`], and its CPU address.
 ///
-/// 128 reserved, 34 used.
+/// Read absolutely, so the routine is **origin-locked** the same way the
+/// marker is; `.origin(WHISTLE_TRAVEL_CPU)` in the checks is what catches a
+/// relocation that forgets this.
+const TRAVEL_TABLE_OFF: usize = 33;
+const NEXT_WORLD_CPU: u16 = WHISTLE_TRAVEL_CPU + TRAVEL_TABLE_OFF as u16;
+
+/// Go to the next visited world in **play order**, wrapping; stay put if there
+/// is nowhere to go.
 ///
-/// The scan walks `World_Num + 1` through `World_Num + 8` mod 8, so its last
-/// probe is the world the player is standing in. That is what makes the
-/// "nowhere to go" case free: after eight fruitless steps `Y` has wrapped back
-/// to `World_Num` on its own, and the exit path stores it unchanged. One
-/// visited world and eight visited worlds take the same code.
+/// 128 reserved, 41 used (33 code + an 8-byte table).
+///
+/// # Why the successor comes from a table
+///
+/// The first cut walked `World_Num + 1 .. World_Num + 8` mod 8, i.e. the
+/// *internal* world index. In a randomized ROM that is not an order the player
+/// can see: `world_order` decides which internal world is displayed as "WORLD
+/// 1", so an internal-index cycle visits the worlds in what looks like an
+/// arbitrary sequence — and one that changes shape every seed. Playtesting
+/// called it awkward, which it is: fast travel whose order you cannot predict
+/// is fast travel you have to step through blind.
+///
+/// So the successor is a per-seed table, `internal -> next internal`, laid out
+/// in the order the player numbers the worlds: the airship spine first, then
+/// any off-spine world (`world_count < 7` leaves some, reachable only by
+/// telepad) in internal order. Blowing the whistle repeatedly now walks WORLD
+/// 1, 2, 3 ... and wraps, skipping the ones not yet visited.
+///
+/// It is also one byte *smaller* than the arithmetic it replaced: `LDA tbl,Y /
+/// TAY` is 4 bytes where `INY / TYA / AND #$07 / TAY` was 5.
+///
+/// # The scan
+///
+/// [`NEXT_WORLD`] is a single eight-cycle by construction, so eight steps from
+/// `World_Num` land back on `World_Num`: the last probe is the world the player
+/// is standing in. That is what makes the "nowhere to go" case free — after
+/// eight fruitless steps `Y` holds `World_Num` again and the exit path stores
+/// it unchanged. One visited world and eight visited worlds take the same code.
 ///
 /// The exit sequence is the canonical world change, and every line of it is
 /// load-bearing:
@@ -333,31 +375,145 @@ const TRAVEL_HOOK_VANILLA: [u8; TRAVEL_HOOK_LEN] = [
 /// variables (and `start_airship_swap`'s helper the column), and with
 /// `ARRIVAL_FLAG` clear the arrival restore is a no-op.
 #[rustfmt::skip]
-const WHISTLE_TRAVEL: [u8; 34] = [
+const WHISTLE_TRAVEL: [u8; TRAVEL_TABLE_OFF + 8] = [
     0xAC, WORLD_NUM as u8, (WORLD_NUM >> 8) as u8,           //  0: LDY World_Num
     0xA2, VISITED_TABLE_LEN as u8,                           //  3: LDX #8      ; tries
 
     // ----- scan (5) -----
-    0xC8,                                                    //  5: INY
-    0x98,                                                    //  6: TYA
-    0x29, (VISITED_TABLE_LEN - 1) as u8,                     //  7: AND #$07    ; wrap
-    0xA8,                                                    //  9: TAY
-    0xB9, VISITED_TABLE as u8, (VISITED_TABLE >> 8) as u8,   // 10: LDA VISITED,Y
-    0xD0, 0x03,                                              // 13: BNE +3 -> go
-    0xCA,                                                    // 15: DEX
-    0xD0, 0xF3,                                              // 16: BNE -13 -> scan
+    0xB9, NEXT_WORLD_CPU as u8,
+          (NEXT_WORLD_CPU >> 8) as u8,                       //  5: LDA NEXT_WORLD,Y
+    0xA8,                                                    //  8: TAY
+    0xB9, VISITED_TABLE as u8, (VISITED_TABLE >> 8) as u8,   //  9: LDA VISITED,Y
+    0xD0, 0x03,                                              // 12: BNE +3 -> go
+    0xCA,                                                    // 14: DEX
+    0xD0, 0xF4,                                              // 15: BNE -12 -> scan
 
-    // ----- go (18): Y is the destination, or World_Num if nothing was found
-    // ----- (eight wraps land back on it) -----
-    0x8C, WORLD_NUM as u8, (WORLD_NUM >> 8) as u8,           // 18: STY World_Num
-    0xA9, 0x00,                                              // 21: LDA #$00
-    0x8D, ARRIVAL_FLAG as u8, (ARRIVAL_FLAG >> 8) as u8,     // 23: STA ARRIVAL_FLAG
-    0x85, MAP_WARPWIND_FX,                                   // 26: STA Map_WarpWind_FX
-    0xA2, 0xFF,                                              // 28: LDX #$FF
-    0x9A,                                                    // 30: TXS
+    // ----- go (17): Y is the destination, or World_Num if nothing was found
+    // ----- (eight steps round the cycle land back on it) -----
+    0x8C, WORLD_NUM as u8, (WORLD_NUM >> 8) as u8,           // 17: STY World_Num
+    0xA9, 0x00,                                              // 20: LDA #$00
+    0x8D, ARRIVAL_FLAG as u8, (ARRIVAL_FLAG >> 8) as u8,     // 22: STA ARRIVAL_FLAG
+    0x85, MAP_WARPWIND_FX,                                   // 25: STA Map_WarpWind_FX
+    0xA2, 0xFF,                                              // 27: LDX #$FF
+    0x9A,                                                    // 29: TXS
     0x4C, WORLD_MAP_INIT_CPU as u8,
-          (WORLD_MAP_INIT_CPU >> 8) as u8,                   // 31: JMP $84A0   ; never returns
+          (WORLD_MAP_INIT_CPU >> 8) as u8,                   // 30: JMP $84A0   ; never returns
+
+    // ----- NEXT_WORLD (33): internal world -> the next one in play order,
+    // ----- filled by `apply`. The placeholder is the internal-index cycle,
+    // ----- which is a legal eight-cycle and exactly what this routine did
+    // ----- before the table existed — so an unfilled table degrades to the
+    // ----- old behaviour rather than walking off the end of VISITED.
+    1, 2, 3, 4, 5, 6, 7, 0,
 ];
+
+/// `internal world -> the next one in play order`, as a single eight-cycle.
+///
+/// `play_order` is `world_order::randomize`'s return: the airship spine, in the
+/// order the player will number the worlds. Any world it leaves out — which is
+/// what `world_count < 7` produces — is appended in internal order, because an
+/// off-spine world has no display number to sort by but is still somewhere the
+/// whistle has to be able to reach.
+///
+/// Duplicates and out-of-range entries are dropped rather than trusted: the
+/// result has to be a permutation with exactly one cycle, or the scan's "eight
+/// steps come home" property fails and it can settle on a world it already
+/// rejected.
+fn build_next_world(play_order: &[u8]) -> [u8; VISITED_TABLE_LEN] {
+    let mut order: Vec<u8> = Vec::with_capacity(VISITED_TABLE_LEN);
+    for world in play_order.iter().copied().chain(0..VISITED_TABLE_LEN as u8) {
+        if (world as usize) < VISITED_TABLE_LEN && !order.contains(&world) {
+            order.push(world);
+        }
+    }
+    let mut next = [0u8; VISITED_TABLE_LEN];
+    for (i, &world) in order.iter().enumerate() {
+        next[world as usize] = order[(i + 1) % VISITED_TABLE_LEN];
+    }
+    next
+}
+
+// --- Part 3: the transition animations, faster --------------------------
+
+/// `Map_WW_DeltaX` (PRG011, CPU `$A2F6` = file 0x16306) — how far the warp
+/// wind moves each frame, one signed byte per direction of travel.
+///
+/// Vanilla sweeps the full 240 pixels at 2 px/frame: **120 frames, two whole
+/// seconds**, and that is on top of the ~32-frame white flash before it. In
+/// vanilla that is paid once a game, for a one-shot warp to the warp island.
+/// The maze whistle is not that — it is fast travel, blown again and again,
+/// and a world three steps down the cycle costs three of those animations.
+///
+/// At 8 px/frame the sweep is 30 frames, so a hop is about a second end to
+/// end. The flash is left alone deliberately: `WarpWhistle_Flash` is shared
+/// with the hand trap (`HT_Flash`), and shortening it there would be a visible
+/// change to something nobody asked about.
+///
+/// **8 is chosen because it divides 16.** `WWFX_WarpDoWind` erases the
+/// player's map sprite on an exact `CMP` of the wind's X against the player's
+/// screen X, and map positions are always multiples of 16 — a delta that does
+/// not divide 16 (6, say) would step straight past the player, who would then
+/// stay drawn while the gust blew through them. 240 is a multiple of 8 too, so
+/// the target-edge compare that ends the state still lands.
+///
+/// Only `WWFX_WarpDoWind` and `WWFX_WarpLanding` read this table, and both are
+/// warp-whistle states; the landing state belongs to the warp island, which
+/// the cycler makes unreachable. The hand trap shares the `Map_WWOrHT_*`
+/// variables but not this table.
+const WIND_DELTA_OFFSET: usize = 0x16306;
+
+/// What vanilla has there: `+2` travelling right, `-2` travelling left.
+#[cfg(test)]
+const WIND_DELTA_VANILLA: [u8; 2] = [0x02, 0xFE];
+
+/// Four times the speed, in the same encoding.
+const WIND_DELTA_FAST: [u8; 2] = [0x08, 0xF8];
+
+/// The `LDA #$80` operand inside `WorldIntro_BoxTimer_NoSym` (PRG010, CPU
+/// `$C50F` = file 0x1451F) — how many frames the "WORLD n" card sits there
+/// before the starry wipe drops the player onto the tile.
+///
+/// **This one is not the whistle's**, and it is sited here for the gate rather
+/// than for the subject: it fires on every world entry — whistle, telepad and
+/// beaten airship alike — and [`apply`] runs exactly when the maze is on, which
+/// is the only condition it wants. A second module hook for a single byte would
+/// buy nothing.
+///
+/// The entry sequence is three phases and only one of them is animation:
+///
+/// | phase | frames |
+/// |---|---|
+/// | the card, motionless (`Map_Intro_Tick`) | **128** |
+/// | erase + the stars opening out (`Map_StarsOutRad += 4` to `$5F`) | ~24 |
+/// | the stars closing onto the player | ~24 |
+///
+/// So nearly three quarters of the ~2.9 s is a still image. Vanilla enters a
+/// world eight times a run; the maze does it constantly, and every telepad hop
+/// pays this. Halving the card to 64 frames takes the sequence to about 1.6 s
+/// and leaves both star sweeps — the part that is actually a transition —
+/// untouched.
+///
+/// **Not below readable.** The card is where the player is told which world the
+/// whistle actually landed them in, which in this mode is real information
+/// rather than a formality. A second is comfortably above reading a digit you
+/// are already looking for; `$30` or `$20` would still work and are the same
+/// one-byte change, but they start to read as a flash rather than a card.
+///
+/// All three of the mode's entry paths reach this through `$84A0`, whose init
+/// block zeroes `Map_Intro_Tick` and `World_EnterState` — so the card always
+/// re-seeds itself here and this operand is the whole dial. The other two
+/// `Map_Intro_Tick = $80` sites in the ROM are the warp island's landing
+/// (unreachable once the cycler takes over `WWFX_WarpDoWind`) and a level-return
+/// path; `Map_Intro_Tick` is a shared scratch counter, which is why this patches
+/// the card's own self-init and not the variable's every writer.
+const INTRO_DWELL_OFFSET: usize = 0x1451F;
+
+/// What vanilla has there: 128 frames, about 2.1 seconds.
+#[cfg(test)]
+const INTRO_DWELL_VANILLA: u8 = 0x80;
+
+/// Half of it.
+const INTRO_DWELL_FAST: u8 = 0x40;
 
 // --- Writer -------------------------------------------------------------
 
@@ -394,12 +550,17 @@ const WHISTLE_CONSUME_VANILLA: [u8; 3] = [0x20, 0x1B, 0xA6];
 /// hook site — but both are required: the cycler with no marker can only ever
 /// stay put, and the marker with no cycler writes a table nothing reads.
 ///
+/// `play_order` is `world_order::randomize`'s return — the airship spine, in
+/// the order the player numbers the worlds. It decides the cycle the whistle
+/// walks; see [`build_next_world`].
+///
 /// **Depends on `completion_bits` being installed**, because the whole
 /// transition rests on its `World_Num != LIVE_WORLD` hooks packing the
 /// outgoing world. Not asserted here: this module writes ROM, it cannot see
 /// what else the pipeline chose.
-pub(crate) fn apply(rom: &mut Rom, grids: &[Grid]) {
+pub(crate) fn apply(rom: &mut Rom, grids: &[Grid], play_order: &[u8]) {
     let keys = build_start_keys(rom, grids);
+    let next_world = build_next_world(play_order);
 
     rom.push_tag("world_travel");
 
@@ -416,7 +577,9 @@ pub(crate) fn apply(rom: &mut Rom, grids: &[Grid]) {
     // repeated use, and vanilla deletes the item on the first one.
     rom.write_range(WHISTLE_CONSUME_OFFSET, &[0xEA, 0xEA, 0xEA]);
 
-    rom.write_range(FS_MAZE_TRAVEL, &WHISTLE_TRAVEL);
+    let mut cycler = WHISTLE_TRAVEL;
+    cycler[TRAVEL_TABLE_OFF..].copy_from_slice(&next_world);
+    rom.write_range(FS_MAZE_TRAVEL, &cycler);
     // `JMP`, not `JSR`: the routine never comes back, so a return address
     // would be pure litter — and the stack is reset a few bytes later anyway.
     let mut hook = [0xEA_u8; TRAVEL_HOOK_LEN];
@@ -424,6 +587,13 @@ pub(crate) fn apply(rom: &mut Rom, grids: &[Grid]) {
     hook[1] = WHISTLE_TRAVEL_CPU as u8;
     hook[2] = (WHISTLE_TRAVEL_CPU >> 8) as u8;
     rom.write_range(TRAVEL_HOOK_OFFSET, &hook);
+
+    // Two seconds of wind per hop is vanilla's price for a once-a-game warp.
+    // See `WIND_DELTA_OFFSET`.
+    rom.write_range(WIND_DELTA_OFFSET, &WIND_DELTA_FAST);
+    // ...and two more of the motionless "WORLD n" card on the far side, on
+    // every entry rather than only the whistle's. See `INTRO_DWELL_OFFSET`.
+    rom.write_byte(INTRO_DWELL_OFFSET, INTRO_DWELL_FAST);
 
     rom.pop_tag();
 }
@@ -478,6 +648,7 @@ mod asm_checks {
         asm::check(&WHISTLE_TRAVEL)
             .allocation(FS_MAZE_TRAVEL)
             .origin(WHISTLE_TRAVEL_CPU)
+            .data_from(TRAVEL_TABLE_OFF)
             // `Map_WarpWind_FX` is the engine's own whistle state, cleared on
             // the way out; nothing else in the page is touched.
             .zero_page(NMI_SAFE_MAX, &[MAP_WARPWIND_FX])
@@ -531,6 +702,7 @@ mod asm_checks {
         asm::check(&WHISTLE_TRAVEL)
             .allocation(FS_MAZE_TRAVEL)
             .origin(WHISTLE_TRAVEL_CPU)
+            .data_from(TRAVEL_TABLE_OFF)
             .hook(&TRAVEL_HOOK_VANILLA, 0, &jmp)
             .assert_ok();
     }
@@ -541,7 +713,7 @@ mod asm_checks {
         let Some(rom) = load_vanilla() else { return };
         let mut patched = rom.clone();
         let grids = crate::randomize::rom_data::read_all_tile_grids(&patched);
-        apply(&mut patched, &grids);
+        apply(&mut patched, &grids, &IDENTITY_ORDER);
 
         assert_eq!(
             patched.read_range(MARK_HOOK_OFFSET, 3),
@@ -556,7 +728,17 @@ mod asm_checks {
             &MARK_VISITED[..MARK_TABLE_OFF]
         );
         assert_eq!(patched.read_range(FS_MAZE_TRAVEL, WHISTLE_TRAVEL.len()), WHISTLE_TRAVEL);
+        assert_eq!(
+            patched.read_range(WIND_DELTA_OFFSET, 2),
+            WIND_DELTA_FAST,
+            "the warp wind is still travelling at vanilla speed"
+        );
     }
+
+    /// The internal-index play order, which reproduces the placeholder table
+    /// baked into [`WHISTLE_TRAVEL`] — so the fixture arm above can compare
+    /// the written bytes against the constant.
+    const IDENTITY_ORDER: [u8; 8] = [0, 1, 2, 3, 4, 5, 6, 7];
 
     /// The marker's two table reads name the right addresses. `Map_Y_Starts`
     /// points *outside* the routine so `.origin` cannot judge it, and
@@ -582,6 +764,75 @@ mod asm_checks {
             "the row compare must read Map_Y_Starts"
         );
         assert_eq!(MAP_Y_STARTS_CPU, 0x838A, "Map_Y_Starts is not where PRG030 puts it");
+    }
+
+    /// The wind-speed poke lands on `Map_WW_DeltaX` and nothing else — the
+    /// bytes either side are `Map_WW_StartX` and `Map_WW_TargetX`, which the
+    /// same states compare against and which must stay at the screen edges.
+    ///
+    /// The divisibility assert is the one that matters: `WWFX_WarpDoWind`
+    /// erases the player's map sprite on an exact `CMP`, and map positions are
+    /// multiples of 16.
+    #[test]
+    fn the_wind_delta_site_is_the_delta_table() {
+        let Some(rom) = load_vanilla() else { return };
+        assert_eq!(
+            rom.read_range(WIND_DELTA_OFFSET, 2),
+            WIND_DELTA_VANILLA,
+            "Map_WW_DeltaX is not where this module thinks it is"
+        );
+        // Map_WW_StartX before it, Map_WW_TargetX after: 0/240 and 240/0.
+        assert_eq!(rom.read_range(WIND_DELTA_OFFSET - 2, 2), [0x00, 0xF0]);
+        assert_eq!(rom.read_range(WIND_DELTA_OFFSET + 2, 2), [0xF0, 0x00]);
+
+        // The two directions are equal and opposite, and both step the wind
+        // onto every multiple of 16 between the edges.
+        assert_eq!(
+            WIND_DELTA_FAST[0].wrapping_add(WIND_DELTA_FAST[1]),
+            0,
+            "the two directions must be equal and opposite"
+        );
+        assert_eq!(
+            16 % WIND_DELTA_FAST[0],
+            0,
+            "a delta that does not divide 16 steps past the player without erasing them"
+        );
+        assert_eq!(240 % WIND_DELTA_FAST[0], 0, "the wind must land exactly on the target edge");
+        assert!(
+            WIND_DELTA_FAST[0] > WIND_DELTA_VANILLA[0],
+            "this patch exists to make the sweep faster"
+        );
+    }
+
+    /// The intro-card poke lands on the `LDA #$80` inside
+    /// `WorldIntro_BoxTimer_NoSym`, and the instructions around it are the
+    /// ones that make it the card's whole dial: the `BNE` that skips the
+    /// re-seed when the tick is already running, and the `DEC` that spends it.
+    #[test]
+    fn the_intro_dwell_site_is_the_card_timer() {
+        let Some(rom) = load_vanilla() else { return };
+        // LDA #$80 / STA Map_Intro_Tick / DEC Map_Intro_Tick
+        assert_eq!(
+            rom.read_range(INTRO_DWELL_OFFSET - 1, 9),
+            [0xA9, INTRO_DWELL_VANILLA, 0x8D, 0x11, 0x07, 0xCE, 0x11, 0x07, 0xD0],
+            "WorldIntro_BoxTimer_NoSym is not where this module thinks it is"
+        );
+        // ...reached by `LDA Map_Intro_Tick / BNE` straight over the re-seed,
+        // which is what makes a caller that pre-seeds the tick keep its own
+        // value and this operand the card's own.
+        assert_eq!(
+            rom.read_range(INTRO_DWELL_OFFSET - 6, 5),
+            [0xAD, 0x11, 0x07, 0xD0, 0x05],
+            "the re-seed is not guarded by the tick test"
+        );
+
+        const { assert!(INTRO_DWELL_FAST > 0, "a zero dwell underflows: DEC wraps to 255 frames") };
+        const { assert!(INTRO_DWELL_FAST < INTRO_DWELL_VANILLA, "this patch shortens the card") };
+
+        let mut patched = rom.clone();
+        let grids = crate::randomize::rom_data::read_all_tile_grids(&patched);
+        apply(&mut patched, &grids, &IDENTITY_ORDER);
+        assert_eq!(patched.read_byte(INTRO_DWELL_OFFSET), INTRO_DWELL_FAST);
     }
 
     /// `ARRIVAL_FLAG` is `world_persist`'s byte, mirrored here. If that module
@@ -614,17 +865,87 @@ mod asm_checks {
         assert_eq!(VANILLA_Y_STARTS, rom.read_range(MAP_Y_STARTS_OFF, 8), "the fixture is stale");
     }
 
-    /// The visited table the cycler scans is the one `maze_state` allocated,
-    /// and the scan's wrap mask matches its length.
+    /// The cycler's two table reads name the right addresses: the visited
+    /// table `maze_state` allocated, and its own successor table.
     #[test]
     fn the_cycler_scans_the_allocated_table() {
-        assert_eq!(WHISTLE_TRAVEL[10], 0xB9, "offset 10 is not an LDA abs,Y");
-        assert_eq!(u16::from_le_bytes([WHISTLE_TRAVEL[11], WHISTLE_TRAVEL[12]]), VISITED_TABLE);
+        assert_eq!(WHISTLE_TRAVEL[9], 0xB9, "offset 9 is not an LDA abs,Y");
+        assert_eq!(u16::from_le_bytes([WHISTLE_TRAVEL[10], WHISTLE_TRAVEL[11]]), VISITED_TABLE);
         assert_eq!(WHISTLE_TRAVEL[4], VISITED_TABLE_LEN as u8, "the try count is not the length");
-        assert_eq!(WHISTLE_TRAVEL[8], (VISITED_TABLE_LEN - 1) as u8, "the wrap mask is wrong");
-        assert!(VISITED_TABLE_LEN.is_power_of_two(), "AND-wrapping needs a power-of-two length");
         // The marker writes into the same table.
         assert_eq!(u16::from_le_bytes([MARK_VISITED[29], MARK_VISITED[30]]), VISITED_TABLE);
+
+        assert_eq!(WHISTLE_TRAVEL[5], 0xB9, "offset 5 is not an LDA abs,Y");
+        assert_eq!(
+            u16::from_le_bytes([WHISTLE_TRAVEL[6], WHISTLE_TRAVEL[7]]),
+            NEXT_WORLD_CPU,
+            "the successor read must name this routine's own table"
+        );
+        assert_eq!(
+            NEXT_WORLD_CPU,
+            WHISTLE_TRAVEL_CPU + TRAVEL_TABLE_OFF as u16,
+            "the successor table must sit at the routine's declared table offset"
+        );
+    }
+
+    /// **The successor table must be one eight-cycle**, whatever it is handed.
+    /// The scan's "eight steps come home" exit — and with it the whole
+    /// nowhere-to-go case — is false for a permutation with two cycles, and
+    /// false in a way that shows up as the whistle settling on a world it has
+    /// already passed rather than as a crash.
+    #[test]
+    fn the_successor_table_is_always_one_cycle() {
+        let orders: &[&[u8]] = &[
+            &[],
+            &[0, 1, 2, 3, 4, 5, 6, 7],
+            &[3, 0, 6, 1, 4, 2, 5, 7],
+            &[5, 2, 7],             // a short spine: world_count < 7
+            &[2, 2, 9, 0xFF, 4, 4], // duplicates and out-of-range entries
+        ];
+        for order in orders {
+            let next = build_next_world(order);
+            let mut seen = [false; 8];
+            let mut w = 0u8;
+            for _ in 0..8 {
+                assert!(!seen[w as usize], "{order:?} produced a short cycle at W{}", w + 1);
+                seen[w as usize] = true;
+                w = next[w as usize];
+            }
+            assert_eq!(w, 0, "{order:?}: eight steps did not come home");
+            assert!(seen.iter().all(|&v| v), "{order:?} left a world out of the cycle");
+        }
+    }
+
+    /// The spine leads, and the worlds it leaves out follow in internal order.
+    /// This is the whole point of the table: the player blows the whistle and
+    /// walks WORLD 1, 2, 3 ... rather than the internal indices behind them.
+    #[test]
+    fn the_cycle_follows_play_order() {
+        // A four-world spine over internal worlds 5, 2, 0, 7.
+        let next = build_next_world(&[5, 2, 0, 7]);
+        assert_eq!(next[5], 2);
+        assert_eq!(next[2], 0);
+        assert_eq!(next[0], 7);
+        // ...then the off-spine worlds, ascending, then home.
+        assert_eq!(next[7], 1);
+        assert_eq!(next[1], 3);
+        assert_eq!(next[3], 4);
+        assert_eq!(next[4], 6);
+        assert_eq!(next[6], 5);
+
+        // And the routine really walks it: with every world visited, the
+        // whistle steps the spine in order.
+        let mut code = WHISTLE_TRAVEL;
+        code[TRAVEL_TABLE_OFF..].copy_from_slice(&next);
+        let all = table(&[0, 1, 2, 3, 4, 5, 6, 7]);
+        for (from, to) in [(5u8, 2u8), (2, 0), (0, 7), (7, 1)] {
+            assert_eq!(travel(&code, from, &all), to, "W{} -> W{}", from + 1, to + 1);
+        }
+
+        // With only the spine visited, the off-spine worlds are skipped over
+        // rather than stepped through.
+        let spine_only = table(&[5, 2, 0, 7]);
+        assert_eq!(travel(&code, 7, &spine_only), 5, "the spine wraps past the off-spine worlds");
     }
 
     // --- The start-key table --------------------------------------------
@@ -651,7 +972,7 @@ mod asm_checks {
         ] {
             let mut patched = rom.clone();
             let grids = crate::randomize::rom_data::read_all_tile_grids(&patched);
-            apply(&mut patched, &grids);
+            apply(&mut patched, &grids, &IDENTITY_ORDER);
             let table = patched.read_range(FS_MAZE_VISITED + MARK_TABLE_OFF, 8).to_vec();
 
             for (world, &key) in table.iter().enumerate() {
@@ -702,7 +1023,7 @@ mod asm_checks {
         let err = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
             let mut b = broken;
             let grids = crate::randomize::rom_data::read_all_tile_grids(&b);
-            apply(&mut b, &grids);
+            apply(&mut b, &grids, &IDENTITY_ORDER);
         }));
         assert!(err.is_err(), "a stale Map_Y_Starts must not produce a silently wrong table");
     }
@@ -1072,34 +1393,49 @@ mod asm_checks {
     fn the_cycler_tests_catch_planted_faults() {
         let t = table(&[0, 2, 5]);
 
-        // 1. The loop-back branch is one byte short, so the scan restarts at
-        //    `TYA` and never advances Y past the first probe.
+        let ok = |code: &[u8; TRAVEL_TABLE_OFF + 8]| {
+            asm::check(code).origin(WHISTLE_TRAVEL_CPU).data_from(TRAVEL_TABLE_OFF).assert_ok();
+        };
+
+        // 1. The loop-back branch is three bytes short, so the scan restarts
+        //    at `TAY` and never advances Y past the first probe.
         let mut wrong_branch = WHISTLE_TRAVEL;
-        wrong_branch[17] = 0xF4; // BNE -13 -> -12, landing on `TYA` instead of `INY`
-        asm::check(&wrong_branch).origin(WHISTLE_TRAVEL_CPU).assert_ok();
+        wrong_branch[16] = 0xF7; // BNE -12 -> -9, landing on `TAY` instead of the successor read
+        ok(&wrong_branch);
         assert_ne!(
             travel(&wrong_branch, 0, &t),
             2,
             "a wrong loop-back displacement must break the cycle test"
         );
 
-        // 2. The scan reads one byte past the table (the wand table's first
-        //    byte, in the real map) — an off-by-one in the table address.
+        // 2. The scan reads one byte past the visited table (the wand table's
+        //    first byte, in the real map) — an off-by-one in the address.
         let mut wrong_index = WHISTLE_TRAVEL;
-        wrong_index[11] = wrong_index[11].wrapping_add(1);
-        asm::check(&wrong_index).origin(WHISTLE_TRAVEL_CPU).assert_ok();
+        wrong_index[10] = wrong_index[10].wrapping_add(1);
+        ok(&wrong_index);
         assert_ne!(
             travel(&wrong_index, 0, &t),
             2,
-            "an off-by-one table address must break the cycle test"
+            "an off-by-one visited-table address must break the cycle test"
         );
 
-        // 3. The wrap mask is $0F rather than $07, so the scan walks off the
-        //    end of the table.
-        let mut wrong_mask = WHISTLE_TRAVEL;
-        wrong_mask[8] = 0x0F;
-        asm::check(&wrong_mask).origin(WHISTLE_TRAVEL_CPU).assert_ok();
-        assert_ne!(travel(&wrong_mask, 5, &t), 0, "a wrong wrap mask must break the wraparound");
+        // 3. The successor table is read one byte high, so every world takes
+        //    the *next* world's successor and the cycle collapses.
+        let mut wrong_order = WHISTLE_TRAVEL;
+        wrong_order[6] = wrong_order[6].wrapping_add(1);
+        ok(&wrong_order);
+        assert_ne!(
+            travel(&wrong_order, 2, &t),
+            5,
+            "an off-by-one successor-table address must break the cycle test"
+        );
+
+        // 4. The destination is stored from X (which is the try counter) rather
+        //    than Y, so the whistle lands somewhere unrelated to the scan.
+        let mut wrong_store = WHISTLE_TRAVEL;
+        wrong_store[17] = 0x8E; // STY abs -> STX abs
+        ok(&wrong_store);
+        assert_ne!(travel(&wrong_store, 0, &t), 2, "storing the wrong register must be visible");
     }
 }
 
@@ -1137,7 +1473,7 @@ mod whistle_reuse {
         let Some(rom) = vanilla() else { return };
         let mut patched = rom.clone();
         let grids = crate::randomize::rom_data::read_all_tile_grids(&patched);
-        apply(&mut patched, &grids);
+        apply(&mut patched, &grids, &[0, 1, 2, 3, 4, 5, 6, 7]);
         assert_eq!(
             patched.read_range(WHISTLE_CONSUME_OFFSET, 3),
             [0xEA, 0xEA, 0xEA],
