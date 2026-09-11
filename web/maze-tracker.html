@@ -33,6 +33,39 @@
 .tracker { max-width: 1400px; zoom: var(--tracker-scale, 1); }
 .tracker .note { font-size: 0.82rem; color: #7a7a96; }
 
+/* **The controls live OUTSIDE the card, and size against the VIEWPORT.**
+   The size slider used to sit inside the board's card. Zoom changes that card's
+   width and the card is centred, so every point inside it moves as you drag —
+   measured at 729px sideways across 60-150%. The thumb walks out from under the
+   pointer and the control is unusable.
+
+   Two things had to go, and the first alone was not enough:
+
+   - Counter-zooming the row fixed its SIZE and none of its MOVEMENT.
+   - Hoisting it above the card fixed movement only above 100%. Its `width:100%`
+     still resolved against a wrapper sized by its contents — the card — so
+     below 100% the bar shrank with the board and the slider slid left again
+     (840px wide at 60% against 1400px at 100%).
+
+   So the bar is a direct child of `body`, which this page lays out as a column
+   for exactly that reason. Its width is a percentage of the body content box,
+   which depends on the viewport and on nothing that zooms. The card may then be
+   any width at all without moving the control.
+
+   The card must NOT be capped by a wrapper either: `.tracker` gets its zoom
+   effect from `max-width` being a fixed length that zoom multiplies, and a
+   capped parent turns that back into a no-op. The cost of all this is that away
+   from 100% the bar no longer lines up with the card's edges. */
+body {
+    flex-direction: column;
+    justify-content: flex-start;
+    align-items: center;
+}
+.tracker-chrome {
+    width: 100%;
+    max-width: 1400px;
+    margin-bottom: 0.75rem;
+}
 .tracker-nav {
     display: flex;
     justify-content: space-between;
@@ -433,6 +466,20 @@
 </style>
 </head>
 <body>
+<div class="tracker-chrome">
+    <div class="tracker-nav">
+        <a href="index.html">&larr; Back to the randomizer</a>
+        <div class="tools">
+            <label class="scale" for="scale">
+                Size
+                <input id="scale" type="range" min="60" max="150" step="5" value="100">
+                <span id="scale-value">100%</span>
+            </label>
+            <button id="reset-btn" type="button">Reset</button>
+        </div>
+    </div>
+</div>
+
 <div class="page-wrapper">
 <div class="container tracker">
 
@@ -445,17 +492,6 @@
         </div>
     </header>
 
-    <div class="tracker-nav">
-        <a href="index.html">&larr; Back to the randomizer</a>
-        <div class="tools">
-            <label class="scale" for="scale">
-                Size
-                <input id="scale" type="range" min="60" max="150" step="5" value="100">
-                <span id="scale-value">100%</span>
-            </label>
-            <button id="reset-btn" type="button">Reset</button>
-        </div>
-    </div>
 
     <p class="note" style="margin-bottom:1rem">
         Fill this in as you explore. Worlds are numbered the way the game numbers
