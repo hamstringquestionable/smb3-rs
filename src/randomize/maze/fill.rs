@@ -423,15 +423,14 @@ pub(crate) fn assign_keys<R: Rng>(
     // takes cross-world locks from 51% to 76% and the World 8 bridge from 37%
     // to 73%, with no seed falling back at all.
     //
-    // The player is never stranded even so: the maze whistle is never consumed,
-    // survives a game over, and always has the spine's first world to return
-    // to. See `world_travel`.
+    // The player is never stranded even so: a game over returns them to the
+    // world the run started in, which is the world this fill walks from — so
+    // whatever was reachable still is. `world_travel::GAMEOVER_RETURN`.
     //
-    // **That makes the whistle a safety property, not a convenience.** If the
-    // mode ever ships without one, this reasoning lapses and game over has to
-    // return the player to the spine's first world instead of the one they died
-    // in — the note at `remove_whistles` in `randomizer::randomize_inner`
-    // carries the mechanism.
+    // **That used to be the whistle's job**, on the grounds that it is never
+    // consumed and always has the spine's first world to return to, which made
+    // it a safety property rather than a convenience. Game over carries the
+    // property now and the whistle is fast travel again.
     if report.built < report.locks {
         state.locks = builders;
         let mut fallback = swap_search(state, spine, knobs, rng);

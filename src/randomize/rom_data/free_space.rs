@@ -268,6 +268,12 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
         &["world_travel"],
         "world-maze: mark a world visited on its start tile + start-column key table (64 reserved, 48 used)",
     ),
+    fs(
+        0x1562C,
+        32,
+        &["world_travel"],
+        "world-maze: game over returns to the starting world (32 reserved, 16 used)",
+    ),
     fs(0x15DF0, 35, &["fix_canoe_softlock"], "canoe_fix: death respawn position save"),
     fs(0x15E13, 162, &["map_warp"], "2P Start+Select warp-to-partner routine"),
     fs(0x15EB5, 151, &["canoe_summon"], "A-on-dock call-the-boat routine + offset tables"),
@@ -458,6 +464,17 @@ pub(crate) const FS_MAZE_TRAVEL: usize = 0x17EFB;
 // target can read. The FREE_SPACE_ALLOCATIONS rows stay ungated -- the
 // accounting has to be complete on every target.
 pub(crate) const FS_MAZE_VISITED: usize = 0x155EC;
+
+/// World-maze: game over returns the player to the world a new game starts in.
+/// PRG010, CPU `$D61C` — the second half of the same 128-byte run
+/// [`FS_MAZE_VISITED`] opens, and PRG010 is the bank mapped at `$C000` through
+/// the whole game-over sequence (`PRG030_927E` calls `GameOver_Loop` there
+/// every frame of it).
+// Native-only, like every other world-maze routine constant: the mode is
+// gated to native, and CI's wasm clippy pass flags a constant nothing on that
+// target can read. The FREE_SPACE_ALLOCATIONS rows stay ungated -- the
+// accounting has to be complete on every target.
+pub(crate) const FS_MAZE_GAMEOVER: usize = 0x1562C;
 
 /// The flag key + seed stamp: `"S3R"`, a length byte, the flag-key bytes and
 /// the seed. **This is not new** — `randomizer::STAMP_OFFSET` has written here
@@ -655,9 +672,9 @@ pub(crate) const FS_FORTRESS_FX: usize = 0x147CD; // 537 reserved, 484 used
 // Was FS_WORLD_PERSIST_SWAP, the POC's two-world raw bank swap. Retired when
 // the packed path replaced it; the gap now holds PACK_WORLD.
 pub(crate) const FS_PACK_WORLD: usize = 0x155C4; // 40 reserved, 33 used
-// 0x155EC..0x1566C is unclaimed: the SELECT+START debug world-jump used to
-// reserve the first 48 bytes of it, and removing that merged the pair into one
-// 128-byte run.
+// 0x155EC..0x1566C is the 128-byte run the retired SELECT+START debug
+// world-jump left behind — `FS_MAZE_VISITED` takes the first 64 and
+// `FS_MAZE_GAMEOVER` the next 32, leaving 0x1564C..0x1566C unclaimed.
 pub(crate) const FS_RESTORE_ARRIVAL: usize = 0x1566C; // 64 reserved, 56 used
 
 // The portal arrival stash and the table it reads, together because the stash

@@ -1,13 +1,14 @@
 //! World-maze fast travel: the warp whistle becomes a hop between worlds the
 //! player has already been to.
 //!
-//! Two routines, and they are deliberately independent of everything else the
-//! maze installs:
+//! Three routines, and they are deliberately independent of everything else
+//! the maze installs:
 //!
 //! | routine | bank | fires |
 //! |---|---|---|
 //! | [`MARK_VISITED`] | PRG010 | every map frame, from `MO_NormalMoveEnter` |
 //! | [`WHISTLE_TRAVEL`] | PRG011 | once, at the whistle's world switch |
+//! | [`GAMEOVER_RETURN`] | PRG010 | once, at the game-over finalize |
 //!
 //! **A world counts as visited once the player stands on its start tile.**
 //!
@@ -31,19 +32,20 @@
 //! stronger, and the rule additionally rejected the mode's own formula by
 //! refusing to count foreign fortresses.
 //!
-//! So it is now the other way round: **the whistle is what makes a trapped
-//! start region survivable**, and that makes this module a safety property
-//! rather than a convenience. Game over, airship arrival and whistle travel all
-//! deposit the player on a start tile that may have no walk-out; what saves
-//! them is that the whistle is never consumed, survives a game over, and always
-//! has the spine's first world to return to.
+//! So it is now the other way round: **something has to make a trapped start
+//! region survivable.** Game over, airship arrival and whistle travel all
+//! deposit the player on a start tile that may have no walk-out.
 //!
-//! Two consequences worth keeping in view. A world only ever pad-hopped into
-//! the middle of is still correctly not whistle-able — the marker fires on the
-//! start tile, not on arrival. And if the mode is ever shipped without a
-//! whistle, game over has to return the player to the spine's first world
-//! instead of the one they died in; the note at `remove_whistles` in
-//! `randomizer::randomize_inner` carries the mechanism.
+//! That used to be the whistle's job alone, and this module was a safety
+//! property rather than a convenience on the strength of it. It is
+//! [`GAMEOVER_RETURN`]'s job now: a game over sends the player to the world a
+//! new game starts in, which is the one place the fill guarantees everything
+//! is still reachable from. The whistle is back to being fast travel — welcome,
+//! and no longer load-bearing.
+//!
+//! One consequence worth keeping in view: a world only ever pad-hopped into the
+//! middle of is still correctly not whistle-able — the marker fires on the
+//! start tile, not on arrival.
 //!
 //! # Why a position compare and not `Map_GetTile`
 //!
@@ -105,15 +107,16 @@ use super::maze_state::{VISITED_TABLE, VISITED_TABLE_LEN};
 #[cfg(test)]
 use super::rom_data::NMI_SAFE_MAX;
 use super::rom_data::{
-    FS_MAZE_TRAVEL, FS_MAZE_VISITED, Grid, MAP_Y_STARTS_OFF, PLAYER_CURRENT, WORLD_MAP_INIT_CPU,
-    WORLD_MAP_X, WORLD_MAP_XHI, WORLD_MAP_Y, WORLD_NUM, find_start, prg010_file_to_cpu,
-    prg011_file_to_cpu, prg030_file_to_cpu,
+    FS_MAZE_GAMEOVER, FS_MAZE_TRAVEL, FS_MAZE_VISITED, Grid, MAP_Y_STARTS_OFF, PLAYER_CURRENT,
+    WORLD_MAP_INIT_CPU, WORLD_MAP_X, WORLD_MAP_XHI, WORLD_MAP_Y, WORLD_NUM, find_start,
+    prg010_file_to_cpu, prg011_file_to_cpu, prg030_file_to_cpu,
 };
 
 // --- Addresses ----------------------------------------------------------
 
 const MARK_VISITED_CPU: u16 = prg010_file_to_cpu(FS_MAZE_VISITED);
 const WHISTLE_TRAVEL_CPU: u16 = prg011_file_to_cpu(FS_MAZE_TRAVEL);
+const GAMEOVER_RETURN_CPU: u16 = prg010_file_to_cpu(FS_MAZE_GAMEOVER);
 
 /// `Map_Y_Starts` — the per-world start row, `$838A`. Read at runtime rather
 /// than baked in, because `start_airship_swap` rewrites the table.
@@ -433,7 +436,114 @@ fn build_next_world(play_order: &[u8]) -> [u8; VISITED_TABLE_LEN] {
     next
 }
 
-// --- Part 3: the transition animations, faster --------------------------
+// --- Part 3: game over returns to the starting world --------------------
+
+/// `Map_GameOver_CursorY` (`$7DCB`) — the CONTINUE/END cursor, `$60` or `$68`.
+///
+/// **It is the only thing at the finalize that still remembers which the
+/// player chose**, and it remembers it in a form that needs no mask: the
+/// CONTINUE branch *zeroes* the byte on its way past (`$9300`), and the END
+/// branch skips that store and leaves `$68` standing. So a plain `BNE` at the
+/// finalize means "somebody gave up", which in two-player is a partner who is
+/// still mid-run and must not be dragged anywhere.
+const MAP_GAMEOVER_CURSOR_Y: u16 = 0x7DCB;
+
+/// `JMP PRG030_879B` at the end of `PRG030_933E` (CPU `$9349` = file
+/// 0x3D359) — three bytes, one whole instruction, and the single point every
+/// concluded game over passes through on its way back to the map loop.
+///
+/// **The finalize, not the animation.** `GameOver_TwirlToStart` moves the
+/// player home by a per-frame delta with a hardcoded column-2 skid test, so it
+/// cannot be retargeted — `start_airship_swap` learned that the expensive way
+/// and settled on stamping the answer at the finalize instead (see
+/// [`super::start_airship_swap`]). This is the same lesson one step further
+/// out: let the twirl play out in the world the player died in, then change
+/// worlds once it is over.
+///
+/// **It has to be after `PRG030_9314`.** That loop is the game-over completion
+/// penalty, and it ANDs the *live* array — so the wipe has to land while the
+/// world being left is still the live one, before `$84A0` packs it away.
+const GAMEOVER_HOOK_OFFSET: usize = 0x3D359;
+#[cfg(test)]
+const GAMEOVER_HOOK_LEN: usize = 3;
+
+/// Vanilla bytes at [`GAMEOVER_HOOK_OFFSET`], and the address they name — the
+/// player-switch at the top of the map loop, which the quit path still needs.
+#[cfg(test)]
+#[rustfmt::skip]
+const GAMEOVER_HOOK_VANILLA: [u8; GAMEOVER_HOOK_LEN] = [
+    0x4C, 0x9B, 0x87,       // JMP PRG030_879B
+];
+const GAMEOVER_RESUME_CPU: u16 = 0x879B;
+
+/// Offset of the starting-world operand inside [`GAMEOVER_RETURN`].
+const GAMEOVER_WORLD_OFF: usize = 6;
+
+/// Continue after a game over, in the world a new game starts in.
+///
+/// 32 reserved, 16 used.
+///
+/// Vanilla returns the player to the start tile of the world they died in,
+/// which is the right answer for a game that only ever moves forwards. The
+/// maze is a graph: the world you died in can be one a telepad dropped you
+/// into, with a start region whose only way out is a gate you have no key for.
+/// Sending the player to the *global* start instead is the one destination
+/// that is always live — `maze::fill::assign_keys` hands every gate a key
+/// already reachable from there, and map reachability is monotone, so
+/// everything that was ever reachable still is.
+///
+/// **That discharges the whistle's safety role.** The fill dropped the
+/// start-region rule on the grounds that the whistle is never consumed and can
+/// always take the player back to the spine's first world; the note there said
+/// a mode shipped without a whistle would need game over to do this instead.
+/// It does it now either way, and the whistle is back to being a convenience.
+///
+/// # Why a `JMP $84A0` is the whole mechanism
+///
+/// Changing `World_Num` alone would leave the previous world's map on screen
+/// and its completions in `$7D00`: Continue does *not* re-init the map — it
+/// rejoins the loop at `PRG030_879B` — so nothing would pack the outgoing
+/// world or expand the incoming one. `$84A0` is the canonical world change and
+/// carries all of it: `completion_bits`' `World_Num != LIVE_WORLD` hooks pack
+/// and expand, `Map_Init` (and `start_airship_swap`'s helper inside it) stamps
+/// the destination's start into all ten position variables and both camera
+/// backups, `World_8_Dark` is recomputed from the new world, and the map is
+/// redrawn from the restored bits.
+///
+/// Dying in the starting world takes the same path. The hooks compare equal
+/// and do nothing, so the live array — penalty already applied — simply stays
+/// live, and the player gets the "WORLD 1" card that every other game over
+/// gets. Two bytes cheaper than a special case, and one path to playtest.
+///
+/// # No stack reset, unlike the other two
+///
+/// [`WHISTLE_TRAVEL`] and `world_persist`'s `PAD_ENTER` both `LDX #$FF / TXS`
+/// before the jump because they fire frames deep inside `Map_DoOperation`.
+/// This one does not need it: vanilla's own airship transition does
+/// `INC World_Num / JMP $84A0` (`world_order::WORLD_INC_OFFSET`) from this
+/// very frame — the level-exit chain the game-over path is a branch of — so
+/// the stack is already at the depth `$84A0` expects.
+///
+/// `ARRIVAL_FLAG` needs no clearing for the same kind of reason: every pass
+/// through `$84A0` ends in `RESTORE_ARRIVAL`, which consumes the flag, and a
+/// game over is downstream of at least one.
+#[rustfmt::skip]
+const GAMEOVER_RETURN: [u8; 16] = [
+    0xAD, MAP_GAMEOVER_CURSOR_Y as u8,
+          (MAP_GAMEOVER_CURSOR_Y >> 8) as u8,               //  0: LDA Map_GameOver_CursorY
+    0xD0, 0x08,                                             //  3: BNE +8 -> quit
+    0xA9, 0x00,                                             //  5: LDA #starting world (`apply`)
+    0x8D, WORLD_NUM as u8, (WORLD_NUM >> 8) as u8,          //  7: STA World_Num
+    0x4C, WORLD_MAP_INIT_CPU as u8,
+          (WORLD_MAP_INIT_CPU >> 8) as u8,                  // 10: JMP $84A0   ; never returns
+
+    // ----- quit (13): the displaced instruction, for a two-player partner
+    // ----- who is still playing -----
+    0x4C, GAMEOVER_RESUME_CPU as u8,
+          (GAMEOVER_RESUME_CPU >> 8) as u8,                 // 13: JMP PRG030_879B
+];
+
+// --- Part 4: the transition animations, faster --------------------------
 
 /// `Map_WW_DeltaX` (PRG011, CPU `$A2F6` = file 0x16306) — how far the warp
 /// wind moves each frame, one signed byte per direction of travel.
@@ -595,6 +705,18 @@ pub(crate) fn apply(rom: &mut Rom, grids: &[Grid], play_order: &[u8]) {
     // every entry rather than only the whistle's. See `INTRO_DWELL_OFFSET`.
     rom.write_byte(INTRO_DWELL_OFFSET, INTRO_DWELL_FAST);
 
+    // Game over goes home rather than back to where it happened. The starting
+    // world is `play_order`'s first entry, which is the byte `world_order`
+    // baked into the title screen's own `LDA #$00` — so this and a new game
+    // agree on where "WORLD 1" is by construction.
+    let mut gameover = GAMEOVER_RETURN;
+    gameover[GAMEOVER_WORLD_OFF] = play_order.first().copied().unwrap_or(0);
+    rom.write_range(FS_MAZE_GAMEOVER, &gameover);
+    rom.write_range(
+        GAMEOVER_HOOK_OFFSET,
+        &[0x4C, GAMEOVER_RETURN_CPU as u8, (GAMEOVER_RETURN_CPU >> 8) as u8],
+    );
+
     rom.pop_tag();
 }
 
@@ -733,6 +855,174 @@ mod asm_checks {
             WIND_DELTA_FAST,
             "the warp wind is still travelling at vanilla speed"
         );
+    }
+
+    #[test]
+    fn gameover_return_is_well_formed() {
+        asm::check(&GAMEOVER_RETURN)
+            .allocation(FS_MAZE_GAMEOVER)
+            .origin(GAMEOVER_RETURN_CPU)
+            // It touches no zero page at all: the cursor, `World_Num` and both
+            // jump targets are absolute.
+            .zero_page(NMI_SAFE_MAX, &[])
+            .assert_ok();
+    }
+
+    /// The game-over hook displaces one whole instruction, and the routine
+    /// replays it on the path that must stay vanilla.
+    #[test]
+    fn gameover_hook_displaces_one_whole_instruction() {
+        let Some(rom) = load_vanilla() else { return };
+        assert_eq!(
+            rom.read_range(GAMEOVER_HOOK_OFFSET, GAMEOVER_HOOK_LEN),
+            GAMEOVER_HOOK_VANILLA,
+            "PRG030_933E's return to the map loop has moved, or something else hooked it"
+        );
+        assert_eq!(
+            GAMEOVER_RETURN[13..16],
+            GAMEOVER_HOOK_VANILLA,
+            "the quit path must be exactly what the hook overwrote"
+        );
+
+        let jmp = [0x4C, GAMEOVER_RETURN_CPU as u8, (GAMEOVER_RETURN_CPU >> 8) as u8];
+        asm::check(&GAMEOVER_RETURN)
+            .allocation(FS_MAZE_GAMEOVER)
+            .origin(GAMEOVER_RETURN_CPU)
+            .zero_page(NMI_SAFE_MAX, &[])
+            .hook(&GAMEOVER_HOOK_VANILLA, 0, &jmp)
+            .assert_ok();
+    }
+
+    /// The cursor the return reads really is the CONTINUE/END cursor, and the
+    /// CONTINUE branch really does zero it — which is what lets a bare `BNE`
+    /// stand in for `AND #$08`.
+    ///
+    /// Both facts live in `PRG030_92B6`, six bytes apart: `LDA $7DCB / AND
+    /// #$08 / BNE +$65` decides, and the `STA $7DCB` inside the CONTINUE
+    /// branch is the store the END branch jumps over.
+    #[test]
+    fn the_continue_branch_zeroes_the_cursor() {
+        let Some(rom) = load_vanilla() else { return };
+        // CPU $92BE: LDA Map_GameOver_CursorY / AND #$08 / BNE PRG030_932A
+        assert_eq!(
+            rom.read_range(0x3D2CE, 7),
+            [
+                0xAD,
+                MAP_GAMEOVER_CURSOR_Y as u8,
+                (MAP_GAMEOVER_CURSOR_Y >> 8) as u8,
+                0x29,
+                0x08,
+                0xD0,
+                0x65
+            ],
+            "the game-over finalize no longer branches on Map_GameOver_CursorY"
+        );
+        // CPU $92E8, inside the CONTINUE branch and short of that BNE's
+        // target: LDA #$00, then three stores, the third of them the cursor.
+        assert_eq!(
+            rom.read_range(0x3D2F8, 11),
+            [
+                0xA9,
+                0x00, // LDA #$00
+                0x9D,
+                0x3E,
+                0x07, // STA Map_Player_SkidBack,X
+                0x8D,
+                0x28,
+                0x07, // STA World_EnterState
+                0x8D,
+                MAP_GAMEOVER_CURSOR_Y as u8,
+                (MAP_GAMEOVER_CURSOR_Y >> 8) as u8, // STA Map_GameOver_CursorY
+            ],
+            "CONTINUE no longer clears the cursor, so a bare BNE cannot read the choice"
+        );
+    }
+
+    /// The destination is the world a new game starts in — the operand
+    /// `world_order` bakes into the title screen's own `LDA #$00`. If those two
+    /// ever disagree, "back to World 1" means a world the player has never
+    /// numbered 1.
+    #[test]
+    fn the_destination_is_where_a_new_game_starts() {
+        for seed in [1_u64, 7, 99] {
+            let Some(mut rom) = load_vanilla() else { return };
+            let opts = crate::randomizer::Options {
+                world_maze: true,
+                ..crate::randomizer::Options::default()
+            };
+            crate::randomizer::randomize(&mut rom, seed, &opts);
+            assert_eq!(
+                rom.read_byte(FS_MAZE_GAMEOVER + GAMEOVER_WORLD_OFF),
+                rom.read_byte(crate::randomize::world_order::WORLD_INIT_OPERAND),
+                "seed {seed}: game over returns to a different world than a new game starts in"
+            );
+            assert_eq!(
+                rom.read_range(GAMEOVER_HOOK_OFFSET, GAMEOVER_HOOK_LEN),
+                [0x4C, GAMEOVER_RETURN_CPU as u8, (GAMEOVER_RETURN_CPU >> 8) as u8],
+                "seed {seed}: the game-over hook is not installed"
+            );
+        }
+    }
+
+    /// **Run it.** [`GAMEOVER_RETURN`] is one of the few routines here that
+    /// can be executed whole: it calls nothing and reads three absolute bytes.
+    /// `asm::check` proves the branch lands on an instruction boundary — it
+    /// cannot tell a `BNE` from a `BEQ`, and swapping those two is the whole
+    /// bug (every game over would strand the player, or none would move).
+    #[test]
+    fn the_return_moves_the_player_only_on_continue() {
+        // $60 is CONTINUE and $68 is END, but the finalize zeroes the byte on
+        // the CONTINUE branch, so the routine sees 0 or $68. Both raw cursor
+        // values are here too: either one reaching this code means somebody
+        // reached the finalize without going through the branch, and the safe
+        // reading of that is "do not move the player".
+        for (cursor, moves) in [(0x00_u8, true), (0x68, false), (0x60, false)] {
+            for world in [0_u8, 3, 7] {
+                let mut code = GAMEOVER_RETURN;
+                code[GAMEOVER_WORLD_OFF] = world;
+                let mut mem = Memory::new();
+                mem.set_bytes(GAMEOVER_RETURN_CPU, &code);
+                mem.set_byte(MAP_GAMEOVER_CURSOR_Y, cursor);
+                // The world the player died in — poison, so "unchanged" shows.
+                mem.set_byte(WORLD_NUM, 0xAA);
+                let mut cpu = CPU::new(mem, Ricoh2a03);
+                cpu.registers.stack_pointer = StackPointer(0xFD);
+                cpu.registers.program_counter = GAMEOVER_RETURN_CPU;
+
+                let mut landed = None;
+                for _ in 0..100 {
+                    match cpu.registers.program_counter {
+                        WORLD_MAP_INIT_CPU | GAMEOVER_RESUME_CPU => {
+                            landed = Some(cpu.registers.program_counter);
+                            break;
+                        }
+                        _ => {
+                            cpu.single_step();
+                        }
+                    }
+                }
+                let landed = landed.expect("GAMEOVER_RETURN ran away");
+
+                if moves {
+                    assert_eq!(landed, WORLD_MAP_INIT_CPU, "cursor {cursor:#04X} did not re-init");
+                    assert_eq!(
+                        cpu.memory.get_byte(WORLD_NUM),
+                        world,
+                        "cursor {cursor:#04X}: the destination world was not stored"
+                    );
+                } else {
+                    assert_eq!(
+                        landed, GAMEOVER_RESUME_CPU,
+                        "cursor {cursor:#04X} moved a player who did not continue"
+                    );
+                    assert_eq!(
+                        cpu.memory.get_byte(WORLD_NUM),
+                        0xAA,
+                        "cursor {cursor:#04X}: World_Num must be left alone"
+                    );
+                }
+            }
+        }
     }
 
     /// The internal-index play order, which reproduces the placeholder table
