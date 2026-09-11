@@ -3246,6 +3246,75 @@ of vanilla's four-per-world allocation, not a rule.
 `Map_WasInPipeway` = `$7973`, `MO_NormalMoveEnter` (map operation `$D`, the
 normal standing-on-the-map state) at CPU `$CDCA` = file `0x14DDA`.
 
+### World-entry and warp-whistle animation timing (PRG010 / PRG011)
+
+*(Researched 2026-09-11. Frame counts derived from the per-frame deltas in the
+disassembly and confirmed against the ROM bytes.)*
+
+**Entering a world is three phases, and only two of them move.** `Map_Operation`
+`$00` = `MO_WorldXIntro` (PRG010, CPU `$C4FA`) dispatches on `World_EnterState`:
+
+| `World_EnterState` | Routine | Frames | What |
+|---|---|---|---|
+| 0 | `WorldIntro_BoxTimer` | **128** | the "WORLD n" card, motionless |
+| 1 | `WorldIntro_EraseAndStars` | ~24 | erase the card a strip a frame, stars open out |
+| 2 | `WorldIntro_CompleteStars` | ~24 | stars close onto the player |
+
+State 0 is a pure dwell: `Map_Intro_Tick` (`$0711`) is seeded `$80` and
+decremented once a frame. The operand lives at CPU `$C50F` = file `0x1451F`, and
+that single byte is the whole dial.
+
+**`Map_Intro_Tick` is a shared scratch counter, so patch the card's own
+self-init and not the variable's writers.** At least five map routines seed it
+with different values for unrelated purposes (`GameOver_Complete` `$10`,
+`GameOver_Timeout` `$10`, others 8 / 14 / `$20`). Two further sites seed it `$80`
+— `WWFX_WarpLanding`'s island init (PRG011) and a level-return path around
+PRG010 `$CD53`. The card's own seed is guarded by `LDA Map_Intro_Tick / BNE`,
+so a caller that pre-seeds keeps its value:
+
+```
+$C509: AD 11 07    LDA Map_Intro_Tick
+$C50C: D0 05       BNE $C513          ; already running -> skip the re-seed
+$C50E: A9 80       LDA #$80           ; <- the dial, operand at $C50F
+$C511: 8D 11 07    STA Map_Intro_Tick
+$C514: CE 11 07    DEC Map_Intro_Tick
+```
+
+**Every normal world entry re-seeds it here**, because `$84A0`'s init block
+(PRG030, just before `PRG030_857E`) zeroes both `Map_Intro_Tick` and
+`World_EnterState`. Airship progression, telepad arrival and whistle travel all
+route through `$84A0`, so all three get the card's own value.
+
+The star sweep is `Map_StarsOutRad` stepping `+4` per frame until `>= $5F`, then
+`-4` per frame to zero (`MapStarsIntro_Do`, PRG011). Both the step and
+the `SUB #$04 / BNE` termination assume that stride — it is not a free dial.
+
+**The warp whistle's own sequence**, for comparison:
+
+| State (`Map_WarpWind_FX` `$8B`) | Routine | Frames |
+|---|---|---|
+| 1 | `WWFX_WarpWhistleFlash` | 32 (`Map_WWOrHT_Cnt` `$89` = `$20`) |
+| 2 | `WWFX_WarpDoWind` | **120** — the gust crossing the screen |
+
+| Table | CPU | File | Vanilla |
+|---|---|---|---|
+| `Map_WW_StartX` | `$A2F4` | `0x16304` | `00 F0` |
+| `Map_WW_DeltaX` | `$A2F6` | `0x16306` | `02 FE` |
+| `Map_WW_TargetX` | `$A2F8` | `0x16308` | `F0 00` |
+
+`Map_WW_DeltaX` is the speed dial, and it is read only by `WWFX_WarpDoWind` and
+`WWFX_WarpLanding` — both whistle states. **A replacement delta must divide
+16**: `WWFX_WarpDoWind` erases the player's map sprite on an exact
+`CMP` of the wind's X against `World_Map_X - Horz_Scroll`, and map positions are
+always multiples of 16, so a delta of 6 would step straight past the player and
+leave them drawn while the gust blew through. It should divide 240 too, or the
+target-edge compare that ends the state never fires.
+
+The 32-frame flash is **not** whistle-private: `WarpWhistle_Flash` (PRG011
+`$A32B`; its `LDA #$20` sits at `$A32F`, operand at `$A330` = file `0x16340`) is
+also the hand trap's `HT_Flash`. The wind sprite alternates frames on `Map_WWOrHT_Cnt AND
+#$10`, i.e. every 16 ticks, and that draw site is shared with the hand trap too.
+
 ### Free SRAM
 
 `$6000-$7FFF` is MMC3 work RAM. Beyond the named variables, the disassembly
