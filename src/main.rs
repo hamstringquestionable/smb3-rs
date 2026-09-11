@@ -205,8 +205,10 @@ struct Cli {
     #[arg(long)]
     world_order: bool,
 
-    /// Number of worlds before Dark Land (1-7, default 7; requires --world-order)
-    #[arg(long, default_value_t = 7, value_parser = clap::value_parser!(u8).range(1..=7))]
+    /// Number of worlds before Dark Land (0-7, default 7; 0 starts the game in
+    /// Dark Land itself. Requires --world-order; ignored under --world-maze,
+    /// which always uses all eight worlds)
+    #[arg(long, default_value_t = 7, value_parser = clap::value_parser!(u8).range(0..=7))]
     world_count: u8,
 
     /// World maze: the eight maps become one Metroidvania, linked by telepads,
@@ -712,8 +714,14 @@ fn print_summary(options: &Options, seed: u64, output_path: &std::path::Path) {
     if options.world_maze {
         eprintln!("  World maze: on ({} wand(s) to open the castle)", options.maze_wands);
     }
-    if options.world_order && options.world_count < 7 {
-        eprintln!("  World count: {}", options.world_count);
+    // Silent under --world-maze: the mode pins the spine to all eight worlds, so
+    // printing the player's value would report a setting the run ignores.
+    if options.world_order && !options.world_maze && options.world_count < 7 {
+        if options.world_count == 0 {
+            eprintln!("  World count: 0 (the game starts in Dark Land)");
+        } else {
+            eprintln!("  World count: {}", options.world_count);
+        }
     }
     eprintln!("  Big ? Blocks: {}", if options.big_q_blocks { "on" } else { "off" });
     eprintln!(

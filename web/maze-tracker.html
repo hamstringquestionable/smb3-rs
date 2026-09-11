@@ -21,7 +21,16 @@
    Sized to be used one-handed with a controller in the other: every control is
    a real tap target and every chip is readable from arm's length, because this
    gets glanced at mid-level rather than studied. */
-.tracker { max-width: 1400px; }
+/* The size slider zooms the whole board, the way browser zoom would — so the
+   cards, their text and the chips all grow together.
+
+   It has to sit on this element rather than on the grid inside it. `zoom` scales
+   an element's *contents* while its own box still fills the space it was given,
+   so zooming a grid whose columns are `1fr` changes nothing at all: each column
+   is a third of the same width, measured in a coordinate space that shrank by
+   exactly the factor it is then drawn at. Zooming the container instead means
+   `max-width` is what gets scaled, which is a real size change. */
+.tracker { max-width: 1400px; zoom: var(--tracker-scale, 1); }
 .tracker .note { font-size: 0.82rem; color: #7a7a96; }
 
 .tracker-nav {
@@ -34,7 +43,25 @@
 }
 .tracker-nav a { color: #5c94fc; text-decoration: none; font-size: 0.95rem; }
 .tracker-nav a:hover { text-decoration: underline; }
-.tracker-nav .tools { display: flex; gap: 0.5rem; }
+.tracker-nav .tools { display: flex; gap: 0.5rem; align-items: center; }
+
+/* Board size. A tracker is something you sit and stare at next to an emulator,
+   so how much of the screen it wants is the player's call, not the layout's. */
+.tracker-nav .scale {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: #9a9ab0;
+    font-size: 0.85rem;
+}
+.tracker-nav .scale input { width: 8rem; accent-color: #5c94fc; cursor: pointer; }
+/* Fixed width on the readout: it changes as you drag, and without one the
+   slider shuffles sideways under the cursor every time a digit is added. */
+.tracker-nav .scale #scale-value {
+    width: 4ch;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
 .tracker-nav button {
     background: #1c1c38;
     color: #9a9ab0;
@@ -153,10 +180,16 @@
 .pad-links path.same-world { stroke-dasharray: 5 5; opacity: 0.55; }
 .pad-links circle { fill: #a05cff; opacity: 0.55; }
 
-/* --- World cards --- */
+/* --- World cards ---
+   Three fixed columns, so the eight cards always land 1-2-3 / 4-5-6 / 7 + Dark
+   Land. `auto-fill` decided the count from the viewport instead, which moved
+   Dark Land around as the window changed and stranded it on a row of its own at
+   most widths. Fixed columns also keep the arrangement steady under the size
+   slider, which with `auto-fill` would have bought extra columns instead of
+   bigger cards. */
 .worlds {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 1rem;
 }
 
@@ -169,9 +202,24 @@
     flex-direction: column;
     gap: 0.7rem;
 }
-/* Dark Land holds four fortresses and is where the run ends, so it gets the
-   whole row rather than being squeezed into a column with the rest. */
-.wcard.dark-land { grid-column: 1 / -1; }
+/* Dark Land holds four fortresses, so it wants more width than one column —
+   but it is still the eighth world, and putting it on its own row read as a
+   separate thing rather than the end of the run. Two columns beside World 7
+   fills the last row exactly. */
+.wcard.dark-land { grid-column: span 2; }
+
+/* Narrower windows. These come after the rule above on purpose: a media query
+   adds no specificity, so an override written before it would simply lose. */
+@media (max-width: 1100px) {
+    .worlds { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    /* Two columns already leave one free cell beside World 7, so Dark Land
+       takes it as an ordinary card rather than spanning onto a row of its own. */
+    .wcard.dark-land { grid-column: auto; }
+}
+
+@media (max-width: 760px) {
+    .worlds { grid-template-columns: minmax(0, 1fr); }
+}
 .wcard.droppable { outline: 3px dashed #f0c040; outline-offset: 3px; }
 .wcard.dragover { background: #1e1e3e; }
 
@@ -400,6 +448,11 @@
     <div class="tracker-nav">
         <a href="index.html">&larr; Back to the randomizer</a>
         <div class="tools">
+            <label class="scale" for="scale">
+                Size
+                <input id="scale" type="range" min="60" max="150" step="5" value="100">
+                <span id="scale-value">100%</span>
+            </label>
             <button id="reset-btn" type="button">Reset</button>
         </div>
     </div>
@@ -570,6 +623,30 @@ function stampIds() {
 
 function save() {
 	try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch { /* private mode */ }
+}
+
+// Board size, stored apart from the board. It is a view preference rather than
+// anything the player found, so Reset must not take it away and a shape check
+// on the tracker's own entry must never be able to throw it out.
+const SCALE_KEY = "smb3r-maze-tracker-scale";
+
+function loadScale() {
+	try {
+		const raw = Number(localStorage.getItem(SCALE_KEY));
+		// Clamped, not trusted: a hand-edited entry that scaled the grid to
+		// nothing would leave a page with no visible way back.
+		return Number.isFinite(raw) && raw >= 60 && raw <= 150 ? raw : 100;
+	} catch { return 100; }
+}
+
+function applyScale(percent) {
+	document.documentElement.style.setProperty("--tracker-scale", String(percent / 100));
+	if (scaleValueEl) scaleValueEl.textContent = `${percent}%`;
+	try { localStorage.setItem(SCALE_KEY, String(percent)); } catch { /* private mode */ }
+	// The cards just changed size, so the curves between them are measuring a
+	// layout that no longer exists. The ResizeObserver catches this too; calling
+	// it here makes the redraw immediate rather than a frame behind the drag.
+	drawPadLinks();
 }
 
 function load() {
@@ -862,6 +939,8 @@ const aimingText = document.getElementById("aiming-text");
 const countsEl = document.getElementById("counts");
 const linksEl = document.getElementById("pad-links");
 const problemsEl = document.getElementById("problems");
+const scaleEl = document.getElementById("scale");
+const scaleValueEl = document.getElementById("scale-value");
 
 function el(tag, attrs = {}, ...children) {
 	const node = document.createElement(tag);
@@ -928,11 +1007,22 @@ function drawPadLinks() {
 	const base = worldsEl.getBoundingClientRect();
 	if (!base.width) return;
 
+	// The size slider zooms the whole tracker, this overlay included. A zoomed
+	// element measures *out* in screen pixels and draws *in* its own unscaled
+	// ones — `getBoundingClientRect` reports the scaled box while `offsetWidth`
+	// reports the layout box — so every distance taken from a rect has to come
+	// back down by the same factor or the curves drift off their chips by
+	// exactly the amount the board was scaled by.
+	const zoom = worldsEl.offsetWidth ? base.width / worldsEl.offsetWidth : 1;
+
 	const centreOf = padId => {
 		const node = worldsEl.querySelector(`[data-pad="${padId}"]`);
 		if (!node) return null;
 		const r = node.getBoundingClientRect();
-		return { x: r.left - base.left + r.width / 2, y: r.top - base.top + r.height / 2 };
+		return {
+			x: (r.left - base.left + r.width / 2) / zoom,
+			y: (r.top - base.top + r.height / 2) / zoom,
+		};
 	};
 
 	const drawn = new Set();
@@ -1387,6 +1477,16 @@ document.getElementById("reset-btn").addEventListener("click", () => {
 	aiming = null;
 	render();
 });
+
+if (scaleEl) {
+	// Applied, not just shown: the stored size has to reach the CSS variable on
+	// load, or the slider comes back where the player left it while the board
+	// renders at 100%.
+	const percent = loadScale();
+	scaleEl.value = String(percent);
+	applyScale(percent);
+	scaleEl.addEventListener("input", () => applyScale(Number(scaleEl.value)));
+}
 
 // The curves are measured from the laid-out grid, so anything that reflows it
 // has to redraw them. Guarded because none of this exists headlessly.

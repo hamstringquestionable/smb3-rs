@@ -190,9 +190,22 @@ fn randomize_inner(
     // chains the wand counter through the routine it installs, so it cannot run
     // without it. Forced here rather than only in the CLI, because a flag key
     // can name `world_maze` with `world_order` off.
+    //
+    // **The maze pins the spine to all eight worlds.** `world_count` means two
+    // different things in the two modes — worlds before Dark Land in standard,
+    // spine length in the maze — and the web form now greys the control out
+    // under the mode and sends its default instead. Pinning it here is what
+    // makes that true of a CLI run and a pasted flag key as well, rather than
+    // leaving the page describing one game and the ROM playing another. The key
+    // still carries whatever the player chose; see `flag_key`.
+    //
+    // Free of the seed: `world_order::randomize` shuffles all seven worlds and
+    // then takes a prefix, so the count selects from the deal without changing a
+    // single RNG draw.
+    let world_count = if options.world_maze { 7 } else { options.world_count };
     let credits_progression = if options.world_order || options.world_maze {
         rom.set_tag("world_order");
-        Some(randomize::world_order::randomize(rom, &mut rng, options.world_count))
+        Some(randomize::world_order::randomize(rom, &mut rng, world_count))
     } else {
         None
     };

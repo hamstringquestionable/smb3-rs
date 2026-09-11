@@ -554,6 +554,37 @@ input[type="radio"] {
     margin-left: 0.25rem;
 }
 
+/* Mode badge: "Maze only", "Forced on by World Maze". Sits in the row it talks
+   about rather than in a note at the top of the section, because the thing a
+   player needs to know is why *this* control is not theirs to set. Amber, not
+   the flavor pill's green — it is a warning about the control, not a joke about
+   the option. `margin-left: auto` pushes it to the pill group's left edge, so a
+   column of badges lines up down the form. */
+.opt-badge {
+    font-size: 0.6rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #0c0c1e;
+    background: #e8a33d;
+    margin-left: auto;
+    margin-right: 0.5rem;
+    padding: 0.1rem 0.4rem;
+    border-radius: 3px;
+    white-space: nowrap;
+}
+
+/* A row the mode (or its host option) has made inert. Until this rule, greying
+   a row only stopped its pills responding to clicks — nothing on screen said
+   why, which reads as a broken page rather than a rule. The pills themselves
+   keep their colors so a forced value is still legible at a glance. */
+.select-label.disabled {
+    opacity: 0.5;
+}
+
+.select-label.disabled .pill-group label {
+    cursor: default;
+}
+
 .option-flavor {
     font-size: 0.65rem;
     color: #0c0c1e;

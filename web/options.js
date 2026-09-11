@@ -6,6 +6,7 @@
 //   - Live flag-key updates (universal change listener)
 //   - Sub-option visibility (enabledWhen — a value, or a list meaning "any of")
 //   - Pills that ride on another entry's group (pillOf)
+//   - Mode-specific applicability (mode / forcedInMaze — see below)
 //
 // Adding a new option = one schema entry. The renderer, serializer,
 // applier, and listener pick it up automatically. A load-time parity
@@ -102,14 +103,19 @@ const OFF_DOUBLE_WILD = [
 ];
 
 // Categories rendered as <fieldset> sections, in order.
+//
+// **World Maze comes first because it is a mode, not a flag.** It decides what
+// several of the sections below even mean — a row further down can be greyed,
+// badged or replaced outright by it — and a switch that reaches that far has to
+// be read before the options it governs, not found underneath them.
 export const GROUPS = [
-	{ id: "map", label: "Map" },
 	{ id: "maze", label: "World Maze",
-		note: "Only affects World Maze. With the mode off these are ignored, and they leave your flag key alone.",
+		note: "The mode switch, and the settings only it uses. Options elsewhere that the maze takes over or has no use for say so in their own row.",
 		// Relative on purpose: the /beta/ deploy is a copy of this whole folder,
 		// so the beta page links to the beta tracker and the root page to the
 		// root one, with no build-time knowledge of which it is.
 		link: { href: "maze-tracker.html", label: "Open the World Maze tracker →" } },
+	{ id: "map", label: "Map" },
 	{ id: "enemies", label: "Enemies" },
 	{ id: "bosses", label: "Bosses" },
 	{ id: "items", label: "Items & Pickups" },
@@ -310,13 +316,19 @@ export const SCHEMA = [
 	{ id: "world_order", type: "bool", default: false,
 		label: "World Order",
 		tip: "Shuffle the order you progress through Worlds 1-8",
-		group: "map", inFlagKey: true },
+		group: "map", inFlagKey: true,
+		// The maze reads this table as its airship spine, so it cannot run
+		// without it — see `randomizer::randomize_inner`.
+		forcedInMaze: true },
+	// Standard-only: the maze uses all eight worlds, so it pins this to 7 (see
+	// `randomizer::randomize_inner`) and the row greys out under the mode.
 	{ id: "world_count", type: "tri", numeric: true,
-		options: [1,2,3,4,5,6,7].map(n => ({ value: n, label: String(n) })),
+		options: [0,1,2,3,4,5,6,7].map(n => ({ value: n, label: String(n) })),
 		default: 7,
 		label: "World Count",
-		tip: "Number of worlds before Dark Land (fewer = shorter game)",
+		tip: "Number of worlds before Dark Land (fewer = shorter game). 0 starts you in Dark Land — it becomes the whole game, and there is no airship before Bowser's castle.",
 		group: "map", inFlagKey: true,
+		mode: "standard",
 		enabledWhen: { world_order: true } },
 
 	// --- World Maze ---
@@ -324,7 +336,7 @@ export const SCHEMA = [
 	// what the group note says.
 	{ id: "world_maze", type: "bool", default: false,
 		label: "World Maze",
-		tip: "The eight maps become one big maze. Warp pads link them, a fortress can open a lock in another world, and your progress in a world is still there when you come back. Turns World Order on.",
+		tip: "The eight maps become one big maze. Warp pads link them, a fortress can open a lock in another world, and your progress in a world is still there when you come back. Turns World Order on, and uses all eight worlds.",
 		group: "maze", inFlagKey: true },
 	{ id: "maze_wands", type: "tri", numeric: true,
 		options: [0,1,2,3,4,5,6,7].map(n => ({ value: n, label: String(n) })),
@@ -332,12 +344,12 @@ export const SCHEMA = [
 		label: "Wands To Enter",
 		tip: "Wands needed before Bowser's castle will open. Fewer is a shorter game; 0 lets you walk straight in if you find a way there.",
 		group: "maze", inFlagKey: true,
-		enabledWhen: { world_maze: true } },
+		mode: "maze" },
 	{ id: "hints", type: "tri", options: OFF_SOME_FULL, default: "some",
 		label: "Hints",
 		tip: "How much the map gives away about which fortress opens which lock. Some marks a fortress with the design for where its lock is, and tints a lock whose key is in another world. Full also stamps that lock with the world number to go to.",
 		group: "maze", inFlagKey: true,
-		enabledWhen: { world_maze: true } },
+		mode: "maze" },
 
 	// --- Enemies ---
 	{ id: "ground", type: "tri", options: TRI, default: "shuffle",
@@ -497,7 +509,12 @@ export const SCHEMA = [
 		label: "Remove Warp Whistles",
 		tip: "Remove warp whistles so all worlds must be played",
 		icon: WHISTLE,
-		group: "items", inFlagKey: true },
+		group: "items", inFlagKey: true,
+		// A vanilla whistle warps to a world number, which the maze has no use
+		// for — it would be an item that takes a slot and does nothing. The
+		// maze's own whistle is a different thing entirely, and it is not from
+		// the item pool this removes from.
+		forcedInMaze: true },
 	{ id: "hammer_breaks_locks", type: "tri", options: ON_OFF_MAYBE, default: "off",
 		label: "Hammer Breaks Locks",
 		tip: "Hammer item also breaks fortress locks on the overworld map. Maybe: the seed secretly decides on or off, so you won't know until you play.",
@@ -529,7 +546,10 @@ export const SCHEMA = [
 		label: "No Game Over Penalty",
 		tip: "Game Over no longer wipes your inventory, map progress, or cards — continue picks up where you left off.",
 		credit: { name: "MaCobra52", url: "https://github.com/macobra52" },
-		group: "player", inFlagKey: true },
+		group: "player", inFlagKey: true,
+		// Without it a Game Over wipes map completions, and in a mode built on
+		// "a world you can come back to" that is the whole point undone.
+		forcedInMaze: true },
 	{ id: "faster_frog", type: "bool", default: false,
 		label: "Faster Frog",
 		tip: "Speeds up swimming and running while wearing the Frog Suit.",
@@ -717,6 +737,7 @@ export const PRESETS = [
 // fields untouched (same fields applyOptions skips). Mirrors applyOptions so
 // callers update the flag key + summary the same way afterward.
 export function applyPreset(overrides) {
+	clearForcedMemo();
 	for (const entry of SCHEMA) {
 		if (!entry.inFlagKey) continue;
 		const v = overrides && entry.id in overrides ? overrides[entry.id] : entry.default;
@@ -739,6 +760,139 @@ export function assertPresetParity() {
 		}
 	}
 	if (bad.length) console.error("Preset references unknown flag-key fields", bad);
+}
+
+// --- Modes ---
+//
+// One option is not a flag but a *mode switch*: World Maze does not add a
+// feature the other options describe, it changes which of them describe
+// anything at all. Three shapes fall out of that, and each is a schema key
+// rather than a special case in the renderer:
+//
+//   mode: "maze" | "standard"  This option only means something in that mode.
+//                              Outside it the row is greyed, badged, and — the
+//                              part that matters — REPLACED BY ITS DEFAULT in
+//                              `getOptions`, so it cannot reach the generator.
+//   forcedInMaze: <value>      The maze decides this one. The row shows the
+//                              value the ROM will use, greyed and badged, and
+//                              the player's own setting comes back when they
+//                              leave the mode.
+//
+// Every mode-specific option stays in the section it belongs to and keeps its
+// own row. Hiding one, or swapping two onto a shared row, was tried and dropped:
+// a control that vanishes teaches a player nothing about why, where a greyed row
+// with "Maze only" on it says the rule out loud in the place they are looking.
+//
+// **Greying alone was never enough.** `readValue` ignores `disabled`, so a
+// greyed control still fed `getOptions`, the flag key and the generator: that is
+// how a maze seed could take its spine length from a World Count pill the page
+// had greyed out. Anything inert here is neutralized in the value, and the
+// greying is only how that is explained to the player.
+//
+// The Rust side neutralizes the same fields independently (`hints` outside the
+// maze, `world_count` inside it, `maze_wands` in the key). That is deliberate
+// duplication: the CLI and a pasted flag key never run this file.
+const MODE_SWITCH = "world_maze";
+
+function currentMode() {
+	const entry = SCHEMA.find(s => s.id === MODE_SWITCH);
+	return entry && readValue(entry) ? "maze" : "standard";
+}
+
+// True when the option describes nothing in the mode the form is currently in.
+function isInert(entry, mode) {
+	return !!entry.mode && entry.mode !== mode;
+}
+
+function modeBadgeText(entry) {
+	if (entry.forcedInMaze !== undefined) {
+		return `Forced ${entry.forcedInMaze ? "on" : "off"} by World Maze`;
+	}
+	return entry.mode === "maze" ? "Maze only" : "Standard only";
+}
+
+// What the player had before the maze pinned a forced option, so turning the
+// mode off gives it back. Kept out of the settings blob: `saveSettings` stores
+// what the inputs currently show, which while the maze is on is the forced
+// value — restoring a page in maze mode would otherwise eat the memo.
+const FORCED_MEMO_KEY = "smb3r-forced-memo";
+
+function loadForcedMemo() {
+	try {
+		return JSON.parse(localStorage.getItem(FORCED_MEMO_KEY) ?? "{}");
+	} catch (_) {
+		return {};
+	}
+}
+
+function saveForcedMemo(memo) {
+	try {
+		localStorage.setItem(FORCED_MEMO_KEY, JSON.stringify(memo));
+	} catch (_) {}
+}
+
+// Forget the pre-maze values. Any wholesale rewrite of the form — a preset, a
+// pasted flag key — states every flag-key field outright, so the memo describes
+// a form that no longer exists: without this, leaving maze mode afterwards would
+// restore settings from before the rewrite, silently overwriting three of the
+// values it had just delivered.
+function clearForcedMemo() {
+	try {
+		localStorage.removeItem(FORCED_MEMO_KEY);
+	} catch (_) {}
+}
+
+// Values first, before anything reads them: the maze pins World Order on, and
+// World Count's `enabledWhen` rides on that.
+function applyForcedValues() {
+	const forced = currentMode() === "maze";
+	const memo = loadForcedMemo();
+	let dirty = false;
+	for (const entry of SCHEMA) {
+		if (entry.forcedInMaze === undefined) continue;
+		if (forced) {
+			if (!(entry.id in memo)) {
+				memo[entry.id] = readValue(entry);
+				dirty = true;
+			}
+			writeValue(entry, entry.forcedInMaze);
+		} else if (entry.id in memo) {
+			writeValue(entry, memo[entry.id]);
+			delete memo[entry.id];
+			dirty = true;
+		}
+	}
+	if (dirty) saveForcedMemo(memo);
+}
+
+function setBadge(entry, text) {
+	const badge = document.getElementById(`badge-${entry.id}`);
+	if (!badge) return;
+	badge.textContent = text ?? "";
+	badge.hidden = !text;
+}
+
+// Fold the current mode into the form: grey and badge what the mode makes
+// inert, and show forced options at the value the ROM will actually use.
+export function applyModeStates() {
+	const mode = currentMode();
+	for (const entry of SCHEMA) {
+		if (entry.forcedInMaze !== undefined) {
+			const forced = mode === "maze";
+			applyEntryEnabled(entry, !forced);
+			setBadge(entry, forced ? modeBadgeText(entry) : null);
+			continue;
+		}
+		if (!entry.mode) continue;
+		const inert = isInert(entry, mode);
+		// Inert always greys. Re-enabling belongs to `applyEnabledWhen` when the
+		// entry has a host to answer to (World Count still rides on World Order),
+		// and to us when it does not; without that second half an option greyed
+		// in one mode would stay greyed after switching into the one it belongs
+		// to.
+		if (inert || !entry.enabledWhen) applyEntryEnabled(entry, !inert);
+		setBadge(entry, inert ? modeBadgeText(entry) : null);
+	}
 }
 
 // --- DOM helpers ---
@@ -1132,10 +1286,27 @@ const RENDERERS = {
 	nescolor: renderNesColor,
 };
 
+// A mode-specific option carries a badge in its own row — "Maze only",
+// "Forced on by World Maze" — so the rule is legible where the control is,
+// rather than only in a note at the top of a section. It renders empty and
+// hidden; `applyModeStates` fills it in for whichever mode the form is in.
+function modeBadge(entry) {
+	if (entry.forcedInMaze === undefined && !entry.mode) return null;
+	return el("span", { class: "opt-badge", id: `badge-${entry.id}`, hidden: true });
+}
+
 function renderEntry(entry) {
 	const r = RENDERERS[entry.type];
 	if (!r) throw new Error(`Unknown schema type: ${entry.type}`);
 	const node = r(entry);
+	const badge = modeBadge(entry);
+	if (badge) {
+		// Before the pills, so it reads as part of the label rather than as
+		// another choice on the right-hand side.
+		const group = node.querySelector?.(".pill-group");
+		if (group) node.insertBefore(badge, group);
+		else node.appendChild?.(badge);
+	}
 	const block = tipBlock(entry);
 	if (!block) return node;
 	const frag = document.createDocumentFragment();
@@ -1273,8 +1444,13 @@ export function writeValue(entry, value) {
 
 export function getOptions() {
 	const out = { ...CONSTANT_FIELDS };
+	const mode = currentMode();
 	for (const entry of SCHEMA) {
-		out[entry.id] = readValue(entry);
+		// An option the current mode makes inert sends its default, not what its
+		// greyed-out control still shows. This is the load-bearing half of
+		// `mode`: disabling an input does not stop `readValue` reading it, so
+		// without this a stale World Count would still set a maze's spine.
+		out[entry.id] = isInert(entry, mode) ? entry.default : readValue(entry);
 	}
 	return out;
 }
@@ -1283,7 +1459,11 @@ export function getOptions() {
 // the schema default. Used by the changes-summary UI in the control panel.
 export function getChangedFields() {
 	const changed = [];
+	const mode = currentMode();
 	for (const entry of SCHEMA) {
+		// Inert in this mode: it changes nothing about the seed, so listing it
+		// as a change would be a lie of the same kind the badges exist to stop.
+		if (isInert(entry, mode)) continue;
 		const current = readValue(entry);
 		if (!valuesEqual(current, entry.default)) {
 			changed.push({ entry, current });
@@ -1338,6 +1518,7 @@ export function getOptionsJson() {
 // fields (palettes, palette_themed, remove_flashing, skip_rom_validation) so applying a
 // shared key doesn't clobber the user's local cosmetic / ROM choices.
 export function applyOptions(opts) {
+	clearForcedMemo();
 	for (const entry of SCHEMA) {
 		if (!entry.inFlagKey) continue;
 		writeValue(entry, opts[entry.id]);
@@ -1345,6 +1526,7 @@ export function applyOptions(opts) {
 }
 
 export function applyEnabledWhen() {
+	applyForcedValues();
 	for (const entry of SCHEMA) {
 		if (!entry.enabledWhen) continue;
 		const enabled = Object.entries(entry.enabledWhen).every(
@@ -1362,6 +1544,10 @@ export function applyEnabledWhen() {
 		if (!enabled && entry.pillOf) writeValue(entry, false);
 		applyEntryEnabled(entry, enabled);
 	}
+	// Last, so the mode wins: it forces values that `enabledWhen` reads (the
+	// maze pins World Order on, which is what un-greys the row beside it), and
+	// an option the mode has made inert must stay greyed whatever its host says.
+	applyModeStates();
 }
 
 function applyEntryEnabled(entry, enabled) {
@@ -1376,8 +1562,16 @@ function applyEntryEnabled(entry, enabled) {
 			elNode.nextElementSibling?.classList.toggle("pill-disabled", !enabled);
 			continue;
 		}
-		// Walk up to the wrapping label/div so the visual styling matches today
-		const wrap = elNode.closest("label, .radio-group-vertical, .pill-group");
+		// Walk up to the row that wraps the whole option — its label, or the
+		// vertical group for the types that have no single label.
+		//
+		// `.pill-group` used to be in this list, and since `closest` matches the
+		// NEAREST ancestor rather than the first selector listed, a pill entry
+		// always landed the class on the group div — which no rule styles. So
+		// "greyed out" greyed nothing out for every pill option on the page; the
+		// pills just quietly stopped responding. The class belongs on the row,
+		// where `.select-label.disabled` dims it and the badge explains it.
+		const wrap = elNode.closest("label, .radio-group-vertical");
 		if (wrap) wrap.classList.toggle("disabled", !enabled);
 	}
 }

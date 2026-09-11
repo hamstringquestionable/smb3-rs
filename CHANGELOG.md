@@ -23,7 +23,8 @@ deploys.
   could open the lock and no room for one, it says so rather than accepting a
   map that cannot exist. Each world wears the king's HELP balloon until you
   cross it off, which counts your wands for you. And when the board says something the game could not have built — more locks in a world than it has room for, a lock whose key is in a world with nothing that could open it — it says so, and keeps saying so until you fix it. Every fortress stands beside a lock, so filling in the fortresses fills in the locks: plain where that fortress opens it, tinted where its key is somewhere else. It fills itself in as you explore and keeps what you typed
-  in your browser.
+  in your browser. A size slider at the top scales the whole board, for sitting
+  it beside an emulator at whatever size the screen has room for.
 
 - **Deja Vu counts fortresses.** A fourth pill on the Deja Vu row, toggling on
   its own rather than as a fourth mode. Fortresses are then dealt the way levels
@@ -45,6 +46,21 @@ deploys.
   whistle is how you get around, and it can never take you anywhere new.
 
 ### Changed
+
+- **World Count goes down to 0 — start the game in Dark Land.** It becomes the
+  whole game, and displays as World 1. There is no airship before Bowser's
+  castle at that count, so no wand exists in the run.
+
+- **The page says which settings your mode is actually using.** World Maze is
+  now the first section, because it is a mode rather than a flag: it decides
+  what several settings below it mean. Ones it takes over — World Order, Remove
+  Warp Whistles, No Game Over Penalty — show the value the mode will use, greyed
+  out and labelled "Forced on by World Maze", and go back to what you had when
+  you turn it off. Ones it has no use for, like World Count, grey out and say
+  "Standard only"; Wands To Enter and Hints say "Maze only" the rest of the
+  time. Before this, a greyed-out control still fed the generator — a maze could
+  take its world count from a row the page had greyed out — and greying a row
+  did not visibly grey anything.
 
 - **World Maze: the warp whistle goes in world order, and gets there faster.**
   Blowing it used to walk the worlds in an order that looked like nothing at

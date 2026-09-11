@@ -88,6 +88,16 @@ const VANILLA_SITES: [(usize, &[u8], &str); 2] = [
 /// (first entry is the starting world, last is always 7/Dark Land). With
 /// `world_count` < 7 this is shorter than 8 (unvisited worlds are omitted).
 /// Callers such as [`super::credits`] use it to align the ending montage.
+///
+/// **`world_count` 0 is the degenerate end of that range, not a special case.**
+/// The prefix is simply empty, so the progression is `[7]` alone: the player
+/// starts *in* Dark Land and it displays as "WORLD 1". Nothing below branches on
+/// it, but two consequences are worth naming. No airship stands before Bowser's
+/// castle, so no wand exists in the game at all — which is why the world maze
+/// pins this to 7 rather than exposing it (see `randomizer::randomize_inner`).
+/// And the seven unvisited worlds keep display tile `$00`, exactly as any
+/// `world_count` < 7 already leaves them; it is invisible because they cannot be
+/// reached.
 pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R, world_count: u8) -> Vec<u8> {
     for (offset, want, what) in VANILLA_SITES {
         assert_eq!(
@@ -100,7 +110,7 @@ pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R, world_count: u8) -> Vec<u8>
         );
     }
 
-    let world_count = world_count.clamp(1, 7) as usize;
+    let world_count = world_count.min(7) as usize;
 
     // Build shuffled world order: shuffle worlds 0-6, take first world_count, append world 7
     let mut pool: Vec<u8> = (0..7).collect();
@@ -398,5 +408,29 @@ mod tests {
         // Display table: Dark Land should show as "WORLD 4" ($F4)
         let display = rom.read_range(DISPLAY_TABLE_OFFSET, 8);
         assert_eq!(display[7], 0xF4, "Dark Land should display as World 4 with world_count=3");
+    }
+
+    /// `world_count` 0: the whole game is Dark Land, entered from the title
+    /// screen. The old `clamp(1, 7)` silently turned this into a one-world
+    /// prefix plus Dark Land, so the option would have looked like it worked
+    /// while giving two worlds.
+    #[test]
+    fn test_world_count_0_starts_in_dark_land() {
+        let mut rom = make_test_rom();
+        let mut rng = ChaCha8Rng::seed_from_u64(42);
+        let order = randomize(&mut rom, &mut rng, 0);
+
+        assert_eq!(order, vec![7], "world_count=0 is Dark Land alone");
+        assert_eq!(rom.read_byte(WORLD_INIT_OPERAND), 7, "the game must start in Dark Land");
+
+        // Nothing leads into Dark Land, and Dark Land leads to itself — so the
+        // airship transition can never walk out of the one world that exists.
+        let table = rom.read_range(FS_WORLD_ORDER + 12, 8);
+        assert_eq!(table, vec![0, 0, 0, 0, 0, 0, 0, 7]);
+
+        // And it is "WORLD 1", not "WORLD 8": the display table is keyed by
+        // position in the progression, and Dark Land is now position 0.
+        let display = rom.read_range(DISPLAY_TABLE_OFFSET, 8);
+        assert_eq!(display[7], 0xF1, "Dark Land should display as World 1 with world_count=0");
     }
 }

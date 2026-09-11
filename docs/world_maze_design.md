@@ -89,6 +89,13 @@ table — it absorbed what an earlier `foreign_locks.rs` did; see
   (`GlobalState::in_maze`), exactly as a shorter game means fewer worlds in
   standard mode.
 
+  **No shipped maze run has a short spine any more** (2026-09-11). World Count
+  greys out under the mode and the form sends its default, and `randomize_inner`
+  pins `world_count` to 7 so a CLI run and a pasted flag key agree with the page.
+  Everything below still holds and is still tested: the capability is intact, the
+  censuses exercise it, and re-exposing it is a UI decision — un-grey the control
+  and drop the pin — rather than a generator change.
+
   **They are not merely optional, and this section used to say they were.**
   `in_maze` scopes two things — which fortresses must be beatable, and what the
   spoiler log counts. It does *not* scope the lock list or the fill's pool of
