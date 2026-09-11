@@ -537,9 +537,10 @@ body {
                 wears the world number to go to.</dd>
             <dt><span class="chip lock unattributed"><span class="body">Lock</span></span></dt>
             <dd>Dashed: a lock you have seen but cannot yet pin on a fortress. Say
-                which world its key is in and it joins up with one. Every world has
-                as many locks as it has fortresses, so a lock you cannot account for
-                means there is a fortress here you have not found.</dd>
+                which world its key is in and it joins up with one. There are seventeen
+                locks and seventeen fortresses, one each, so a lock you cannot
+                account for means there is a fortress somewhere you have not
+                found — not necessarily in this world.</dd>
             <dt><span class="help" style="display:inline-block">HELP</span></dt>
             <dd>A world calls for help until you clear its castle and take its wand.
                 Click the balloon to cross it off. Dark Land has none — that is where
@@ -599,10 +600,18 @@ const W8_FORTS = ["Battleship", "Air Force", "Super Tank", "Fortress"];
 //   pad tiles overall — a pair is two tiles, so eight pairs.
 const PADS_MAX = 3;         // per world
 const PAD_TILES_MAX = 16;   // whole game; 8 pairs
-const FORTS_MAX = 3;        // per world, worlds 1-7
-const FORTS_ROAMING = 13;   // whole game, worlds 1-7
+// **Fortresses and locks are counted separately, and that is not redundant.**
+// The builder deals one lock per fortress in the same world, but `maze::relocate`
+// then moves up to two fortresses into other worlds — never a lock — so a world
+// can hold five fortresses and one lock, or none and three. Dark Land is held
+// out of that move, so its four stay four. Measured over 400 seeds: at most 5
+// fortresses in a W1-W7 world, at most 3 locks, and the W1-W7 fortress total is
+// 13 on every seed.
+const FORTS_MAX = 5;        // per world, worlds 1-7: 3 dealt + up to 2 moved in
+const LOCKS_MAX = 3;        // per world, worlds 1-7 — locks never move
+const FORTS_ROAMING = 13;   // whole game, worlds 1-7 — conserved by the move
 const FORTS_TOTAL = 17;     // those 13 plus Dark Land's 4
-const LOCKS_TOTAL = FORTS_TOTAL; // one lock per fortress
+const LOCKS_TOTAL = FORTS_TOTAL; // the fort/lock bijection survives relocation
 const WANDS_TOTAL = 7;      // one per world 1-7, held once its castle falls
 const W8 = 7;               // index of the Dark Land slot
 
@@ -621,7 +630,11 @@ function blankState() {
 			pads: [],
 		});
 	}
-	// Worlds 1-7 always hold at least one fortress; Dark Land holds its four.
+	// A starting guess, not a guarantee. The builder deals every world 1-7 at
+	// least one fortress, but `maze::relocate` can carry that one out again, so
+	// a world really can hold none (measured ~3.5% of worlds). The seeded chip
+	// says nothing until the player gives it a hint — an "unknown" fortress
+	// draws no lock anywhere — so a wrong guess costs one deletion.
 	for (let w = 0; w < 7; w++) worlds[w].forts.push(newFort());
 	worlds[W8].forts = W8_FORTS.map(label => newFort(label));
 	return { nextId: 1, worlds };
@@ -730,21 +743,23 @@ function lockWorldOf(world, fort) {
 
 // Every lock standing in `target`.
 //
-// One per fortress in that world, always — `WorldState::fort_count` is "also
-// the number of lock sections", so a world's locks are its own fortresses'
-// locks whatever those fortresses open. The design only decides whether the
-// lock is plain (this world's fortress opens it) or tinted (its key is
-// somewhere else).
+// **One per fortress whose KEY points here — not one per fortress standing
+// here.** Those were the same number until fortresses started changing worlds
+// (`maze::relocate`), because the builder dealt each world a lock per fortress
+// and nothing moved afterwards. Now a fortress can be carried into a world
+// without a lock coming with it, so the fortresses on a card no longer tell you
+// how many locks the card holds.
 //
-// Then the ones a fortress elsewhere opens here: a W8-design fortress reaching
-// into Dark Land, or a remote one the player has placed.
+// What survives is the bijection: every lock is opened by exactly one fortress.
+// So a lock stands here for each fortress ANYWHERE whose lock is here, plus the
+// free ones the player has walked up to but not yet pinned on a fortress.
+//
+// A fortress that has not said where its lock is draws nothing yet. It has one
+// out there somewhere, and putting it in that fortress's own world is exactly
+// the inference that stopped being true.
 function locksIn(target) {
 	const out = state.worlds[target].locks.map(lock => ({ kind: "free", lock, world: target }));
-	for (const fort of state.worlds[target].forts) {
-		out.push({ kind: "own", fort, world: target });
-	}
 	state.worlds.forEach((world, w) => {
-		if (w === target) return;
 		for (const fort of world.forts) {
 			if (lockWorldOf(w, fort) === target) out.push({ kind: "fort", fort, world: w });
 		}
@@ -752,20 +767,11 @@ function locksIn(target) {
 	return out;
 }
 
-// Whether a fortress's own-world lock is open.
-//
-// For a local fortress that is the same fact as "have I beaten it" — it opens
-// the lock standing beside it. For every other design it is a separate fact,
-// because the lock in its world is opened by some fortress elsewhere, and the
-// two are cleared at different times.
-function ownLockOpen(fort) {
-	return fort.hint === "here" ? !!fort.done : !!fort.ownLockOpen;
-}
-
-function setOwnLockOpen(fort, open) {
-	if (fort.hint === "here") fort.done = open;
-	else fort.ownLockOpen = open;
-}
+// `ownLockOpen`/`setOwnLockOpen` lived here. They tracked the lock standing in a
+// remote fortress's OWN world — the one some other fortress opens — which the
+// tracker no longer draws, because there is no longer any reason to believe it
+// exists. Every lock chip is now the lock its fortress opens, so `fort.done`
+// says whether it is open and the second flag has nothing left to mean.
 
 // --- Counting against the budgets -------------------------------------
 
@@ -790,40 +796,35 @@ function countPadPairs() {
 // Lock chips standing anywhere: the free ones the player logged, plus every
 // fortress whose lock has a home. A fortress still showing "?" has a lock out
 // there somewhere, but nothing to draw yet.
+//
+// Defined through [`locksIn`] rather than re-counting, because three places once
+// had their own idea of how many locks a world holds and they have to agree.
 function countLockChips() {
-	let n = 0;
-	state.worlds.forEach((world, w) => {
-		n += world.locks.length;
-		for (const fort of world.forts) if (lockWorldOf(w, fort) !== null) n++;
-	});
-	return n;
+	return state.worlds.reduce((n, _world, w) => n + locksIn(w).length, 0);
 }
 
-// A world holds exactly one lock per fortress — `WorldState::fort_count` is
-// "also the number of lock sections" — so a world can never hold more locks
-// than it can hold fortresses: three for worlds 1-7, four for Dark Land.
+// How many locks a world can hold: three for worlds 1-7, four for Dark Land.
+//
+// **Not `FORTS_MAX`, though it used to be.** The builder deals a world one lock
+// per fortress, and that ceiling is what survives — locks never move. What moves
+// is fortresses, so the two numbers came apart and a world can now hold more
+// fortresses than it has locks.
 //
 // Counted against the *ceiling* rather than against the fortresses the player
 // has actually logged. Finding a lock before its fortress is the normal way
 // round, and warning about that would cry wolf all run.
 function lockCapacity(w) {
-	return w === W8 ? 4 : FORTS_MAX;
+	return w === W8 ? 4 : LOCKS_MAX;
 }
 
 // How many fortresses open a lock in this world.
 //
-// This, not the number of chips on the card, is what the capacity is about. A
-// world's own fortresses each stand beside a lock whatever they open, so the
-// chips are always at least the fort count; what cannot exceed it is the number
-// of KEYS pointing here. For Dark Land that sum is exactly the one to watch —
-// the plain fortresses standing there plus every special fortress out in the
-// other worlds.
+// Now exactly the chips on the card — since a lock is drawn here only when some
+// fortress's key points here, the two questions have the same answer and one
+// definition. For Dark Land this is the sum to watch: the plain fortresses
+// standing there plus every special fortress out in the other worlds.
 function keysInto(target) {
-	let n = state.worlds[target].locks.length;
-	state.worlds.forEach((world, w) => {
-		for (const fort of world.forts) if (lockWorldOf(w, fort) === target) n++;
-	});
-	return n;
+	return locksIn(target).length;
 }
 
 function worldName(w) {
@@ -1335,7 +1336,6 @@ function lockToken(w, fort) {
 function renderLocks(w) {
 	return locksIn(w).map(entry => {
 		if (entry.kind === "free") return renderFreeLock(w, entry.lock);
-		if (entry.kind === "own") return renderOwnLock(entry.fort);
 		const { fort, world } = entry;
 		const away = world !== w;
 		const chip = el("span", {
@@ -1373,26 +1373,6 @@ function renderLocks(w) {
 		}
 		return chip;
 	});
-}
-
-// The lock that stands beside a fortress, in its own world. Plain when that
-// fortress opens it, tinted when its key is somewhere else — which is what the
-// lock tile itself says on Some hints and above.
-function renderOwnLock(fort) {
-	const local = fort.hint === "here";
-	const open = ownLockOpen(fort);
-	const chip = el("span", {
-		class: "chip lock" + (local ? "" : " away") + (open ? " done" : ""),
-	});
-	chip.appendChild(el("button", {
-		class: "body",
-		type: "button",
-		title: open ? "Mark shut again" : "Mark open",
-		onclick: ev => { ev.stopPropagation(); setOwnLockOpen(fort, !open); render(); },
-	}, open ? "🔓" : "🔒"));
-	chip.appendChild(el("span", { class: "src" },
-		local ? "here" : (fort.hint === "unknown" ? "key: ?" : "key: elsewhere")));
-	return chip;
 }
 
 // A lock the player has walked up to but cannot yet pin on a fortress — the
