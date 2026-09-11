@@ -22,7 +22,7 @@ deploys.
   is in puts that fortress on the board, and if that world has no fortress that
   could open the lock and no room for one, it says so rather than accepting a
   map that cannot exist. Each world wears the king's HELP balloon until you
-  cross it off, which counts your wands for you. And when the board says something the game could not have built — more locks in a world than it has room for, a lock whose key is in a world with nothing that could open it — it says so, and keeps saying so until you fix it. Every fortress stands beside a lock, so filling in the fortresses fills in the locks: plain where that fortress opens it, tinted where its key is somewhere else. It fills itself in as you explore and keeps what you typed
+  cross it off, which counts your wands for you. And when the board says something the game could not have built — more locks in a world than it has room for, a lock whose key is in a world with nothing that could open it — it says so, and keeps saying so until you fix it. Filling in a fortress fills in the lock it opens, wherever that lock is: plain where it stands in the same world, tinted where its key is a world away. It fills itself in as you explore and keeps what you typed
   in your browser. A size slider at the top scales the whole board, for sitting
   it beside an emulator at whatever size the screen has room for.
 
@@ -46,6 +46,16 @@ deploys.
   whistle is how you get around, and it can never take you anywhere new.
 
 ### Changed
+
+- **World Maze: a world no longer has as many fortresses as it has locks.** One
+  or two fortresses a seed change places with a level in another world, so a
+  world can hold three locks and one fortress, or locks with no fortress of its
+  own at all. Counting the locks in front of you stops telling you how many
+  fortresses are behind you. Nothing about the run gets harder or longer — the
+  same fortresses open the same locks at the same points — you just walk
+  somewhere else to find the key. Dark Land is left alone: its locks are the
+  bridge to the castle, and moving a fortress there would change the endgame
+  rather than the map.
 
 - **World Count goes down to 0 — start the game in Dark Land.** It becomes the
   whole game, and displays as World 1. There is no airship before Bowser's

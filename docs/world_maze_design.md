@@ -226,6 +226,18 @@ fixpoint check per step, not a rebuild. The pass never moves content between
 worlds — levels stay in their own world, forts stay where placed — so the level
 deck model is untouched.
 
+> **Superseded in part, 2026-09-11.** A third pass, `maze::relocate`, does move
+> content between worlds: one or two fortresses a seed change places with a
+> level slot in another world. The level deck model is still untouched — the
+> exchange is 1:1, so no world's slot count moves and both decks are dealt
+> globally anyway. It runs between the pads and the fill, and it is exact rather
+> than checked: both ends of an exchange sit in the same sphere, which makes the
+> fixpoint provably identical afterwards. See that module's header for the
+> induction, and for the two relaxations (earlier sphere, later sphere) it
+> declines. **World 8 is held out**: its locks are the dealt bridge spans to
+> the castle and the wand gate stands on the same approach, so a fortress moved
+> on or off that corridor changes the endgame rather than how the map reads.)
+
 **Standard mode is not touched in v1.** There is no clean seam to extract from
 `locks.rs`, and sharing the code would move the overworld baseline and put the
 change on the hook for the deep censuses (500-seed reachability, 1000-seed
@@ -447,7 +459,12 @@ knob has to be earned:
   exist: every fortress must have exactly one lock (a lock breaking is the only
   feedback that says which fort did it, and a world's lock count is how the
   player deduces its fort count), so the assignment is a bijection and the count
-  is not a free parameter.
+  is not a free parameter. The bijection still holds and the knob
+  still cannot exist, but **the deduction is gone as of `maze::relocate`**: a
+  fortress can now stand in a different world from its lock, so a world's lock
+  count says nothing about its fortress count. What replaced the deduction is
+  the hint tiles — `LockHint` on the fortress, and the key's world number on
+  the lock at `HintMode::Full`.
 - **Key depth within a sphere** — the charter's proposed secondary dial. It is
   subsumed by `fort_distance_bias`: spine distance already orders keys from
   "same room" to "three worlds back", and a second dial over the same axis would
