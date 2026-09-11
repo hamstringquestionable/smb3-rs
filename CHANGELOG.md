@@ -54,6 +54,14 @@ deploys.
   is a setting people pick on purpose, and it should be a scramble rather than a
   walk to the door.
 
+- **Worlds with islands are less samey, and less linear.** A pipe used to join
+  the starting island straight to the one holding the world's goal in almost
+  every seed, which is the shortest possible route through a world and left the
+  least room for alternatives. Pipes now link islands in a different pattern
+  each seed. World 7 and World 8 change the most — they have the most islands —
+  and both got measurably more route choice out of it. As a side effect a ROM
+  generates about 15% faster, because the maps need less fixing up afterwards.
+
 - **Generating a ROM is faster again**, by about another 5%. Same output, same
   maps — the map walker was working out whether the canoe was usable by walking
   the whole world a second time, and now answers it on the way through.

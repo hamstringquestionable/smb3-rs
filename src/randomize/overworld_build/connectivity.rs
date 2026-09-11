@@ -64,7 +64,7 @@ impl Phase for Connectivity {
                 walk_reachable(&state.grid, &state.pipe_pairs, state.start, state.world_idx);
             let blanks = blank_positions(state);
 
-            let Some(island_seed) = next_island_seed(state, &reach, &blanks) else {
+            let Some(island_seed) = next_island_seed(state, &reach, &blanks, rng) else {
                 break; // everything that can be reached is reached
             };
 
@@ -86,7 +86,39 @@ impl Phase for Connectivity {
                 if clear.is_empty() { side } else { clear }
             };
             let island_candidates = pick_side(&|p| island_reach.contains(*p));
-            let mainland_candidates = pick_side(&|p| reach.contains(*p));
+
+            // **Attach to a uniformly random CONNECTED ISLAND, not to the
+            // whole reached blob.** Picking a mouth from every reachable cell
+            // sounds uniform and is not: it is uniform over *cells*, so the
+            // island with the most legal blanks wins, and that is almost
+            // always the start's. Every island therefore hung off the start
+            // island and the pocket graph came out a star — measured, 120
+            // seeds, one pipe joined the start island straight to the goal's
+            // in ~100% of every world that has islands.
+            //
+            // A star is the shape with the least route structure available:
+            // every cycle through it shares the start island, so both arms
+            // overlap and no later phase can price them apart. Choosing the
+            // island first and the cell second makes the attachment uniform
+            // over the thing that decides the shape.
+            let connected: Vec<usize> = {
+                let mut ids: Vec<usize> = legal
+                    .iter()
+                    .filter(|&&p| reach.contains(p))
+                    .filter_map(|p| pocket.get(p).copied())
+                    .collect();
+                ids.sort_unstable();
+                ids.dedup();
+                ids
+            };
+            let mainland_candidates = match connected.choose(rng) {
+                Some(&host) => {
+                    let on_host =
+                        pick_side(&|p| reach.contains(*p) && pocket.get(p).copied() == Some(host));
+                    if on_host.is_empty() { pick_side(&|p| reach.contains(*p)) } else { on_host }
+                }
+                None => pick_side(&|p| reach.contains(*p)),
+            };
 
             let (Some(&near), Some(&far)) =
                 (mainland_candidates.choose(rng), island_candidates.choose(rng))
@@ -191,17 +223,41 @@ fn loop_eligible(_islands: &[super::islands::Island], _pa: usize, _pb: usize) ->
     true
 }
 
-/// Where to grow next: the goal's component first (a world you can't finish
-/// is the worst kind of cut off), then the first stranded blank in scan
-/// order — skipping hammer-gated pockets, which are not stranded (and, being
-/// excluded from `legal_blanks`, could never take an endpoint). `None` when
-/// start is unknown or nothing is stranded.
-fn next_island_seed(state: &WorldState, reach: &Reach, blanks: &[Pos]) -> Option<Pos> {
+/// Where to grow next: a uniformly random stranded blank — skipping
+/// hammer-gated pockets, which are not stranded (and, being excluded from
+/// `legal_blanks`, could never take an endpoint). `None` when start is
+/// unknown or nothing is stranded.
+///
+/// **The goal's component used to come first and that was the whole
+/// short-circuit.** The reasoning was sound on its own terms — a world you
+/// cannot finish is the worst kind of cut off — but bridging the goal island
+/// on the FIRST pipe means the only thing it can attach to is the start
+/// island, because nothing else has been connected yet. So a pipe joined the
+/// start island directly to the goal's in ~100% of seeds in every world that
+/// has islands, which is the shortest corridor the terrain admits and the one
+/// with the least room for route structure.
+///
+/// Order is now random, so the goal island attaches to whatever is connected
+/// when its turn comes. That is not a weaker guarantee: the loop runs until
+/// nothing reachable is stranded, and spanning k islands costs k-1 pipes
+/// whatever order they are taken in. `all_world_targets_reachable` is the
+/// check that the goal still always arrives, and it is run at depth.
+///
+/// Scan order was also not neutral for the same reason: taking the first
+/// stranded blank by row and column attaches islands in a fixed geographic
+/// sequence, so the tree came out the same shape on every seed with the same
+/// terrain.
+fn next_island_seed(
+    state: &WorldState,
+    reach: &Reach,
+    blanks: &[Pos],
+    rng: &mut dyn RngCore,
+) -> Option<Pos> {
     state.start?;
-    if let Some(target) = state.target
-        && !reach.contains(target)
-    {
-        return Some(target);
-    }
-    blanks.iter().copied().find(|p| !reach.contains(*p) && !state.hammer_gated.contains(p))
+    let stranded: Vec<Pos> = blanks
+        .iter()
+        .copied()
+        .filter(|p| !reach.contains(*p) && !state.hammer_gated.contains(p))
+        .collect();
+    stranded.choose(rng).copied()
 }

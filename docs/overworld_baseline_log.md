@@ -34,6 +34,65 @@ hashes they describe are gone; the reasoning is not.
 
 ## Entries
 
+### 2026-09-10 — connectivity stops building a star through the start island
+
+**Intended, and it moves every seed.** Pipe placement changed, so the pocket
+graph changed, so the map changed. All 20 fingerprints differ, which is the
+expected shape for a change to the first placement phase — unlike a tie-order
+change, there is no subset of seeds it could miss.
+
+**What changed.** Two things in `connectivity.rs`, both about *which islands* a
+pipe joins rather than how many pipes are spent:
+
+- The mainland endpoint is now drawn from a uniformly random **connected
+  island**, then a cell within it. It used to be drawn from every legal blank in
+  the whole reached blob — uniform over *cells*, so the island with the most
+  blanks won, and that is nearly always the start's.
+- Island order is random rather than goal-first-then-scan-order. Bridging the
+  goal island on the FIRST pipe meant the only thing it could attach to was the
+  start island, because nothing else was connected yet.
+
+**Why.** Measured, 120 seeds: one pipe joined the start island straight to the
+goal's in **~100% of seeds in every world that has islands**, and the pocket
+graph came out a star. #231 filed this as a World 8 sameness bug; it was the
+universal behaviour of the phase. A star is the shape with the least route
+structure available — every cycle through it shares the start island, so both
+arms overlap and no later phase can price them apart.
+
+**The pocket graph, 120 seeds:**
+
+| | start→goal before | after | distinct shapes before | after |
+|---|---|---|---|---|
+| W7 (7.3 islands) | 97% | **46%** | 17 | **25** |
+| W8 (5.0 islands) | 97% | **41%** | 6 | **11** |
+
+W8 lands almost exactly on the uniform-spanning-tree rate for 5 nodes (2/n =
+40%). Two-island worlds stay at 100% and that is correct — two islands admit
+exactly one tree.
+
+**The distribution improved rather than merely moving.** `test_route_census`,
+2000 seeds, before and after:
+
+| | before | after |
+|---|---|---|
+| overall linear% | 6.23% | **5.64%** |
+| mean routes/world | 2.589 | 2.591 |
+| C1 | 19.2 | 19.3 |
+| below dealt floor | 0.33% | **0.27%** |
+| W7 | 19% linear, 2.02 routes | **16%, 2.15** |
+| W8 | 4% linear, 2.28 routes | **3%, 2.37** |
+| W1, W2 | — | identical |
+
+No world regressed on linearity. W7 and W8 — the two with real island counts,
+and the two this change can reach — improved on every column. W1 and W2 have one
+island each, so nothing about them could move, and nothing did.
+
+`all_world_targets_reachable` passes at `CENSUS_SEEDS=500` (8 arms). That is the
+gate the goal-first rule existed to provide, and it is now the only thing
+providing it — spanning k islands costs k-1 pipes whatever order they are taken
+in, so the guarantee is the loop's, not the ordering's.
+
+
 ### 2026-09-09 — the route Dijkstra's frontier becomes a radix heap
 
 **Intended.** `route_choice`'s `CostHeap` went from `BinaryHeap<Reverse<(u32,
