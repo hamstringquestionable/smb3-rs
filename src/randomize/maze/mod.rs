@@ -51,6 +51,7 @@ pub(crate) mod graph;
 /// redeals the short ones, so this runs on the shipping path. The rest of the
 /// module is still census-only.
 pub(crate) mod metrics;
+pub(crate) mod relocate;
 pub(crate) mod roles;
 #[cfg(test)]
 mod tests;
@@ -745,6 +746,9 @@ pub(crate) struct GenReport {
     /// What the kept deal priced at, in levels and fortresses beaten. Below
     /// [`CONTENT_FLOOR`] only when [`MAX_DEALS`] ran out.
     pub content: usize,
+    /// Fortresses moved into another world — see [`relocate`]. Empty when the
+    /// spine-alone fallback fired.
+    pub relocated: relocate::RelocateReport,
 }
 
 /// One deal of the maze layer: everything [`generate`] draws in a single
@@ -773,6 +777,7 @@ struct Deal {
     fill: fill::FillReport,
     pads: Vec<graph::PlacedPad>,
     unsafe_worlds: Vec<usize>,
+    relocated: relocate::RelocateReport,
 }
 
 impl Deal {
@@ -818,6 +823,13 @@ pub(crate) fn generate<R: Rng>(
         let pads = graph::plan_pads(&state, knobs, rng);
         state.add_pads(pads.iter().map(|p| p.edge).collect());
 
+        // **Before the fill, after the pads.** The sphere index it reads has to
+        // include the pads, and the fill has to see the fortresses where they
+        // finally sit — it draws every key from the fortresses reachable at
+        // that moment, so a fortress that moves afterwards invalidates the
+        // reasoning that makes the fill safe by construction.
+        let relocated = relocate::relocate_forts(&mut state, rng);
+
         let fill = fill::assign_keys(&mut state, spine, knobs, rng);
 
         // A world whose start region has no walk-out still gets offered a pad,
@@ -851,7 +863,16 @@ pub(crate) fn generate<R: Rng>(
         }
 
         let spheres = state.spheres();
-        Deal { solvable: spheres.solvable, content: 0, state, spheres, fill, pads, unsafe_worlds }
+        Deal {
+            solvable: spheres.solvable,
+            content: 0,
+            state,
+            spheres,
+            fill,
+            pads,
+            unsafe_worlds,
+            relocated,
+        }
     };
 
     // **The content floor.** Deal until the maze is long enough, keeping the
@@ -887,8 +908,9 @@ pub(crate) fn generate<R: Rng>(
             break;
         }
     }
-    let Deal { content, mut state, mut spheres, fill, pads, mut unsafe_worlds, .. } =
-        best.expect("MAX_DEALS is non-zero, so at least one deal was kept");
+    let Deal {
+        content, mut state, mut spheres, fill, pads, mut unsafe_worlds, mut relocated, ..
+    } = best.expect("MAX_DEALS is non-zero, so at least one deal was kept");
 
     // Defence in depth, and the one guard this mode cannot do without.
     //
@@ -917,6 +939,10 @@ pub(crate) fn generate<R: Rng>(
         // escapable), which is exactly why it must not lie if it ever fires.
         unsafe_worlds =
             (0..state.worlds.len()).filter(|&wi| !state.start_region_escapable(wi)).collect();
+        // The fallback rebuilds from the BuildResult, so the relocations are
+        // gone with everything else. Report none rather than the ones that
+        // were dealt and then discarded.
+        relocated = relocate::RelocateReport::default();
     }
 
     // **And the fallback itself is checked, which it never used to be.**
@@ -955,7 +981,7 @@ pub(crate) fn generate<R: Rng>(
         spheres = state.spheres();
     }
 
-    (state, GenReport { spheres, fill, pads, unsafe_worlds, sealable, deals, content })
+    (state, GenReport { spheres, fill, pads, unsafe_worlds, sealable, deals, content, relocated })
 }
 
 /// Fold the maze's decisions back into the build, for the writer to write.
@@ -994,6 +1020,21 @@ pub(crate) fn stamp_into(build: &mut BuildResult, state: &GlobalState) {
     }
 
     for (world, built) in build.worlds.iter_mut().enumerate() {
+        // **Slots, first, because everything below reads them.** `relocate`
+        // exchanges a fortress with a level in another world, so a slot can
+        // have changed world, position and fortress id since the build handed
+        // it over. `section_count` is the writer's loop bound over fortress
+        // ids, and a world that lost one leaves a hole in the numbering, so it
+        // is the highest id in use rather than the count of them.
+        built.slots = state.worlds[world].slots.clone();
+        built.section_count = built
+            .slots
+            .iter()
+            .filter(|s| s.kind == SlotKind::Fortress)
+            .map(|s| s.section + 1)
+            .max()
+            .unwrap_or(0);
+
         for ((pad_world, (row, col)), _) in state.pad_edges() {
             if pad_world == world {
                 built.grid.set(row, col, rom_data::TILE_TELEPAD);
@@ -1048,5 +1089,12 @@ pub(crate) fn stamp_into(build: &mut BuildResult, state: &GlobalState) {
                 LockHint::Elsewhere
             };
         }
+    }
+
+    // Fortress counts moved with the slots. Only the censuses read this, but a
+    // stale count is a lie the next reader would have to catch by hand.
+    for wi in 0..build.worlds.len() {
+        build.fort_counts[wi] =
+            build.worlds[wi].slots.iter().filter(|s| s.kind == SlotKind::Fortress).count();
     }
 }

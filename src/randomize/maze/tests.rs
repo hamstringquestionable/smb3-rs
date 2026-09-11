@@ -17,7 +17,7 @@ use super::graph::{Knobs, PAD_BUDGET};
 use super::{GenReport, GlobalState, IDENTITY_SPINE, MazeEdge};
 
 use crate::randomize::map_walker::walk_reachable;
-use crate::randomize::maze::walk::{MazeWorld, walk_maze};
+use crate::randomize::maze::walk::{MazePos, MazeWorld, walk_maze};
 use crate::randomize::node_catalog::NodeCatalog;
 /// Every census and property test asks for the same secret-exit slot count the
 /// pipeline does — the writer needs one, so the maze must leave one.
@@ -2395,12 +2395,13 @@ fn a_fortress_tile_says_where_its_lock_is() {
 
     let Some(raw) = load_rom() else { return };
     let mut checked = 0usize;
+    let mut relocated_checked = 0usize;
     let mut seen = [0usize; 3];
 
     for seed in 0..census_seeds(8) {
         let (_, mut build) = census_build(&raw, seed);
         let mut rng = ChaCha8Rng::seed_from_u64(seed ^ 0x5EED_1234);
-        let (state, _) = super::generate(
+        let (state, report) = super::generate(
             &build,
             &IDENTITY_SPINE,
             super::DEFAULT_WANDS_REQUIRED,
@@ -2409,6 +2410,35 @@ fn a_fortress_tile_says_where_its_lock_is() {
             &mut rng,
         );
         super::stamp_into(&mut build, &state);
+
+        // **A relocated fortress is the case this test exists for.** Its hint is
+        // computed from the world it is in, and relocation is the only thing
+        // that changes that world after the builder has spoken — so if the hint
+        // were read before the move, or from the old world, this is where it
+        // would show. Assert the moved ones are actually in the sample below
+        // rather than trusting that they turned up.
+        for m in &report.relocated.moves {
+            let (nw, npos) = m.to;
+            assert!(
+                build.worlds[nw]
+                    .slots
+                    .iter()
+                    .any(|s| s.kind == SlotKind::Fortress && s.pos == npos),
+                "seed {seed}: the fortress relocated to W{} {npos:?} is not there after \
+                 stamp_into — the move never reached the build",
+                nw + 1
+            );
+            assert!(
+                !build.worlds[m.from.0]
+                    .slots
+                    .iter()
+                    .any(|s| s.kind == SlotKind::Fortress && s.pos == m.from.1),
+                "seed {seed}: a fortress is still at its old cell W{} {:?}",
+                m.from.0 + 1,
+                m.from.1
+            );
+            relocated_checked += 1;
+        }
 
         for (wi, built) in build.worlds.iter().enumerate() {
             for slot in built.slots.iter().filter(|s| s.kind == SlotKind::Fortress) {
@@ -2447,6 +2477,11 @@ fn a_fortress_tile_says_where_its_lock_is() {
         }
     }
     assert!(checked > 0, "no fortresses checked; the test is vacuous");
+    assert!(
+        relocated_checked > 0,
+        "no relocated fortress was checked — this test no longer covers the case where a \
+         fortress changed worlds after the builder set its hint"
+    );
     for (bucket, name) in [(0, "local"), (1, "elsewhere"), (2, "World 8")] {
         assert!(seen[bucket] > 0, "no fortress exercised {name}; that state is unchecked");
     }
@@ -2672,4 +2707,261 @@ fn maze_spine_length_census() {
     }
     eprintln!("  cells are seeds where the castle is unreachable or a spine fortress unbeatable");
     assert_eq!(worst, 0, "a spine length shipped an unwinnable maze");
+}
+
+// ---------------------------------------------------------------------------
+// Fortress relocation
+// ---------------------------------------------------------------------------
+
+/// The fixpoint as a relocation must leave it: per round, the cells first
+/// reached and the locks that open.
+type SphereShape = (bool, Option<usize>, Vec<(Vec<MazePos>, Vec<usize>)>);
+
+/// The fixpoint, read so that a moved fortress cannot hide inside it.
+///
+/// Neither `FortRef` identities nor the cells fortresses are beaten on survive a
+/// relocation — those are the move itself, and comparing them reports a
+/// difference on every seed the pass touches. What has to be identical is the
+/// causal chain: **which cells become reachable in which round, and which locks
+/// open in which round**. Lock indices are stable (no lock moves), so they say
+/// it exactly.
+fn sphere_shape(state: &GlobalState) -> SphereShape {
+    let s = state.spheres();
+    let rounds = s
+        .spheres
+        .iter()
+        .map(|round| {
+            let mut reached = round.reached.clone();
+            reached.sort_unstable();
+            let mut opened = round.opened.clone();
+            opened.sort_unstable();
+            (reached, opened)
+        })
+        .collect();
+    (s.solvable, s.goal_sphere, rounds)
+}
+
+/// The first place two fixpoint shapes disagree, in one line.
+///
+/// A whole-shape `assert_eq!` prints two thousand-cell dumps and hides the one
+/// cell that moved, which is the only thing worth knowing.
+fn first_difference(a: &SphereShape, b: &SphereShape) -> Option<String> {
+    if a.0 != b.0 {
+        return Some(format!("solvable {} -> {}", a.0, b.0));
+    }
+    if a.1 != b.1 {
+        return Some(format!("goal sphere {:?} -> {:?}", a.1, b.1));
+    }
+    if a.2.len() != b.2.len() {
+        return Some(format!("{} spheres -> {}", a.2.len(), b.2.len()));
+    }
+    fn gone<T: PartialEq + Copy + std::fmt::Debug>(x: &[T], y: &[T]) -> Vec<T> {
+        x.iter().filter(|p| !y.contains(p)).copied().collect()
+    }
+    for (i, (ra, rb)) in a.2.iter().zip(b.2.iter()).enumerate() {
+        let (lost, gained) = (gone(&ra.0, &rb.0), gone(&rb.0, &ra.0));
+        if !lost.is_empty() || !gained.is_empty() {
+            return Some(format!("sphere {i} reached: lost {lost:?}, gained {gained:?}"));
+        }
+        let (lost, gained) = (gone(&ra.1, &rb.1), gone(&rb.1, &ra.1));
+        if !lost.is_empty() || !gained.is_empty() {
+            return Some(format!("sphere {i} locks opened: lost {lost:?}, gained {gained:?}"));
+        }
+    }
+    None
+}
+
+/// **A same-sphere exchange cannot move the fixpoint**, and this is what says
+/// so rather than the argument in `relocate`'s module docs.
+///
+/// The pass has no accept test — it is safe by construction — so if the
+/// construction is wrong there is nothing downstream to catch it except a
+/// player walking into a gate whose key moved somewhere unreachable. That makes
+/// this the load-bearing test for the feature: every round of the fixpoint, the
+/// cells reached and the cells a fortress falls on, before and after.
+#[test]
+fn relocation_leaves_the_fixpoint_identical() {
+    let Some(raw) = load_rom() else { return };
+    let mut moves = 0usize;
+    let mut seeds_that_moved = 0usize;
+    let seeds = census_seeds(12);
+    for seed in 0..seeds {
+        let (_, result) = census_build(&raw, seed);
+        let mut state = GlobalState::from_build(&result, &IDENTITY_SPINE, 0);
+
+        // Pads first, exactly as `generate` orders it — a pad changes what is
+        // reachable, so a sphere index read without them is not the one the
+        // shipped maze has.
+        let mut rng = ChaCha8Rng::seed_from_u64(seed ^ 0x5EED_1234);
+        let pads = super::graph::plan_pads(&state, &Knobs::default(), &mut rng);
+        state.add_pads(pads.iter().map(|p| p.edge).collect());
+
+        let before = sphere_shape(&state);
+        let report = super::relocate::relocate_forts(&mut state, &mut rng);
+        let after = sphere_shape(&state);
+
+        if let Some(why) = first_difference(&before, &after) {
+            panic!(
+                "seed {seed}: {} relocation(s) moved the fixpoint — the same-sphere \
+                 construction is wrong\n  {why}\n  moves: {:?}\n{}",
+                report.done(),
+                report.moves,
+                state.spheres().spoiler()
+            );
+        }
+        for m in &report.moves {
+            assert_ne!(m.from.0, m.to.0, "seed {seed}: a relocation stayed inside one world");
+            // W8 is held out on both sides — its locks are the castle approach,
+            // where a moved fortress changes the endgame rather than how the
+            // map reads. See the exclusion note in `relocate::relocate_forts`.
+            assert!(
+                m.from.0 != crate::randomize::rom_data::W8_IDX
+                    && m.to.0 != crate::randomize::rom_data::W8_IDX,
+                "seed {seed}: a relocation touched World 8 ({m:?})"
+            );
+        }
+        // Fortress ids stay unique within a world; the writer looks a fortress
+        // up by (world, id) and a collision would silently drop one.
+        for wi in 0..8 {
+            let ids = super::relocate::fort_ids(&state, wi);
+            let mut uniq = ids.clone();
+            uniq.dedup();
+            assert_eq!(ids, uniq, "seed {seed} W{}: duplicate fortress id in {ids:?}", wi + 1);
+        }
+
+        moves += report.done();
+        seeds_that_moved += usize::from(report.done() > 0);
+    }
+    eprintln!(
+        "  relocation: {moves} fortresses moved over {seeds} seeds, \
+         {seeds_that_moved} seeds touched"
+    );
+    assert!(
+        seeds_that_moved > 0,
+        "no seed relocated anything — the pass is inert and the test above proves nothing"
+    );
+}
+
+/// **What the player sees**: how often a world's lock count stops matching its
+/// fortress count, which is the entire point of the pass.
+///
+/// Reported rather than asserted at a number. The one assertion is that the
+/// mechanism fires at all — a supply that dries up would make this a no-op
+/// feature that still looks present in the code.
+#[test]
+fn relocation_decouples_lock_and_fort_counts() {
+    let Some(raw) = load_rom() else { return };
+    let seeds = census_seeds(12);
+    let mut supply = Vec::new();
+    let mut spheres: Vec<usize> = Vec::new();
+    let mut mismatched = 0usize;
+    let mut worlds = 0usize;
+    let mut fortless = 0usize;
+    let mut lockless = 0usize;
+    let mut empty = 0usize;
+    let mut max_forts = 0usize;
+    let mut max_locks = 0usize;
+    let mut roaming_seen: Vec<usize> = Vec::new();
+    for seed in 0..seeds {
+        let (_, result) = census_build(&raw, seed);
+        let mut build = result.clone();
+        let mut rng = ChaCha8Rng::seed_from_u64(seed ^ 0x5EED_1234);
+        let (state, report) = super::generate(
+            &result,
+            &IDENTITY_SPINE,
+            super::DEFAULT_WANDS_REQUIRED,
+            &Knobs::default(),
+            SEALABLE_NEEDED,
+            &mut rng,
+        );
+        supply.push(report.relocated.pairs);
+        spheres.extend(report.relocated.moves.iter().map(|m| m.sphere));
+        super::stamp_into(&mut build, &state);
+
+        // After `stamp_into`, because that is the shape the writer sees. It
+        // panics on a lock naming a fortress that is not on the map, which is
+        // exactly the failure a mis-keyed relocation would produce.
+        //
+        // **And the entries are checked, not merely produced.** `key_world` is
+        // what colours the lock tile (`away = lock.fort.world != wi`) and what
+        // the world number on a `HintMode::Full` lock reads, so a key pointing
+        // at the fortress's OLD world would mislabel the lock rather than
+        // crash. Assert every key lands on a cell a fortress actually occupies.
+        for e in crate::randomize::overworld_writer::lock_entries(&build) {
+            assert!(
+                build.worlds[e.key_world]
+                    .slots
+                    .iter()
+                    .any(|s| s.kind == SlotKind::Fortress && s.pos == e.key_pos),
+                "seed {seed}: the lock at W{} {:?} names a key at W{} {:?}, where no \
+                 fortress stands",
+                e.target_world + 1,
+                e.target_pos,
+                e.key_world + 1,
+                e.key_pos
+            );
+        }
+
+        let mut roaming = 0usize;
+        for (wi, built) in build.worlds.iter().enumerate() {
+            let forts = built.slots.iter().filter(|s| s.kind == SlotKind::Fortress).count();
+            worlds += 1;
+            mismatched += usize::from(forts != built.locks.len());
+            fortless += usize::from(forts == 0 && !built.locks.is_empty());
+            if wi != crate::randomize::rom_data::W8_IDX {
+                max_forts = max_forts.max(forts);
+                roaming += forts;
+            } else {
+                assert_eq!(forts, 4, "seed {seed}: W8 must keep its four fortresses");
+            }
+            max_locks = max_locks.max(built.locks.len());
+            lockless += usize::from(forts > 0 && built.locks.is_empty());
+            empty += usize::from(forts == 0 && built.locks.is_empty());
+            assert!(
+                built.section_count
+                    > built
+                        .slots
+                        .iter()
+                        .filter(|s| s.kind == SlotKind::Fortress)
+                        .map(|s| s.section)
+                        .max()
+                        .unwrap_or(0)
+                    || forts == 0,
+                "seed {seed} W{}: section_count {} does not cover the fortress ids",
+                wi + 1,
+                built.section_count
+            );
+        }
+        roaming_seen.push(roaming);
+    }
+    let mean = |v: &[usize]| v.iter().sum::<usize>() as f64 / v.len() as f64;
+    eprintln!(
+        "  eligible (fort, level) pairs per seed: mean {:.1}, min {}",
+        mean(&supply),
+        supply.iter().min().copied().unwrap_or(0)
+    );
+    eprintln!(
+        "  worlds whose lock count != fort count: {mismatched}/{worlds} = {:.1}%",
+        100.0 * mismatched as f64 / worlds as f64
+    );
+    eprintln!("  worlds with locks but NO fortress: {fortless}/{worlds}");
+    eprintln!("  worlds with a fortress but NO lock: {lockless}/{worlds}");
+    eprintln!("  worlds with neither: {empty}/{worlds}");
+    let mut hist = [0usize; 8];
+    for s in &spheres {
+        hist[(*s).min(7)] += 1;
+    }
+    eprintln!("  relocations by sphere (0..=7+): {hist:?}");
+    eprintln!("  most fortresses in one W1-W7 world: {max_forts}  (the tracker's per-world cap)");
+    eprintln!("  most locks in one world: {max_locks}");
+    eprintln!(
+        "  fortresses across W1-W7: min {}, max {}  (W8 keeps 4, asserted above)",
+        roaming_seen.iter().min().copied().unwrap_or(0),
+        roaming_seen.iter().max().copied().unwrap_or(0)
+    );
+    assert!(
+        mismatched > 0,
+        "no world came out with a lock count that differs from its fortress count — \
+         the pass did nothing a player could see"
+    );
 }

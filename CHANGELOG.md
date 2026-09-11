@@ -47,6 +47,16 @@ deploys.
 
 ### Changed
 
+- **World Maze: a world no longer has as many fortresses as it has locks.** One
+  or two fortresses a seed change places with a level in another world, so a
+  world can hold three locks and one fortress, or locks with no fortress of its
+  own at all. Counting the locks in front of you stops telling you how many
+  fortresses are behind you. Nothing about the run gets harder or longer — the
+  same fortresses open the same locks at the same points — you just walk
+  somewhere else to find the key. Dark Land is left alone: its locks are the
+  bridge to the castle, and moving a fortress there would change the endgame
+  rather than the map.
+
 - **World Count goes down to 0 — start the game in Dark Land.** It becomes the
   whole game, and displays as World 1. There is no airship before Bowser's
   castle at that count, so no wand exists in the run.
