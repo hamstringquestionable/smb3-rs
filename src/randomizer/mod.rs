@@ -412,7 +412,13 @@ fn randomize_inner(
             options.disable_autoscroll,
         );
         rom.set_tag("world_travel");
-        randomize::world_travel::apply(rom, written.grids(rom));
+        // The whistle cycles the worlds in the order the player numbers them,
+        // which is `world_order`'s spine and not the internal index.
+        randomize::world_travel::apply(
+            rom,
+            written.grids(rom),
+            credits_progression.as_deref().expect("world_maze forces world_order on"),
+        );
     }
 
     // Every lock in the game, home and away, in one table — and with it the

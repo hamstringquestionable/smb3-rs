@@ -1236,6 +1236,41 @@ requested pad role distribution.
   a no-op that puts you back on your own start tile. The warp zone is not reused
   and is now unreachable: the hook replaces `WWFX_WarpDoWind`'s
   `World_Num = 8` outright.
+- **The cycle runs in play order, and the first cut got this wrong.** It stepped
+  the *internal* world index, which `world_order` has already decoupled from the
+  number the player sees — so the whistle visited the worlds in a sequence that
+  looked arbitrary and changed shape every seed. A cycler you cannot predict is
+  one you have to step through blind, which is most of the friction the mode's
+  backtracking was supposed to remove. Fixed by emitting a per-seed successor
+  table (`internal -> next internal`) laid out along the airship spine, with any
+  off-spine world (`world_count < 7`) appended in internal order so it is still
+  reachable. It costs 8 bytes of table and saves one byte of code. The table
+  must be a **single eight-cycle**: the scan's "eight steps come home" exit —
+  and with it the whole nowhere-to-go case — is false for a permutation with two
+  cycles, and false in a way that surfaces as the whistle settling on a world it
+  already passed rather than as a crash.
+- **The "WORLD n" card is halved, and it is not the whistle's card.** Entering
+  a world is three phases and only two of them move: the card sits motionless
+  for `Map_Intro_Tick` = 128 frames, then the stars open out (~24) and close
+  onto the player (~24). Nearly three quarters of the ~2.9 s is a still image,
+  and the maze pays it on *every* entry — whistle, telepad and beaten airship —
+  where vanilla pays it eight times a run. `WorldIntro_BoxTimer_NoSym`'s
+  `LDA #$80` goes to `$40`, taking the sequence to about 1.6 s and leaving both
+  star sweeps alone; they are the part that is actually a transition. Not
+  shorter than that on purpose: this card is where the player is told which
+  world the whistle landed them in, which in this mode is information rather
+  than a formality. All three entry paths reach it through `$84A0`, whose init
+  zeroes `Map_Intro_Tick`, so the card always re-seeds itself there and that one
+  operand is the whole dial — `Map_Intro_Tick` is a shared scratch counter and
+  patching its other writers would hit unrelated timers.
+- **The wind sweep is four times faster.** `Map_WW_DeltaX` goes from ±2 to ±8,
+  turning a 120-frame sweep into a 30-frame one; with the flash in front of it a
+  hop costs about a second rather than two and a half. Vanilla priced that
+  animation for a once-a-game warp, and this whistle is blown over and over. 8
+  is not arbitrary: `WWFX_WarpDoWind` erases the player's map sprite on an exact
+  `CMP` against their screen X, map positions are multiples of 16, and a delta
+  that does not divide 16 would step straight past them. The flash is left alone
+  on purpose — `WarpWhistle_Flash` is shared with the hand trap.
 - **Does hammer-breakability key off `Map_Removable_Tiles`? No.** Vanilla's
   hammer tests `$51`/`$52` by range (`SUB #TILE_ROCKBREAKH / CMP #$02`), and the
   randomizer's `hammer_breaks_tiles` builds its own explicit table. **The wand

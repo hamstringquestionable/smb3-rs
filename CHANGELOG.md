@@ -46,6 +46,15 @@ deploys.
 
 ### Changed
 
+- **World Maze: the warp whistle goes in world order, and gets there faster.**
+  Blowing it used to walk the worlds in an order that looked like nothing at
+  all; now it steps World 1, 2, 3 and so on, skipping the ones you have not set
+  foot in yet and wrapping at the end, so you can count whistles instead of
+  guessing. The wind that carries you sweeps four times faster too, and the
+  "WORLD n" card that stars you onto the tile — which you see on every arrival,
+  by whistle, warp pad or beaten airship — sits there half as long. Arriving
+  somewhere went from about five and a half seconds to two and a half.
+
 - **World Maze: no more two-level seeds.** A maze that could be finished in a
   handful of levels now gets thrown out and dealt again. Nothing about how long
   a *typical* seed runs has changed — fast seeds are still fast, and the longest
