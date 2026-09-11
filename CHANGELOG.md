@@ -46,6 +46,21 @@ deploys.
 
 ### Changed
 
+- **World Count goes down to 0 — start the game in Dark Land.** It becomes the
+  whole game, and displays as World 1. There is no airship before Bowser's
+  castle at that count, so no wand exists in the run.
+
+- **The page says which settings your mode is actually using.** World Maze is
+  now the first section, because it is a mode rather than a flag: it decides
+  what several settings below it mean. Ones it takes over — World Order, Remove
+  Warp Whistles, No Game Over Penalty — show the value the mode will use, greyed
+  out and labelled "Forced on by World Maze", and go back to what you had when
+  you turn it off. Ones it has no use for, like World Count, grey out and say
+  "Standard only"; Wands To Enter and Hints say "Maze only" the rest of the
+  time. Before this, a greyed-out control still fed the generator — a maze could
+  take its world count from a row the page had greyed out — and greying a row
+  did not visibly grey anything.
+
 - **World Maze: the warp whistle goes in world order, and gets there faster.**
   Blowing it used to walk the worlds in an order that looked like nothing at
   all; now it steps World 1, 2, 3 and so on, skipping the ones you have not set

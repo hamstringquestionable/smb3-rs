@@ -626,7 +626,9 @@ fn flag_key_per_option_round_trip() {
         assert_eq!(recovered.starting_lives, lives, "starting_lives={lives}: round-trip mismatch");
         assert_eq!(recovered, expected, "starting_lives={lives}: full struct mismatch");
     }
-    for wc in 1u8..=7 {
+    // 0 included: it is "start in Dark Land", not a dead pattern, since the
+    // world-count control gained that rung.
+    for wc in 0u8..=7 {
         let opts = Options { world_count: wc, ..Default::default() };
         let expected = normalized(opts.clone());
         let recovered = Options::from_flag_key(&opts.to_flag_key()).unwrap();
@@ -914,7 +916,17 @@ fn flag_key_short_key_zero_fills() {
     assert!(decoded.powerups, "an early option must survive a short key");
     assert_eq!(decoded.ground, EnemyMode::Shuffle);
     // starting_lives/world_count/items live in the truncated tail.
-    assert_eq!(decoded.world_count, default_world_count());
+    assert_eq!(decoded.starting_lives, STARTING_LIVES_VALUES[0]);
+    assert_eq!(decoded.starting_items, Vec::<u8>::new());
+
+    // **`world_count` is the one field with no "absent" pattern left**: since
+    // 0 became "start in Dark Land", a key that stops short of it reads as that
+    // rather than as the default of seven worlds. Nothing in circulation can
+    // land there — a real key truncated in transit fails the checksum, and this
+    // one only decodes because `forge_key` recomputes it — but the day another
+    // field needs a "this key predates me" pattern, this is the one that cannot
+    // supply one.
+    assert_eq!(decoded.world_count, 0);
 }
 
 /// The checksum's reason for existing, measured.

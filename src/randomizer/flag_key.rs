@@ -386,7 +386,17 @@ mod payload {
         // --- Numbers ---
         /// Index into [`STARTING_LIVES_VALUES`].
         pub(super) starting_lives: B2,
-        /// 1–7; 0 is a dead pattern that decodes to the default of 7.
+        /// 0–7, every pattern a real value.
+        ///
+        /// **0 used to be dead and decode to the default of 7.** It became the
+        /// "start in Dark Land" count, which is the one kind of change the
+        /// reserve-bit scheme does not cover for free — but it needs no version
+        /// bump either, because no key in circulation carries it: the encoder
+        /// clamped to 1–7 from the day the field existed. The only skew is a
+        /// *newer* key read by an older build, which decodes 0 to 7 and plays
+        /// seven worlds. An appended "start in Dark Land" bool would have had
+        /// the identical failure there (an older build reads the bit as zero),
+        /// so it would have bought nothing for an extra bit.
         pub(super) world_count: B3,
         /// Item IDs directly (0 = empty slot), including the `ITEM_RANDOM*`
         /// sentinels — 5 bits covers all of them, where the old layout needed a
@@ -570,7 +580,13 @@ impl Options {
             .with_wild_lakitu(has(WildChaser::Lakitu))
             .with_wild_bass(has(WildChaser::Bass))
             .with_starting_lives(lives_to_idx(*starting_lives))
-            .with_world_count((*world_count).clamp(1, 7))
+            // Verbatim, including 0, and NOT normalized to 7 when the maze is
+            // on. The maze does pin the spine to all eight worlds, but it pins
+            // it in `randomize_inner` — the writer is what ignores this field,
+            // the same split `deja_vu_forts` uses, and normalizing here would
+            // move the key string of every maze key already minted with a
+            // shorter spine.
+            .with_world_count((*world_count).min(7))
             .with_world_maze(*world_maze)
             // Zero unless the maze is on. The field is meaningless with it
             // off, and encoding its default anyway would have moved the
@@ -668,9 +684,6 @@ impl Options {
             piranha_shuffle: f.piranha_shuffle_or_err().unwrap_or_default(),
             wild_injections: chasers,
             starting_lives: idx_to_lives(f.starting_lives()),
-            // 0 is unreachable from the encoder (it clamps to 1–7) but reachable
-            // from a corrupt or newer key; take the default rather than a world
-            // count the builder can't satisfy.
             world_maze: f.world_maze(),
             // 0 is a REAL value with the maze on — a pure maze, no gate on the
             // castle — so it is taken at face value there. With the maze off
@@ -681,10 +694,11 @@ impl Options {
             } else {
                 HintMode::default()
             },
-            world_count: match f.world_count() {
-                0 => default_world_count(),
-                n => n,
-            },
+            // Every pattern is a value now, 0 included — it is "start in Dark
+            // Land", not "unset". A key minted before that meaning existed
+            // cannot carry 0 (the encoder clamped to 1–7), so nothing older is
+            // being reinterpreted; see the field's own comment.
+            world_count: f.world_count(),
             starting_items: items,
             // Not encoded: fixed to the values a shared key should never
             // override. The web app skips these fields when applying a decoded

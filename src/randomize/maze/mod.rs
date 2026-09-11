@@ -90,12 +90,19 @@ pub(crate) struct MazeLock {
 /// is the whole reason the mode forces that option on; this constant exists so
 /// a census can pin the spine and vary one thing at a time.
 ///
-/// A spine need not name all eight worlds. `world_order` with `world_count < 7`
-/// returns a shorter order, and the worlds it leaves out are still built, still
-/// full of content, and still on the map — they simply have no airship edge
-/// into them, so **the only way in is a telepad**. That is not a degradation of
-/// the mode, it is the mode: a world you can only reach by pad is the closest
-/// thing the terrain allows to the charter's pad-only island.
+/// The generator does not require a spine that names all eight worlds. A
+/// shorter one leaves worlds still built, still full of content, still on the
+/// map, and with no airship edge into them, so **the only way in is a telepad**
+/// — which is not a degradation of the mode but the mode itself: a world you can
+/// only reach by pad is the closest thing the terrain allows to the charter's
+/// pad-only island.
+///
+/// **No shipped run produces one today.** `world_count` used to reach this
+/// (`world_order` returns a shorter order below 7), but the mode now pins it to
+/// 7 in `randomizer::randomize_inner`, and the web form greys that control out
+/// under the mode. The capability is kept here, and censuses still exercise
+/// short spines, so re-exposing it is a UI decision rather than a generator
+/// change.
 #[cfg(test)]
 pub(crate) const IDENTITY_SPINE: [usize; 8] = [0, 1, 2, 3, 4, 5, 6, 7];
 

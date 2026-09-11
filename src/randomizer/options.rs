@@ -448,7 +448,17 @@ pub struct Options {
     pub king_quotes: bool,
     #[serde(default)]
     pub world_order: bool,
-    /// Number of worlds before Dark Land (1–7, default 7).
+    /// Number of worlds before Dark Land (0–7, default 7). Only read when
+    /// [`Options::world_order`] is on, since its table is the mechanism.
+    ///
+    /// **0 starts the game in Dark Land**, which is then the whole game and
+    /// displays as "WORLD 1". No airship stands before Bowser's castle at that
+    /// count, so no wand exists in the run.
+    ///
+    /// **Ignored when [`Options::world_maze`] is on**, which pins the spine to
+    /// all eight worlds: the web form greys the control out under the mode, and
+    /// `randomize_inner` makes that true of every other entry point. The flag
+    /// key still carries the player's value verbatim.
     #[serde(default = "default_world_count")]
     pub world_count: u8,
     /// **World maze.** The eight world maps stop being a sequence and become

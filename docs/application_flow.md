@@ -91,7 +91,7 @@ changes every seed that uses `Maybe`.
 | 2.6 | `beta_tornado::randomize_beta9_tornado` · `beta_tornado` | [opt `include_beta_stages`] — after the enemy pass so the Tornado is final |
 | 2.7 | `bowser_castle::randomize` | [always] |
 | 2.8 | `podoboo_gauntlet::randomize` | [always] |
-| 2.9 | `world_order::randomize(world_count)` → `credits_progression` · `world_order` | [opt `world_order` **∨ `world_maze`**] — the maze reads this table as its airship spine, so it forces the pass on |
+| 2.9 | `world_order::randomize(world_count)` → `credits_progression` · `world_order` | [opt `world_order` **∨ `world_maze`**] — the maze reads this table as its airship spine, so it forces the pass on, and pins `world_count` to 7 (the web form greys that control out in maze mode). `world_count` 0 starts the game in Dark Land |
 | 2.10 | `enemies::randomize_big_q_blocks` · `enemies/big_q_blocks` | [opt `big_q_blocks`] |
 | 2.11 | `levels::randomize_airships` · `levels/airships` | [opt `shuffle_airships`] |
 | 2.12 | `antechambers::shuffle` · `levels/antechambers` | [tri `antechamber_shuffle`] — level data only, independent of the builder |

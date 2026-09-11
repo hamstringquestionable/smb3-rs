@@ -389,3 +389,56 @@ fn preset_overrides_name_live_flag_key_fields() {
 
     assert!(bad.is_empty(), "presets reference ids they cannot apply: {bad:?}");
 }
+
+/// The mode keys (`mode`, `forcedInMaze`) hold the page's story about which
+/// options apply in which mode, and their failure modes are silent in a browser:
+/// a mode spelled wrong makes an option inert in *both* modes, since neither
+/// matches; an entry marked both mode-specific and forced has its value written
+/// by the mode and then thrown away by `getOptions`. Nothing throws, so nothing
+/// but a check like this one would report either.
+///
+/// Deliberately not a list of which options are mode-specific — that is the
+/// schema's to say. This only asserts the markings are coherent with each other.
+#[test]
+fn mode_markings_are_coherent() {
+    let src = options_js();
+    let entries: Vec<(String, &str)> = entries(array_block(&src, "SCHEMA"))
+        .into_iter()
+        .map(|e| (entry_id(e).to_string(), e))
+        .collect();
+
+    let mode_of = |body: &str| -> Option<String> {
+        let at = body.find("mode: \"")? + "mode: \"".len();
+        let rest = &body[at..];
+        Some(rest[..rest.find('"').expect("mode value is not terminated")].to_string())
+    };
+    let mut modes = 0;
+    let mut forced_count = 0;
+    for (id, body) in entries.iter() {
+        let mode = mode_of(body);
+        let forced = body.contains("forcedInMaze:");
+        if forced {
+            forced_count += 1;
+        }
+
+        let Some(m) = &mode else { continue };
+        modes += 1;
+        assert!(
+            m == "maze" || m == "standard",
+            "SCHEMA entry `{id}` has mode `{m}`, which is neither mode",
+        );
+        assert!(
+            !forced,
+            "SCHEMA entry `{id}` is both mode-specific and forced — the mode would \
+             write its value and `getOptions` would then throw it away",
+        );
+        assert!(
+            body.contains("inFlagKey: true"),
+            "SCHEMA entry `{id}` is mode-specific but not in the flag key, so \
+             nothing it does can differ between modes in the first place",
+        );
+    }
+
+    assert!(modes > 0, "no mode-specific entries parsed from {OPTIONS_JS} — parser drift");
+    assert!(forced_count > 0, "no forced entries parsed from {OPTIONS_JS} — parser drift");
+}
