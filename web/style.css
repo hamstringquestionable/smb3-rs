@@ -4,6 +4,22 @@
     padding: 0;
 }
 
+/* The `hidden` attribute only gets `display: none` from the UA stylesheet, and
+   an author rule beats the UA stylesheet whatever its specificity. So ANY rule
+   here that sets `display` on an element also carrying `hidden` silently
+   cancels it — `el.hidden = true` runs, the attribute lands, and the element
+   stays on screen with nothing in it.
+
+   Three elements were in that state: the title-hash row (`display: flex`), the
+   version picker (`flex`) and the "The End" canvas (`block`) — all three meant
+   to stay hidden until a ROM is loaded, all three visible from first paint.
+   Rather than unpick each rule, `hidden` is made to mean hidden. `!important`
+   is what makes that true against the author rules already here, and against
+   the next one somebody writes. */
+[hidden] {
+    display: none !important;
+}
+
 body {
     font-family: "Courier New", Courier, monospace;
     background: #0c0c1e;
@@ -799,11 +815,37 @@ input[type="radio"] {
     background: rgba(228, 68, 52, 0.08);
 }
 
+/* The panel stacks its sections; each section's pills wrap inside their own
+   row, so a two-pill section can't share a line with the next heading. */
 .preset-pills {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    margin-bottom: 0.5rem;
+}
+
+.preset-row {
     display: flex;
     flex-wrap: wrap;
     gap: 0.5rem;
-    margin-bottom: 0.5rem;
+}
+
+.preset-section-label {
+    color: #6a6a85;
+    font-size: 0.65rem;
+    font-weight: bold;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+/* The first heading sits directly under the panel title, which already has
+   space beneath it. */
+.preset-section-label + .preset-row {
+    margin-bottom: 0.15rem;
+}
+
+.preset-row + .preset-section-label {
+    margin-top: 0.35rem;
 }
 
 .preset-pill {
@@ -925,7 +967,9 @@ input[type="radio"] {
     margin-left: 0.25rem;
 }
 
-.early-access-note {
+/* The two community links under Generate. Was the early-access caveat; the
+   styling is the same quiet centred line, without the italics a warning wanted. */
+.links-note {
     margin-top: 0.6rem;
     text-align: center;
     font-size: 0.7rem;
@@ -933,12 +977,19 @@ input[type="radio"] {
     line-height: 1.4;
 }
 
-.early-access-note a {
+/* Each phrase stays whole, so the line breaks between them rather than
+   orphaning "Discord" from "Join the". */
+.links-note span {
+    display: inline-block;
+    white-space: nowrap;
+}
+
+.links-note a {
     color: #5c94fc;
     text-decoration: none;
 }
 
-.early-access-note a:hover {
+.links-note a:hover {
     text-decoration: underline;
 }
 

@@ -390,6 +390,61 @@ fn preset_overrides_name_live_flag_key_fields() {
     assert!(bad.is_empty(), "presets reference ids they cannot apply: {bad:?}");
 }
 
+/// **A preset's section and what it actually builds must agree.** `mode` only
+/// decides which heading the pill appears under, so a maze preset that forgets
+/// `world_maze: true` sits in the World Maze section and quietly generates a
+/// standard game — the pill works, the ROM is wrong, and nothing says so. The
+/// reverse is the same bug from the other side: a standard preset that switches
+/// the mode on.
+///
+/// Both are one line to get wrong and invisible in a browser, which is the same
+/// argument [`mode_markings_are_coherent`] makes for the schema's own markings.
+#[test]
+fn preset_modes_match_what_they_build() {
+    let src = options_js();
+    let entries = entries(array_block(&src, "PRESETS"));
+    assert!(
+        entries.len() >= MIN_PRESETS,
+        "parsed only {} presets from {OPTIONS_JS} — parser drift",
+        entries.len(),
+    );
+
+    let mut bad = Vec::new();
+    for entry in entries {
+        let pid = entry_id(entry);
+        let body = strip_comments(entry);
+
+        let mode = body
+            .find("mode:")
+            .map(|at| {
+                let rest = &body[at + "mode:".len()..];
+                let open = rest.find('"').expect("mode has no opening quote") + 1;
+                let close = rest[open..].find('"').expect("mode has no closing quote") + open;
+                rest[open..close].to_string()
+            })
+            .unwrap_or_else(|| panic!("preset `{pid}` has no `mode:` — which section is it in?"));
+
+        // `world_maze: true` inside the overrides, comments already stripped.
+        let turns_maze_on = body
+            .find("world_maze:")
+            .map(|at| body[at..].trim_start_matches("world_maze:").trim_start().starts_with("true"))
+            .unwrap_or(false);
+
+        match mode.as_str() {
+            "maze" if !turns_maze_on => {
+                bad.push(format!("{pid}: in the maze section but never sets world_maze: true"))
+            }
+            "standard" if turns_maze_on => {
+                bad.push(format!("{pid}: in the standard section but sets world_maze: true"))
+            }
+            "maze" | "standard" => {}
+            other => bad.push(format!("{pid}: mode `{other}` is not a section")),
+        }
+    }
+
+    assert!(bad.is_empty(), "preset sections disagree with their overrides: {bad:?}");
+}
+
 /// The mode keys (`mode`, `forcedInMaze`) hold the page's story about which
 /// options apply in which mode, and their failure modes are silent in a browser:
 /// a mode spelled wrong makes an option inert in *both* modes, since neither

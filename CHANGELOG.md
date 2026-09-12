@@ -22,6 +22,15 @@ build a different ROM.
 
 ### Added
 
+- **The presets come in two sections, Standard and World Maze.** Standard holds
+  Recommended, Beginner Friendly, Vanilla Randomizer, Challenging, Max Chaos and
+  a new **W8 Sprint** — one world, straight into Dark Land, with a hammer to open
+  the way. World Maze holds a Recommended, Beginner Friendly, Challenging and
+  Max Chaos of its own, tuned for the mode: Beginner gets full lock hints,
+  Challenging gets none, and the two hardest open Bowser's castle from the start
+  rather than asking for wands. League Season 7 is retired now the season is
+  over, and Jet goes with it — W8 Sprint is the short game now.
+
 - **A World Maze tracker page.** Linked from the World Maze section, and a
   paper aid rather than anything the ROM knows about: eight world slots, the
   fortresses and locks in each, and the warp pads between them, which you link
@@ -57,6 +66,9 @@ build a different ROM.
   whistle is how you get around, and it can never take you anywhere new.
 
 ### Changed
+
+- **A Discord invite sits beside the GitHub link**, and the "early access — you
+  may encounter bugs" line it replaces is gone.
 
 - **World Maze: a game over sends you back to World 1.** Vanilla drops you at
   the start of whatever world you ran out of lives in, which in a maze can be a
@@ -173,6 +185,12 @@ build a different ROM.
   to nearly three quarters. Maze maps will feel noticeably less self-contained.
 
 ### Fixed
+
+- **The Title Hash panel no longer appears empty.** It showed its heading and
+  the mute hint from the moment the page loaded, before there was any ROM or
+  seed to draw icons from. Two other things meant to wait their turn were doing
+  the same: the randomizer-version picker and the ending sign-off at the bottom
+  of the page.
 
 - **World Maze: a seed that could not be finished can no longer be handed out.**
   Nothing was known to produce one, but nothing checked either — the game worked

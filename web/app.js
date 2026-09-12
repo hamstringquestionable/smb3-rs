@@ -594,22 +594,65 @@ generateBtn.addEventListener("click", async () => {
 // settings simply no longer match any single preset.
 
 function renderPresetPills() {
+	// Sections, in the order they are shown. A preset's `mode` says which one
+	// it belongs to — the same "standard" / "maze" split the schema uses to
+	// mark an option inert in the other mode.
+	//
+	// **Both sections are always rendered, rather than only the current
+	// mode's.** Hiding the maze four until World Maze is already ticked would
+	// make the mode a prerequisite for discovering the presets that turn it on
+	// — and the four labels repeat the standard ones (`Recommended`,
+	// `Challenging`, ...), so a heading is doing real work here.
+	//
+	// **Declared in here, not at module scope, and that is load-bearing.**
+	// This function is *called* from the init run at the top of the file, far
+	// above this point in the source. A module-scope `const` is not hoisted,
+	// so the call would hit its temporal dead zone and throw — and because the
+	// throw aborts module evaluation, every listener wired below the call site
+	// silently never attaches, the ROM file input included. It looked like the
+	// app had stopped accepting ROMs. `node --check` cannot see it; only
+	// running the page can.
+	// World Maze first, matching `GROUPS` in options.js, where the maze is also
+	// the first fieldset: the mode is 2.0's headline, and a player who came for
+	// it should not have to scroll past the standard slate to find it.
+	const sections = [
+		{ mode: "maze", label: "World Maze" },
+		{ mode: "standard", label: "Standard" },
+	];
+
 	presetPills.replaceChildren();
-	for (const preset of PRESETS) {
-		const btn = document.createElement("button");
-		btn.type = "button";
-		btn.className = "preset-pill";
-		btn.textContent = preset.label;
-		if (preset.tip) btn.title = preset.tip;
-		btn.addEventListener("click", () => {
-			applyPreset(preset.overrides);
-			updateFlagKey();
-			updateChangesSummary();
-			updateSkipValidationWarning();
-			validateLoadedRom();
-			showStatus(`Loaded preset: ${preset.label}`, "success");
-		});
-		presetPills.appendChild(btn);
+	for (const section of sections) {
+		const inSection = PRESETS.filter(p => p.mode === section.mode);
+		if (!inSection.length) continue;
+
+		const heading = document.createElement("div");
+		heading.className = "preset-section-label";
+		heading.textContent = section.label;
+		presetPills.appendChild(heading);
+
+		const row = document.createElement("div");
+		row.className = "preset-row";
+		for (const preset of inSection) {
+			const btn = document.createElement("button");
+			btn.type = "button";
+			btn.className = "preset-pill";
+			btn.textContent = preset.label;
+			if (preset.tip) btn.title = preset.tip;
+			btn.addEventListener("click", () => {
+				applyPreset(preset.overrides);
+				updateFlagKey();
+				updateChangesSummary();
+				updateSkipValidationWarning();
+				validateLoadedRom();
+				// The label alone is ambiguous now that both sections carry a
+				// "Recommended" and a "Challenging".
+				const what =
+					preset.mode === "maze" ? `${preset.label} (World Maze)` : preset.label;
+				showStatus(`Loaded preset: ${what}`, "success");
+			});
+			row.appendChild(btn);
+		}
+		presetPills.appendChild(row);
 	}
 }
 
