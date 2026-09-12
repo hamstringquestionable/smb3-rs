@@ -20,7 +20,7 @@ Status column:
 | [smb3_rom_reference.md](smb3_rom_reference.md) | **Reference** | The ROM-hacking reference: offsets, data structures, RAM map, bank layout. **New ROM findings get recorded here** (CLAUDE.md's rule). Sections describing subsystems the randomizer has since replaced carry vanilla-only banners. |
 | [application_flow.md](application_flow.md) | **Live** | Every randomization step in the order `randomize_inner` applies them, with its gate and write-log tag. Regenerate from the function when it drifts. |
 | [choice_first_charter.md](choice_first_charter.md) | **Live** | The overworld builder's design authority — the point, the values, the pipeline, the measured baselines. |
-| [world_maze_design.md](world_maze_design.md) | **Live** | The world maze: eight worlds linked by telepads. Shipped to `beta/next` 2026-09-07; **never playtested end to end.** Several mid-document sections are marked superseded by the fortress-FX rework — read the banners. |
+| [world_maze_design.md](world_maze_design.md) | **Live** | The world maze: eight worlds linked by telepads. Shipped to `beta/next` 2026-09-07 and playtested repeatedly since. Several mid-document sections are marked superseded by the fortress-FX rework — read the banners. |
 | [fx_table_redesign.md](fx_table_redesign.md) | **Live** | Why vanilla's 17 fortress-FX slots were retired for one position-keyed table, and how. The mechanism is `lock_keys.rs`. |
 | [big_q_rooms_design.md](big_q_rooms_design.md) | **Live** | The Big [?] bonus-room shuffle, opt-in since PR #197. Well maintained; the pool is 19 rooms. |
 | [wild_injection_rework.md](wild_injection_rework.md) | **Live** | How wild enemy injection works after the 0.12.2 rework. Verified accurate. |

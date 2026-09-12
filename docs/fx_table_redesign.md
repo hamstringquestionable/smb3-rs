@@ -3,7 +3,7 @@
 **Status:** **stage 1 landed** 2026-09-06 on `experiment/world-maze`. The slot
 tables and vanilla's `MO_DoFortressFX` are gone; every lock in the game is one
 entry in one position-keyed table, found at map operation 8 from the player's
-own cell. Not yet playtested on hardware.
+own cell. Exercised on hardware through World Maze playtesting.
 
 > **Correction, same day.** The first cut keyed on `Map_MarkLevelComplete`'s
 > fortress branch — the site the maze's cross-world locks already used — and
