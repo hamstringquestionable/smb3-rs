@@ -1,0 +1,21 @@
+{
+  "name": "smb3-rs",
+  "type": "module",
+  "description": "Super Mario Bros. 3 randomizer — outputs an IPS patch or a patched ROM",
+  "version": "2.0.0",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/hamstringquestionable/smb3-rs"
+  },
+  "files": [
+    "smb3_rs_bg.wasm",
+    "smb3_rs.js",
+    "smb3_rs.d.ts"
+  ],
+  "main": "smb3_rs.js",
+  "types": "smb3_rs.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ]
+}
