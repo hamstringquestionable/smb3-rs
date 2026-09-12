@@ -7,12 +7,35 @@ mechanisms discovered along the way, and the measured numbers. The rest of the
 charter remains the plain-English contract the work is measured against. No
 Rust here on purpose.
 
-> **A note on the name.** This started as a "mission-first" builder, and the code
-> still carries that name (the `Mission` struct, the `--mission-overworld` flag).
-> That name describes a *mechanism* — placing pieces to realize a per-world
-> progression — not the goal. The goal is the one thing below: **generate choices
-> for the player.** A mission is one tool we use to produce them. Read "mission"
-> throughout as an ingredient, never the north star.
+> **Every measured number in this document is a dated snapshot, and may have
+> drifted.** The percentages below — linearity, forced-fort rates, route-choice
+> bands, the Fred comparison, the W8 bridge distribution — were each true of the
+> builder on the date its section carries. The builder has changed since, more
+> than once, and nothing re-checks these figures: no test asserts them, so they
+> cannot fail. They are a record of what was measured, not a live readout.
+>
+> **Do not settle a decision on a number from this document without re-running
+> the census that produced it.** The two that matter, from CLAUDE.md — each a
+> few minutes:
+>
+> ```sh
+> CENSUS_SEEDS=500 cargo test --release --lib all_world_targets_reachable
+> CENSUS_SEEDS=1000 cargo test --release --lib test_route_census -- --ignored --nocapture
+> ```
+>
+> Reading them for orientation — "roughly what shape was this?", "which lever
+> moved it?" — is exactly what they are for. Quoting one as the current value,
+> or comparing a fresh measurement against one to claim an improvement or a
+> regression, is not: re-measure the baseline in the same run and compare like
+> with like. When you do re-run one, update the section and date it.
+
+> **A note on the name.** This started as a "mission-first" builder. That name
+> described a *mechanism* — placing pieces to realize a per-world progression —
+> not the goal. The goal is the one thing below: **generate choices for the
+> player.** The naming residue is gone from the code as well: there is no
+> `Mission` struct and no `--mission-overworld` flag any more, and the
+> `WorldPlan` / `LockRole` archetype layer they belonged to was deleted when the
+> measured route structure took over the decision (see "Implementation status").
 
 ## What it is
 
@@ -484,12 +507,21 @@ level 3 / fort 5 / rock 8, each clearable charged once) that enumerates every
 distinct near-optimal route (identity = level-set), drops dominated superset
 detours, and calls a world *choiceful* when ≥2 routes sit within 3 points.
 
-**Pipeline** (per world): connectivity pipes → levels placed as the terrain
-(`place_levels` — first half greedy, second half measured) → measured fort
-shaping (`shape.rs`) → fort sections renumbered by BFS rank → locks → spare
-pipes. The `WorldPlan` archetype /
-`LockRole` layer is deleted — the measured route structure decides directly.
-No rerolls: worlds whose terrain can't fork stay honestly linear.
+**Pipeline** (per world), as of the 2026-07-30 session and still current —
+`overworld_build/mod.rs`'s own module doc is the authority: `Connectivity`
+(bridge islands with pipe pairs) → `Levels` → `Forts` → `Locks` → `Shaping`
+(the diagnosis-driven improvement loop) → `SparePipes` (the full vanilla pipe
+budget is always spent; the guard steers where), the whole thing wrapped in
+`run_shaped_with_web_retries` so a world finishing below the C1 floor redeals
+its pipe web. Then across worlds: the secret-exit-safety backstop, hammer-bro
+fill, toad-house / spade promotion, wandering-sprite redistribution.
+
+> The July 27 version of this paragraph had fort shaping running *before* locks,
+> in a `shape.rs` that no longer exists — shaping became its own phase in
+> `shaping.rs`, after `Locks`, so that it can diagnose a world that already has
+> its gates in place. The `WorldPlan` archetype / `LockRole` layer is deleted:
+> the measured route structure decides directly. No rerolls beyond the pipe-web
+> redeal — worlds whose terrain can't fork stay honestly linear.
 
 **Mechanisms, in the order the censuses forced them into existence:**
 
@@ -814,6 +846,27 @@ the cheapest route as well.
 | C1 mean | 19.4 | 19.2 |
 | below own dealt floor | 0.34% | 0.39% |
 | goal-open | 3.0% | 2.7% |
+
+**These numbers are one commit stale, and the drift is accounted for.** PR #212
+("a completable map tile at row 7 must bar its row-8 partner") landed after this
+table was recorded and adds a terrain clause to `WorldState::row78_barred`,
+which bars cells the placement phases used to be free to take. Measured at 1000
+seeds, with only that clause reverted and nothing else changed:
+
+| | this table | with #212 |
+|---|---|---|
+| routes/world | 2.595 | 2.587 |
+| linear% | 6.22 | 6.19 |
+| goal-open | **2.7%** | **3.3%** |
+| C1 below its dealt floor | 0.39% | 0.36% |
+
+Reverting the clause reproduces `2.595 / 6.22% / 2.7%` exactly, so the
+attribution is measured rather than inferred. Routes, linear% and the sub-floor
+rate all move the *right* way or not at all; goal-open is the one that moved,
+and a goal-open world above its floor is a charter non-defect (see the note
+below this table). Nothing in the world-maze work touches it — the maze's only
+builder line is inert unless `wand_gate_reserved` is set, and W8's bridge deal
+is byte-identical over 2000 seeds with the maze off.
 | build time (shaped) | 52.1 ms/seed | 52.5 ms/seed |
 
 The feared trade did not materialise: C1 gives up 0.2 points, and choice

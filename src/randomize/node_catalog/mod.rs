@@ -31,8 +31,14 @@ pub(super) type RawClassifiedEntry = (usize, NodeKind, Pos, u8, Option<LevelEntr
 pub(super) enum NodeKind {
     /// Numbered action level.
     Level,
-    /// Fortress (carries Boom-Boom Y-byte offset for patching).
-    Fortress { boomboom_y_offset: usize },
+    /// Fortress.
+    ///
+    /// It used to carry the offset of its Boom-Boom's spawn Y byte, because the
+    /// old fortress-FX chain smuggled a lock's slot ordinal through that byte's
+    /// high nibble. Position keying retired that path — `lock_keys::apply`
+    /// masks all 17 nibbles back to the real spawn Y — so the offset is no
+    /// longer a fact anything needs a fortress to carry.
+    Fortress,
     /// One endpoint of a pipe pair.
     /// `is_a_side`: true if this is the A endpoint (upper nibble in dest tables).
     Pipe { dest_idx: usize, is_a_side: bool },
@@ -59,7 +65,7 @@ impl NodeKind {
     pub fn label(&self) -> &'static str {
         match self {
             NodeKind::Level => "level",
-            NodeKind::Fortress { .. } => "fortress",
+            NodeKind::Fortress => "fortress",
             NodeKind::Pipe { .. } => "pipe",
             NodeKind::Airship => "airship",
             NodeKind::Bowser => "bowser",
@@ -76,7 +82,7 @@ impl NodeKind {
         matches!(
             self,
             NodeKind::Level
-                | NodeKind::Fortress { .. }
+                | NodeKind::Fortress
                 | NodeKind::Pipe { .. }
                 | NodeKind::Airship
                 | NodeKind::Bowser
@@ -227,6 +233,19 @@ impl NodeCatalog {
                 is_numbered_level: matches!(e.kind, NodeKind::Level),
                 level_entry: e.level_entry.clone(),
             })
+            .collect()
+    }
+
+    /// Every spade / bonus-game panel, as `(world, grid position)`.
+    ///
+    /// Native-only: its sole consumer is the `testrom` builder's telepads,
+    /// which stand on these tiles.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn bonus_game_views(&self) -> Vec<(usize, (usize, usize))> {
+        self.entries
+            .iter()
+            .filter(|e| matches!(e.kind, NodeKind::BonusGame))
+            .map(|e| (e.world_idx, e.grid_pos))
             .collect()
     }
 

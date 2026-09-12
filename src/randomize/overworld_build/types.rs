@@ -18,6 +18,12 @@ pub(crate) struct BuildFlags {
     pub shuffle_toad_houses: bool,
     pub eights_are_wild: bool,
     pub shuffle_hammer_bros: bool,
+    /// World-maze mode. The builder's own behaviour is unchanged by it with
+    /// one exception: W8's wand-gate cell is held out of the lock passes,
+    /// because the maze writes a gate over that cell after the build and a
+    /// lock there would be two owners for one tile. Standard mode must not
+    /// move, so this is a flag rather than an unconditional rule.
+    pub world_maze: bool,
 }
 
 /// What kind of node occupies a grid slot.
@@ -47,6 +53,31 @@ pub struct SlotAssignment {
     /// tile drops the player into the underlying level (uniform Map_Op = $10
     /// dispatch — no pipe-transit state).
     pub is_troll_pipe: bool,
+    /// Where the lock this fortress opens is, for the map-hint tiles. Only
+    /// meaningful on `SlotKind::Fortress` slots, and only set by the world
+    /// maze — outside it every fortress opens a lock in its own world, so
+    /// there is nothing to say.
+    pub lock_hint: LockHint,
+}
+
+/// Where the lock a fortress opens is — the *fact*, with no tile byte in it.
+///
+/// The writer turns this into one of [`rom_data::FORTRESS_TILES`], the same way
+/// it turns `is_hand_trap` and `is_troll_pipe` into their tiles. Which byte
+/// says what, whether the player asked to be told at all, and what the tile
+/// becomes once the fortress is beaten are all the writer's business; deciding
+/// which fortress opens which lock is the maze's.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum LockHint {
+    /// Nothing to say — the writer picks a fortress tile for variety.
+    #[default]
+    Unhinted,
+    /// The lock is in this fortress's own world.
+    OwnWorld,
+    /// The lock is in World 8: this fortress opens the way to the castle.
+    World8,
+    /// The lock is in some other world.
+    Elsewhere,
 }
 
 /// Stamp assigned slots onto a grid so `walk_map` sees them as nodes.
@@ -69,17 +100,31 @@ pub(crate) fn stamp_slots(grid: &mut Grid, slots: &[SlotAssignment]) {
     }
 }
 
+/// **Which fortress opens a lock**, as `(world, section)`.
+///
+/// `section` is the fortress's per-world section index — the same numbering
+/// `SlotAssignment::section` uses, so no second fort id has to be invented.
+///
+/// The world is part of it because the ROM stopped caring about world
+/// boundaries. Vanilla's fortress-FX slots were per-world tables, so a lock
+/// could only ever name a fortress in its own world and the model matched the
+/// hardware. `lock_keys` replaced those tables with one position-keyed table
+/// (`docs/fx_table_redesign.md`), and a fortress can now open a lock anywhere.
+/// The world maze is the only thing that does so today; the builder sets its
+/// own world, and `maze::stamp_into` rewrites this with the maze's pairing.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub(crate) struct FortRef {
+    pub world: usize,
+    pub section: usize,
+}
+
 /// A lock/bridge placed on a path tile.
 #[derive(Clone, Debug)]
 pub(crate) struct LockAssignment {
     /// Path tile position where the lock goes.
     pub pos: (usize, usize),
-    /// The blocking tile to write (0x54 vert lock, 0x56 horiz lock, 0xE4 sky lock, 0x9D water gap).
-    pub gap_tile: u8,
-    /// The original path tile (for FX restore).
-    pub replace_tile: u8,
-    /// Which fortress (section index) opens this lock.
-    pub fort_section: usize,
+    /// The fortress that opens it, which need not be in this world.
+    pub fort: FortRef,
     /// True if the world's target (airship/Bowser) is still reachable with
     /// this lock closed. These locks are safe for 1-F (secret exit doesn't
     /// trigger FX replacement).

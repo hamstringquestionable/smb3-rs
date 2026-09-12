@@ -4,6 +4,22 @@
     padding: 0;
 }
 
+/* The `hidden` attribute only gets `display: none` from the UA stylesheet, and
+   an author rule beats the UA stylesheet whatever its specificity. So ANY rule
+   here that sets `display` on an element also carrying `hidden` silently
+   cancels it — `el.hidden = true` runs, the attribute lands, and the element
+   stays on screen with nothing in it.
+
+   Three elements were in that state: the title-hash row (`display: flex`), the
+   version picker (`flex`) and the "The End" canvas (`block`) — all three meant
+   to stay hidden until a ROM is loaded, all three visible from first paint.
+   Rather than unpick each rule, `hidden` is made to mean hidden. `!important`
+   is what makes that true against the author rules already here, and against
+   the next one somebody writes. */
+[hidden] {
+    display: none !important;
+}
+
 body {
     font-family: "Courier New", Courier, monospace;
     background: #0c0c1e;
@@ -348,6 +364,24 @@ input[type="radio"] {
     color: var(--pill-active-text, #fff);
 }
 
+/* A pill that toggles independently of the exclusive choice beside it (Deja
+   Vu's "Forts"). The heavier left edge is the only thing saying "this one is
+   not part of the pick-one group" — without it a lit Forts reads as a fourth
+   mode. */
+.pill-group label.pill-flag {
+    border-left: 2px solid #2a2a50;
+}
+
+/* Its host is off, so the flag would change nothing. Dimmed and inert rather
+   than hidden, so the row does not change shape as the host is switched. */
+.pill-group label.pill-disabled,
+.pill-group label.pill-disabled:hover {
+    opacity: 0.35;
+    cursor: default;
+    background: #1c1c38;
+    color: #9a9ab0;
+}
+
 /* "Off" selected: muted gray so an explicit off doesn't read as a hot accent. */
 .pill-group input[value="off"]:checked + label {
     background: #3a3a60;
@@ -534,6 +568,37 @@ input[type="radio"] {
     font-size: 0.7rem;
     color: #5c94fc;
     margin-left: 0.25rem;
+}
+
+/* Mode badge: "Maze only", "Forced on by World Maze". Sits in the row it talks
+   about rather than in a note at the top of the section, because the thing a
+   player needs to know is why *this* control is not theirs to set. Amber, not
+   the flavor pill's green — it is a warning about the control, not a joke about
+   the option. `margin-left: auto` pushes it to the pill group's left edge, so a
+   column of badges lines up down the form. */
+.opt-badge {
+    font-size: 0.6rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #0c0c1e;
+    background: #e8a33d;
+    margin-left: auto;
+    margin-right: 0.5rem;
+    padding: 0.1rem 0.4rem;
+    border-radius: 3px;
+    white-space: nowrap;
+}
+
+/* A row the mode (or its host option) has made inert. Until this rule, greying
+   a row only stopped its pills responding to clicks — nothing on screen said
+   why, which reads as a broken page rather than a rule. The pills themselves
+   keep their colors so a forced value is still legible at a glance. */
+.select-label.disabled {
+    opacity: 0.5;
+}
+
+.select-label.disabled .pill-group label {
+    cursor: default;
 }
 
 .option-flavor {
@@ -750,11 +815,37 @@ input[type="radio"] {
     background: rgba(228, 68, 52, 0.08);
 }
 
+/* The panel stacks its sections; each section's pills wrap inside their own
+   row, so a two-pill section can't share a line with the next heading. */
 .preset-pills {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    margin-bottom: 0.5rem;
+}
+
+.preset-row {
     display: flex;
     flex-wrap: wrap;
     gap: 0.5rem;
-    margin-bottom: 0.5rem;
+}
+
+.preset-section-label {
+    color: #6a6a85;
+    font-size: 0.65rem;
+    font-weight: bold;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+/* The first heading sits directly under the panel title, which already has
+   space beneath it. */
+.preset-section-label + .preset-row {
+    margin-bottom: 0.15rem;
+}
+
+.preset-row + .preset-section-label {
+    margin-top: 0.35rem;
 }
 
 .preset-pill {
@@ -876,7 +967,9 @@ input[type="radio"] {
     margin-left: 0.25rem;
 }
 
-.early-access-note {
+/* The two community links under Generate. Was the early-access caveat; the
+   styling is the same quiet centred line, without the italics a warning wanted. */
+.links-note {
     margin-top: 0.6rem;
     text-align: center;
     font-size: 0.7rem;
@@ -884,12 +977,19 @@ input[type="radio"] {
     line-height: 1.4;
 }
 
-.early-access-note a {
+/* Each phrase stays whole, so the line breaks between them rather than
+   orphaning "Discord" from "Join the". */
+.links-note span {
+    display: inline-block;
+    white-space: nowrap;
+}
+
+.links-note a {
     color: #5c94fc;
     text-decoration: none;
 }
 
-.early-access-note a:hover {
+.links-note a:hover {
     text-decoration: underline;
 }
 

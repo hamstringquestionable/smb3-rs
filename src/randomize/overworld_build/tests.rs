@@ -2,6 +2,7 @@ use super::capacity::{W8_HB_CAP, distribute_levels, prepare_capacities, redistri
 use super::*;
 
 use super::types::stamp_slots;
+use crate::randomize::map_walker::walk_map_blocked;
 use crate::rom::Rom;
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
@@ -571,25 +572,19 @@ fn world_topology(built: &BuiltWorld) -> Option<WorldTopology> {
     if forts.is_empty() {
         return None;
     }
-    let all_secs: HashSet<usize> = built.locks.iter().map(|l| l.fort_section).collect();
-    let grid_with = |opened: &HashSet<usize>| -> Grid {
-        let mut g = base.clone();
-        for l in &built.locks {
-            if opened.contains(&l.fort_section) {
-                g.set(l.pos.0, l.pos.1, l.replace_tile);
-            } else {
-                g.set(l.pos.0, l.pos.1, l.gap_tile);
-            }
-        }
-        g
+    let all_secs: HashSet<usize> = built.locks.iter().map(|l| l.fort.section).collect();
+    // Which cells are shut, given the fort-sections beaten. An open lock is
+    // simply absent: locks are an overlay, so `base` already holds the path.
+    let shut_with = |opened: &HashSet<usize>| -> HashSet<Pos> {
+        built.locks.iter().filter(|l| !opened.contains(&l.fort.section)).map(|l| l.pos).collect()
     };
 
     // Chain depth: rounds of beat-all-reachable until the goal opens.
     let mut opened: HashSet<usize> = HashSet::new();
     let mut depth = 0usize;
     loop {
-        let g = grid_with(&opened);
-        let walk = walk_map(&g, &built.pipe_pairs, Some(start), wi);
+        let shut = shut_with(&opened);
+        let walk = walk_map_blocked(&base, &built.pipe_pairs, Some(start), wi, &shut);
         if walk.nodes.contains(&target) {
             break;
         }
@@ -692,19 +687,16 @@ fn progression_metrics() {
 
             // Build a grid with `opened` fort-sections' locks restored (open)
             // and every other lock closed (gapped).
-            let grid_with = |opened: &HashSet<usize>| -> Grid {
-                let mut g = base.clone();
-                for l in &built.locks {
-                    if opened.contains(&l.fort_section) {
-                        g.set(l.pos.0, l.pos.1, l.replace_tile);
-                    } else {
-                        g.set(l.pos.0, l.pos.1, l.gap_tile);
-                    }
-                }
-                g
+            let shut_with = |opened: &HashSet<usize>| -> HashSet<Pos> {
+                built
+                    .locks
+                    .iter()
+                    .filter(|l| !opened.contains(&l.fort.section))
+                    .map(|l| l.pos)
+                    .collect()
             };
             let all_lock_sections: HashSet<usize> =
-                built.locks.iter().map(|l| l.fort_section).collect();
+                built.locks.iter().map(|l| l.fort.section).collect();
 
             // ---- Problem 2: chain depth (round-count) ----
             if let Some(tgt) = target {
@@ -712,8 +704,8 @@ fn progression_metrics() {
                 let mut depth = 0usize;
                 let mut infeasible = false;
                 loop {
-                    let g = grid_with(&opened);
-                    let walk = walk_map(&g, &built.pipe_pairs, start, wi);
+                    let shut = shut_with(&opened);
+                    let walk = walk_map_blocked(&base, &built.pipe_pairs, start, wi, &shut);
                     if walk.nodes.contains(&tgt) {
                         break;
                     }
@@ -746,16 +738,16 @@ fn progression_metrics() {
                     for &sec in &all_lock_sections {
                         let mut opened_but_one = all_lock_sections.clone();
                         opened_but_one.remove(&sec);
-                        let g = grid_with(&opened_but_one);
-                        let walk = walk_map(&g, &built.pipe_pairs, start, wi);
+                        let shut = shut_with(&opened_but_one);
+                        let walk = walk_map_blocked(&base, &built.pipe_pairs, start, wi, &shut);
                         if !walk.nodes.contains(&tgt) {
                             mandatory += 1;
                         }
                     }
 
                     // Forts accessible at start (all locks closed).
-                    let g0 = grid_with(&HashSet::new());
-                    let walk0 = walk_map(&g0, &built.pipe_pairs, start, wi);
+                    let shut0 = shut_with(&HashSet::new());
+                    let walk0 = walk_map_blocked(&base, &built.pipe_pairs, start, wi, &shut0);
                     let at_start = forts.iter().filter(|p| walk0.nodes.contains(*p)).count();
 
                     // Census only worlds that CAN chain (2+ forts); single-fort
@@ -794,7 +786,7 @@ fn progression_metrics() {
                 let fort_pos = built
                     .slots
                     .iter()
-                    .find(|s| s.kind == SlotKind::Fortress && s.section == l.fort_section);
+                    .find(|s| s.kind == SlotKind::Fortress && s.section == l.fort.section);
                 let Some(fp) = fort_pos.map(|s| s.pos) else { continue };
 
                 let man = fp.0.abs_diff(l.pos.0) + fp.1.abs_diff(l.pos.1);
@@ -807,9 +799,9 @@ fn progression_metrics() {
                 // Fort-side component: only this lock closed, all others open;
                 // walk from the fort. Small => fort stuck with its own gate.
                 let mut opened = all_lock_sections.clone();
-                opened.remove(&l.fort_section);
-                let g = grid_with(&opened);
-                let walk = walk_map(&g, &built.pipe_pairs, Some(fp), wi);
+                opened.remove(&l.fort.section);
+                let shut = shut_with(&opened);
+                let walk = walk_map_blocked(&base, &built.pipe_pairs, Some(fp), wi, &shut);
                 comp_hist[walk.nodes.len().min(11)] += 1;
                 comp_total += 1;
             }
@@ -1989,9 +1981,7 @@ fn test_walkgraph_reuse() {
                 if let Some(pos) = lock_pos {
                     cand.locks.push(super::types::LockAssignment {
                         pos,
-                        gap_tile: 0x54,
-                        replace_tile: 0x00,
-                        fort_section: seed as usize % built.section_count,
+                        fort: FortRef { world, section: seed as usize % built.section_count },
                         secret_exit_safe: false,
                     });
                     assert!(
@@ -2132,7 +2122,7 @@ fn w8_bridges_out_census() {
             spans: w8
                 .locks
                 .iter()
-                .filter(|l| l.replace_tile == rom_data::BRIDGE_TILE)
+                .filter(|l| w8.grid.get(l.pos.0, l.pos.1) == rom_data::BRIDGE_TILE)
                 .map(|l| l.pos.1)
                 .collect(),
             zero_gate: state.zero_gate_locks().len(),
@@ -2201,4 +2191,111 @@ struct W8Sample {
     c1: u32,
     floor: u32,
     routes: usize,
+}
+
+/// How many completion bits an eight-world map actually needs.
+///
+/// The world-maze design banks a world's map state as one bit per *completable
+/// cell* rather than as the engine's 64-column bitmap, because 8 x 128 bytes of
+/// raw `Map_Completions` does not fit the 384 bytes of free SRAM. The RAM
+/// budget is therefore set by the worst world across seeds, not by vanilla's
+/// layout — and the randomizer does not hold per-world capacity fixed, so
+/// eyeballing vanilla is not good enough.
+///
+/// Counts cells the engine's own completion routine would act on.
+/// [`capacity::is_completion_unsafe`] mirrors that classification:
+/// `Map_Completable_Tiles`, the `Tile_Attributes_TS0` level-panel threshold,
+/// and `Map_Removable_Tiles` — which is exactly the set of cells
+/// `Map_Reload_with_Completions` can change, and so exactly the set that needs
+/// a bit.
+///
+/// ```sh
+/// CENSUS_SEEDS=200 cargo test --release --lib completion_bit_census -- --ignored --nocapture
+/// ```
+#[test]
+#[ignore]
+fn completion_bit_census() {
+    let Ok(rom_bytes) = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes") else {
+        eprintln!("SKIP: requires the ROM");
+        return;
+    };
+    let seeds: u64 = std::env::var("CENSUS_SEEDS").ok().and_then(|s| s.parse().ok()).unwrap_or(25);
+
+    // Arms chosen for what moves the *cell count*, not the routing: extra
+    // rocks and the W8 water page add removable tiles, and the promotion
+    // flags change how many map tiles end up as enterable panels.
+    type Arm = (&'static str, fn(&mut crate::Options));
+    let arms: [Arm; 3] = [
+        ("defaults", |_| {}),
+        ("rocks+8s-wild", |o| {
+            o.more_hammer_rocks = crate::Tri::On;
+            o.eights_are_wild = crate::Tri::On;
+        }),
+        ("all-promotions", |o| {
+            o.more_hammer_rocks = crate::Tri::On;
+            o.eights_are_wild = crate::Tri::On;
+            o.shuffle_spade_games = true;
+            o.shuffle_toad_houses = true;
+            o.shuffle_hammer_bros = true;
+            o.include_beta_stages = true;
+        }),
+    ];
+
+    let mut worst_world = [0usize; 8];
+    let mut worst_total = 0usize;
+    let mut worst_total_seed = (0u64, "");
+
+    for (name, arm) in arms {
+        let mut arm_worst_world = [0usize; 8];
+        let mut arm_worst_total = 0usize;
+        for seed in 0..seeds {
+            // Palettes are OS-random, and they move no tiles — off so a seed
+            // means the same map every run.
+            let mut options =
+                crate::Options { palettes: false, palette_themed: false, ..Default::default() };
+            arm(&mut options);
+            let Ok((rom, _)) =
+                crate::randomize_rom_with_overworld_capture(&rom_bytes, seed, &options, None)
+            else {
+                continue;
+            };
+            let mut total = 0;
+            for w in 0..8 {
+                let grid = rom_data::read_tile_grid(&rom, w);
+                let mut n = 0;
+                for row in 0..grid.rows() {
+                    for col in 0..grid.cols {
+                        if capacity::is_completion_unsafe(grid.get(row, col)) {
+                            n += 1;
+                        }
+                    }
+                }
+                arm_worst_world[w] = arm_worst_world[w].max(n);
+                worst_world[w] = worst_world[w].max(n);
+                total += n;
+            }
+            arm_worst_total = arm_worst_total.max(total);
+            if total > worst_total {
+                worst_total = total;
+                worst_total_seed = (seed, name);
+            }
+        }
+        eprintln!("{name:>16}: per-world max {arm_worst_world:?}  total max {arm_worst_total}");
+    }
+
+    let bytes_1bit = worst_total.div_ceil(8);
+    let bytes_2bit = (worst_total * 2).div_ceil(8);
+    let packed: usize = worst_world.iter().map(|n| n.div_ceil(8)).sum();
+    eprintln!();
+    eprintln!(
+        "worst total {worst_total} cells (seed {}, arm {})",
+        worst_total_seed.0, worst_total_seed.1
+    );
+    eprintln!("per-world worst: {worst_world:?}  (sum {})", worst_world.iter().sum::<usize>());
+    eprintln!();
+    eprintln!("  1 bit/cell, worlds packed by a base table : {bytes_1bit} bytes");
+    eprintln!("  2 bits/cell (both players), packed        : {bytes_2bit} bytes");
+    eprintln!("  1 bit/cell, per-world byte-aligned slices : {packed} bytes");
+    eprintln!("  raw Map_Completions banking               : {} bytes", 8 * 128);
+    eprintln!("  free SRAM measured                        : 384 bytes");
 }

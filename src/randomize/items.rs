@@ -44,7 +44,7 @@ const TOAD_HOUSE_ITEMS: &[u8] = &[
     0x09, // Starman
 ];
 
-const WARP_WHISTLE: u8 = 0x0C;
+pub(crate) const WARP_WHISTLE: u8 = 0x0C;
 
 /// Full item pool including warp whistle (used when remove_whistles is false).
 const GOOD_ITEMS_WITH_WHISTLE: &[u8] =

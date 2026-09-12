@@ -10,19 +10,15 @@ use rand::seq::{IndexedRandom, SliceRandom};
 use crate::rom::Rom;
 use crate::{DejaVuMode, PiranhaMode};
 
+use super::lock_keys::LockEntry;
 use super::node_catalog::NodeKind;
 use super::overworld_build::{
-    BuildResult, BuiltWorld, OverworldData, SlotKind, VANILLA_LEVEL_COUNT, bfs_ordered,
+    BuildResult, BuiltWorld, LockHint, OverworldData, SlotKind, VANILLA_LEVEL_COUNT, bfs_ordered,
 };
-use super::overworld_helpers;
 use super::pipe_helpers;
-use super::rom_data::{
-    self, FORTRESS_1F_OBJ_PTR, FX_MAP_COMP_IDX, FX_PATTERNS, FX_VADDR_H, FX_VADDR_L,
-    MAP_COMPLETE_BITS, TILE_BONUS_GAME, TILE_PIPE, WORLDS,
-};
+use super::rom_data::{self, FORTRESS_1F_OBJ_PTR, Grid, TILE_BONUS_GAME, TILE_PIPE, WORLDS};
 
 mod assign;
-mod fortress_fx;
 mod grid;
 mod march_veto;
 mod metatiles;
@@ -31,13 +27,13 @@ mod sprites;
 mod types;
 
 use assign::{assign_pool, interleave_hb_by_obj_ptr};
-use fortress_fx::{patch_fortress_fx_screen_check, write_fortress_fx};
 use grid::write_tile_grid;
 use pointers::{write_pipe_dests, write_pointer_entries};
 use sprites::{
     pick_plant_positions, pick_w8_sprite_positions, write_hb_sprites, write_plant_sprites,
     write_w8_sprites,
 };
+
 use types::{Assignment, HammerBroAssignment, PipeAssignment, WorldAssignments};
 
 // Public API consumed by the randomizer.
@@ -53,7 +49,7 @@ pub(crate) fn write_overworld<R: Rng>(
     data: &OverworldData,
     rng: &mut R,
     flags: WriteFlags,
-) {
+) -> WrittenOverworld {
     let assignments = assign_pool(rom, build, data, rng, flags);
 
     // Compute W8 army sprite target positions before writing tiles,
@@ -79,14 +75,13 @@ pub(crate) fn write_overworld<R: Rng>(
     let hb_fallback_levels = interleave_hb_by_obj_ptr(data.catalog.unique_hammer_bro_levels(), rng);
     let mut hb_fallback_iter = hb_fallback_levels.iter().cycle().cloned();
 
-    let mut fx_slot = 0usize;
+    let mut grids: Vec<Grid> = Vec::with_capacity(8);
     for (wi, wa) in assignments.iter().enumerate() {
         let built = &build.worlds[wi];
         let sprite_mask = &sprite_masks[wi];
 
-        write_tile_grid(rom, built, wa, data, sprite_mask, rng);
+        grids.push(write_tile_grid(rom, built, wa, data, sprite_mask, flags.hints, rng));
         write_pointer_entries(rom, wi, built, wa, data, &mut hb_fallback_iter);
-        write_fortress_fx(rom, wi, built, wa, data, &mut fx_slot);
         write_pipe_dests(rom, wi, wa);
         // For swapped worlds, rewrite the Airship + Start entry coordinates
         // (the main writer pass leaves both untouched) before the resort so
@@ -106,23 +101,135 @@ pub(crate) fn write_overworld<R: Rng>(
     // Keep wandering map objects (Hammer Bros) off plant/army nodes — a bro
     // parked on one would replay the level after it's beaten. Also vetoes
     // hand-trap landings (subsumes the former bros_no_hands patch).
-    // Sub-tagged like fx_screen_check below: it claims free space, so the write
-    // log has to name it for the free-space audit and collision reports.
+    // Sub-tagged: it claims free space, so the write log has to name it for
+    // the free-space audit and collision reports.
     rom.push_tag("march_veto");
     march_veto::write_march_veto(rom, &w8_sprite_positions, &plant_positions);
     rom.pop_tag();
     if flags.shuffle_hammer_bros {
         write_hb_sprites(rom, build, rng);
     }
-    // Sub-tagged for the same reason as march_veto above.
-    rom.push_tag("fx_screen_check");
-    patch_fortress_fx_screen_check(rom);
-    rom.pop_tag();
-
     // Apply engine-side scaffolding for the per-world start ↔ airship swap.
     // No-op when the option was off (no worlds got flagged in pick_swaps).
     if data.catalog.start_airship_swapped.iter().any(|&b| b) {
         super::start_airship_swap::write_engine_scaffolding(rom, data.catalog);
+    }
+
+    WrittenOverworld { grids }
+}
+
+/// **Every `(fortress, lock)` pair the build placed, one per lock.**
+///
+/// A fact about the *build*, not about the writing, which is why it takes no
+/// `WrittenOverworld`: the pairing is decided before the writer runs, and in
+/// the world maze `maze::stamp_into` has already rewritten it — possibly across
+/// worlds. It is *input* to [`super::lock_keys::apply`], which owns every byte
+/// the console reads; nothing here writes ROM.
+pub(crate) fn lock_entries(build: &BuildResult) -> Vec<LockEntry> {
+    let mut out = Vec::new();
+    for (wi, built) in build.worlds.iter().enumerate() {
+        for lock in &built.locks {
+            let fort = lock.fort;
+            let pos = build.worlds[fort.world]
+                .slots
+                .iter()
+                .find(|s| s.section == fort.section && s.kind == SlotKind::Fortress)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "lock at W{} {:?} names fortress section {} in W{}, which is not on \
+                         the map — the lock would be permanently sealed",
+                        wi + 1,
+                        lock.pos,
+                        fort.section,
+                        fort.world + 1
+                    )
+                })
+                .pos;
+            out.push(LockEntry {
+                key_world: fort.world,
+                key_pos: pos,
+                target_world: wi,
+                target_pos: lock.pos,
+            });
+        }
+    }
+    out
+}
+
+/// Do the writer's grids still describe the bytes in the ROM?
+///
+/// The whole risk of handing the map over rather than re-reading it. Names the
+/// first disagreeing cell, because "they differ" is not a debuggable message.
+fn grids_agree_with_rom(grids: &[Grid], rom: &Rom) -> Result<(), String> {
+    for (wi, grid) in grids.iter().enumerate() {
+        for r in 0..grid.rows() {
+            for c in 0..grid.cols {
+                let on_rom = rom.read_byte(rom_data::map_tile_offset(wi, r, c));
+                if grid.get(r, c) != on_rom {
+                    return Err(format!(
+                        "the writer's map and the ROM disagree at W{} ({r},{c}): the writer says \
+                         {:#04X}, the ROM says {on_rom:#04X}. Something wrote a map tile straight \
+                         to the ROM after `write_overworld` — put it in the build instead, or the \
+                         packed completion store will be sized from a map that no longer exists.",
+                        wi + 1,
+                        grid.get(r, c),
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// What the writer wrote: the map it committed, and the slot assignments behind
+/// it.
+///
+/// This is the writer's record of the ROM it produced, and it is the answer to
+/// "what does the finished map look like" for everything downstream. Nothing
+/// here writes ROM; the pairing is *input* to [`super::lock_keys::apply`],
+/// which owns every byte the console reads.
+///
+/// It was called `LockPairing` when locks were its only consumer.
+pub(crate) struct WrittenOverworld {
+    /// **The map as committed, world by world.**
+    ///
+    /// The writer is the last thing that touches a map grid, so this is the
+    /// finished article — what the console will read out of PRG012.
+    ///
+    /// It exists because three modules need it and none of them were given it:
+    /// `completion_bits` counts the cells that can be marked done, to size each
+    /// world's slice of the packed store; `world_travel` finds each world's
+    /// START cell; `lock_keys` looks up an away lock's completion bit. All
+    /// three used to read it back out of the ROM a cell at a time — which
+    /// worked, but made "run after every grid write" an unwritten rule whose
+    /// violation is silent (the slices shift, and completion marks land in the
+    /// wrong world). Handing the map over makes that rule a signature instead.
+    ///
+    /// `grids_match_the_rom` is the guard on the other half of the trade: two
+    /// copies of the map now exist, and they must not drift.
+    grids: Vec<Grid>,
+}
+
+impl WrittenOverworld {
+    /// The finished map for each world, in world order, checked against `rom`.
+    ///
+    /// Handing the map around means two copies of it now exist, and the failure
+    /// mode if they drift is silent — a world's packed-store slice comes out the
+    /// wrong size and completion marks land in the neighbouring world. Reading
+    /// the ROM back could not drift; this check is what makes not doing that a
+    /// fair trade. It costs one grid comparison in debug builds and nothing in
+    /// release, and `grids_match_the_rom` runs the same check over a full
+    /// randomize.
+    ///
+    /// Every caller already holds the ROM, so there is deliberately no
+    /// unchecked accessor to reach for.
+    pub(crate) fn grids(&self, rom: &Rom) -> &[Grid] {
+        debug_assert!(
+            grids_agree_with_rom(&self.grids, rom).is_ok(),
+            "{}",
+            grids_agree_with_rom(&self.grids, rom).unwrap_err()
+        );
+        &self.grids
     }
 }
 
@@ -136,7 +243,15 @@ pub(crate) struct WriteFlags {
     pub piranha: PiranhaMode,
     /// Deja Vu: how many times one level may appear on the map.
     pub deja_vu: DejaVuMode,
+    /// Deja Vu, fortress half: redeal the fortress deck in the same mode.
+    /// Read only when `deja_vu` is on.
+    pub deja_vu_forts: bool,
     /// Friendlier Levels: drop `FRIENDLIER_BLOCKED_LEVELS` from the level deck
-    /// and refill it with duplicates of what remains.
+    /// and `FRIENDLIER_BLOCKED_FORTS` from the fortress deck, refilling both
+    /// with duplicates of what remains.
     pub friendlier_levels: bool,
+    /// Map hints. Resolved to `Off` without the world maze by
+    /// `randomizer::randomize_inner` — every hint is a claim about another
+    /// world, so there is nothing to say without one.
+    pub hints: crate::HintMode,
 }

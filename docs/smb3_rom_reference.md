@@ -959,7 +959,8 @@ but not sufficient.
 
 After scanning the entry-point's enemy data, continue scanning forward past 0xFF
 terminators to find sub-area headers and check their `enemy_ptr` fields for
-Boom-Boom. This was implemented in `levels.rs` with `has_boomboom_in_sub_areas()`.
+Boom-Boom. This was implemented in `levels.rs` as a `has_boomboom_in_sub_areas`
+helper (long since deleted — the approach failed, see below).
 
 **Why it failed:** There is no reliable way to know where one level's sub-areas end
 and another level's data begins. Level data regions pack multiple levels contiguously,
@@ -1007,13 +1008,14 @@ is excluded from FORTRESS_ENTRIES.
 **Approach 5: Hardcoded constant (chosen for Rust implementation)**
 
 Given that the ROM is fixed (USA Rev 1) and the fortress set never changes, all
-17 entries are hardcoded as `FORTRESS_ENTRIES` in `src/randomize/levels.rs`. This
-is consistent with the existing `AIRSHIP_ENTRIES` and `BOWSER_CASTLE` patterns.
+17 entries are hardcoded as `FORTRESS_ENTRIES` in
+`src/randomize/rom_data/tables.rs`. This is consistent with the existing
+`AIRSHIP_ENTRIES` and `BOWSER_ENTRY` patterns.
 The values were derived from `rom_map.py`'s `build_level_groups()` analysis and
 manually verified against known gameplay.
 
-**Bowser's castle exclusion:** W8[40] (`BOWSER_CASTLE` constant, `(7, 40)`) is
-explicitly excluded from level shuffle in `collect_shuffleable()`. The game ending
+**Bowser's castle exclusion:** W8[40] (`BOWSER_ENTRY` constant, `(7, 40)`) is
+excluded from shuffling. The game ending
 sequence is hardcoded to trigger from this specific level — shuffling it to another
 map slot would make the game unwinnable. This exclusion is separate from the
 `FORTRESS_ENTRIES` filter (which also excludes W8[40] as a Boom-Boom group member).
@@ -1770,6 +1772,31 @@ PRG031 via `$07F5`. The handler also stores the item to `$07F5` at $A5D8.
 `Inv_UseItem_Anchor` ($A682) sets `Map_Anchored`, plays the anchor sound, removes the
 item from inventory, and returns — it never enters the powerup animation path.
 
+### The Inventory Is a Compacted List (PRG026)
+
+`Inventory_Items` (`$7D80`, 28 slots, four rows of seven) is not an addressed
+array — it is a **packed list with no holes**, and the engine's routines both
+assume and maintain that:
+
+- **Use** — `Inv_UseItem_ShiftOver` memmoves the whole tail down over the used
+  slot (`LDA Inventory_Items+1,Y / STA Inventory_Items,Y`, loop at
+  `PRG026_A638`, file **0x34648**, running to index 27) and zeroes the last one.
+  It shifts the tail wholesale, so it does **not** close a pre-existing hole —
+  a gap just moves down with everything else.
+- **Panel input** — `PRG026_A4A1` (file **0x344B1**) reads slot 0 first and
+  `RTS`es when it is zero. Left/right *and* the A-press "use" path both sit
+  behind that check, so **an empty slot 0 makes the whole panel inert**: no
+  cursor, no item use, even when later slots hold items.
+- **Holes above slot 0 are survivable.** Moving the highlight onto an empty slot
+  re-enters the move in the same direction (`PRG026_A4EB`, file **0x344FB**), so
+  the cursor skips gaps. Only slot 0 is fatal.
+
+**Consequence for any patch that seeds the inventory**: write from slot 0 upward
+and leave no gap. Parking an item in a high slot at new-game time — a guaranteed
+whistle, say — makes it permanently unreachable unless something else fills
+every slot beneath it. The world maze hit exactly this: its whistle sat in slot
+3 above the (by default empty) starting-item slots 0-2 and could never be used.
+
 ### Inventory Item Draw (PRG026)
 
 `Inventory_DrawItemsOrCards` at CPU **$A366** (file **0x34376**) draws every non-empty
@@ -1971,7 +1998,17 @@ count; the body is raw NES color bytes. Identified by reverse-engineering the
 "Super Mario Bros. 3 Recolored v1.0" IPS — every cluster below is wholly rewritten
 by Recolored, proving these are the master per-tileset/area palette tables.
 
-| File Offset | Size | Pattern | Likely Purpose |
+> **Confirmed vs inferred, in this subsection only.** That these clusters *are*
+> the master palette tables is confirmed — Recolored rewrites all of them, and
+> the shipped randomizer writes into them. What each individual table means is
+> **inferred from structural patterns and the Recolored diff, not read out of
+> the disassembly**, and the rows below say so individually ("Likely Purpose",
+> "still untested", "hypothesis unverified"). Treat the offsets as solid and the
+> semantics as a working model: confirm against the disassembly before basing a
+> new write on any one row. This is the one section of this document that states
+> unverified semantics, and it is marked rather than silently mixed in.
+
+| File Offset | Size | Pattern | Likely Purpose (inferred — see caveat above) |
 |-------------|------|---------|----------------|
 | 0x33046–0x331A2 | 349 B | 8 × `00 3F 00 20 0F 0F …32 colors…` (32-byte full BG+sprite palette set) | **Per-tileset full-palette upload table** — 8 entries; one per BG palette index used by level loader |
 | 0x331BB–0x331DE | 35 B  | dense ≤0x3F bytes | Adjunct palette set (FG vs BG?) |
@@ -2366,12 +2403,20 @@ Each tile byte is rendered as 4 CHR pattern indices forming a 2×2 metatile (16�
 The bank is **shared across all 8 worlds** — re-skinning a tile changes its appearance in
 every world.
 
+**The order is UL / LL / UR / LR — column-major, not row-major.** This table
+said NW/NE/SW/SE until 2026-09-05, which transposes the off-diagonal; the same
+file already had it right at the desert-metatile note above ("UL/LL/UR/LR × 256,
+same layout as the world-map table at 0x18010"). `prg012.asm:14-18` says so, and
+the ROM settles it: `TILE_HORZPATH $45` is `FE E1 FE E1`, which under UL/LL/UR/LR
+is a blank top row over a path bottom row — a horizontal path. Under
+NW/NE/SW/SE it would be a vertical stripe down the right-hand edge.
+
 | Quadrant | File offset | Size |
 |---|---|---|
-| NW | `0x18010 + tile` | 256 bytes |
-| NE | `0x18110 + tile` | 256 bytes |
-| SW | `0x18210 + tile` | 256 bytes |
-| SE | `0x18310 + tile` | 256 bytes |
+| upper-left | `0x18010 + tile` | 256 bytes |
+| **lower-left** | `0x18110 + tile` | 256 bytes |
+| **upper-right** | `0x18210 + tile` | 256 bytes |
+| lower-right | `0x18310 + tile` | 256 bytes |
 
 Total: 4 × 256 = 1024 bytes (matches the doc's "1024-byte maps" per metatile bank).
 
@@ -2831,12 +2876,27 @@ load LevelLayouts pointer into `Level_LayPtr_AddrL/H` → bank-switch via
 
 ### World Map Starting Positions
 
-| Label | Description |
-|-------|-------------|
-| `Map_Y_Starts` | Per-world initial Y coordinate |
-| Fixed X = 0x20 | Same X start for all worlds |
+| Label | File Offset | Description |
+|-------|-------------|-------------|
+| `Map_Y_Starts` | `0x3C39A` (PRG030), 8 bytes | Per-world initial Y coordinate. Lives in PRG030's world-enter routine — **not** PRG010, where the map's other tables are. `MAP_Y_STARTS_OFF` in `rom_data/free_space.rs` is the constant; `world_travel.rs` reads it through `prg030_file_to_cpu`. |
+| Fixed X = 0x20 | — | Same X start for all worlds |
 
 ### Fortress Lock & Bridge FX (PRG010: 0x147CD–0x148B7)
+
+> **VANILLA ONLY — the randomizer no longer uses any of this (2026-09-06).**
+> The whole 17-slot subsystem is retired: one word of the map-operation jump
+> table (`MAP_OP8_VECTOR`, file `0x144D2`) now points operation 8 at a
+> from-scratch, position-keyed routine that occupies this very address range as
+> `FS_FORTRESS_FX` (537 bytes at `0x147CD`). There are no FX slots to index, no
+> `FortressFX_W1–W8`, and no `FortressFXBase_ByWorld` in an output ROM.
+> **What the randomizer does today: `src/randomize/lock_keys.rs` and
+> `docs/fx_table_redesign.md`.** The screen-check patch this section describes
+> at file `0x15554` is likewise gone — that run now holds `FS_LOCK_ENTRIES`, the
+> new position-keyed lock table, and the check is inline in a routine we own.
+>
+> This section stays because it is still an accurate account of the *vanilla*
+> mechanism, which `overworld_pickup::open_fx_gaps` reads before placement and
+> which the replacement was designed against.
 
 When a fortress is cleared (Boom-Boom defeated, magic ball collected), the game triggers
 a map effect that busts a lock or builds a bridge, opening progression on the overworld.
@@ -2988,7 +3048,9 @@ The map DATA update (replacement tile via screen pointer table + `Map_Completion
 is NOT screen-relative and always works correctly. So the correct tile IS placed at
 the lock position; the visual animation is what goes wrong.
 
-**Fix:** Hook 3 bytes at file 0x148F6 (CPU $C8E6) to `JMP $D544` (PRG010 free
+**Fix (retired — see the table below; neither this 39 nor the 46 stated there is
+live, and file 0x15554 now holds `FS_LOCK_ENTRIES`):** Hook 3 bytes at file
+0x148F6 (CPU $C8E6) to `JMP $D544` (PRG010 free
 space at file 0x15554, 39 bytes). Custom code checks whether the lock is on a
 visible screen by comparing `FortressFX_MapLocation[slot] & 0x0F` (lock screen)
 against the current viewport state. The map scrolls in 128-pixel half-screen
@@ -3036,7 +3098,7 @@ PRG030 is the fixed bank, always mapped at $8000–$9FFF. Free space starts at 0
 
 | Offset | Size | Purpose |
 |--------|------|---------|
-| 0x15554 | 46 | FX screen-check patch (JMP target from $C8E6) |
+| 0x15554 | ~~46~~ | ~~FX screen-check patch (JMP target from $C8E6)~~ — **retired 2026-09-06.** This run now holds `FS_LOCK_ENTRIES` (112 bytes); the screen check is inline in the routine that replaced `MO_DoFortressFX`. The old figure was also stated as 39 bytes elsewhere in this section; neither number is live |
 | 0x15DF0 | 35 | Canoe softlock fix: save death respawn position (JSR target from $C6EA) |
 
 **PRG011 free space usage (file 0x17D00 / CPU $BCF0):**
@@ -3090,6 +3152,192 @@ TILE_ALTFORT, TILE_ALTLOCK, TILE_LOCKHORZ ($56), TILE_RIVERVERT`. These tiles ar
 during `Map_Reload_with_Completions` and replaced with their `Map_RemoveTo_Tiles`
 counterparts when the corresponding completion bit is set.
 
+### World transitions and per-world map state
+
+*(Researched 2026-09-03 for the world-maze experiment. Every address below was
+verified against the ROM, not read off the disassembly's labels.)*
+
+**A world map is never saved — it is recomputed.** Three things combine:
+
+| Piece | Where | Mutable? |
+|---|---|---|
+| The layout | ROM, PRG012 grid data | no |
+| The working copy | `Tile_Mem` `$6000-$794F` | rebuilt on every map load |
+| The delta | `Map_Completions` `$7D00-$7D7F` | the only persistent record |
+
+`Map_Reload_with_Completions` (PRG012) decompresses the world's grid from ROM
+into `Tile_Mem`, then replays the bitfield over the top: for each set bit it
+swaps the tile at that cell via `Map_Removable_Tiles` → `Map_RemoveTo_Tiles`.
+Since the lock and fortress tiles are in that table, **setting a completion bit
+is sufficient to make a lock open or a fortress crumble** — no tile write
+needed. That is how vanilla persists both across an ordinary map reload.
+
+Consequence for any "return to a world" feature: retaining a world's map state
+is exactly retaining its 128 bytes of `Map_Completions`. Nothing else about the
+map is state.
+
+**The bitfield walks BOTH halves.** The loop runs to `CMP #$80` — all 128 bytes,
+Mario's and Luigi's — and folds the column index with `AND #$30`, which aliases
+Luigi's `$40-$7F` bytes onto the same four screens as Mario's. The disassembly
+says so at the fold:
+
+```asm
+	; Note: Loop goes through both Players sets of completion bits, but
+	; this AND will basically cause 2 passes across the map...
+	AND #$30
+```
+
+So Luigi's half is **not** private storage even in a one-player game: whatever is
+in it is drawn onto the map.
+
+**Who writes which half.** Per-run progress goes to the current player only;
+*permanent map alterations* are mirrored to both, so they survive a game over:
+
+| Writer | Halves | Disassembly comment |
+|---|---|---|
+| Level clear, `PRG011_BA67` | current player | — |
+| Fortress clear, `PRG011_BA7C` | **both** | "Fortress only... mark complete on both Players (so it remains after Game Over)" |
+| Lock bust / bridge build, `MO_DoFortressFX` | **both** | "Mark lock busted / bridge built (Luigi)" |
+| Rock break, `Map_SetCompletion_By_Poof` (PRG026) | **both** | "Rock removal sets completion bit for BOTH Players!" |
+
+`PRG030_9314` then ANDs the two halves on game over, which is precisely what
+keeps forts and locks broken while wiping plain level clears.
+
+**There is exactly one world-init entry, and it wipes the bitfield.**
+`PRG030_84A0` (file `0x3C4B0`), reached only from the airship-cleared path
+(`INC World_Num`) and the warp zone (`World_Num = Map_Warp_PrevWorld`). It never
+returns — it falls through into `WorldMap_Loop`. Its first act maps PRG010 into
+`$C000` and PRG011 into `$A000`; then, at CPU `$84CD` (file `0x3C4DD`), ten
+bytes and three whole instructions:
+
+```asm
+	LDY #$7F
+	LDA #$00
+	STA Map_Completions,Y
+	DEY
+	BPL -6
+```
+
+Nothing branches into the middle of it, and PRG010 is already mapped when it
+runs, so it is a clean hook site for anything that wants to bank the state
+instead of destroying it. `Map_Reload_with_Completions` is called much later in
+the same routine, so a restore placed here is picked up with no redraw work.
+
+**Fortress FX addressing** (PRG010, all confirmed):
+
+| Address | Meaning |
+|---|---|
+| `$C878` | `FortressFX_W1` — packed per-world rows of FX slot numbers |
+| `$C898` | `FortressFXBase_ByWorld` — byte offset of each world's row |
+| `$C7DF` | `FortressFX_MapCompIdx` — `(column, row bit)` per slot |
+| `$C8E3` | resolved slot stored into `Map_DoFortressFX` (`$0745`) |
+| `$C8E6` | 4 bytes, `LDA #$01 / STA Map_ClearLevelFXCnt` — the standard hook site |
+| `$C8EA` | resume point: full animation |
+| `$C952` | data-only path (map data + `Map_Completions`, no VRAM) |
+| `$C9C9` | **already-busted exit** — zeroes `$0745` and `$20`, `INC Map_Operation`, `JMP $CF29`. The clean "nothing to do" bail-out. |
+
+Lookup is `FortressFX_W1[FortressFXBase_ByWorld[world] + ordinal - 1]`, where the
+ordinal is the high nibble of the fortress's Boom-Boom Y byte. Rows are packed,
+not strided — vanilla's bases happen to be `world * 4`, which is a coincidence
+of vanilla's four-per-world allocation, not a rule.
+
+**Other map RAM confirmed this session:** `Pad_Holding` = `$17`, `Pad_Input` =
+`$18` (zero page), `World_Num` = `$0727`, `Map_NoLoseTurn` = `$796E`,
+`Map_WasInPipeway` = `$7973`, `MO_NormalMoveEnter` (map operation `$D`, the
+normal standing-on-the-map state) at CPU `$CDCA` = file `0x14DDA`.
+
+### World-entry and warp-whistle animation timing (PRG010 / PRG011)
+
+*(Researched 2026-09-11. Frame counts derived from the per-frame deltas in the
+disassembly and confirmed against the ROM bytes.)*
+
+**Entering a world is three phases, and only two of them move.** `Map_Operation`
+`$00` = `MO_WorldXIntro` (PRG010, CPU `$C4FA`) dispatches on `World_EnterState`:
+
+| `World_EnterState` | Routine | Frames | What |
+|---|---|---|---|
+| 0 | `WorldIntro_BoxTimer` | **128** | the "WORLD n" card, motionless |
+| 1 | `WorldIntro_EraseAndStars` | ~24 | erase the card a strip a frame, stars open out |
+| 2 | `WorldIntro_CompleteStars` | ~24 | stars close onto the player |
+
+State 0 is a pure dwell: `Map_Intro_Tick` (`$0711`) is seeded `$80` and
+decremented once a frame. The operand lives at CPU `$C50F` = file `0x1451F`, and
+that single byte is the whole dial.
+
+**`Map_Intro_Tick` is a shared scratch counter, so patch the card's own
+self-init and not the variable's writers.** At least five map routines seed it
+with different values for unrelated purposes (`GameOver_Complete` `$10`,
+`GameOver_Timeout` `$10`, others 8 / 14 / `$20`). Two further sites seed it `$80`
+— `WWFX_WarpLanding`'s island init (PRG011) and a level-return path around
+PRG010 `$CD53`. The card's own seed is guarded by `LDA Map_Intro_Tick / BNE`,
+so a caller that pre-seeds keeps its value:
+
+```
+$C509: AD 11 07    LDA Map_Intro_Tick
+$C50C: D0 05       BNE $C513          ; already running -> skip the re-seed
+$C50E: A9 80       LDA #$80           ; <- the dial, operand at $C50F
+$C511: 8D 11 07    STA Map_Intro_Tick
+$C514: CE 11 07    DEC Map_Intro_Tick
+```
+
+**Every normal world entry re-seeds it here**, because `$84A0`'s init block
+(PRG030, just before `PRG030_857E`) zeroes both `Map_Intro_Tick` and
+`World_EnterState`. Airship progression, telepad arrival and whistle travel all
+route through `$84A0`, so all three get the card's own value.
+
+The star sweep is `Map_StarsOutRad` stepping `+4` per frame until `>= $5F`, then
+`-4` per frame to zero (`MapStarsIntro_Do`, PRG011). Both the step and
+the `SUB #$04 / BNE` termination assume that stride — it is not a free dial.
+
+**The warp whistle's own sequence**, for comparison:
+
+| State (`Map_WarpWind_FX` `$8B`) | Routine | Frames |
+|---|---|---|
+| 1 | `WWFX_WarpWhistleFlash` | 32 (`Map_WWOrHT_Cnt` `$89` = `$20`) |
+| 2 | `WWFX_WarpDoWind` | **120** — the gust crossing the screen |
+
+| Table | CPU | File | Vanilla |
+|---|---|---|---|
+| `Map_WW_StartX` | `$A2F4` | `0x16304` | `00 F0` |
+| `Map_WW_DeltaX` | `$A2F6` | `0x16306` | `02 FE` |
+| `Map_WW_TargetX` | `$A2F8` | `0x16308` | `F0 00` |
+
+`Map_WW_DeltaX` is the speed dial, and it is read only by `WWFX_WarpDoWind` and
+`WWFX_WarpLanding` — both whistle states. **A replacement delta must divide
+16**: `WWFX_WarpDoWind` erases the player's map sprite on an exact
+`CMP` of the wind's X against `World_Map_X - Horz_Scroll`, and map positions are
+always multiples of 16, so a delta of 6 would step straight past the player and
+leave them drawn while the gust blew through. It should divide 240 too, or the
+target-edge compare that ends the state never fires.
+
+The 32-frame flash is **not** whistle-private: `WarpWhistle_Flash` (PRG011
+`$A32B`; its `LDA #$20` sits at `$A32F`, operand at `$A330` = file `0x16340`) is
+also the hand trap's `HT_Flash`. The wind sprite alternates frames on `Map_WWOrHT_Cnt AND
+#$10`, i.e. every 16 ticks, and that draw site is shared with the hand trap too.
+
+### Free SRAM
+
+`$6000-$7FFF` is MMC3 work RAM. Beyond the named variables, the disassembly
+declares **384 bytes** as bare anonymous `.ds` runs. Largest first:
+
+| Range | Bytes |
+|---|---|
+| `$7A73-$7ADF` | 109 |
+| `$7997-$79FF` | 105 |
+| `$7BD0-$7C1F` | 80 |
+| `$7E9E-$7EB5` | 24 |
+| *(15 smaller runs)* | 66 |
+
+The top two are each referenced **nowhere** in the disassembly but their own
+declaration, and unlike the context-reused zero-page blocks — which the
+disassembly marks with explicit `.org`s — this is plain untouched SRAM. Both are
+in use by `world_persist` on `experiment/world-maze` and behave as free.
+
+Named-but-unused entries are additional candidates, notably `THouse_OpenByID`
+(`$7F2E-$7F3D`, 16 bytes, "UNUSED would keep track of chests opened for a given
+Toad House ID") and `Map_Unused7EEA`.
+
+
 **CRITICAL — Gap tile selection must match path orientation:**
 The `Map_RemoveTo_Tiles` replacements are hardcoded: `$54` → `$46` (vertical path),
 `$56` → `$45` (horizontal path). When placing an obstacle on the map, the gap tile
@@ -3124,25 +3372,34 @@ ordinal; the lower nibble is Boom-Boom's spawn Y position on screen.
   overwrites `$88,X` with 1 (resetting the Y-page for gameplay).
 - Crystal ball handler at `$A8F6` (PRG003): reads `$7F,X` and stores it to
   `Map_DoFortressFX` (`$0745`).
-- `MO_DoFortressFX` at `$A8B0` (PRG010): decrements `$0745`, adds
+- `MO_DoFortressFX` at `$C8A9` (PRG010): decrements `$0745`, adds
   `FortressFXBase_ByWorld[World_Num]`, and indexes into `FortressFX_W1–W8` to get
   the FX slot.
 
 All 17 Boom-Boom Y-byte ROM offsets are in PRG006 enemy data (`$C000` bank, file
-base `0x0C010`). See `BOOMBOOM_Y_OFFSETS` in `src/randomize/levels.rs` for the
-complete list.
+base `0x0C010`). See `BOOMBOOM_Y_OFFSETS` in `src/randomize/rom_data/tables.rs`
+for the complete list — **test-only since the fortress-FX rework**, because
+production writes no enemy data for this at all.
 
-**Interaction with fortress shuffling:**
+**Interaction with fortress shuffling — retired (2026-09-06):**
 
-When `randomize_fortresses` swaps level data between fortress map slots, the Boom-Boom
-enemy data travels with the level — including the Y-byte whose upper nibble determines
-which lock/bridge to break. After shuffling, `randomize_fortresses` patches each
-Boom-Boom's Y-byte upper nibble to match its new position's ordinal within the
-destination world (preserving the lower nibble spawn position). The `FortressFX_W1–W8`
-table is **not** modified — it remains correct because each fortress now reports the
-right ordinal for its new world.
+This used to matter. When fortress level data moved between map slots, the
+Boom-Boom enemy data travelled with it, including the Y-byte whose upper nibble
+picked the FX slot, so the shuffler had to rewrite that nibble to the new
+position's ordinal. None of that survives: `lock_keys::apply` **masks the spawn
+Y-nibble of all 17 unconditionally**, and which lock a fortress opens is read
+from the position-keyed table rather than derived from the nibble. There is no
+`randomize_fortresses` function any more — placement is `node_catalog` →
+`overworld_build` → `overworld_writer`.
 
 ### Lock Shuffle Design Constraints
+
+> **HISTORICAL — the FX-slot ordinal model below is not how locks work now.**
+> These constraints came out of the abandoned `lock-shuffle-wip` branch, which
+> reasoned in FX slots ("beating fort with ordinal N opens FX slot N−1"). The
+> shipped design has no FX-slot ordinal at all: `lock_keys.rs` pairs a fortress
+> and a lock **directly by map position** (`key_pos` / `target_pos`). Kept for
+> the engine constraints it records, which remain true of vanilla.
 
 Key constraints discovered while implementing lock shuffle (see `lock-shuffle-wip` branch
 for the failed attempt):
@@ -3901,7 +4158,7 @@ partial tables in the sections above are subsets of this data.
 | 0xB3 | $0B | $0B | +4 | ObjectEntryB3 |
 
 All 180 entries verified byte-for-byte against ROM (2025-04-13). Matches
-`sprite_bank()` in `enemies.rs` with zero discrepancies.
+`sprite_bank()` in `enemies/sprite_bank.rs` with zero discrepancies.
 
 #### Cannon Fire Family CHR Behavior (PRG007, verified 2026-07-12)
 
@@ -4339,7 +4596,7 @@ the swap pool at curated `ExcludeHazards` offsets:
 excluded *unless the vanilla enemy there was the same category*, so within-category
 shuffle (e.g. Thwomp variants) still works and a designed-in hazard is never
 stripped — only *introducing* a new hazard category is blocked. See
-`hazard_excluded` / `HAZARD_CATEGORIES` in `enemies.rs`.
+`hazard_excluded` / `HAZARD_CATEGORIES` in `enemies/tables.rs`.
 
 Current `ExcludeHazards` levels (`enemy_protections.rs`):
 - **7F2** Boom-Boom sub-area (0xD45C): tight boss arena
@@ -4438,6 +4695,23 @@ this and the `ExcludeHazards` filter over many seeds.
 | $797E–$797F | Death respawn map Y (Mario/Luigi) |
 | $7980–$7981 | Death respawn map X high (Mario/Luigi) |
 | $7982–$7983 | Death respawn map X low (Mario/Luigi) |
+| $0075–$0076 | `World_Map_Y` — **live** map row (zero page, Mario/Luigi) |
+| $0077–$0078 | `World_Map_XHi` — live map page |
+| $0079–$007A | `World_Map_X` — live map column, low pixel |
+| $0722–$0723 | `Map_Prev_XOff` — primary camera-scroll backup (low) |
+| $0724–$0725 | `Map_Prev_XHi` — primary camera-scroll backup (page) |
+| $7986–$7987 | `Map_Prev_XOff2` — secondary camera-scroll backup (low); the afar-skid target |
+| $7988–$7989 | `Map_Prev_XHi2` — secondary camera-scroll backup (page) |
+
+**The two scroll-backup pairs are load-bearing, not curiosities.** `$7976/$7978/$797A`
+is where the player *stands*; the `Map_Prev_*` pairs are where the *camera* goes
+back to, and the engine keeps two of them — a near pair and an "afar skid" pair.
+Both must be seeded together or a death/level-exit puts the player at the right
+tile with the camera on the wrong screen. `world_persist.rs` (which restores a
+world's position on re-entry) and `start_airship_swap.rs` both write all four;
+their constants are the authority (`MAP_PREV_XOFF` `$0722`, `MAP_PREV_XHI`
+`$0724`, `MAP_PREV_XOFF2` `$7986`, `MAP_PREV_XHI2` `$7988`). Live camera scroll
+itself is `Horz_Scroll` `$00FD` / `Horz_Scroll_Hi` `$0012`.
 | $0596 | `Map_MarchInit` — marching data initialized this cycle |
 | $0597 | `Map_InCanoe_Flag` — player is in the canoe |
 | $0598 | `World_8_Dark` — W8 darkness active; counts 0–7 while the effect sets up |
@@ -4509,8 +4783,8 @@ velocity — faster horizontal movement = higher jump. Fall velocity is clamped 
 
 | Address | Size | Description |
 |---------|------|-------------|
-| $7D80–$7D9B | 28 bytes | Mario's items (13 slots, Global Item IDs) |
-| $7DA3–$7DBE | 28 bytes | Luigi's items (13 slots) |
+| $7D80–$7D9B | 28 bytes | Mario's items — 28 slots, 4 rows of 7, Global Item IDs. Packed from slot 0 with no holes; see "The Inventory Is a Compacted List" |
+| $7DA3–$7DBE | 28 bytes | Luigi's items (same layout) |
 | $7D9C–$7D9E | 3 bytes | Mario's goal cards (0=none, 1=mushroom, 2=flower, 3=star) |
 | $7DBF–$7DC1 | 3 bytes | Luigi's goal cards |
 | $7DA2 | 1 byte | Mario's coins |
@@ -4976,3 +5250,172 @@ each world's bonus room gives.
 - [Southbird SMB3 Disassembly](https://sonicepoch.com/sm3mix/disassembly.html)
 - [captainsouthbird/smb3 GitHub](https://github.com/captainsouthbird/smb3)
 - [esc0rtd3w hacking_notes.txt](https://github.com/esc0rtd3w/nes-rom-tools/blob/master/super-mario-bros-3/docs/hacking_notes.txt)
+
+### World-map graphics: CHR banks and unused metatiles
+
+*(Measured 2026-09-05 by scanning the ROM, for the world-maze wand gate.)*
+
+**The map's BG CHR is the same for all eight worlds.** `PRG030`'s map entry
+("Load world map graphics") sets `PatTable_BankSel = $14` and `+1 = $16`, so
+metatile quadrant index `i` resolves as:
+
+| index | 1KB CHR page | file offset |
+|---|---|---|
+| `$00-$3F` | `$14` | `0x40010 + 0x14*0x400 + i*16` |
+| `$40-$7F` | `$15` | … |
+| `$80-$BF` | `$16` | … |
+| `$C0-$FF` | `$17` | … |
+
+Per-world variation on the map is **palette only** (`Map_Tile_ColorSets`); no
+per-world BG bank swap exists. Map object *sprites* are a different set, pages
+`$20-$23`.
+
+**Unused capacity, measured against all eight world grids:**
+
+- 139 of the 256 tile bytes appear in some world's grid; **117 are unused**.
+- 215 of the 256 CHR indices are referenced by some metatile; 41 are drawn but
+  referenced by none — and those 41 are the alphabet, the digits, and a few
+  fragments (`4E`, `6A`, `6B`, `80-83`, `A0-A3`, `FB`). They are drawn by
+  nametable text, not by metatiles, so they are **not** free CHR slots without
+  a further check.
+- Of the unused tile bytes, 28 carry a 2x2 graphic no used tile shares. Two of
+  those are complete authored graphics replicated at all four palette pages and
+  used nowhere: `0x00/0x40/0x80/0xC0` (CHR `88 89 8A 8B`) and
+  `0x01/0x41/0x81/0xC1` (CHR `DC DD DE DF`). Both are cut *terrain* pieces — a
+  diagonal and a corner-with-blocks — not the unused skull the wiki documents,
+  which is not present in the map BG bank at all.
+- **An unplaced metatile does not free its CHR** (checked 2026-09-07). Those
+  same eight patterns are `Map_PanelCompletePats` (`prg011.asm:1650`): `88 89
+  8A 8B` is the Mario-complete panel and `DC DD DE DF` the Luigi one, written
+  straight into `Graphics_Buffer` by the level-clear FX without ever going
+  through a metatile. Freeing CHR in this bank requires checking direct pattern
+  writes and nametable text, not just metatile references.
+
+**`0xE2` — the Dark Land wall.** Palette page 3, CHR quadrants `6C 6D / 6E 6F`,
+blocks all four movement directions, member of no behavior registry, used 155
+times in World 8. Cloning its four quadrant entries onto an unused page-3 byte
+yields a pixel-identical wall with a distinct identity — which matters because
+`Map_Removable_Tiles` membership is what makes a cell *completable*, and hence
+what sizes the world-maze packed completion store.
+
+## World-map tile behavior registries
+
+*(Measured 2026-09-07 while scoping hint-bearing lock variants. Every address
+here was read back out of the ROM, not taken from the disassembly alone.)*
+
+A world-map tile byte has no single "type". Its behavior is **membership in
+several independent registries**, and unlocking an unused tile byte for a new
+role means adding it to the ones that role needs and keeping it out of the rest.
+
+| registry | location | governs |
+|---|---|---|
+| metatile quadrants | PRG012, 4 planes of 256 from `0x18010` | the 2x2 graphic; order is UL, LL, UR, LR |
+| palette | top 2 bits of the tile index | fixed by the index — not separately editable |
+| `Map_Object_Valid_Left/Right/Down/Up` | `$D248`, file `0x15258`, 4 × 9 bytes | walkability per direction |
+| `Tile_Attributes_TS0+4` → RAM copy | see below | "enterable", and whether a clear FX plays |
+| `Tile_Attributes_TS0+0` | ROM `$A400`, file `0x18410` | M/L flip on map reload |
+| `Map_Completable_Tiles` | `$A447`, file `0x18457`, 5 bytes | re-admits below-threshold tiles to the M/L flip |
+| `Map_ForcePoofTiles` | `$A9D5`, file `0x169E5`, 5 bytes | re-admits them to the clear FX |
+| `Map_Removable_Tiles` / `Map_RemoveTo_Tiles` | `$A437`/`$A43F`, files `0x18447`/`0x1844F`, 8 + 8 | obstacle → what it becomes |
+| `Map_CompleteTile` | `$A9CA`, file `0x169DA`, 11 bytes | the immediate clear replacement (M/L panels, fortress rubble) |
+| `Map_NoLoseTurnTiles` | PRG011 | 2P turn behavior |
+
+### `Tile_Attributes_TS0` is two rows, and they live in different storage
+
+`$A400` holds eight bytes: `03 67 BF E9 03 67 BF E9`. Four thresholds indexed by
+`tile >> 6`, twice. The duplication looks redundant and is not — the two rows
+answer different questions, and are **read from different places**:
+
+- **`+0`, straight out of ROM.** One consumer: `prg012` at `$A545`
+  (file `0x18555`), `DD 00 A4 B0 26` = `CMP $A400,X` / `BCS`. This is the
+  reload's "flip this completed tile to an M/L marker" test.
+- **`+4`, via the RAM copy at `$7E94-$7E9B`** (`Tile_AttrTable`, filled by the
+  per-tileset copy loop at `prg030.asm:3597`). Four consumers read
+  `$7E98,Y`: PRG010 `$CDF8` (file `0x14E08`), PRG010 `$CEDC` (file `0x14EEC`,
+  the "press A enters a level" test), PRG011 `$AA14` (file `0x16A24`, which
+  clear FX plays), and PRG011 `$B425` (file `0x17435`, purpose not identified).
+
+So the M/L rule and the enterable rule are cleanly separable: changing ROM
+`$A400..$A403` cannot affect level entry, because entry reads the RAM copy of
+the other row.
+
+The thresholds also explain why every *undefined* metatile index is above one:
+those ranges were free precisely because nothing below the threshold was left.
+
+**Free indices, per page (all four quadrants `$FF` and absent from all eight
+vanilla grids):**
+
+| page | palette | threshold | last real tile | undefined indices |
+|---|---|---|---|---|
+| 0 | 0 | `$03` | `$15` (unused panel variants) | `$16`–`$3F` (42) |
+| 1 | 1 | `$67` | `$6A` `TILE_LARGEFORT` | `$6B`–`$7F` (21) |
+| 2 | 2 | `$BF` | `$BF` `TILE_POOL` | none |
+| 3 | 3 | `$E9` | `$EB` `TILE_ALTFORT` | `$EC`–`$FF` (20) |
+
+Above its page threshold, vanilla places only: `$67` fort, `$68` 2-Pyramid,
+`$69` 2-Quicksand (both real pointer-table entries — W2 entry 32 and 42), `$6A`
+(unused), `$E9` W5 star, `$EA` Dark Land fill (67 uses), `$EB` alt fort. A tile
+being above a threshold is often accidental — `$68`/`$69`/`$EA` are unwalkable
+or non-completing, so the classification never fires.
+
+**Turning a threshold into a range** unlocks the undefined tail of a page for
+the *obstacle* role. `$A545`'s test is exactly five bytes, so
+`JSR helper / BCS` splices in at the same size, and a helper of the form
+`CMP UPPER,X / BCS no / CMP $A400,X / RTS` (11 bytes + a 4-byte bound table)
+generalises it to all four pages. It changes only the M/L test, so nothing that
+reads the RAM copy is affected. Not sufficient for a *node* tile (a warp pad,
+say): a node is stood on, so it must also be non-enterable, which means either
+a below-threshold index — what `TILE_TELEPAD` `$DF` does — or splicing the RAM
+consumers, of which there are four.
+
+### The removable pair
+
+```
+$A437  Map_Removable_Tiles   51 52 54 67 EB E4 56 9D
+$A43F  Map_RemoveTo_Tiles    45 46 46 60 E3 DA 45 B3
+$A447  Map_Completable_Tiles 50 E8 E6 BD E0
+```
+
+Index-paired, keyed by tile byte and not by lock instance — so several
+obstacles may share a replacement (`$51`/`$56` both → `$45`), and a new obstacle
+variant is a new row rather than a per-instance field.
+
+- **Every pair preserves the top two bits.** `$54`→`$46`, `$E4`→`$DA`,
+  `$9D`→`$B3` and so on all stay inside their palette page. This is load-bearing:
+  the fortress FX queues only the four pattern bytes into `Graphics_Buffer` and
+  never writes an attribute byte, so a pair that crossed pages would draw the
+  revealed tile in the old palette until the next map reload.
+- **The replacement must also match the corridor's orientation** —
+  `Map_Object_Valid_*` decides whether the revealed tile is walkable in the
+  direction the path runs.
+- **The three tables are contiguous**, so none can be extended in place;
+  expanding means relocating. Only three instructions in the ROM name the
+  removable pair (`prg012.asm:342`, `:361`, `:368`), and the world-maze fortress
+  FX reads a PRG011 mirror rather than these bytes at all, so the relocation is
+  cheap. `LDX #$07` at file `0x1855A` sizes the vanilla scan.
+- **All three lock tiles are the same graphic.** `$54`, `$56` and `$E4` share
+  CHR quadrants `B6 B7 B8 B9`; `$54` and `$56` are pixel- *and* palette-identical
+  and differ only in what they reveal. `$E4` differs only by palette page.
+
+### Duplicated and dead entries
+
+- **`Map_ForcePoofTiles` (`$A9D5`) is byte-identical to `Map_Completable_Tiles`
+  (`$A447`)**: `50 E8 E6 BD E0`. Two copies in two banks for two questions
+  (PRG011 forces the clear FX, PRG012 forces the M/L flip), neither aware of the
+  other. All five are *below* their page threshold, which is why the lists exist:
+  without them a toad house would change tile with no FX at all.
+- **`Map_CompleteTile[10]` is unreachable.** The 11 bytes at `$A9CA` are
+  `00 01 40 41 80 81 C0 C1 60 60 E3`; the only `LDA Map_CompleteTile,X` in the
+  ROM (`prg011.asm:1845`) is reached with X = quadrant/player (0-7), `#$08` for
+  mini and large fortress, and `#$09` for alt fortress — never `#$0A`, so the
+  `$E3` alt rubble entry is dead. Harmless in vanilla: `$60` and `$E3` have
+  identical CHR quadrants, the attribute is not rewritten mid-effect, and the
+  reload re-derives `$EB`→`$E3` from `Map_RemoveTo_Tiles`.
+- **`$6A` `TILE_LARGEFORT` has no completion path.** `prg011` gives it the
+  fortress crumble sound and `$60` rubble (`:1823`, `:1832`), but `prg012`'s
+  reload special-cases only `TILE_FORT` and `TILE_ALTFORT` (`:348`), and `$6A`
+  is in neither `Map_Removable_Tiles` nor `Map_Completable_Tiles` — so it takes
+  the threshold branch and reloads as an M/L panel. Vanilla never places it;
+  this randomizer does (`FORTRESS_TILES`). **Fixed** — `lock_keys.rs`'s
+  `REMOVABLE_PAIRS` carries the row pairing `$6A` → `$60` (large fortress →
+  rubble).

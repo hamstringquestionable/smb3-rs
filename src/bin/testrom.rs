@@ -15,6 +15,24 @@ use smb3_rs::testrom::{self, Base, EnemyOverride, Placement, TestRomSpec};
 const DEFAULT_ROM: &str = "roms/Super Mario Bros. 3 (USA) (Rev 1).nes";
 const DEFAULT_PRACTICE_IPS: &str = "patches/smb3practice_SE.ips";
 
+/// Parse an `A:B` world-pair argument, both worlds 1-8.
+///
+/// `>` reads better and is accepted, but `:` is the documented spelling because
+/// an unquoted `--portal 2>5` is a shell redirect, not an argument.
+fn parse_world_pair(s: &str) -> Result<(u8, u8), String> {
+    let (src, dst) =
+        s.split_once([':', '>']).ok_or_else(|| format!("'{s}': expected A:B, e.g. 2:5"))?;
+    let world = |t: &str| -> Result<u8, String> {
+        t.trim()
+            .trim_start_matches(['w', 'W'])
+            .parse::<u8>()
+            .ok()
+            .filter(|n| (1..=8).contains(n))
+            .ok_or_else(|| format!("'{t}': world must be 1-8"))
+    };
+    Ok((world(src)?, world(dst)?))
+}
+
 #[derive(Parser)]
 #[command(
     name = "testrom",
@@ -93,6 +111,17 @@ struct Cli {
     #[arg(short, long, value_parser = clap::value_parser!(u8).range(1..=8))]
     world: Option<u8>,
 
+    /// World-maze POC: keep each world's map progress across transitions
+    /// instead of wiping it. Pair with --telepad for a way to leave a world.
+    #[arg(long)]
+    world_persist: bool,
+
+    /// World-maze POC: a telepad pair, as A:B (e.g. --telepad 1:5). Stands on
+    /// each world's first spade panel and teleports straight across with no
+    /// transit room. Repeatable. Implies --world-persist.
+    #[arg(long, value_name = "A:B", value_parser = parse_world_pair)]
+    telepad: Vec<(u8, u8)>,
+
     /// Leave lock tiles in place (default: removed).
     #[arg(long)]
     keep_locks: bool,
@@ -109,6 +138,17 @@ struct Cli {
     patches: bool,
 
     /// Skip the open-movement patch, so tiles must be entered and cleared.
+    ///
+    /// **Required for anything that tests map completion.** Open movement is 13
+    /// bytes at PRG010 `$CDBC` — the map power-up palette tables, which the
+    /// engine's enterable-tile scan overruns into (`prg010.asm` documents the
+    /// bug at `Map_EnterSpecialTiles`). The patched values include `$07` and
+    /// `$08`, which are level-panel tiles, so panels match the "enterable
+    /// special tile" list and the engine takes a branch that never calls
+    /// `Map_MarkLevelComplete`. Completions are then silently never recorded:
+    /// the M still appears — painted straight into nametable 2 — while
+    /// `Map_Completions` stays zero, and nothing reads it back until a map
+    /// rebuild. This cost a full session before it was found.
     #[arg(long)]
     no_walk: bool,
 
@@ -401,6 +441,8 @@ fn main() {
         movement_patch,
         always_on_patches: cli.patches,
         walk_skip_conflicts: cli.walk_skip_conflicts,
+        world_persist: cli.world_persist,
+        telepads: cli.telepad.clone(),
         remove_locks: !cli.keep_locks,
         remove_gaps: !cli.keep_gaps,
         starting_items,

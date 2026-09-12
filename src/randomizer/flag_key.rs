@@ -44,7 +44,7 @@ pub(super) const MAYBE_SALT: u64 = 0x4D41_5942_455F_5631; // "MAYBE_V1"
 
 /// Bytes of payload the format can address, past the two-byte envelope.
 ///
-/// 93 bits are spent today, leaving 147 in reserve — years of headroom at the
+/// 99 bits are spent today, leaving 141 in reserve — years of headroom at the
 /// rate this project has actually added options (the layout was bumped six
 /// times in the 38 days to 2026-08-06). It is deliberately generous rather than
 /// "one more byte than we need": running out of reserve is the one thing that
@@ -386,7 +386,17 @@ mod payload {
         // --- Numbers ---
         /// Index into [`STARTING_LIVES_VALUES`].
         pub(super) starting_lives: B2,
-        /// 1–7; 0 is a dead pattern that decodes to the default of 7.
+        /// 0–7, every pattern a real value.
+        ///
+        /// **0 used to be dead and decode to the default of 7.** It became the
+        /// "start in Dark Land" count, which is the one kind of change the
+        /// reserve-bit scheme does not cover for free — but it needs no version
+        /// bump either, because no key in circulation carries it: the encoder
+        /// clamped to 1–7 from the day the field existed. The only skew is a
+        /// *newer* key read by an older build, which decodes 0 to 7 and plays
+        /// seven worlds. An appended "start in Dark Land" bool would have had
+        /// the identical failure there (an older build reads the bit as zero),
+        /// so it would have bought nothing for an extra bit.
         pub(super) world_count: B3,
         /// Item IDs directly (0 = empty slot), including the `ITEM_RANDOM*`
         /// sentinels — 5 bits covers all of them, where the old layout needed a
@@ -412,9 +422,34 @@ mod payload {
         /// How many times one level may appear on the map. Zero is `Off`, so an
         /// older key decodes to the once-each deal it was minted with.
         pub(super) deja_vu: DejaVuMode,
+        /// Deja Vu counts fortresses too. Written verbatim rather than zeroed
+        /// when `deja_vu` is off, which is the opposite of what `maze_wands`
+        /// does below — that field was normalized to keep an *existing* key
+        /// string from moving, and this one is new and false by default, so it
+        /// costs nothing either way. Verbatim wins on the tie: it keeps the
+        /// bool exhaustiveness guard (`flag_key_encodes_every_bool_option`)
+        /// honest, and it round-trips a pill the sender had lit. The writer,
+        /// not the key, is what ignores it with the mode off.
+        pub(super) deja_vu_forts: bool,
+        /// World maze: the eight maps become one Metroidvania.
+        pub(super) world_maze: bool,
+        /// Wands the maze's castle demands, 0-7 — and **only written when
+        /// `world_maze` is on**, so a key from a seed that never touches the
+        /// mode is byte-for-byte what it was before this field existed. Zero is
+        /// a real value with the maze on (a pure maze, no gate).
+        /// How much the maze's map says about which fortress opens which lock.
+        /// **Only written when `world_maze` is on**, like `maze_wands` above, so
+        /// a key from a seed that never touches the mode is byte-for-byte what
+        /// it was before this field existed.
+        ///
+        /// `Full` is the zero discriminant on purpose — see [`HintMode`]. A key
+        /// minted before this option decodes to the hints it was minted with
+        /// rather than to silence.
+        pub(super) hints: HintMode,
+        pub(super) maze_wands: B3,
 
         // --- Reserve ---
-        // 139 bits. Adding an option is: declare it immediately above this
+        // 132 bits. Adding an option is: declare it immediately above this
         // block, then take the same number of bits off `B19`. An older key
         // simply has those bits zero, which is "off" for a bool and the default
         // for every enum here, so it stays a correct key for the settings it
@@ -429,7 +464,7 @@ mod payload {
         #[skip]
         __: B128,
         #[skip]
-        __: B11,
+        __: B4,
     }
 }
 
@@ -471,9 +506,9 @@ impl Options {
             eights_are_wild, troll_pipes, antechamber_shuffle,
             ground, shell, flying, piranhas, ghosts, thwomps, rotodiscs,
             cannons, water, bros, hb_encounters, limit_hazards, friendlier_levels,
-            bro_battle_timer, deja_vu,
+            bro_battle_timer, deja_vu, deja_vu_forts,
             fire_flower, piranha_shuffle, wild_injections,
-            starting_lives, world_count, starting_items,
+            starting_lives, world_count, world_maze, maze_wands, hints, starting_items,
             // Not encoded — see NOT_ENCODED for the reason on each.
             palettes: _, palette_themed: _, player_color: _,
             remove_flashing: _, king_quotes: _, skip_rom_validation: _,
@@ -538,13 +573,27 @@ impl Options {
             .with_friendlier_levels(*friendlier_levels)
             .with_bro_battle_timer(*bro_battle_timer)
             .with_deja_vu(*deja_vu)
+            .with_deja_vu_forts(*deja_vu_forts)
             .with_fire_flower(*fire_flower)
             .with_piranha_shuffle(*piranha_shuffle)
             .with_wild_sun(has(WildChaser::Sun))
             .with_wild_lakitu(has(WildChaser::Lakitu))
             .with_wild_bass(has(WildChaser::Bass))
             .with_starting_lives(lives_to_idx(*starting_lives))
-            .with_world_count((*world_count).clamp(1, 7))
+            // Verbatim, including 0, and NOT normalized to 7 when the maze is
+            // on. The maze does pin the spine to all eight worlds, but it pins
+            // it in `randomize_inner` — the writer is what ignores this field,
+            // the same split `deja_vu_forts` uses, and normalizing here would
+            // move the key string of every maze key already minted with a
+            // shorter spine.
+            .with_world_count((*world_count).min(7))
+            .with_world_maze(*world_maze)
+            // Zero unless the maze is on. The field is meaningless with it
+            // off, and encoding its default anyway would have moved the
+            // default key string for every seed that never touches the mode —
+            // which is a flag-key compatibility event bought for nothing.
+            .with_maze_wands(if *world_maze { (*maze_wands).min(7) } else { 0 })
+            .with_hints(if *world_maze { *hints } else { HintMode::default() })
             .with_starting_item_0(sanitize_item(item(0)))
             .with_starting_item_1(sanitize_item(item(1)))
             .with_starting_item_2(sanitize_item(item(2)))
@@ -630,17 +679,26 @@ impl Options {
             limit_hazards: f.limit_hazards_or_err().unwrap_or_default(),
             friendlier_levels: f.friendlier_levels(),
             deja_vu: f.deja_vu_or_err().unwrap_or_default(),
+            deja_vu_forts: f.deja_vu_forts(),
             fire_flower: f.fire_flower_or_err().unwrap_or_default(),
             piranha_shuffle: f.piranha_shuffle_or_err().unwrap_or_default(),
             wild_injections: chasers,
             starting_lives: idx_to_lives(f.starting_lives()),
-            // 0 is unreachable from the encoder (it clamps to 1–7) but reachable
-            // from a corrupt or newer key; take the default rather than a world
-            // count the builder can't satisfy.
-            world_count: match f.world_count() {
-                0 => default_world_count(),
-                n => n,
+            world_maze: f.world_maze(),
+            // 0 is a REAL value with the maze on — a pure maze, no gate on the
+            // castle — so it is taken at face value there. With the maze off
+            // the field was never encoded, so the default is the honest read.
+            maze_wands: if f.world_maze() { f.maze_wands() } else { default_maze_wands() },
+            hints: if f.world_maze() {
+                f.hints_or_err().unwrap_or_default()
+            } else {
+                HintMode::default()
             },
+            // Every pattern is a value now, 0 included — it is "start in Dark
+            // Land", not "unset". A key minted before that meaning existed
+            // cannot carry 0 (the encoder clamped to 1–7), so nothing older is
+            // being reinterpreted; see the field's own comment.
+            world_count: f.world_count(),
             starting_items: items,
             // Not encoded: fixed to the values a shared key should never
             // override. The web app skips these fields when applying a decoded

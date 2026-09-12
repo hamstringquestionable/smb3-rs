@@ -1,8 +1,6 @@
 //! Overworld map tile edits: rocks, W8 canoe/bridges, drawbridges, N-cards.
 
-use crate::randomize::rom_data::{
-    BRIDGE_TILE, FX_MAP_TILE_REPLACE, map_tile_offset, write_map_sprite,
-};
+use crate::randomize::rom_data::{BRIDGE_TILE, map_tile_offset, write_map_sprite};
 use crate::rom::Rom;
 
 // W3 drawbridge map tile patches: (file offset, replacement tile).
@@ -187,6 +185,13 @@ const W8_WATER_EDITS: &[(usize, usize, u8)] = &[
 /// `0xB3 -> 0x9D`) that its fortress rebuilds — the "bridge out" the builder
 /// deals per seed (`overworld_build::locks`). Single source of truth: the
 /// builder reads these positions rather than repeating the coordinates.
+///
+/// All five are stamped as bridges in every mode. In WORLD-MAZE mode only,
+/// the last of them — `rom_data::W8_WAND_GATE_POS` at (5,59) — is held out
+/// of the deal by `overworld_build::locks::free_bridge_spans`, because the
+/// maze writes its wand gate over that cell after the build. It stays stamped
+/// here either way: the corridor looks the same, and the gate goes down last,
+/// over the finished map.
 pub(crate) const W8_BRIDGE_ROW: usize = 5;
 pub(crate) const W8_BRIDGE_COLS: [usize; 5] = [51, 53, 55, 57, 59];
 
@@ -200,13 +205,6 @@ pub fn apply_w8_bridges(rom: &mut Rom) {
     for col in W8_BRIDGE_COLS {
         rom.write_byte(map_tile_offset(7, W8_BRIDGE_ROW, col), BRIDGE_TILE);
     }
-    // Vanilla FX slot 16 sits at W8 (row 5, col 53) — right on our new bridge
-    // row — and its replace_tile is 0x45 (plain path). The builder's pickup
-    // `open_fx_gaps()` stamps that replace_tile over the grid, clobbering our
-    // 0xB3 bridge. Point it at the bridge tile so the slot opens to a bridge,
-    // matching the other bridge columns (and gating as a water gap if a
-    // fortress lands there).
-    rom.write_byte(FX_MAP_TILE_REPLACE + 16, BRIDGE_TILE);
 }
 
 /// Apply the W8 canoe docks + extra paths and place the canoe sprite (see

@@ -86,8 +86,12 @@ fn census_ctx(raw: &Rom, seed: u64) -> CensusCtx {
         &catalog,
         PickupFlags { shuffle_spade_games: false, shuffle_toad_houses, shuffle_hammer_bros },
     );
-    let flags =
-        BuildFlags { shuffle_toad_houses, eights_are_wild: eights_wild, shuffle_hammer_bros };
+    let flags = BuildFlags {
+        shuffle_toad_houses,
+        eights_are_wild: eights_wild,
+        shuffle_hammer_bros,
+        ..Default::default()
+    };
     let (level_counts, fort_counts, c1_floors) =
         allot_budgets(&rom, &catalog, &pickup, &flags, &mut roll_rng);
     let bridges_out = roll_bridges_out(&mut roll_rng);
@@ -140,6 +144,7 @@ fn test_builder_schedule_runs_phases_in_order() {
         ptr_slots: 0,
         bridges_out: 0,
         bridge_spans: Vec::new(),
+        wand_gate_reserved: false,
         hb_sprite_pins: Vec::new(),
         log: Vec::new(),
     };
@@ -1738,10 +1743,10 @@ fn test_builder_output_completable() {
             );
             for (li, lock) in built.locks.iter().enumerate() {
                 assert!(
-                    lock.fort_section < forts.len(),
+                    lock.fort.section < forts.len(),
                     "seed {seed} W{}: lock {li} points at missing fort {}",
                     wi + 1,
-                    lock.fort_section
+                    lock.fort.section
                 );
                 assert_eq!(
                     lock.secret_exit_safe,
@@ -1832,7 +1837,13 @@ fn test_builder_bridge_lock_rate() {
             run_shaped_with_web_retries(&mut state, &mut rng);
             total_locks[world_idx] += state.locks.len();
             bridge_locks[world_idx] +=
-                state.locks.iter().filter(|l| BRIDGE.contains(&l.replace_tile)).count();
+                // The path under a lock, read off the grid — locks are an
+                // overlay and are never stamped, so it is still there.
+                state
+                    .locks
+                    .iter()
+                    .filter(|l| BRIDGE.contains(&state.grid.get(l.pos.0, l.pos.1)))
+                    .count();
             let has_bridge = (0..state.grid.rows())
                 .any(|r| (0..state.grid.cols).any(|c| BRIDGE.contains(&state.grid.get(r, c))));
             if has_bridge {
@@ -1878,8 +1889,12 @@ fn test_builder_island_roles() {
             shuffle_hammer_bros: true,
         },
     );
-    let flags =
-        BuildFlags { shuffle_toad_houses: true, eights_are_wild: false, shuffle_hammer_bros: true };
+    let flags = BuildFlags {
+        shuffle_toad_houses: true,
+        eights_are_wild: false,
+        shuffle_hammer_bros: true,
+        ..Default::default()
+    };
     let sizes_roles = |world_idx: usize| {
         let state = from_pickup(&rom, &catalog, &pickup, world_idx, &flags);
         let (pocket, count) = super::islands::pocket_map(&state);

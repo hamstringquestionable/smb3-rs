@@ -48,7 +48,9 @@ pub(crate) fn allot_budgets(
 /// Wrap a finished `BuiltWorld` back into a `WorldState`. Start/target are
 /// re-derived from the grid the same way the builder derived them. `fixed`
 /// is empty: a finished world has nothing left to place.
-#[cfg(test)]
+///
+/// Production since the world maze: the maze is eight of these over
+/// `BuildResult::worlds`, which is the whole of how it gets its input.
 pub(crate) fn from_built(built: &BuiltWorld) -> WorldState {
     WorldState {
         world_idx: built.world_idx,
@@ -67,6 +69,7 @@ pub(crate) fn from_built(built: &BuiltWorld) -> WorldState {
         ptr_slots: 0,
         bridges_out: 0,
         bridge_spans: Vec::new(),
+        wand_gate_reserved: false,
         hb_sprite_pins: Vec::new(),
         log: Vec::new(),
     }
@@ -122,7 +125,7 @@ pub(crate) fn from_pickup(
     let fort_budget = catalog
         .entries
         .iter()
-        .filter(|e| e.world_idx == world_idx && matches!(e.kind, NodeKind::Fortress { .. }))
+        .filter(|e| e.world_idx == world_idx && matches!(e.kind, NodeKind::Fortress))
         .count();
     let hb_sprite_pins = if flags.shuffle_hammer_bros {
         Vec::new()
@@ -151,6 +154,7 @@ pub(crate) fn from_pickup(
         ptr_slots: pickup.worlds[world_idx].pool_indices.len(),
         bridges_out: 0,
         bridge_spans: Vec::new(),
+        wand_gate_reserved: flags.world_maze && world_idx == rom_data::W8_IDX,
         hb_sprite_pins,
         log: Vec::new(),
     }
@@ -176,10 +180,13 @@ pub(crate) fn from_vanilla(rom: &Rom, catalog: &NodeCatalog, world_idx: usize) -
     let mut grid = rom_data::read_tile_grid(rom, world_idx);
     let slots = vanilla_slots(rom, catalog, world_idx);
     let fort_count = slots.iter().filter(|s| s.kind == SlotKind::Fortress).count();
-    let locks = vanilla_locks(rom, &grid, world_idx, fort_count);
-    for lock in &locks {
-        grid.set(lock.pos.0, lock.pos.1, lock.replace_tile);
-    }
+    let locks: Vec<LockAssignment> = vanilla_locks(rom, &grid, world_idx, fort_count)
+        .into_iter()
+        .map(|(lock, under)| {
+            grid.set(lock.pos.0, lock.pos.1, under);
+            lock
+        })
+        .collect();
     let start = rom_data::find_start(&grid);
     let target = find_target(&grid, world_idx);
     let level_budget = slots.iter().filter(|s| s.kind == SlotKind::Level).count();
@@ -201,6 +208,7 @@ pub(crate) fn from_vanilla(rom: &Rom, catalog: &NodeCatalog, world_idx: usize) -
         ptr_slots: 0,
         bridges_out: 0,
         bridge_spans: Vec::new(),
+        wand_gate_reserved: false,
         hb_sprite_pins: Vec::new(),
         log: Vec::new(),
     }
@@ -218,10 +226,20 @@ fn vanilla_slots(rom: &Rom, catalog: &NodeCatalog, world_idx: usize) -> Vec<Slot
     for entry in catalog.entries.iter().filter(|e| e.world_idx == world_idx) {
         let (kind, section) = match &entry.kind {
             NodeKind::Level => (SlotKind::Level, 0),
-            NodeKind::Fortress { boomboom_y_offset } => {
-                // The Boom-Boom Y-byte's upper nibble is the fortress's
-                // 1-based FX ordinal within its world; sections are 0-based.
-                let ordinal = (rom.read_byte(*boomboom_y_offset) >> 4) as usize;
+            NodeKind::Fortress => {
+                // Vanilla's Boom-Boom Y-byte carries the fortress's 1-based FX
+                // ordinal within its world in its upper nibble; sections are
+                // 0-based. This reads the *source* ROM, which still has it —
+                // `lock_keys::apply` masks the nibble off the output.
+                let ordinal = entry
+                    .level_entry
+                    .as_ref()
+                    .and_then(|le| {
+                        rom_data::boomboom_y_offset_for_obj(
+                            ((le.obj_hi as u16) << 8) | le.obj_lo as u16,
+                        )
+                    })
+                    .map_or(0, |off| (rom.read_byte(off) >> 4) as usize);
                 (SlotKind::Fortress, ordinal.saturating_sub(1))
             }
             NodeKind::Pipe { .. } => (SlotKind::Pipe, 0),
@@ -238,6 +256,7 @@ fn vanilla_slots(rom: &Rom, catalog: &NodeCatalog, world_idx: usize) -> Vec<Slot
             section,
             is_hand_trap: false,
             is_troll_pipe: false,
+            lock_hint: LockHint::default(),
         });
     }
     slots
@@ -275,27 +294,33 @@ fn vanilla_pipe_pairs(catalog: &NodeCatalog, world_idx: usize) -> Vec<TeleportEd
 /// the writer (`fortress_fx.rs`): row byte = (row+2)<<4; loc byte =
 /// (col_in_screen<<4) | screen.
 #[cfg(test)]
+/// Vanilla's locks, each with the path tile hiding under it.
+///
+/// The tile is returned beside the lock rather than stored on it. It is needed
+/// exactly once — to put the path back on the grid, since a vanilla map carries
+/// the CLOSED tile and `gap_tile_for` cannot invert to the specific variant
+/// (a drawbridge becomes plain path). Once the grid is restored it holds the
+/// faithful tile, which is where every later reader gets it.
 fn vanilla_locks(
     rom: &Rom,
-    grid: &Grid,
+    _grid: &Grid,
     world_idx: usize,
     fort_count: usize,
-) -> Vec<LockAssignment> {
+) -> Vec<(LockAssignment, u8)> {
     let mut locks = Vec::new();
     for ordinal in 0..fort_count.min(4) {
         let slot = rom.read_byte(rom_data::FX_WORLD_TABLE + world_idx * 4 + ordinal) as usize;
         let row = (rom.read_byte(rom_data::FX_MAP_LOC_ROW + slot) >> 4) as usize - 2;
         let loc = rom.read_byte(rom_data::FX_MAP_LOC + slot);
         let col = (loc & 0x0F) as usize * 16 + (loc >> 4) as usize;
-        locks.push(LockAssignment {
-            pos: (row, col),
-            // The vanilla grid carries the CLOSED tile; the caller restores
-            // the open tile onto the grid after reading these.
-            gap_tile: grid.get(row, col),
-            replace_tile: rom.read_byte(rom_data::FX_MAP_TILE_REPLACE + slot),
-            fort_section: ordinal,
-            secret_exit_safe: false,
-        });
+        locks.push((
+            LockAssignment {
+                pos: (row, col),
+                fort: FortRef { world: world_idx, section: ordinal },
+                secret_exit_safe: false,
+            },
+            rom.read_byte(rom_data::FX_MAP_TILE_REPLACE + slot),
+        ));
     }
     locks
 }

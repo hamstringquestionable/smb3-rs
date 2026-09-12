@@ -85,6 +85,12 @@ pub(super) fn default_world_count() -> u8 {
     7
 }
 
+/// Wands the world maze's castle demands by default — see
+/// [`Options::maze_wands`] for the measurement that chose 3.
+pub(super) fn default_maze_wands() -> u8 {
+    crate::randomize::maze::DEFAULT_WANDS_REQUIRED
+}
+
 /// Per-class enemy randomization mode.
 ///
 /// The `Specifier` derive gives this a 2-bit flag-key encoding in declaration
@@ -250,6 +256,80 @@ pub enum DejaVuMode {
     Wild,
 }
 
+/// How much the world maze's map tells you about which fortress opens which
+/// lock. Inert outside the maze, where every lock is local and every fortress
+/// opens something in the world you are standing in.
+///
+/// # The three rungs
+///
+/// * **Off** — nothing is said. Fortresses wear one of their three designs at
+///   random, as they did before any of this, and locks are the plain tiles.
+/// * **Partial** (`some`) — a fortress's design says whether the lock it opens is in this
+///   world, another one, or World 8; and a lock in the alternate colour is one
+///   whose key is somewhere else. Two independent readings of the same fact,
+///   from either end.
+/// * **Full** — as Partial, and the lock carries the *number* of the world its
+///   fortress is in.
+///
+/// # Why the order is not the ladder
+///
+/// Declaration order is the flag-key wire format, and the key's whole
+/// compatibility story is that an unset field decodes as zero *and zero is the
+/// default* — see the `flag_key` module header. So `Partial` is declared first.
+/// [`HintMode::rung`] is the ladder; nothing should read the declaration order
+/// as one.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
+    modular_bitfield::Specifier,
+)]
+#[bits = 2]
+#[serde(rename_all = "snake_case")]
+pub enum HintMode {
+    /// Fortress designs, and a lock's colour says whether its key is local.
+    /// The default: it answers the question a player actually has without
+    /// handing them the whole map.
+    ///
+    /// Named `Partial` rather than `Some` so it never reads as `Option::Some`
+    /// at a match site — the same trick [`HazardLimit::Sparse`] plays. The
+    /// serde/CLI/web value stays "some".
+    #[default]
+    #[serde(rename = "some")]
+    Partial,
+    /// As Partial, and the lock carries the number of the world to go to.
+    Full,
+    /// No hints at all; fortress designs go back to being random.
+    Off,
+}
+
+impl HintMode {
+    /// Position on the ladder — 0 Off, 1 Some, 2 Full — so callers can ask
+    /// "at least Some" without caring that the encoding is in the other order.
+    pub fn rung(self) -> u8 {
+        match self {
+            HintMode::Off => 0,
+            HintMode::Partial => 1,
+            HintMode::Full => 2,
+        }
+    }
+
+    /// Does the map say anything at all about which fortress opens which lock?
+    pub fn hints_at_all(self) -> bool {
+        self.rung() >= HintMode::Partial.rung()
+    }
+
+    /// Do locks carry the world number, rather than only a colour?
+    pub fn numbers_locks(self) -> bool {
+        self == HintMode::Full
+    }
+}
+
 /// A level-wide chaser the wild-injection pass can seed into a level. The
 /// option is the *set* of these the player allowed — an empty set is off.
 ///
@@ -368,9 +448,37 @@ pub struct Options {
     pub king_quotes: bool,
     #[serde(default)]
     pub world_order: bool,
-    /// Number of worlds before Dark Land (1–7, default 7).
+    /// Number of worlds before Dark Land (0–7, default 7). Only read when
+    /// [`Options::world_order`] is on, since its table is the mechanism.
+    ///
+    /// **0 starts the game in Dark Land**, which is then the whole game and
+    /// displays as "WORLD 1". No airship stands before Bowser's castle at that
+    /// count, so no wand exists in the run.
+    ///
+    /// **Ignored when [`Options::world_maze`] is on**, which pins the spine to
+    /// all eight worlds: the web form greys the control out under the mode, and
+    /// `randomize_inner` makes that true of every other entry point. The flag
+    /// key still carries the player's value verbatim.
     #[serde(default = "default_world_count")]
     pub world_count: u8,
+    /// **World maze.** The eight world maps stop being a sequence and become
+    /// the rooms of one Metroidvania: telepads link them, a fortress can bust a
+    /// lock in another world, map progress survives leaving and coming back,
+    /// and the warp whistle becomes fast travel between worlds already visited.
+    /// Bowser's castle stays shut until [`Options::maze_wands`] wands are held.
+    ///
+    /// Forces `world_order` on — its table is what the airship spine reads, and
+    /// the wand counter chains through the routine it installs.
+    #[serde(default)]
+    pub world_maze: bool,
+    /// Wands the castle demands, 0–7. Only read when `world_maze` is on.
+    ///
+    /// **This is a floor, not a length dial** (`maze_wand_gate_sweep`, 40 seeds
+    /// per K): at 0 a telepad chain finishes some seeds in a *single level*; at
+    /// 3 the shortest run is 16 levels while the median is unchanged at 28. It
+    /// only starts costing the median at 6–7.
+    #[serde(default = "default_maze_wands")]
+    pub maze_wands: u8,
     #[serde(default)]
     pub big_q_blocks: bool,
     /// Shuffle airship levels across worlds 1-7.
@@ -626,11 +734,33 @@ pub struct Options {
     /// Hold the harshest levels out of the shuffle pool, refilling it with
     /// beta stages (when they are on) and then with duplicates of the levels
     /// that remain. See `FRIENDLIER_BLOCKED_LEVELS` for the list.
+    ///
+    /// It has a fortress half too, `FRIENDLIER_BLOCKED_FORTS`: 7F2 and 8F1 are
+    /// held out of the fortress deck the same way, so they do not appear on the
+    /// map at all, and their tiles take a second visit to a fortress that
+    /// stayed.
     #[serde(default)]
     pub friendlier_levels: bool,
     /// How many times one level may appear on the map. See [`DejaVuMode`].
     #[serde(default)]
     pub deja_vu: DejaVuMode,
+    /// How much the world maze's map says about which fortress opens which
+    /// lock. See [`HintMode`]. Inert outside the maze.
+    #[serde(default)]
+    pub hints: HintMode,
+    /// Deja Vu counts fortresses too. A modifier on [`Options::deja_vu`]
+    /// rather than an option of its own: it is ignored when that is off, and
+    /// takes its mode from it when it is on.
+    ///
+    /// It redeals the fortress deck exactly as `deja_vu` redeals the level
+    /// deck — `Double` builds a bag of two copies of each and deals it without
+    /// replacement, `Wild` draws with replacement — so a fortress can take two
+    /// tiles, or none. 1-F is the one card that is seeded into every deal and
+    /// never a source: it holds the warp whistle, and it is the one fortress
+    /// whose secret exit skips Boom-Boom, so a copy could land on a lock it can
+    /// never open.
+    #[serde(default)]
+    pub deja_vu_forts: bool,
     /// Which level-wide chasers may be seeded into a fraction of real levels
     /// (CHR-compatible). Empty = off. See [`WildChaser`].
     #[serde(default)]
@@ -659,6 +789,8 @@ impl Default for Options {
             king_quotes: true,
             world_order: false,
             world_count: default_world_count(),
+            world_maze: false,
+            maze_wands: default_maze_wands(),
             big_q_blocks: false,
             shuffle_airships: true,
             shuffle_hammer_bros: true,
@@ -714,6 +846,8 @@ impl Default for Options {
             limit_hazards: HazardLimit::Off,
             friendlier_levels: false,
             deja_vu: DejaVuMode::Off,
+            deja_vu_forts: false,
+            hints: HintMode::Partial,
             wild_injections: Vec::new(),
             starting_lives: default_starting_lives(),
             starting_items: Vec::new(),

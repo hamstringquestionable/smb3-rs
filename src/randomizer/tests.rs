@@ -138,7 +138,20 @@ fn mystery_anchor_trampoline_written() {
 /// but pins `world_count` to 3 and leaves `swap_start_airship` off, and both
 /// gate allocations we want exercised.
 fn audit_options() -> Options {
-    Options { world_count: 7, swap_start_airship: true, ..all_on_options() }
+    // World maze on, because it is the configuration that writes the MOST free
+    // space: nine allocations across five banks belong to it, and every one of
+    // them used to need a hand-written `apply` call in the test body to be
+    // exercised at all. Driving them through the real pipeline is the point —
+    // the check exists because an un-exercised allocation is an unaudited one,
+    // and a hand-written call proves the routine writes bytes without proving
+    // the randomizer ever calls it.
+    Options {
+        world_count: 7,
+        swap_start_airship: true,
+        world_maze: true,
+        maze_wands: 3,
+        ..all_on_options()
+    }
 }
 
 /// Cross-check `FREE_SPACE_ALLOCATIONS` against a real run: every byte written
@@ -613,7 +626,9 @@ fn flag_key_per_option_round_trip() {
         assert_eq!(recovered.starting_lives, lives, "starting_lives={lives}: round-trip mismatch");
         assert_eq!(recovered, expected, "starting_lives={lives}: full struct mismatch");
     }
-    for wc in 1u8..=7 {
+    // 0 included: it is "start in Dark Land", not a dead pattern, since the
+    // world-count control gained that rung.
+    for wc in 0u8..=7 {
         let opts = Options { world_count: wc, ..Default::default() };
         let expected = normalized(opts.clone());
         let recovered = Options::from_flag_key(&opts.to_flag_key()).unwrap();
@@ -901,7 +916,17 @@ fn flag_key_short_key_zero_fills() {
     assert!(decoded.powerups, "an early option must survive a short key");
     assert_eq!(decoded.ground, EnemyMode::Shuffle);
     // starting_lives/world_count/items live in the truncated tail.
-    assert_eq!(decoded.world_count, default_world_count());
+    assert_eq!(decoded.starting_lives, STARTING_LIVES_VALUES[0]);
+    assert_eq!(decoded.starting_items, Vec::<u8>::new());
+
+    // **`world_count` is the one field with no "absent" pattern left**: since
+    // 0 became "start in Dark Land", a key that stops short of it reads as that
+    // rather than as the default of seven worlds. Nothing in circulation can
+    // land there — a real key truncated in transit fails the checksum, and this
+    // one only decodes because `forge_key` recomputes it — but the day another
+    // field needs a "this key predates me" pattern, this is the one that cannot
+    // supply one.
+    assert_eq!(decoded.world_count, 0);
 }
 
 /// The checksum's reason for existing, measured.
@@ -1085,8 +1110,14 @@ fn fnv1a(data: &[u8]) -> u64 {
 fn all_off_options() -> Options {
     Options {
         fire_flower: FireFlowerMode::Off,
+        // Not "off": with the maze off this option is inert, and the key
+        // normalizes it to the default the way it does maze_wands. Claiming
+        // Off here would fail the round trip against a decoder that
+        // deliberately returns the default.
+        hints: crate::HintMode::default(),
         friendlier_levels: false,
         deja_vu: DejaVuMode::Off,
+        deja_vu_forts: false,
         limit_hazards: HazardLimit::Off,
         piranha_shuffle: PiranhaMode::Off,
         powerups: false,
@@ -1097,6 +1128,8 @@ fn all_off_options() -> Options {
         king_quotes: false,
         world_order: false,
         world_count: 7,
+        world_maze: false,
+        maze_wands: 3,
         big_q_blocks: false,
         shuffle_airships: false,
         shuffle_hammer_bros: false,
@@ -1159,9 +1192,11 @@ fn all_off_options() -> Options {
 fn all_on_options() -> Options {
     Options {
         fire_flower: FireFlowerMode::On,
+        hints: crate::HintMode::default(),
         limit_hazards: HazardLimit::All,
         friendlier_levels: true,
         deja_vu: DejaVuMode::Wild,
+        deja_vu_forts: true,
         piranha_shuffle: PiranhaMode::On,
         powerups: true,
         palettes: false,
@@ -1171,6 +1206,8 @@ fn all_on_options() -> Options {
         king_quotes: true,
         world_order: true,
         world_count: 3,
+        world_maze: true,
+        maze_wands: 5,
         big_q_blocks: true,
         shuffle_airships: true,
         shuffle_hammer_bros: true,
@@ -1551,4 +1588,686 @@ fn resolve_concrete_passthrough() {
     assert_eq!(resolve_starting_item(0, &mut rng), 0);
     assert_eq!(resolve_starting_item(5, &mut rng), 5);
     assert_eq!(resolve_starting_item(13, &mut rng), 13);
+}
+
+/// **A pad tile stands under every arrival key the ROM carries.**
+///
+/// This is the end-to-end check for the failure that already cost a playtest
+/// session once. The pad key tables and the map are written by different
+/// modules, and the key table is what the travel routine actually consults, so
+/// a disagreement of one row breaks it in whichever direction the mismatch
+/// runs: a pad tile whose cell is in no key row is scenery the player can stand
+/// on and nothing more, and a key row pointing at a cell that holds some other
+/// tile teleports out of a place with no pad drawn on it. The playtest hit the
+/// first shape back when pads were spade panels, so the pad did the spade game
+/// instead — the tile is `TILE_TELEPAD` now and the symptom would be quieter,
+/// which is the argument for testing it rather than playing it.
+///
+/// Neither side can see this alone: `world_persist` can prove its routine reads
+/// its own tables, the maze can prove it stamped the tiles it meant to, and the
+/// ROM can still be wrong. So this reads the finished ROM the way the engine
+/// does — decode each pad key row back into a `(world, row, col)` and demand a
+/// pad tile there.
+#[test]
+fn a_maze_rom_puts_a_pad_tile_under_every_arrival_key() {
+    use crate::randomize::rom_data::{self, TILE_TELEPAD};
+    use crate::randomize::world_persist::{PAD_TABLE_OFF, PORTAL_MAX};
+
+    let Some(rom) = make_test_rom() else {
+        eprintln!("SKIP: requires the ROM, which is not included in the repo");
+        return;
+    };
+    // Several seeds: the pad count and their worlds are rolled, so one seed
+    // proves very little about the encoding.
+    for seed in [1u64, 7, 12345, 0xA11C0DE] {
+        let mut rom = rom.clone();
+        randomize(&mut rom, seed, &Options { world_maze: true, ..audit_options() });
+
+        let table = crate::randomize::rom_data::FS_PAD_ENTER + PAD_TABLE_OFF;
+        let mut found = 0;
+        for id in 0..PORTAL_MAX {
+            let world = rom.read_byte(table + id);
+            if world == 0xFF {
+                continue; // no pad on this row
+            }
+            // The engine's own encoding, and the only one the map has:
+            // Y = (grid_row + 2) << 4; the X byte packs the column within its
+            // screen in the high nibble and the screen index in the low.
+            let y = rom.read_byte(table + PORTAL_MAX + id);
+            let x = rom.read_byte(table + 2 * PORTAL_MAX + id);
+            let row = (y >> 4) as usize - 2;
+            let col = (x & 0x0F) as usize * 16 + (x >> 4) as usize;
+            let tile = rom.read_byte(rom_data::map_tile_offset(world as usize, row, col));
+            assert_eq!(
+                tile,
+                TILE_TELEPAD,
+                "seed {seed}: pad {id} keys W{} ({row},{col}), but that cell is {tile:#04X}, \
+                 not a telepad — stepping on it would enter a level, not teleport",
+                world + 1
+            );
+            found += 1;
+        }
+        assert!(found > 0, "seed {seed}: a maze ROM with no telepads at all");
+        assert!(
+            found <= PORTAL_MAX,
+            "seed {seed}: {found} pads exceeds the {PORTAL_MAX} arrival rows"
+        );
+    }
+}
+
+/// **The maze player starts holding a whistle, it survives being blown, it does
+/// not cost them a starting item, and they can actually get at it.**
+///
+/// Four clauses of one promise, in three modules, so this is the only place
+/// that can check the promise itself: `completion_bits` puts the whistle in
+/// inventory **slot 0** at the new-game signal, `world_travel` stops the engine
+/// consuming it, and `qol::starting_state` takes slots 1-3 instead of 0-2 so
+/// the player's own three still fit.
+///
+/// Two regressions live here. The whistle used to be merged into the player's
+/// starting-items list, and since the CLI and the web UI both offer exactly
+/// three, a player who asked for three got two of them plus a whistle — the
+/// mode quietly ate a choice. The fix put it in slot 3, above the player's
+/// slots 0-2, which was the second bug: the inventory is a *compacted list*,
+/// and the engine's panel returns immediately when slot 0 is empty
+/// (`PRG026_A4A1` — no cursor, no use). With fewer than three starting items,
+/// and the default is none, slot 0 was empty and the whistle the whole mode
+/// leans on was unreachable for the entire run. So the whistle takes the
+/// bottom slot — it is the one item the player is guaranteed to hold — and
+/// everything else stacks on top of it with no hole.
+///
+/// Read out of the finished ROM rather than from the options, because the two
+/// writes are emitted by different patches into different banks.
+#[test]
+fn a_maze_player_starts_with_a_permanent_whistle() {
+    use crate::randomize::rom_data::{FS_NEW_GAME_INIT, FS_STARTING_ITEMS};
+
+    const WHISTLE: u8 = 0x0C;
+    // `LDA #item / STA $7D80+slot`, the shape both patches emit.
+    fn writes_slot(code: &[u8], item: u8, slot: u8) -> bool {
+        code.windows(5).any(|w| w == [0xA9, item, 0x8D, 0x80 + slot, 0x7D])
+    }
+
+    let Some(rom) = make_test_rom() else {
+        eprintln!("SKIP: requires the ROM, which is not included in the repo");
+        return;
+    };
+
+    for (label, requested) in
+        [("no requested items", vec![]), ("three requested", vec![0x01, 0x02, 0x03])]
+    {
+        let opts =
+            Options { world_maze: true, starting_items: requested.clone(), ..audit_options() };
+        let mut rom = rom.clone();
+        randomize(&mut rom, 12345, &opts);
+
+        let new_game = rom.read_range(FS_NEW_GAME_INIT, 40);
+        assert!(
+            writes_slot(new_game, WHISTLE, 0),
+            "[{label}] the new-game init puts no whistle in inventory slot 0 — \
+             anywhere above an empty slot 0 and the panel will not open for use"
+        );
+
+        // The player's own choices stack on top of it, contiguously, and the
+        // whistle stays out of the trampoline entirely — the two bugs this
+        // guards.
+        let tramp = rom.read_range(FS_STARTING_ITEMS, 40);
+        for (i, &item) in requested.iter().enumerate() {
+            let slot = i as u8 + 1;
+            assert!(
+                writes_slot(tramp, item, slot),
+                "[{label}] requested item {item:#04X} is not in slot {slot}"
+            );
+        }
+        assert!(
+            !tramp.windows(2).any(|w| w == [0xA9, WHISTLE]),
+            "[{label}] the whistle is back in the starting-items trampoline, where it \
+             competes with the three the UI offers"
+        );
+
+        // And blowing it must not take it away.
+        assert_eq!(
+            rom.read_range(crate::randomize::world_travel::WHISTLE_CONSUME_OFFSET, 3),
+            [0xEA, 0xEA, 0xEA],
+            "[{label}] the whistle is still consumed on use"
+        );
+    }
+
+    // Without the maze, none of it applies — otherwise this test would pass
+    // for a reason that has nothing to do with the mode. And the slot shift is
+    // part of "none of it": nothing writes slot 0 outside the maze, so the
+    // player's items must start there or the panel is dead for them too.
+    let mut plain = rom.clone();
+    randomize(
+        &mut plain,
+        12345,
+        &Options { world_maze: false, starting_items: vec![0x01, 0x02, 0x03], ..audit_options() },
+    );
+    assert_ne!(
+        plain.read_range(crate::randomize::world_travel::WHISTLE_CONSUME_OFFSET, 3),
+        [0xEA, 0xEA, 0xEA],
+        "the whistle-keeping patch leaked into a non-maze seed"
+    );
+    let plain_tramp = plain.read_range(FS_STARTING_ITEMS, 40);
+    for (slot, item) in [0x01u8, 0x02, 0x03].into_iter().enumerate() {
+        assert!(
+            writes_slot(plain_tramp, item, slot as u8),
+            "without the maze, item {item:#04X} is not in slot {slot} — a hole at \
+             slot 0 leaves the inventory panel dead"
+        );
+    }
+}
+
+/// **The web build's entry path carries the maze.**
+///
+/// Every other maze test constructs `Options` directly. The browser does not:
+/// `wasm::parse_options` deserialises them from a JSON object the JS layer
+/// builds out of `web/options.js`. A field that is absent, misspelled, or
+/// defaulted wrongly in that direction would leave the mode silently off in the
+/// browser and on everywhere else — and no native test would notice.
+///
+/// So this walks the wasm path exactly: JSON in, flag key out, key back to
+/// options, and finally a real ROM to prove the mode actually ran.
+#[test]
+fn the_wasm_json_entry_path_carries_the_maze() {
+    // What the JS layer sends when the two controls are set.
+    let json = r#"{"world_maze":true,"maze_wands":5}"#;
+    let opts: Options = serde_json::from_str(json).expect("wasm parse_options");
+    assert!(opts.world_maze, "world_maze did not survive JSON");
+    assert_eq!(opts.maze_wands, 5, "maze_wands did not survive JSON");
+
+    // The key is how a seed is shared, so it has to carry the mode too.
+    let key = opts.to_flag_key();
+    let back = Options::from_flag_key(&key).expect("flag key round trip");
+    assert!(back.world_maze, "world_maze did not survive the flag key");
+    assert_eq!(back.maze_wands, 5, "maze_wands did not survive the flag key");
+
+    // And the defaults the JS layer seeds its form from must name the fields,
+    // or the controls have nothing to bind to.
+    let defaults = serde_json::to_string(&Options::default()).expect("default_options_json");
+    for field in ["world_maze", "maze_wands"] {
+        assert!(defaults.contains(field), "default_options_json is missing {field}");
+    }
+
+    // Finally: the mode really runs from a JSON-built Options, not just parses.
+    let Some(mut rom) = make_test_rom() else {
+        eprintln!("SKIP: requires the ROM, which is not included in the repo");
+        return;
+    };
+    let full: Options =
+        serde_json::from_str(r#"{"world_maze":true,"maze_wands":3,"world_count":7}"#).unwrap();
+    randomize(&mut rom, 4242, &full);
+    let (row, col) = crate::randomize::rom_data::W8_WAND_GATE_POS;
+    assert_eq!(
+        rom.read_byte(crate::randomize::rom_data::map_tile_offset(7, row, col)),
+        crate::randomize::rom_data::WAND_GATE_TILE,
+        "a JSON-configured maze produced a ROM with no wand gate"
+    );
+}
+
+/// **Every lock is keyed to a fortress the player can actually clear — and a
+/// sprite-covered one counts.**
+///
+/// This replaces `every_cross_world_lock_names_a_crumbling_fortress`, which
+/// asserted the opposite and had to. Under the old cross-world hook the key was
+/// `Map_MarkLevelComplete`'s fortress branch, gated on the tile under the player
+/// being rubble, so a fortress hidden under a World 8 tank could not open a lock
+/// in another world. Position keying at map operation 8 has no such gate: both
+/// halves of `MO_DoLevelClear` set `Map_Operation = 8` at one shared exit, so a
+/// tank and a stone fortress reach the effect identically.
+///
+/// Three of World 8's four fortresses get an army sprite, so this is not an edge
+/// case — it is 17.6% of all locks. The count is printed rather than merely
+/// asserted, because "no sprite-covered fortress was keyed" would mean the
+/// capability had quietly gone away again.
+#[test]
+fn every_lock_is_keyed_to_a_fortress_slot() {
+    use crate::randomize::lock_keys;
+    use crate::randomize::overworld_build::SlotKind;
+    use crate::randomize::rom_data::{self, FORTRESS_TILES};
+
+    let Some(raw) = make_test_rom() else {
+        eprintln!("SKIP: requires the ROM, which is not included in the repo");
+        return;
+    };
+
+    let (mut checked, mut sprite_keyed, mut away_seen) = (0usize, 0usize, 0usize);
+    for maze in [false, true] {
+        let opts = Options { world_maze: maze, ..audit_options() };
+        for seed in [1u64, 4242, 12345, 31337] {
+            let (rom, build) =
+                crate::randomize_rom_with_overworld_capture(&raw.data, seed, &opts, None)
+                    .expect("randomize");
+
+            for entry in lock_keys::decode_entries(&rom) {
+                checked += 1;
+                away_seen += usize::from(entry.away);
+                let world = &build.worlds[entry.key_world];
+                assert!(
+                    world
+                        .slots
+                        .iter()
+                        .any(|s| s.pos == entry.key_pos && s.kind == SlotKind::Fortress),
+                    "maze={maze} seed {seed}: a lock is keyed on W{} {:?}, which is not a \
+                     fortress slot — nothing there would ever arm the effect",
+                    entry.key_world + 1,
+                    entry.key_pos
+                );
+                let tile = rom.read_byte(rom_data::map_tile_offset(
+                    entry.key_world,
+                    entry.key_pos.0,
+                    entry.key_pos.1,
+                ));
+                sprite_keyed += usize::from(!FORTRESS_TILES.contains(&tile));
+            }
+        }
+    }
+    assert!(checked > 0, "no locks in any seed; the check is vacuous");
+    assert!(away_seen > 0, "no cross-world locks in any maze seed");
+    assert!(
+        sprite_keyed > 0,
+        "no lock is keyed to a sprite-covered fortress — either World 8's army sprites stopped \
+         landing on fortresses, or the tile gate is back and those locks are dead again"
+    );
+    eprintln!(
+        "  {checked} locks checked, {sprite_keyed} keyed to a sprite-covered fortress, \
+         {away_seen} cross-world"
+    );
+}
+
+/// **The `// N reserved, M used` figures in the registry must be true.**
+///
+/// Every `FREE_SPACE_ALLOCATIONS` row carries its size in prose, and prose does
+/// not compile. Two of them had silently drifted by the time this test was
+/// written — `FS_NEW_GAME_INIT` said 25 where the routine had grown to 33, and
+/// `FS_WIPE_REPLACEMENT` said 31 against 34 — because both grew a caller after
+/// the row was written. Worse, `completion_bits`' own module comment had the
+/// right number while the registry had the wrong one, which is the arrangement
+/// most likely to mislead: two sources, one stale, no way to tell which.
+///
+/// Nothing enforced them. `free_space_audit_matches_registry` proves nobody
+/// overran or wrote where they should not; `free_space_doc_table_is_current`
+/// proves CLAUDE.md's per-bank table is fresh. Neither reads these strings.
+/// The audit already computes the real figure, so this is only a matter of
+/// asking.
+///
+/// The rule is **a label may not understate**, not "a label must match". Some
+/// rows honestly state a maximum rather than one run's figure — the flag-key
+/// stamp says "up to 42 used at the largest key", the cross-world lock table
+/// sizes itself for 17 rows — and a seed that writes fewer bytes is not a bug.
+/// Understating is the direction that hurts: it makes an allocation look
+/// roomier than it is, which is how the next feature gets sited on top of
+/// something.
+#[test]
+fn registry_used_figures_are_current() {
+    use crate::randomize::rom_data::audit_free_space;
+
+    let Some(mut rom) = make_test_rom() else {
+        eprintln!("SKIP: requires the ROM, which is not included in the repo");
+        return;
+    };
+    randomize(&mut rom, 0xA11C0DE, &audit_options());
+
+    // `N reserved, M used`, in the label. Rows without the phrase opt out —
+    // some genuinely have nothing to say — but a row that states a figure is
+    // held to it.
+    let stated = |label: &str| -> Option<usize> {
+        let at = label.find(" used")?;
+        let head = &label[..at];
+        let start = head.rfind(|c: char| !c.is_ascii_digit())? + 1;
+        head[start..].parse().ok()
+    };
+
+    let mut checked = 0;
+    let mut wrong = Vec::new();
+    for u in audit_free_space(&rom) {
+        let Some(says) = stated(u.alloc.label) else { continue };
+        checked += 1;
+        if says < u.used {
+            wrong.push(format!(
+                "  0x{:05X} ({}): label says {says} used, the run wrote {}",
+                u.alloc.offset, u.alloc.label, u.used
+            ));
+        }
+    }
+
+    assert!(checked >= 20, "only {checked} rows state a used figure; the parse is broken");
+    assert!(
+        wrong.is_empty(),
+        "these registry rows claim FEWER bytes than the randomizer actually wrote, \
+         so the allocation looks roomier than it is:\n{}\n\
+         Regenerate from `smb3-rs <rom> --write-log`, do not hand-count.",
+        wrong.join("\n")
+    );
+}
+
+/// **Every lock has exactly one key.**
+///
+/// This is the identity that was false for the whole life of the world maze,
+/// and no test noticed because both halves were separately self-consistent.
+///
+/// The overworld writer pairs each lock with a fortress in its own world and
+/// buys it an FX slot; the slot is the local key, carrying both the crumble
+/// animation and the `Map_Completions` write that persists it. The maze then
+/// re-keys some of those locks to a fortress in another world and writes
+/// `foreign_locks` rows for them — but adding a row never removed the local
+/// pairing. A re-keyed lock therefore had *two* keys, the local one sitting a
+/// few tiles away and always found first, so every cross-world lock in the game
+/// was decoration and the mode's difficulty model described a map that did not
+/// exist. A World 2 playthrough found it: three fortresses, three locks, all
+/// three opening locally.
+///
+/// The count is readable straight off the ROM: home and away entries share one
+/// table now, so they must partition the locks the builder placed — never
+/// overlap them, and never leave one out.
+///
+/// Since the fortress-FX rework the build-time [`lock_keys::apply`] would panic
+/// on a lock with two keys before a ROM was ever produced. This still earns its
+/// place: it measures the *finished artefact*, so it also catches an entry lost
+/// between the writer and the ROM, and it is what pins that away locks exist at
+/// all rather than the mode quietly emitting none.
+#[test]
+fn every_maze_lock_has_exactly_one_key() {
+    use crate::randomize::lock_keys;
+
+    let Some(raw) = make_test_rom() else {
+        eprintln!("SKIP: requires the ROM, which is not included in the repo");
+        return;
+    };
+
+    for seed in [7u64, 12345, 999, 20260905] {
+        let opts = Options { world_maze: true, ..audit_options() };
+        let (rom, build) =
+            crate::randomize_rom_with_overworld_capture(raw.output_bytes(), seed, &opts, None)
+                .expect("maze seed should randomize");
+
+        let placed: usize = build.worlds.iter().map(|w| w.locks.len()).sum();
+        let entries = lock_keys::decode_entries(&rom);
+        let away = entries.iter().filter(|e| e.away).count();
+
+        assert_eq!(
+            entries.len(),
+            placed,
+            "seed {seed}: {placed} locks were placed but the table holds {} entries \
+             ({away} of them cross-world). Over the total means a re-keyed lock kept its \
+             local fortress as well, which makes the cross-world lock decoration; under \
+             it means a lock no fortress opens.",
+            entries.len()
+        );
+        assert!(away > 0, "seed {seed}: no cross-world locks at all");
+    }
+}
+
+/// **1-F's lock can always be left shut.**
+///
+/// 1-F's secret exit hands out an item and skips the crystal ball, so the
+/// fortress is beaten and the lock does *not* open. That is a real choice — the
+/// item or the lock — and the mode keeps it. What it must never be is a choice
+/// that ends the run, so `assign.rs` parks 1-F on a fortress whose lock the
+/// builder marked `secret_exit_safe`: the world stays completable with it sealed
+/// forever.
+///
+/// Nothing asserted that until now. Measured at 40/40 seeds when this was
+/// written.
+///
+/// **Standard mode only, deliberately.** `maze::fill` permutes which fortress
+/// opens which lock, and `secret_exit_safe` is a *per-world* verdict computed
+/// before telepads exist — so in maze mode the property has to be re-asked of
+/// the whole graph at the shipping wand count, which nothing does yet. See
+/// `maze::tests::per_world_sealable_locks_are_sealable_for_the_maze` for the
+/// size of that gap (57% of locks are sealable at K=7 against 81% at K=3).
+#[test]
+fn one_f_lands_on_a_lock_that_can_stay_shut() {
+    use crate::randomize::lock_keys;
+    use crate::randomize::rom_data::{self, FORTRESS_1F_OBJ_PTR, WORLDS};
+
+    let Some(raw) = make_test_rom() else {
+        eprintln!("SKIP: requires the ROM, which is not included in the repo");
+        return;
+    };
+    let mut checked = 0usize;
+    for seed in [1u64, 4242, 12345, 31337] {
+        let opts = Options { world_maze: false, ..audit_options() };
+        let (rom, build) =
+            crate::randomize_rom_with_overworld_capture(raw.output_bytes(), seed, &opts, None)
+                .expect("randomize");
+
+        // Where did the 1-F fortress level end up?
+        let mut at: Option<(usize, (usize, usize))> = None;
+        for (wi, w) in WORLDS.iter().enumerate() {
+            for idx in 0..w.entry_count {
+                let e = rom_data::read_entry(&rom, w, idx);
+                if u16::from_le_bytes([e.obj_lo, e.obj_hi]) == FORTRESS_1F_OBJ_PTR {
+                    at = Some((wi, rom_data::entry_grid_position(&rom, w, idx)));
+                }
+            }
+        }
+        let Some((fw, fpos)) = at else { continue };
+
+        // Which lock does the fortress standing there open?
+        let entry = lock_keys::decode_entries(&rom)
+            .into_iter()
+            .find(|e| e.key_world == fw && e.key_pos == fpos)
+            .unwrap_or_else(|| panic!("seed {seed}: 1-F at W{} {fpos:?} opens no lock", fw + 1));
+        let target = entry.target.expect("a non-maze run has only home entries");
+        let lock = build.worlds[fw]
+            .locks
+            .iter()
+            .find(|l| l.pos == target)
+            .unwrap_or_else(|| panic!("seed {seed}: 1-F's entry names {target:?}, not a lock"));
+        assert!(
+            lock.secret_exit_safe,
+            "seed {seed}: 1-F opens the lock at W{} {target:?}, which the builder did NOT mark \
+             safe to leave shut — taking the secret exit could strand the run",
+            fw + 1
+        );
+        checked += 1;
+    }
+    assert!(checked > 0, "1-F was never placed; the check is vacuous");
+}
+
+/// **How many map-object slots are actually free, under real options?**
+///
+/// A floating marker sprite — HELP is the model: static, non-interactive, never
+/// defeated — would need one slot per lock in the world it marks. Vanilla's
+/// tables say 4-7 free per world, but vanilla is the wrong instrument: the
+/// Hammer Bro shuffle redistributes 1-3 bros per world, piranha shuffle plants
+/// sprites, and World 8 carries tanks, a battleship and an airship on top.
+///
+/// Slot accounting, from `rom_data::access`: nine slots (0-8); slot 0 always
+/// holds HELP; slot 1 is the runtime airship spawn, reserved in W1-W7 and free
+/// in W8; `RESERVED_DYNAMIC_SLOTS` = 2 are kept empty everywhere for a
+/// level-triggered white mushroom house.
+///
+/// ```sh
+/// CENSUS_SEEDS=30 cargo test --release --lib map_object_slot_budget \
+///     -- --ignored --nocapture
+/// ```
+#[test]
+#[ignore]
+fn map_object_slot_budget() {
+    use crate::randomize::overworld_build::RESERVED_DYNAMIC_SLOTS;
+    use crate::randomize::rom_data::{self, MAP_OBJ_IDS_MASTER};
+
+    let Some(raw) = make_test_rom() else {
+        eprintln!("SKIP: requires the ROM, which is not included in the repo");
+        return;
+    };
+    let seeds: u64 = std::env::var("CENSUS_SEEDS").ok().and_then(|s| s.parse().ok()).unwrap_or(20);
+
+    // min/sum/worst-case-zero per world
+    let mut free_min = [usize::MAX; 8];
+    let mut free_sum = [0usize; 8];
+    let mut locks_sum = [0usize; 8];
+    let mut home_sum = [0usize; 8];
+    let mut away_sum = [0usize; 8];
+    let (mut short, mut short_rare) = (0usize, 0usize);
+    let mut short_both = 0usize;
+    let mut plants_sum = [0usize; 8];
+    let (mut need_now, mut need_plants) = (0usize, 0usize);
+    let mut need_all = 0usize;
+
+    for seed in 0..seeds {
+        // Wild is the heaviest arm: `all_on_options` already sets it, and it is
+        // the one that plants the most sprites.
+        let opts = audit_options();
+        let (rom, build) =
+            crate::randomize_rom_with_overworld_capture(raw.output_bytes(), seed, &opts, None)
+                .expect("maze seed should randomize");
+        let entries = crate::randomize::lock_keys::decode_entries(&rom);
+
+        for wi in 0..8 {
+            let used = (0..9)
+                .filter(|&slot| {
+                    rom.read_byte(rom_data::map_obj_slot_offset(&rom, MAP_OBJ_IDS_MASTER, wi, slot))
+                        != 0
+                })
+                .count();
+            // Free slots a marker could take.
+            //
+            // **Slots 0 and 1 count as free.** Vanilla reserves them — slot 0
+            // holds the HELP bubble, which `TAndK_WaitPlayerButtonA` reads as a
+            // one-shot "this world's airship is still available" token, and
+            // slot 1 is where that routine then writes the airship. Neither
+            // happens in a shipped ROM: `autoscroll::disable_autoscroll`
+            // repoints every world's airship entry away from the shared
+            // Toad-and-King object stream ($D2AF) to its own reworked level, so
+            // the cutscene never loads, the token is never read and the airship
+            // is never written. The bubble is left as decoration.
+            //
+            // That holds while autoscroll removal is on, which is the default
+            // (`--keep-autoscroll` puts the cutscene and the dependency back).
+            // `audit_options` has it on.
+            // Slot 0 always reads as "used" (the HELP bubble is still there),
+            // so add it back; slot 1 is already empty in every world's table.
+            let help_slot = usize::from(
+                rom.read_byte(rom_data::map_obj_slot_offset(&rom, MAP_OBJ_IDS_MASTER, wi, 0)) != 0,
+            );
+            let free =
+                9usize.saturating_sub(used).saturating_sub(RESERVED_DYNAMIC_SLOTS) + help_slot;
+            free_min[wi] = free_min[wi].min(free);
+            free_sum[wi] += free;
+            let locks = build.worlds[wi].locks.len();
+            locks_sum[wi] += locks;
+            // A "home" entry decodes its target, and its key is in the same
+            // world; everything else in this world is foreign. Absence carries
+            // meaning either way, so only the RARER kind needs a marker.
+            let home = entries
+                .iter()
+                .filter(|e| !e.away && e.key_world == wi && e.target.is_some())
+                .count();
+            let away = locks.saturating_sub(home);
+            home_sum[wi] += home;
+            away_sum[wi] += away;
+            if free < locks {
+                short += 1;
+            }
+            if free < home.min(away) {
+                short_rare += 1;
+            }
+            // What-if: our own 2-slot runtime buffer dropped as well. It is
+            // there because nothing clears slots 9-13 on world entry, so a
+            // runtime spawn that landed in one persists; clearing them in the
+            // restore hook `map_objects` already runs on every `Map_Init` would
+            // make the buffer redundant (~10 bytes).
+            if free + RESERVED_DYNAMIC_SLOTS < home.min(away) {
+                short_both += 1;
+            }
+
+            // The shipping proposal: a marker on every FOREIGN lock, naming the
+            // world its key is in; unmarked means the key is home. Markers are
+            // budgeted before piranha plants, which already yield gracefully —
+            // `pick_plant_positions` is best-effort and a skipped plant just
+            // leaves a normal numbered level tile.
+            let plants = (0..9)
+                .filter(|&slot| {
+                    rom.read_byte(rom_data::map_obj_slot_offset(&rom, MAP_OBJ_IDS_MASTER, wi, slot))
+                        == 0x07
+                })
+                .count();
+            plants_sum[wi] += plants;
+            for (budget, tally) in [
+                (free, &mut need_now),
+                (free + plants, &mut need_plants),
+                (free + plants + RESERVED_DYNAMIC_SLOTS, &mut need_all),
+            ] {
+                if budget < away {
+                    *tally += 1;
+                }
+            }
+        }
+    }
+
+    println!("\n=== map-object slots free for markers, {seeds} seeds ===");
+    println!(
+        "{:<6}{:>10}{:>10}{:>10}{:>10}{:>10}",
+        "world", "free min", "free avg", "locks", "local", "foreign"
+    );
+    for wi in 0..8 {
+        println!(
+            "W{:<5}{:>10}{:>10.2}{:>10.2}{:>10.2}{:>10.2}",
+            wi + 1,
+            free_min[wi],
+            free_sum[wi] as f64 / seeds as f64,
+            locks_sum[wi] as f64 / seeds as f64,
+            home_sum[wi] as f64 / seeds as f64,
+            away_sum[wi] as f64 / seeds as f64,
+        );
+    }
+    println!("world-seeds where free < every lock:   {short} of {}", seeds as usize * 8);
+    let n = seeds as usize * 8;
+    println!("world-seeds short, marking the RARER kind:");
+    println!("   as things stand                 {short_rare} of {n}");
+    println!("   + the 2-slot buffer dropped     {short_both} of {n}");
+    println!("\nmarking every FOREIGN lock (unmarked = key is home):");
+    println!("   as things stand                     {need_now} of {n}");
+    println!("   + markers budgeted before plants    {need_plants} of {n}");
+    println!("   + the 2-slot buffer dropped         {need_all} of {n}");
+    println!("plants placed per world: {:?}", plants_sum.map(|v| v as f64 / seeds as f64));
+}
+
+/// **Every World Maze option does nothing without the maze, and that is
+/// enforced rather than incidental.**
+///
+/// Two options are maze-only — `maze_wands` and `hints` — and the web form
+/// greys both out without it (`enabledWhen: { world_maze: true }`). Nothing
+/// stopped a flag key or a CLI run carrying them anyway, and the flag key
+/// normalises `hints` to its *default*, which is `Partial`, not `Off`.
+///
+/// Every hint is a statement about another world: a fortress design says which
+/// world holds its lock, a lock's colour says its key is elsewhere. Outside the
+/// world maze the first is always "this one" and the second cannot happen.
+///
+/// It looked inert before it was enforced, and it was not.
+/// `lock_keys::stamp_hint_locks` returns early only when hints are *off*; with
+/// hints on and no away locks it fell through to `move_local_sky_locks` with an
+/// empty remote set, which recoloured **every** sky lock on the map to the
+/// maze's local-sky tile. `hints: Partial` is the default, so that was every
+/// standard-mode seed with a sky lock on it.
+#[test]
+fn maze_options_change_nothing_without_the_maze() {
+    let Ok(bytes) = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes") else {
+        eprintln!("SKIP: requires the ROM");
+        return;
+    };
+    let opts = |hints| crate::Options {
+        hints,
+        palettes: false,
+        palette_themed: false,
+        ..crate::Options::default()
+    };
+    for seed in 1..=12u64 {
+        let off = crate::generate_patched_rom(&bytes, seed, &opts(crate::HintMode::Off), None)
+            .expect("generate");
+        for mode in [crate::HintMode::Partial, crate::HintMode::Full] {
+            let on =
+                crate::generate_patched_rom(&bytes, seed, &opts(mode), None).expect("generate");
+            let diff = off.iter().zip(&on).filter(|(a, b)| a != b).count();
+            assert_eq!(
+                diff, 0,
+                "seed {seed}: {mode:?} changed {diff} bytes with the maze off — a hint reached \
+                 a map that has nothing to hint at"
+            );
+        }
+    }
 }

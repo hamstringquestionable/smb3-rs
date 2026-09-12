@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::process;
 
 use smb3_rs::{
-    DejaVuMode, EnemyMode, FireFlowerMode, HazardLimit, ITEMS, Options, PiranhaMode,
+    DejaVuMode, EnemyMode, FireFlowerMode, HazardLimit, HintMode, ITEMS, Options, PiranhaMode,
     STARTING_LIVES_VALUES, Tri, WildChaser, item_display_name, item_id,
 };
 
@@ -85,6 +85,16 @@ fn parse_deja_vu(s: &str) -> Result<DejaVuMode, String> {
         "double" => Ok(DejaVuMode::Double),
         "wild" => Ok(DejaVuMode::Wild),
         _ => Err("valid values: off, double, wild".to_string()),
+    }
+}
+
+/// clap value parser for `--hints` (off/some/full).
+fn parse_hints(s: &str) -> Result<HintMode, String> {
+    match s {
+        "off" => Ok(HintMode::Off),
+        "some" => Ok(HintMode::Partial),
+        "full" => Ok(HintMode::Full),
+        _ => Err("valid values: off, some, full".to_string()),
     }
 }
 
@@ -195,9 +205,21 @@ struct Cli {
     #[arg(long)]
     world_order: bool,
 
-    /// Number of worlds before Dark Land (1-7, default 7; requires --world-order)
-    #[arg(long, default_value_t = 7, value_parser = clap::value_parser!(u8).range(1..=7))]
+    /// Number of worlds before Dark Land (0-7, default 7; 0 starts the game in
+    /// Dark Land itself. Requires --world-order; ignored under --world-maze,
+    /// which always uses all eight worlds)
+    #[arg(long, default_value_t = 7, value_parser = clap::value_parser!(u8).range(0..=7))]
     world_count: u8,
+
+    /// World maze: the eight maps become one Metroidvania, linked by telepads,
+    /// with cross-world locks and a whistle that fast-travels between visited
+    /// worlds. Forces --world-order on.
+    #[arg(long)]
+    world_maze: bool,
+
+    /// Wands Bowser's castle demands in world-maze mode (0-7, default 3)
+    #[arg(long, default_value_t = 3, value_parser = clap::value_parser!(u8).range(0..=7))]
+    maze_wands: u8,
 
     /// Enable Big ? Block randomization
     #[arg(long)]
@@ -433,7 +455,9 @@ struct Cli {
     limit_hazards: HazardLimit,
 
     /// Hold the harshest levels out of the shuffle pool (2-3, 5-3, 6-6, 7-5,
-    /// 7-8, 8-1), refilling with beta stages and duplicates of what remains
+    /// 7-8, 8-1), refilling with beta stages and duplicates of what remains.
+    /// Forts 7F2 and 8F1 are held out the same way, so they do not appear at
+    /// all, and their tiles take a second visit to a fort that stayed
     #[arg(long)]
     friendlier_levels: bool,
 
@@ -444,6 +468,22 @@ struct Cli {
     /// way. (MaCobra52's idea.)
     #[arg(long, default_value = "off", value_parser = parse_deja_vu)]
     deja_vu: DejaVuMode,
+
+    /// World maze: how much the map tells you about which fortress opens which
+    /// lock — off, some, or full (default: some). `some` gives each fortress a
+    /// design saying whether its lock is local, elsewhere, or in World 8, and
+    /// tints a lock whose key is in another world; `full` keeps the designs and
+    /// stamps that lock with the world number *instead* of the tint. Ignored
+    /// outside `--world-maze`.
+    #[arg(long, default_value = "some", value_parser = parse_hints)]
+    hints: HintMode,
+
+    /// Deja Vu counts fortresses too, in whatever mode `--deja-vu` is set to,
+    /// so a fortress can take two map tiles or none. Ignored with `--deja-vu
+    /// off`. 1-F is always dealt exactly once: it holds the warp whistle, and
+    /// its secret exit skips Boom-Boom
+    #[arg(long)]
+    deja_vu_forts: bool,
 
     /// Seed a level-wide chaser into a fraction of levels. A comma-separated
     /// set of `sun`, `lakitu`, `bass`; or `all`; or `off` (default). A level
@@ -559,8 +599,13 @@ fn build_options(cli: &Cli) -> Options {
             player_color: cli.player_color,
             remove_flashing: !cli.keep_flashing,
             king_quotes: !cli.vanilla_king_quotes,
-            world_order: cli.world_order,
+            // The maze reads `world_order`'s table as its airship spine and
+            // chains the wand counter through the routine it installs, so it
+            // cannot run without it.
+            world_order: cli.world_order || cli.world_maze,
             world_count: cli.world_count,
+            world_maze: cli.world_maze,
+            maze_wands: cli.maze_wands,
             big_q_blocks: cli.big_q_blocks,
             shuffle_airships: !cli.no_shuffle_airships,
             shuffle_hammer_bros: !cli.no_shuffle_hammer_bros,
@@ -616,6 +661,8 @@ fn build_options(cli: &Cli) -> Options {
             limit_hazards: cli.limit_hazards,
             friendlier_levels: cli.friendlier_levels,
             deja_vu: cli.deja_vu,
+            deja_vu_forts: cli.deja_vu_forts,
+            hints: cli.hints,
             wild_injections: cli.wild_injections.0.clone(),
             starting_lives: cli.starting_lives,
             starting_items,
@@ -652,16 +699,30 @@ fn print_summary(options: &Options, seed: u64, output_path: &std::path::Path) {
     );
     eprintln!("  Friendlier levels: {}", if options.friendlier_levels { "on" } else { "off" });
     eprintln!(
-        "  Deja Vu: {}",
+        "  Deja Vu: {}{}",
         match options.deja_vu {
             DejaVuMode::Off => "off",
             DejaVuMode::Double => "double",
             DejaVuMode::Wild => "wild",
+        },
+        if options.deja_vu != DejaVuMode::Off && options.deja_vu_forts {
+            " (forts too)"
+        } else {
+            ""
         }
     );
     eprintln!("  World order: {}", if options.world_order { "on" } else { "off" });
-    if options.world_order && options.world_count < 7 {
-        eprintln!("  World count: {}", options.world_count);
+    if options.world_maze {
+        eprintln!("  World maze: on ({} wand(s) to open the castle)", options.maze_wands);
+    }
+    // Silent under --world-maze: the mode pins the spine to all eight worlds, so
+    // printing the player's value would report a setting the run ignores.
+    if options.world_order && !options.world_maze && options.world_count < 7 {
+        if options.world_count == 0 {
+            eprintln!("  World count: 0 (the game starts in Dark Land)");
+        } else {
+            eprintln!("  World count: {}", options.world_count);
+        }
     }
     eprintln!("  Big ? Blocks: {}", if options.big_q_blocks { "on" } else { "off" });
     eprintln!(
@@ -673,7 +734,17 @@ fn print_summary(options: &Options, seed: u64, output_path: &std::path::Path) {
     eprintln!("  Hammer Bro shuffle: {}", if options.shuffle_hammer_bros { "on" } else { "off" });
     eprintln!("  Autoscroll: {}", if options.disable_autoscroll { "disabled" } else { "enabled" });
     eprintln!("  Chest items: {}", if options.chest_items { "on" } else { "off" });
-    eprintln!("  Warp whistles: {}", if options.remove_whistles { "removed" } else { "kept" });
+    eprintln!(
+        "  Warp whistles: {}",
+        match (options.world_maze, options.remove_whistles) {
+            // The maze turns the whistle into fast travel, so it is kept
+            // whatever the option says — and saying "removed" here would be a
+            // straight lie about the ROM that was just written.
+            (true, _) => "fast travel (world maze)",
+            (false, true) => "removed",
+            (false, false) => "kept",
+        }
+    );
     eprintln!("  More hammer rocks: {}", tri_str(options.more_hammer_rocks));
     eprintln!("  8s are Wild: {}", tri_str(options.eights_are_wild));
     eprintln!("  Antechamber shuffle: {}", tri_str(options.antechamber_shuffle));

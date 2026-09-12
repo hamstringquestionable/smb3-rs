@@ -127,7 +127,7 @@ pub(super) fn write_pointer_entries(
                     && !matches!(
                         e.kind,
                         NodeKind::Level
-                            | NodeKind::Fortress { .. }
+                            | NodeKind::Fortress
                             | NodeKind::Pipe { .. }
                             | NodeKind::HammerBro
                             | NodeKind::BonusGame

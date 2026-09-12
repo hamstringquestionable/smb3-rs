@@ -11,7 +11,7 @@
 //! corridor scores only the slice between, and loses to fresh territory.
 //! The first candidate that keeps the world completable wins.
 //!
-//! One row is dealt rather than ranked: the five spans of the W8 bridge
+//! One row is dealt rather than ranked: the spans of the W8 bridge
 //! approach to Bowser's castle ([`deal_bridge_spans`], weights in
 //! [`capacity::BRIDGES_OUT_WEIGHTS`]). Marginal cut cannot produce a
 //! distribution there — the corridor is a chain, so one span wins the cut
@@ -79,12 +79,10 @@ impl Phase for Locks {
 
             let mut placed = false;
             let tried = candidates.len();
-            for (pos, tile, cut) in candidates {
+            for (pos, cut) in candidates {
                 state.locks.push(LockAssignment {
                     pos,
-                    gap_tile: gap_tile_for(tile),
-                    replace_tile: tile,
-                    fort_section: fort_id,
+                    fort: FortRef { world: state.world_idx, section: fort_id },
                     // Stamped by recompute_safety_flags once the set is
                     // final.
                     secret_exit_safe: false,
@@ -135,10 +133,22 @@ pub(crate) fn recompute_safety_flags(state: &mut WorldState) {
     }
 }
 
-/// Cross-world invariant: at least one lock across all worlds must be
-/// secret-exit-safe — the write phase parks the 1-F fortress level (whose
-/// secret exit skips the lock-opening FX) on a slot whose lock can stay
-/// closed forever without softlocking.
+/// How many fortress slots must be able to host a secret-exit fortress level.
+///
+/// One today, because 1-F is the only such level the deck places — Friendlier
+/// Levels drops 7F2 and 8F1 rather than placing them. It is a named constant
+/// because it is a *contract* between three parties, not a property of any one
+/// of them: the builder leaves this many behind ([`ensure_secret_exit_safe`]),
+/// the world maze restores that many after re-pairing
+/// (`maze::fill::keep_n_sealable`), and the writer consumes them
+/// (`overworld_writer::assign`). A deck that placed a second secret-exit level
+/// would raise this, and all three would follow.
+pub(crate) const SECRET_EXIT_SLOTS_NEEDED: usize = 1;
+
+/// Cross-world invariant: at least [`SECRET_EXIT_SLOTS_NEEDED`] locks across
+/// all worlds must be secret-exit-safe — the write phase parks the 1-F fortress
+/// level (whose secret exit skips the lock-opening FX) on a slot whose lock can
+/// stay closed forever without softlocking.
 ///
 /// Knob-free backstop, run after every world's schedule: if uniform
 /// placement produced no safe lock anywhere, relocate ONE existing lock —
@@ -187,19 +197,13 @@ pub(crate) fn ensure_secret_exit_safe(
                         state.start,
                         state.world_idx,
                         l.pos,
-                        l.replace_tile,
                     )
                 })
                 .collect();
             let candidates = rank_candidates(state, &open, &open_reach, &covered, rng);
-            for (pos, tile, _) in candidates {
-                state.locks[li] = LockAssignment {
-                    pos,
-                    gap_tile: gap_tile_for(tile),
-                    replace_tile: tile,
-                    fort_section: original.fort_section,
-                    secret_exit_safe: false,
-                };
+            for (pos, _) in candidates {
+                state.locks[li] =
+                    LockAssignment { pos, fort: original.fort, secret_exit_safe: false };
                 if state.completable() && state.completable_sealed(Some(li)) {
                     // Relocation changed the world — every flag in it is
                     // stale, not just the moved lock's.
@@ -207,7 +211,7 @@ pub(crate) fn ensure_secret_exit_safe(
                     actions.push(format!(
                         "W{} fort {} lock relocated {:?} -> {pos:?} (secret-exit-safe)",
                         state.world_idx + 1,
-                        original.fort_section,
+                        original.fort.section,
                         original.pos,
                     ));
                     return PhaseReport { phase, actions };
@@ -286,7 +290,7 @@ pub(crate) fn place_locks_gating(
             if pass == LockPass::GoalGate && (!goal_first || goal_gated) {
                 continue;
             }
-            for (pos, tile, cut) in &candidates {
+            for (pos, cut) in &candidates {
                 let admits = match pass {
                     LockPass::GoalGate => state.target.is_some_and(|t| cut.contains(&t)),
                     LockPass::AnyGate => !cut.is_empty(),
@@ -297,9 +301,7 @@ pub(crate) fn place_locks_gating(
                 }
                 state.locks.push(LockAssignment {
                     pos: *pos,
-                    gap_tile: gap_tile_for(*tile),
-                    replace_tile: *tile,
-                    fort_section: fort_id,
+                    fort: FortRef { world: state.world_idx, section: fort_id },
                     secret_exit_safe: false,
                 });
                 if state.completable() {
@@ -334,7 +336,19 @@ fn is_bridge_span(state: &WorldState, pos: Pos) -> bool {
 }
 
 /// The spans still available to the deal: on the bridge row, still a bridge
-/// tile, and not already locked.
+/// tile, and not already locked — minus the wand-gate cell **in maze mode**.
+///
+/// [`rom_data::W8_WAND_GATE_POS`] is (5,59), the span between the last node
+/// and Bowser's castle. The world maze writes its wand gate over that cell
+/// after the build, so a lock dealt there would be two owners for one tile:
+/// the fortress clear would draw a bridge straight over the gate. With
+/// [`WorldState::wand_gate_reserved`] set it is withheld from the deal, and
+/// [`is_bridge_span`] keeps it out of the ranked candidates in every mode, so
+/// in maze mode no lock of any kind can land there.
+///
+/// The condition is the point. Standard mode deals from all five spans, as it
+/// always has — the maze must not move a baseline every future overworld
+/// change is measured against.
 fn free_bridge_spans(state: &WorldState) -> Vec<Pos> {
     if state.world_idx != rom_data::W8_IDX {
         return Vec::new();
@@ -343,6 +357,7 @@ fn free_bridge_spans(state: &WorldState) -> Vec<Pos> {
     W8_BRIDGE_COLS
         .iter()
         .map(|&c| (W8_BRIDGE_ROW, c))
+        .filter(|&p| !(state.wand_gate_reserved && p == rom_data::W8_WAND_GATE_POS))
         .filter(|&p| state.grid.get(p.0, p.1) == rom_data::BRIDGE_TILE && !locked.contains(&p))
         .collect()
 }
@@ -372,16 +387,8 @@ fn deal_bridge_spans(
     spans.shuffle(rng);
     if let Some(target) = state.target
         && let Some(i) = spans.iter().position(|&pos| {
-            cut_set(
-                open,
-                open_reach,
-                &state.pipe_pairs,
-                state.start,
-                state.world_idx,
-                pos,
-                state.grid.get(pos.0, pos.1),
-            )
-            .contains(&target)
+            cut_set(open, open_reach, &state.pipe_pairs, state.start, state.world_idx, pos)
+                .contains(&target)
         })
     {
         spans.swap(0, i);
@@ -407,24 +414,14 @@ fn claim_bridge_span(
     fort_id: usize,
 ) -> Option<HashSet<Pos>> {
     for (i, &pos) in pending.iter().enumerate() {
-        let tile = state.grid.get(pos.0, pos.1);
         state.locks.push(LockAssignment {
             pos,
-            gap_tile: gap_tile_for(tile),
-            replace_tile: tile,
-            fort_section: fort_id,
+            fort: FortRef { world: state.world_idx, section: fort_id },
             secret_exit_safe: false,
         });
         if state.completable() {
-            let cut = cut_set(
-                open,
-                open_reach,
-                &state.pipe_pairs,
-                state.start,
-                state.world_idx,
-                pos,
-                tile,
-            );
+            let cut =
+                cut_set(open, open_reach, &state.pipe_pairs, state.start, state.world_idx, pos);
             pending.remove(i);
             return Some(cut);
         }
@@ -443,11 +440,9 @@ fn cut_set(
     start: Option<Pos>,
     world_idx: usize,
     pos: Pos,
-    tile: u8,
 ) -> HashSet<Pos> {
-    let mut g = open.clone();
-    g.set(pos.0, pos.1, gap_tile_for(tile));
-    let closed = walk_reachable(&g, pipe_pairs, start, world_idx);
+    let shut = HashSet::from([pos]);
+    let closed = walk_reachable_blocked(open, pipe_pairs, start, world_idx, &shut);
     let mut cut = HashSet::new();
     for r in 0..open.rows() {
         for c in 0..open.cols {
@@ -474,19 +469,15 @@ fn rank_candidates(
     open_reach: &Reach,
     covered: &HashSet<Pos>,
     rng: &mut dyn RngCore,
-) -> Vec<(Pos, u8, HashSet<Pos>)> {
+) -> Vec<(Pos, HashSet<Pos>)> {
+    // The tile is read here to rank bridge spans and then dropped: classifying
+    // terrain the builder is standing on is fair game, deciding which byte gets
+    // written is not. The writer picks that from the path underneath.
     let mut out: Vec<(Pos, u8, HashSet<Pos>)> = lock_candidates(state)
         .into_iter()
         .map(|(pos, tile)| {
-            let cut = cut_set(
-                open,
-                open_reach,
-                &state.pipe_pairs,
-                state.start,
-                state.world_idx,
-                pos,
-                tile,
-            );
+            let cut =
+                cut_set(open, open_reach, &state.pipe_pairs, state.start, state.world_idx, pos);
             (pos, tile, cut)
         })
         .collect();
@@ -495,7 +486,7 @@ fn rank_candidates(
         let marginal = cut.iter().filter(|p| !covered.contains(*p)).count();
         (std::cmp::Reverse(marginal), !BRIDGE_TILES.contains(tile))
     });
-    out
+    out.into_iter().map(|(pos, _, cut)| (pos, cut)).collect()
 }
 
 /// Tiles a lock may claim: lockable path-tile types (the kinds the FX engine

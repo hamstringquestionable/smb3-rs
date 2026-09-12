@@ -38,7 +38,7 @@ pub(crate) struct RequiredProgression {
     pub reachable: bool,
     /// Ordered list of (position, kind) starting at start, ending at target.
     pub path: Vec<((usize, usize), PathNodeKind)>,
-    /// Locks crossed during traversal, in path order: (lock_path_tile, fort_section).
+    /// Locks crossed during traversal, in path order: (lock_path_tile, fort section).
     pub locks_crossed: Vec<((usize, usize), usize)>,
     /// Which section's lock the hammer pre-opened, if any. `None` means the
     /// hammer was not used (or the analysis was no-hammer).
@@ -135,7 +135,7 @@ pub(super) fn analyze_with_pre_opened_mask(
     // 3. Lock lookup keyed on path-tile position.
     let mut lock_section: HashMap<(usize, usize), usize> = HashMap::new();
     for lock in &built.locks {
-        lock_section.insert(lock.pos, lock.fort_section);
+        lock_section.insert(lock.pos, lock.fort.section);
     }
 
     // 3b. Canoe edges for this world. There's one boat that starts at the
@@ -606,7 +606,7 @@ pub(crate) fn dump_required_progression(built: &BuiltWorld) {
     }
     eprintln!("  locks:");
     for lock in &built.locks {
-        eprintln!("    ({}, {}) opened by section {}", lock.pos.0, lock.pos.1, lock.fort_section,);
+        eprintln!("    ({}, {}) opened by section {}", lock.pos.0, lock.pos.1, lock.fort.section,);
     }
     eprintln!("  pipe pairs:");
     for &(a, b) in &built.pipe_pairs {

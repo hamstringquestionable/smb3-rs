@@ -69,7 +69,7 @@ pub(super) fn classify_world(
         let map_tile = if row < grid.rows() && col < grid.cols { grid.get(row, col) } else { 0xFF };
 
         let kind =
-            classify_entry(rom, world_idx, i, obj, lay, map_tile, row, &map_obj_entries, &pipe_map);
+            classify_entry(world_idx, i, obj, lay, map_tile, row, &map_obj_entries, &pipe_map);
 
         let level_entry = if matches!(kind, NodeKind::Start) {
             None
@@ -89,7 +89,6 @@ pub(super) fn classify_world(
 // construction friction at every call site without revealing a real concept.
 #[allow(clippy::too_many_arguments)]
 fn classify_entry(
-    rom: &Rom,
     world_idx: usize,
     entry_idx: usize,
     obj: u16,
@@ -116,10 +115,7 @@ fn classify_entry(
 
     // 4. Fortress
     if FORTRESS_ENTRIES.contains(&(world_idx, entry_idx)) {
-        let entry = rom_data::read_entry(rom, &WORLDS[world_idx], entry_idx);
-        let obj_ptr = (entry.obj_hi as u16) << 8 | entry.obj_lo as u16;
-        let boomboom_y_offset = rom_data::boomboom_y_offset_for_obj(obj_ptr).unwrap_or(0);
-        return NodeKind::Fortress { boomboom_y_offset };
+        return NodeKind::Fortress;
     }
 
     // 5. Pipe (PIPEWAYCONTROLLER or W5 spiral)

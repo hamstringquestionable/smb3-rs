@@ -9,6 +9,297 @@ deploys.
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-09-11
+
+The major number is for **World Maze**: a mode in which the eight world maps
+stop being a sequence and become the rooms of one Metroidvania. Everything
+else here is an ordinary release's worth of work alongside it.
+
+Old flag keys still decode — the key version is unchanged at 29, and
+`maze_wands` only spends key space when the mode is on. Seeds are not
+comparable with 1.3.0's, as across any version: the same seed and flags now
+build a different ROM.
+
+### Added
+
+- **The presets come in two sections, Standard and World Maze.** Standard holds
+  Recommended, Beginner Friendly, Vanilla Randomizer, Challenging, Max Chaos and
+  a new **W8 Sprint** — one world, straight into Dark Land, with a hammer to open
+  the way. World Maze holds a Recommended, Beginner Friendly, Challenging and
+  Max Chaos of its own, tuned for the mode: Beginner gets full lock hints,
+  Challenging gets none, and the two hardest open Bowser's castle from the start
+  rather than asking for wands. League Season 7 is retired now the season is
+  over, and Jet goes with it — W8 Sprint is the short game now.
+
+- **A World Maze tracker page.** Linked from the World Maze section, and a
+  paper aid rather than anything the ROM knows about: eight world slots, the
+  fortresses and locks in each, and the warp pads between them, which you link
+  by dragging one onto another world. Because a pad is half of a pair, linking
+  one draws its partner on the far side too. It knows the seed's own budgets —
+  seventeen fortresses and their locks, eight pad pairs, one map per slot — so
+  it counts down what is still out there and stops you writing in more than the
+  game can contain. It also joins things up: telling it which world a lock's key
+  is in puts that fortress on the board, and if that world has no fortress that
+  could open the lock and no room for one, it says so rather than accepting a
+  map that cannot exist. Each world wears the king's HELP balloon until you
+  cross it off, which counts your wands for you. And when the board says something the game could not have built — more locks in a world than it has room for, a lock whose key is in a world with nothing that could open it — it says so, and keeps saying so until you fix it. Filling in a fortress fills in the lock it opens, wherever that lock is: plain where it stands in the same world, tinted where its key is a world away. It fills itself in as you explore and keeps what you typed
+  in your browser. A size slider at the top scales the whole board, for sitting
+  it beside an emulator at whatever size the screen has room for.
+
+- **Deja Vu counts fortresses.** A fourth pill on the Deja Vu row, toggling on
+  its own rather than as a fourth mode. Fortresses are then dealt the way levels
+  are: Double gives every fort a second copy in the deck, so some turn up twice
+  and others sit the seed out, and Wild lifts the limit. 1F is the exception in
+  both — always exactly once, because it is holding the warp whistle and its
+  secret exit is the one that skips Boom-Boom.
+
+- **World Maze.** A new mode in which the eight world maps stop being a sequence
+  and become the rooms of one big maze. Warp pads link them, a fortress can bust
+  a lock in a *different* world, and — the part none of it works without — the
+  progress you made in a world is still there when you come back to it. The warp
+  whistle stops being a warp zone and becomes fast travel between worlds you
+  have already set foot in. Bowser's castle stays shut until you are carrying
+  enough wands, which is the new **Wands To Enter** setting (0-7, default 3).
+
+  Turning it on also turns World Order on, keeps map progress through a game
+  over, and leaves whistles in the game whatever "Remove Whistles" says — the
+  whistle is how you get around, and it can never take you anywhere new.
+
+### Changed
+
+- **A Discord invite sits beside the GitHub link**, and the "early access — you
+  may encounter bugs" line it replaces is gone.
+
+- **World Maze: a game over sends you back to World 1.** Vanilla drops you at
+  the start of whatever world you ran out of lives in, which in a maze can be a
+  world you were pad-hopped into and whose only way onward is a lock you have no
+  key for. Continuing now returns you to the world the run started in, where
+  everything you have not done yet is still reachable. Nothing else about a
+  game over changes: every world keeps the progress it already kept, and your
+  whistle and wands come with you.
+
+- **World Maze: a world no longer has as many fortresses as it has locks.** One
+  or two fortresses a seed change places with a level in another world, so a
+  world can hold three locks and one fortress, or locks with no fortress of its
+  own at all. Counting the locks in front of you stops telling you how many
+  fortresses are behind you. Nothing about the run gets harder or longer — the
+  same fortresses open the same locks at the same points — you just walk
+  somewhere else to find the key. Dark Land is left alone: its locks are the
+  bridge to the castle, and moving a fortress there would change the endgame
+  rather than the map.
+
+- **World Count goes down to 0 — start the game in Dark Land.** It becomes the
+  whole game, and displays as World 1. There is no airship before Bowser's
+  castle at that count, so no wand exists in the run.
+
+- **The page says which settings your mode is actually using.** World Maze is
+  now the first section, because it is a mode rather than a flag: it decides
+  what several settings below it mean. Ones it takes over — World Order, Remove
+  Warp Whistles, No Game Over Penalty — show the value the mode will use, greyed
+  out and labelled "Forced on by World Maze", and go back to what you had when
+  you turn it off. Ones it has no use for, like World Count, grey out and say
+  "Standard only"; Wands To Enter and Hints say "Maze only" the rest of the
+  time. Before this, a greyed-out control still fed the generator — a maze could
+  take its world count from a row the page had greyed out — and greying a row
+  did not visibly grey anything.
+
+- **World Maze: the warp whistle goes in world order, and gets there faster.**
+  Blowing it used to walk the worlds in an order that looked like nothing at
+  all; now it steps World 1, 2, 3 and so on, skipping the ones you have not set
+  foot in yet and wrapping at the end, so you can count whistles instead of
+  guessing. The wind that carries you sweeps four times faster too, and the
+  "WORLD n" card that stars you onto the tile — which you see on every arrival,
+  by whistle, warp pad or beaten airship — sits there half as long. Arriving
+  somewhere went from about five and a half seconds to two and a half.
+
+- **World Maze: no more two-level seeds.** A maze that could be finished in a
+  handful of levels now gets thrown out and dealt again. Nothing about how long
+  a *typical* seed runs has changed — fast seeds are still fast, and the longest
+  ones are untouched — but the bottom of the range is gone: with Wands To Enter
+  at 0 the shortest run went from 2 levels to 14. Worth having because 0 wands
+  is a setting people pick on purpose, and it should be a scramble rather than a
+  walk to the door.
+
+- **Worlds with islands are less samey, and less linear.** A pipe used to join
+  the starting island straight to the one holding the world's goal in almost
+  every seed, which is the shortest possible route through a world and left the
+  least room for alternatives. Pipes now link islands in a different pattern
+  each seed. World 7 and World 8 change the most — they have the most islands —
+  and both got measurably more route choice out of it. As a side effect a ROM
+  generates about 15% faster, because the maps need less fixing up afterwards.
+
+- **Generating a ROM is faster again**, by about another 5%. Same output, same
+  maps — the map walker was working out whether the canoe was usable by walking
+  the whole world a second time, and now answers it on the way through.
+
+- **Generating a ROM is about 30% faster.** In the browser a seed went from
+  ~98ms to ~70ms with the default settings, and from ~123ms to ~87ms in World
+  Maze. Part of that is a build setting and changes nothing at all; the rest is
+  a faster route finder, which does mean **a given seed produces a different map
+  than it did in the last release**. Seeds have never carried across versions,
+  and the maps are the same quality by every measure we track.
+
+- **Friendlier Levels drops 7F2 and 8F1 for real.** They used to be made
+  *optional* — still on the map, still beatable, just parked behind a lock the
+  world could be finished without. That was a workaround for not being able to
+  take a fortress out of the deck at all. Now they are held out the same way the
+  blocked levels are: not on the map, and their tiles go to a second visit to a
+  fortress that stayed — two of them, on every seed.
+
+- **World Maze: a fortress now shows where its lock is.** The three fortress
+  designs used to be picked at random for variety; now the one a fortress wears
+  tells you whether the lock it opens is in this world, in another one, or in
+  World 8 — the ones that open the way to Bowser. Worth knowing before you
+  decide a fortress isn't worth the detour.
+
+- **World Maze: Hints, a setting.** Off, Some or Full, defaulting to Some. Off
+  says nothing and goes back to giving fortresses their design at random. Some
+  marks each fortress with the design for where its lock is, and tints a lock
+  whose key is in another world. Full also stamps that lock with the number of
+  the world to go to. Only affects World Maze, and with the mode off it leaves
+  your flag key alone.
+
+- **World Maze: a lock now tells you which world its key is in.** A lock opened
+  from another world wears that world's number; a lock with no number is opened
+  by a fortress in the world you're standing in. So a locked path is no longer a
+  question, it's a destination. A missing bridge does the same, though it and the
+  bridge it becomes are the wrong color until you leave the map and come back —
+  there was no room left in that palette, and the number seemed worth more.
+
+  This replaces the marker that briefly sat on locks a world could open itself.
+  The number says everything the marker did and then says where, so the map gets
+  its sprites back.
+
+- **World Maze: World 8 loses its wandering Hammer Bro.** Dark Land is the only
+  world whose map is already crowded with tanks, a battleship and an airship,
+  and the mode needs that room to show you things on the map. The encounter
+  isn't lost — it moves to a world with space. Standard mode is unchanged.
+
+- **World Maze: a lock's key is now far more often in another world.** The maze
+  used to decide which fortress opens which lock by shuffling an assignment it
+  inherited, which meant it could only ever trade one crossing for another —
+  and the trade was usually rejected. It now picks each key deliberately, from
+  the fortresses you can already reach when the gate goes down. Cross-world
+  locks go from about half to about three quarters, and the locks guarding
+  Bowser's bridge — the ones most worth sending you elsewhere for — from a third
+  to nearly three quarters. Maze maps will feel noticeably less self-contained.
+
+### Fixed
+
+- **The Title Hash panel no longer appears empty.** It showed its heading and
+  the mute hint from the moment the page loaded, before there was any ROM or
+  seed to draw icons from. Two other things meant to wait their turn were doing
+  the same: the randomizer-version picker and the ending sign-off at the bottom
+  of the page.
+
+- **World Maze: a seed that could not be finished can no longer be handed out.**
+  Nothing was known to produce one, but nothing checked either — the game worked
+  out whether a maze was winnable and then threw the answer away. It now deals
+  again for a finishable maze rather than merely a long one, and says so loudly
+  instead of staying quiet if it ever runs out of ways to make one.
+
+- **World Maze: the same airship could be beaten for a second wand.** Nothing
+  marks an airship as beaten, so a world you walk back into still has one — and
+  each clear counted, which meant seven trips through one airship could open a
+  castle set to seven wands. A wand is now recorded per world, so beating the
+  same airship again is worth nothing.
+
+- **World Maze: the HELP bubble stayed forever.** The bubble over a world's
+  castle kept calling for help long after you had rescued that king, every time
+  you came back through. It now goes away once you have beaten that world's
+  airship. (Not with "Keep Autoscrolling Levels" on, where the game still needs
+  it.)
+
+- **Sky locks looked wrong outside World Maze.** Hints are a World Maze feature —
+  they say which world holds a fortress's lock — but the setting was being read
+  on every seed, and with the default "some" it recoloured every sky lock to the
+  variant that means "your key is nearby". Hints are now ignored unless World
+  Maze is on, so a sky lock outside it looks like a sky lock again.
+
+- **World Maze: the hammer could not break a numbered lock.** The breakable-tile
+  table was built from vanilla's three lock bytes, so every lock the hint system
+  had renumbered or recoloured was immune — "Hammer Breaks Locks" quietly
+  stopped working on most of the locks in the game.
+
+- **World Maze: a fortress tile could reappear under a World 8 tank or
+  battleship.** The cell under an army sprite is deliberately left blank so the
+  sprite is what you see; the fortress recolour pass painted a fortress back
+  onto it.
+
+- **World Maze: map objects could follow you into a world they had nothing to do
+  with.** An N-Spade, coin ship or white mushroom house lives in a runtime slot
+  the game does not clear when you enter a world, so one could turn up in the
+  next world along, drawn at the coordinates it had in the last one.
+
+- **World Maze: warp whistles stopped cluttering chests.** The mode already
+  gives you a whistle you can never lose or use up, but it was also forcing
+  "Remove Warp Whistles" off — putting whistles back into the chest, Hammer Bro
+  and Toad House pools, where each one was a duplicate of an item you already
+  had, taking up an inventory slot. Measured about 1.6 wasted whistles a seed.
+  The setting is now always on in the maze, and your own choice is no longer
+  quietly ignored.
+
+- **World Maze: taking 1-F's secret exit could end a run.** 1-F's secret exit
+  hands you an item and leaves the lock shut, so the game deliberately picks a
+  lock you can afford to leave shut. The maze then re-paired every fortress with
+  a different lock, so the lock 1-F actually opened was one nobody had checked —
+  and in about one seed in eight it was a lock the run could not continue
+  without. 1-F now keeps its checked pairing, and the check is made against the
+  whole maze rather than a single world.
+
+- A fortress on World 6 opened its lock onto a cloud path in the middle of plain
+  ground. Vanilla's table stored the sky tile for a lock nowhere near the sky —
+  the value looks copied down a row when the table was written — and the wrong
+  graphic showed until you next entered the world.
+
+- **World Maze:** the fortress that opens a lock is now the one the maze
+  actually chose. A third of the locks that stayed in their own world were
+  opened by a different fortress than the generator had planned, and a fortress
+  could end up breaking two locks at once — one of them a lock it was never
+  meant to touch. The map you played was not the map the generator checked was
+  solvable.
+
+- **World Maze:** a fortress in another world now really is the only way to
+  open a cross-world lock. Those locks kept their original fortress as a second
+  key, sitting a few tiles away in the same world, and you would always find
+  that one first — so every cross-world lock in the game was decoration. Found
+  by playing World 2: three fortresses, three locks, all three opening locally.
+
+- **World Maze:** the warp whistle you start with no longer costs you a
+  starting item, and is somewhere you can actually reach it. It went into the
+  third inventory slot, so asking for three items meant getting two and a
+  whistle; moving it to the fourth slot then put it out of reach entirely,
+  because with slot 0 empty — which it is by default — the item panel is dead:
+  no cursor, no way to use anything. The whistle owns slot 0 now and your own
+  items sit above it.
+
+- **World Maze:** warp pads have their own tile, so one no longer looks exactly
+  like an N-Spade card game. They used to share the spade panel: on one seed
+  there were 28 spade tiles and only 9 were pads, so walking into one was a
+  coin flip between a warp and a card game.
+
+- **World Maze:** warp pads come in pairs and always take you to their partner.
+  They used to drop you wherever — on a blank patch of map about half the time,
+  or on a pipe in a world you'd never seen, and one could even put you back on
+  the tile you were already standing on.
+
+- **World Maze:** beaten Hammer Bros stay beaten. Leaving a world and coming
+  back used to bring every map object it had lost straight back, because the
+  game rebuilds them from scratch every time you enter a world — which never
+  mattered before, since you could never return.
+
+- **World Maze:** you start with a warp whistle and you keep it for good. It is
+  the mode's fast travel, so it is yours from the first frame rather than
+  something to go and find, and blowing it no longer uses it up. It can still
+  only take you to worlds you have already set foot in, so it can never skip
+  you ahead.
+
+- **World Maze:** the decorative corners on the map's boxes are no longer
+  scrambled. The skull that was meant to block Bowser's castle was drawn over
+  the four corner pieces; the castle is now blocked by a piece of World 8's own
+  masonry instead, which reads as a wall rather than as a lock you have missed
+  the key for.
+
 ## [1.3.0] - 2026-09-05
 
 ### Added

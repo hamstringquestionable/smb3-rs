@@ -243,10 +243,24 @@ pub(crate) const TILE_PIPE: u8 = 0xBC;
 #[allow(dead_code)]
 pub(crate) const TILE_FORTRESS: u8 = 0x67;
 
+/// Fortress wearing the alternate colour. With map hints on it means "the lock
+/// this opens is in another world". `Map_Removable_Tiles` turns it into rubble
+/// `$E3`, the same as [`TILE_FORTRESS`]'s `$60`.
+pub(crate) const TILE_FORTRESS_AWAY: u8 = 0xEB;
+
+/// Fortress whose lock is in World 8 — the ones that open the way to the
+/// castle. In neither tile registry, so it comes back wearing the completion
+/// marker rather than rubble; it still claims a completion bit.
+pub(crate) const TILE_FORTRESS_W8: u8 = 0x6A;
+
 /// All map tiles the game treats as fortresses ($67, $EB, $6A —
 /// Map_Removable_Tiles + completion-unsafe). $6A's CHR animation is frozen
 /// by `patch_metatile_6a_freeze` so it can serve as a static variant.
-pub(crate) const FORTRESS_TILES: [u8; 3] = [TILE_FORTRESS, 0xEB, 0x6A];
+///
+/// With map hints off the writer picks among these at random, purely for
+/// variety. With hints on the choice carries meaning — see
+/// `overworld_build::LockHint`.
+pub(crate) const FORTRESS_TILES: [u8; 3] = [TILE_FORTRESS, TILE_FORTRESS_AWAY, TILE_FORTRESS_W8];
 
 /// Airship dock tile ID.
 pub(crate) const TILE_AIRSHIP: u8 = 0xC9;
@@ -256,6 +270,134 @@ pub(crate) const TILE_BOWSER: u8 = 0xCC;
 
 /// Bonus game (spade/N-Spade) tile ID.
 pub(crate) const TILE_BONUS_GAME: u8 = 0xE8;
+
+/// The world maze's telepad: the tile a player steps on to be teleported.
+///
+/// **It used to be [`TILE_BONUS_GAME`], and that was the bug.** A playtest
+/// found it: 28 spade panels on the map, only 9 of them pads, so two out of
+/// three "telepads" were an N-Spade card game. A pad the player cannot pick out
+/// of the map is not a mechanic, it is a lottery — so the pad gets a byte of
+/// its own, and a shape nothing else on the map wears (see
+/// [`TELEPAD_QUADRANTS`]).
+///
+/// `0xDF` is `TILE_ALTSPIRAL`, the alternate-colour World 5 spiral castle. It
+/// appears in **no world's grid**, in vanilla or after the builder. Everything
+/// the pad needs is a property it already has:
+///
+/// * **Enterable.** The enter hook (`world_persist::PAD_ENTER`) replaces
+///   `PRG010_CEA7`, and a tile only gets there by being in
+///   `Map_EnterSpecialTiles` or by clearing its palette page's threshold in
+///   `Tile_AttrTable+4`. `0xDF` is `Map_EnterSpecialTiles[6]`, so it is
+///   enterable by membership — exactly how `0xE8` was, and with no table to
+///   grow.
+/// * **Bypassable.** Page 3's threshold is `0xE9` (`Tile_Attributes_TS0` =
+///   `03 67 BF E9`), and `0xDF` is under it. That matters more than it looks:
+///   `MO_NormalMoveEnter` refuses to let the player walk *off* a tile at or
+///   above the threshold until it is completed, so a pad byte `>= 0xE9` would
+///   sever every path it stood on — a pad can never be completed. Under the
+///   threshold it behaves like the spade panel did: walk on, walk off, or
+///   press A.
+/// * **Not completable, and not removable.** It is in neither
+///   `Map_Completable_Tiles` nor `Map_Removable_Tiles`, so it takes no bit in
+///   the packed completion store (`0xE8` did) and no stray bit can turn it into
+///   something else. The hardware playtest's finding — a pad stays a pad,
+///   because diverting at enter time means `MO_DoLevelClear` never runs — now
+///   holds by construction rather than by observation.
+/// * **Canoe-proof.** `Map_CheckDoMove`'s canoe range check rejects anything
+///   `>= TILE_VERTPATHWLU` (`0xAA`), and `0xDF` is above it.
+/// * **March-proof.** It is in `Map_Object_Forbid_LandingTiles`, so a
+///   wandering Hammer Bro will not land on a pad. `0xE8` is in that list too;
+///   this is the one registry membership the pad *wants*.
+///
+/// Walking ONTO a pad needs nothing: `Map_CheckDoMove` validates only the
+/// tile the player moves *over* (the path cell between two nodes) and then
+/// moves a hardcoded two tiles, so a destination cell's own byte is never
+/// tested. That is why the fortress, the toad house and the spade panel all
+/// sit on the node lattice without appearing in [`VALID_HORZ`] /
+/// [`VALID_VERT`], and the pad is the same shape.
+pub(crate) const TILE_TELEPAD: u8 = 0xDF;
+
+/// The four metatile quadrants [`TILE_TELEPAD`] is composed from, in the ROM's
+/// plane order: **NW, SW, NE, SE**.
+///
+/// **No CHR is written.** These are four patterns the map already draws — the
+/// corners of its window boxes — pointed at rather than overwritten. Assembled
+/// as a 2x2 they close into a bright rectangular ring on a black field, which
+/// is a shape no other map metatile has: every panel on the map is a *filled*
+/// bright badge (the spade, the toad house, `START`), and the pad is the
+/// inverse — a hole with a lit rim, on the one colour terrain never uses.
+///
+/// The closest thing to it is `TILE_HANDTRAP`, which is a bright badge with a
+/// ring drawn *inside* it, and the two are inverses rather than lookalikes: the
+/// pad is mostly black where the hand trap is mostly white. Hand traps also
+/// live only in World 8.
+///
+/// Two constraints picked these four out of the 256:
+///
+/// * **They are in the static half of the map's CHR.** `Map_DoAnimations`
+///   swaps the 2KB at PPU `$0000` — patterns `$00`-`$7F` — between pages `$14`,
+///   `$70`, `$72` and `$74` four times a second. A quadrant pointing below
+///   `$80` animates, which is why `TILE_LARGEFORT` is documented as "usually
+///   gets visually corrupt by map animation". `$80`-`$83` live in pages
+///   `$16`/`$17`, which nothing swaps.
+/// * **They use colours 0 and 1 only.** Palette page 3 is not the same in
+///   every world, and in World 6 colour 1 and colour 3 are *both* `$30`
+///   (white) — art drawn on colour 3 would be invisible there. Colour 0 is the
+///   universal backdrop (`$0F`, black) in all eight, so a colour-1 ring on it
+///   contrasts everywhere.
+///
+/// There is an irony worth recording: `$80`-`$83` are the four tiles an earlier
+/// cut of `wand_gate` tried to overwrite with a skull, on a scan that could not
+/// see the routine computing their index. The playtest came back with the map's
+/// window corners shredded. They are safe to *read*; it is writing them that
+/// was the bug.
+pub(crate) const TELEPAD_QUADRANTS: [u8; 4] = [0x80, 0x82, 0x81, 0x83];
+
+/// The world maze's wand gate: the wall that stands on the last span of
+/// World 8's bridge until the player holds K of the seven wands.
+///
+/// `0xD5` is one of the page-3 bytes that appear in no world's grid. Below the
+/// page's `0xE9` threshold those are `0xC0`, `0xC1`, `0xC6`, `0xC7`, `0xCF`,
+/// `0xD5`, `0xDF`, `0xE3` and `0xE7` — the last two spoken for by
+/// `Map_RemoveTo_Tiles` and `Map_Bottom_Tiles`, and `0xDF` now by
+/// [`TILE_TELEPAD`]. It was picked on
+/// looks: its four metatile quadrants are all the same CHR tile, so the 16x16
+/// reads as a regular 2x2 lattice rather than a torn scrap of coastline, and it
+/// wears that art unaltered — `wand_gate` writes no CHR and repoints no
+/// quadrant.
+///
+/// What makes it usable as a barrier is what it is *absent* from. The engine
+/// has no per-tile "blocks movement" flag: a tile blocks a direction by not
+/// appearing in [`VALID_HORZ`] / [`VALID_VERT`], and `0xD5` appears in
+/// neither, so it walls all four directions for free — the same way `0xE2`,
+/// the Dark Land wall it stands among, does. It is likewise in no other
+/// registry: not `Map_Removable_Tiles` (so the packed completion stencil does
+/// not grow and no completion bit can ever open it), not the rock lists (so
+/// `hammer_breaks_tiles` cannot touch it), not `LOCKABLE_TILES`, not
+/// [`VALID_BLANK_TILES`]. The only thing that opens it is
+/// `wand_gate`'s own routine.
+///
+/// Palette follows the byte's top two bits, so page 3 puts it on the same
+/// palette entry as the surrounding Dark Land masonry.
+pub(crate) const WAND_GATE_TILE: u8 = 0xD5;
+
+/// Where the wand gate stands: World 8, row 5, column 59 — the last span of
+/// the bridge approach, between the final node at (5,58) and Bowser's castle
+/// at (5,60).
+///
+/// It is the *unique* approach to the castle, which is what makes one cell
+/// enough. `TILE_BOWSER`'s other neighbours are (4,60) and (6,60), and
+/// neither of those tiles is in [`VALID_VERT`]; (5,61) is the castle's own
+/// lower-right quadrant. `wand_gate::the_gate_cell_is_the_only_approach`
+/// asserts that over a census of real builds rather than trusting the
+/// vanilla grid, because the builder may rewrite the terrain around it.
+///
+/// The cell is on the bridge row. `qol::apply_w8_bridges` stamps it like every
+/// other span, and in maze mode `overworld_build::locks` holds it out of the
+/// bridge deal so a lock cannot claim the same tile — standard mode is
+/// unchanged and still deals all five. The gate itself is written last, over
+/// the finished map.
+pub(crate) const W8_WAND_GATE_POS: Pos = (5, 59);
 
 /// Toad House placeholder tile ID. Vanilla Toad Houses use either 0x50 or
 /// 0xE0; the build phase stamps this constant when a HammerBro slot is
@@ -277,6 +419,11 @@ pub(crate) const ROWS: usize = 9;
 pub(crate) const PRG012_FILE_BASE: usize = 0x18010;
 
 // Pipe destination tables (PRG002)
+
+/// Entries in each pipe destination table. The four tables are contiguous and
+/// this is also their stride, which is the check if one of them ever moves.
+pub(crate) const PIPE_DEST_LEN: usize = 24;
+
 pub(crate) const PIPE_MAP_XHI: usize = 0x046AA;
 
 pub(crate) const PIPE_MAP_X: usize = 0x046C2;
@@ -286,18 +433,23 @@ pub(crate) const PIPE_MAP_Y: usize = 0x046DA;
 pub(crate) const PIPE_MAP_SCRL_XHI: usize = 0x046F2;
 
 // FX table offsets (17 slots)
+#[cfg(test)]
 pub(crate) const FX_VADDR_H: usize = 0x147CD;
 
+#[cfg(test)]
 pub(crate) const FX_VADDR_L: usize = 0x147DE;
 
+#[cfg(test)]
 pub(crate) const FX_MAP_COMP_IDX: usize = 0x147EF; // 17 x 2 bytes
 
+#[cfg(test)]
 pub(crate) const FX_PATTERNS: usize = 0x14811; // 17 x 4 bytes
 
 pub(crate) const FX_MAP_LOC_ROW: usize = 0x14855;
 
 pub(crate) const FX_MAP_LOC: usize = 0x14866;
 
+#[cfg(test)]
 pub(crate) const FX_MAP_TILE_REPLACE: usize = 0x14877;
 
 pub(crate) const FX_WORLD_TABLE: usize = 0x14888;
@@ -355,25 +507,33 @@ pub(crate) fn is_friendlier_blocked(name: &str) -> bool {
     FRIENDLIER_BLOCKED_LEVELS.contains(&name)
 }
 
-/// Fortresses **Friendlier Levels** tries to make optional, in the order it
-/// tries. Keyed by `NodeCatalog` name — note forts are named `7F2` / `8F1`,
-/// with no dash, unlike the levels above.
+/// Fortresses held out of the deck by the **Friendlier Levels** option, the
+/// exact counterpart of [`FRIENDLIER_BLOCKED_LEVELS`] above. Keyed by
+/// `NodeCatalog` name — note forts are named `7F2` / `8F1`, with no dash,
+/// unlike the levels.
 ///
-/// A fortress can't be held out of its pool the way a level can: every fort
-/// has a lock (asserted in `overworld_build::tests`) and the full roster is a
-/// redeal-screened invariant, so removals never ship. Instead these are parked
-/// on a slot whose lock is `secret_exit_safe` — one the world stays completable
-/// without — which leaves the fort on the map and beatable but no longer on the
-/// critical path.
+/// They do not appear on the map at all. The tiles that would have been theirs
+/// take a second visit to a fortress that stayed, which is the same bargain the
+/// level half makes and is why removing them is safe: the deck is drawn with a
+/// bare `expect` against however many fortress slots the builder placed, so a
+/// card taken out without a duplicate to replace it would panic.
 ///
-/// **Ordered, and the order is the whole point.** 1-F claims a safe slot first
-/// and unconditionally: its secret exit permanently prevents the lock FX, so a
-/// non-safe slot is a softlock rather than an inconvenience. These two are only
-/// preferences — the fort works normally, and a player who skips it can always
-/// come back — so they take what is left, in this order. Measured over 300
-/// seeds, 99% have the three safe slots this wants; in the rest the tail of the
-/// ladder simply stays required.
-pub(crate) const FRIENDLIER_OPTIONAL_FORTS: &[&str] = &["7F2", "8F1"];
+/// **1-F is not in here and could not be.** It hands over the warp whistle, and
+/// its secret exit permanently prevents the lock FX, so it has to be dealt
+/// exactly once and onto a `secret_exit_safe` slot — a correctness requirement,
+/// where these two are a preference. `assign_pool` seeds it into the deck ahead
+/// of every redeal for that reason.
+///
+/// This used to be `FRIENDLIER_OPTIONAL_FORTS`, a ladder that *parked* these
+/// two on the safe slots 1-F did not claim. That was a workaround for not being
+/// able to remove a fortress at all, and it is gone: the fort deck is now
+/// redealt like the level deck, so removal is expressible.
+pub(crate) const FRIENDLIER_BLOCKED_FORTS: &[&str] = &["7F2", "8F1"];
+
+/// True if `name` is in [`FRIENDLIER_BLOCKED_FORTS`].
+pub(crate) fn is_friendlier_blocked_fort(name: &str) -> bool {
+    FRIENDLIER_BLOCKED_FORTS.contains(&name)
+}
 
 /// True if the given vanilla `(world_idx, entry_idx)` is in [`CHEST_LEVELS`].
 pub(crate) fn is_chest_level(world_idx: usize, entry_idx: usize) -> bool {
@@ -474,6 +634,10 @@ pub(crate) const FORTRESS_ENTRIES: &[(usize, usize)] = &[
 /// ROM file offset of the Boom-Boom Y-byte for each fortress (same order as
 /// FORTRESS_ENTRIES). The Y-byte upper nibble encodes the fortress ordinal
 /// (1-based Map_DoFortressFX value); the lower nibble is spawn Y position.
+/// Test-only since the fortress-FX rework. Production writes no enemy data at
+/// all: the `(?)` orb still arms the effect and all 17 vanilla Boom-Booms
+/// already carry a non-zero Y-nibble, so the trigger needs no help.
+#[cfg(test)]
 pub(crate) const BOOMBOOM_Y_OFFSETS: [usize; 17] = [
     0x0D35F, // W1[11]
     0x0D262, // W2[13]
@@ -500,9 +664,15 @@ pub(crate) const BOOMBOOM_Y_OFFSETS: [usize; 17] = [
 pub(crate) const FORTRESS_1F_OBJ_PTR: u16 = 0xD32B;
 
 /// Vanilla fortress obj_ptrs (same order as FORTRESS_ENTRIES).
+///
+/// Test-only since the fortress-FX rework: production no longer needs to reach
+/// one fortress's Boom-Boom record, because `lock_keys::apply` masks the spawn
+/// Y-nibble of all 17 unconditionally. What is left is the vanilla-layout
+/// reference reader in `overworld_build::sources`.
 /// The obj_ptr identifies the fortress level's enemy data stream in PRG006.
 /// After level shuffle, the obj_ptr at a slot still points to the same enemy
 /// data — only the pointer table entries move, not the data itself.
+#[cfg(test)]
 pub(crate) const VANILLA_FORTRESS_OBJ_PTRS: [u16; 17] = [
     0xD32B, // W1[11]
     0xD222, // W2[13]
@@ -525,6 +695,7 @@ pub(crate) const VANILLA_FORTRESS_OBJ_PTRS: [u16; 17] = [
 
 /// Given an obj_ptr found at a fortress slot, return the Boom-Boom Y-byte
 /// ROM file offset for that fortress's enemy data.
+#[cfg(test)]
 pub(crate) fn boomboom_y_offset_for_obj(obj_ptr: u16) -> Option<usize> {
     VANILLA_FORTRESS_OBJ_PTRS
         .iter()
@@ -635,6 +806,11 @@ pub(crate) const HB_NEEDS_SHELL_ENEMIES: &[u8] = &[
 pub(crate) const HB_EXCLUDE_ENTRIES: &[(u16, u8)] = &[
     (0xC640, 3), // W3[41] — tileset 3 is wrong for lay 0xB3E7
 ];
+
+/// Map-object sprite slots per world. Slot 0 always holds a fixed non-HB
+/// marker and slot 1 is the airship's in W1-W7; see
+/// [`first_usable_map_obj_slot`](super::first_usable_map_obj_slot).
+pub(crate) const MAP_OBJ_SLOTS: usize = 9;
 
 /// Master pointer table for Map_List_Object_Ys (8 words, one per world).
 pub(crate) const MAP_OBJ_YS_MASTER: usize = 0x16020;
@@ -918,11 +1094,18 @@ pub(crate) const UNUSED5_LAYOUT_BANK: usize = 21;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) const UNUSED5_VANILLA_BGPAL: u8 = 6;
 
-/// An FX slot (lock/bridge position and replacement tile).
+/// Where one of vanilla's 17 fortress-FX slots points.
+///
+/// Read from the *source* ROM only. The randomizer no longer writes these
+/// tables — `lock_keys` replaced them — but `overworld_pickup` still asks
+/// vanilla which cells are lock gaps so it can open them before placement.
+///
+/// The slot's stored replacement tile is deliberately not carried: what a gap
+/// opens to is derived from the tile standing on it (`path_for_gap_tile`), and
+/// vanilla has one slot where the two disagree. See `open_fx_gaps`.
 pub(crate) struct FxSlot {
     pub grid_row: usize,
     pub grid_col: usize,
-    pub replace_tile: u8,
 }
 
 #[cfg(test)]

@@ -4,7 +4,9 @@
 //   - Flag-key apply (writing options back to the DOM)
 //   - Settings persistence (localStorage)
 //   - Live flag-key updates (universal change listener)
-//   - Sub-option visibility (enabledWhen)
+//   - Sub-option visibility (enabledWhen — a value, or a list meaning "any of")
+//   - Pills that ride on another entry's group (pillOf)
+//   - Mode-specific applicability (mode / forcedInMaze — see below)
 //
 // Adding a new option = one schema entry. The renderer, serializer,
 // applier, and listener pick it up automatically. A load-time parity
@@ -77,6 +79,12 @@ const OFF_SOME_ALL = [
 	{ value: "all", label: "All" },
 ];
 
+const OFF_SOME_FULL = [
+	{ value: "off", label: "Off" },
+	{ value: "some", label: "Some" },
+	{ value: "full", label: "Full" },
+];
+
 // Off / On / Wild pill for Random Fire Flower. "Wild" widens the pool to also
 // include the Small/Big downgrade outcomes. Values match the Rust
 // `FireFlowerMode` enum's serde representation.
@@ -95,7 +103,18 @@ const OFF_DOUBLE_WILD = [
 ];
 
 // Categories rendered as <fieldset> sections, in order.
+//
+// **World Maze comes first because it is a mode, not a flag.** It decides what
+// several of the sections below even mean — a row further down can be greyed,
+// badged or replaced outright by it — and a switch that reaches that far has to
+// be read before the options it governs, not found underneath them.
 export const GROUPS = [
+	{ id: "maze", label: "World Maze",
+		note: "The mode switch, and the settings only it uses. Options elsewhere that the maze takes over or has no use for say so in their own row.",
+		// Relative on purpose: the /beta/ deploy is a copy of this whole folder,
+		// so the beta page links to the beta tracker and the root page to the
+		// root one, with no build-time knowledge of which it is.
+		link: { href: "maze-tracker.html", label: "Open the World Maze tracker →" } },
 	{ id: "map", label: "Map" },
 	{ id: "enemies", label: "Enemies" },
 	{ id: "bosses", label: "Bosses" },
@@ -297,14 +316,40 @@ export const SCHEMA = [
 	{ id: "world_order", type: "bool", default: false,
 		label: "World Order",
 		tip: "Shuffle the order you progress through Worlds 1-8",
-		group: "map", inFlagKey: true },
+		group: "map", inFlagKey: true,
+		// The maze reads this table as its airship spine, so it cannot run
+		// without it — see `randomizer::randomize_inner`.
+		forcedInMaze: true },
+	// Standard-only: the maze uses all eight worlds, so it pins this to 7 (see
+	// `randomizer::randomize_inner`) and the row greys out under the mode.
 	{ id: "world_count", type: "tri", numeric: true,
-		options: [1,2,3,4,5,6,7].map(n => ({ value: n, label: String(n) })),
+		options: [0,1,2,3,4,5,6,7].map(n => ({ value: n, label: String(n) })),
 		default: 7,
 		label: "World Count",
-		tip: "Number of worlds before Dark Land (fewer = shorter game)",
+		tip: "Number of worlds before Dark Land (fewer = shorter game). 0 starts you in Dark Land — it becomes the whole game, and there is no airship before Bowser's castle.",
 		group: "map", inFlagKey: true,
+		mode: "standard",
 		enabledWhen: { world_order: true } },
+
+	// --- World Maze ---
+	// The mode switch first; everything under it is inert without it, which is
+	// what the group note says.
+	{ id: "world_maze", type: "bool", default: false,
+		label: "World Maze",
+		tip: "The eight maps become one big maze. Warp pads link them, a fortress can open a lock in another world, and your progress in a world is still there when you come back. Turns World Order on, and uses all eight worlds.",
+		group: "maze", inFlagKey: true },
+	{ id: "maze_wands", type: "tri", numeric: true,
+		options: [0,1,2,3,4,5,6,7].map(n => ({ value: n, label: String(n) })),
+		default: 3,
+		label: "Wands To Enter",
+		tip: "Wands needed before Bowser's castle will open. Fewer is a shorter game; 0 lets you walk straight in if you find a way there.",
+		group: "maze", inFlagKey: true,
+		mode: "maze" },
+	{ id: "hints", type: "tri", options: OFF_SOME_FULL, default: "some",
+		label: "Hints",
+		tip: "What the map gives away about which fortress opens which lock. On Some the colour is the mark: tan means a fortress and its lock are together in one world, the odd colour on either one means the two are apart, and the beta fortress opens a lock or bridge in World 8. On Full the number is the mark instead — a lock wears the number of the world its fortress is in, and a lock with no number is local. Fortress designs read the same either way. On Off the designs are picked at random and say nothing. Hints never change the map, so the same seed has the same locks and fortresses whichever you pick.",
+		group: "maze", inFlagKey: true,
+		mode: "maze" },
 
 	// --- Enemies ---
 	{ id: "ground", type: "tri", options: TRI, default: "shuffle",
@@ -359,13 +404,19 @@ export const SCHEMA = [
 		group: "enemies", inFlagKey: true },
 	{ id: "friendlier_levels", type: "bool", default: false,
 		label: "Friendlier Levels",
-		tip: "Keeps the roughest levels out of the shuffle — 2-3, 5-3, 6-6, 7-5, 7-8 and 8-1. Their slots go to beta stages if you have those on, otherwise to a second visit to a level already in the seed. Two fortresses, 7F2 and 8F1, are usually made optional rather than removed: still there, still beatable, just not in your way.",
+		tip: "Keeps the roughest levels out of the shuffle — 2-3, 5-3, 6-6, 7-5, 7-8 and 8-1. Their slots go to beta stages if you have those on, otherwise to a second visit to a level already in the seed. Two fortresses go the same way, 7F2 and 8F1: they are not on the map at all, and their tiles go to a fort you have already beaten.",
 		group: "map", inFlagKey: true },
 	{ id: "deja_vu", type: "tri", options: OFF_DOUBLE_WILD, default: "off",
 		label: "Deja Vu", flavor: "Haven't we been here?",
 		tip: "Let the same level show up on more than one tile. Double: every level gets a second copy in the deck, so some show up twice and others sit the seed out. Wild: no limit — a level can turn up over and over, or never. Levels that hand you an item still appear exactly once.",
 		credit: { name: "MaCobra52", url: "https://github.com/macobra52" },
 		group: "map", inFlagKey: true },
+	{ id: "deja_vu_forts", type: "bool", default: false, pillOf: "deja_vu",
+		label: "Forts",
+		summaryLabel: "Deja Vu (forts)",
+		tip: "Deja Vu counts fortresses too, in whichever mode you picked — a fortress can turn up on two tiles, or not at all. 1F always turns up exactly once: it is holding the warp whistle.",
+		group: "map", inFlagKey: true,
+		enabledWhen: { deja_vu: ["double", "wild"] } },
 	{ id: "limit_hazards", type: "tri", options: OFF_SOME_ALL, default: "off",
 		label: "Limit Hazards",
 		tip: "Stops swaps from dropping nippers, Ptooies, thwomps, Hot Foots or Bros into levels that weren't built for them. Some allows the occasional one, All allows none. Hazards that were always there stay put.",
@@ -458,7 +509,12 @@ export const SCHEMA = [
 		label: "Remove Warp Whistles",
 		tip: "Remove warp whistles so all worlds must be played",
 		icon: WHISTLE,
-		group: "items", inFlagKey: true },
+		group: "items", inFlagKey: true,
+		// A vanilla whistle warps to a world number, which the maze has no use
+		// for — it would be an item that takes a slot and does nothing. The
+		// maze's own whistle is a different thing entirely, and it is not from
+		// the item pool this removes from.
+		forcedInMaze: true },
 	{ id: "hammer_breaks_locks", type: "tri", options: ON_OFF_MAYBE, default: "off",
 		label: "Hammer Breaks Locks",
 		tip: "Hammer item also breaks fortress locks on the overworld map. Maybe: the seed secretly decides on or off, so you won't know until you play.",
@@ -490,7 +546,10 @@ export const SCHEMA = [
 		label: "No Game Over Penalty",
 		tip: "Game Over no longer wipes your inventory, map progress, or cards — continue picks up where you left off.",
 		credit: { name: "MaCobra52", url: "https://github.com/macobra52" },
-		group: "player", inFlagKey: true },
+		group: "player", inFlagKey: true,
+		// Without it a Game Over wipes map completions, and in a mode built on
+		// "a world you can come back to" that is the whole point undone.
+		forcedInMaze: true },
 	{ id: "faster_frog", type: "bool", default: false,
 		label: "Faster Frog",
 		tip: "Speeds up swimming and running while wearing the Frog Suit.",
@@ -554,121 +613,369 @@ const CONSTANT_FIELDS = {
 // flag key, so a future flag-layout change can't silently corrupt a preset; an
 // unknown id just no-ops (and assertPresetParity shouts about it on load).
 //
-// These override maps were generated by decoding the source flag keys once via
-// Options::from_flag_key and diffing against Options::default(). To revise a
-// preset, decode its new flag key and replace the overrides — don't store the
-// flag key itself.
+// **`mode` puts each preset in a section**, the same "standard" / "maze" split
+// the schema's own `mode` key uses for options. Both sections are always shown
+// — see `PRESET_SECTIONS` in `app.js` for why hiding the maze four until the
+// mode is already on would be backwards — so the heading is what tells two
+// presets called "Recommended" apart.
+//
+// The maze four are their standard twins plus the mode and its two dials, and
+// that is cheap rather than lazy: maze mode forces only `world_order`,
+// `remove_whistles` and `no_game_over_penalty`, and makes only `world_count`
+// inert, so a recipe's character survives the switch intact. The differences
+// that are there are deliberate — full hints for Beginner, none for
+// Challenging, and no wand gate on the two hardest.
+//
+// Each map was generated by decoding the flag key in its comment via
+// `Options::from_flag_key` and diffing against `Options::default()`. **Those
+// keys are stamped by flag-key version 29 and go stale the moment a field is
+// added to the key** — they record where the map came from, they are not a
+// second source of truth, and pasting an old one into a newer build will not
+// reproduce the preset. To revise a preset, decode its new key and replace the
+// overrides — `cargo run --example preset_decode -- <key>` prints the map and
+// refuses a key that does not re-encode to itself.
 export const PRESETS = [
-	{ id: "recommended", label: "Recommended",
-		tip: "A balanced everyday ruleset: most enemies wild, beta stages, and quality-of-life conveniences.",
+	{ id: "recommended", label: "Recommended", mode: "standard",
+		tip: "A balanced everyday ruleset: most enemies wild, beta stages, and the quality-of-life conveniences.",
+		// decoded from SMB3R-3QMZZZVZ3SGT8AK9WBXQQKR
 		overrides: {
-			ground: "wild", shell: "wild", flying: "wild", piranhas: "wild",
-			ghosts: "wild", water: "wild", cannons: "wild", hb_encounters: "wild",
-			rotodiscs: "shuffle",
-			wild_injections: ["sun", "lakitu", "bass"], early_sun: true,
-			include_beta_stages: true, swap_start_airship: true,
-			antechamber_shuffle: "on", piranha_shuffle: "wild",
-			big_q_blocks: true, starting_items: [15, 15, 15],
-			fast_mushroom_house: true, faster_frog: true, faster_tail_speed: true,
-			no_game_over_penalty: true, limit_bro_movement: true,
-			hammer_breaks_locks: "on", eights_are_wild: "on",
-			more_hammer_rocks: "maybe",
-			world_order: true, random_koopalings: true,
-			hammer_vulnerable_koopalings: true,
-		} },
-	{ id: "beginner", label: "Beginner Friendly",
-		tip: "Gentler ruleset: extra lives and items, no added hazards, the roughest levels sat out, no game-over penalty, no hand traps or troll pipes.",
-		overrides: {
-			starting_lives: 20, starting_items: [1, 2, 3],
-			infinite_mushroom_houses: true, fast_mushroom_house: true,
-			no_game_over_penalty: true, faster_tail_speed: true,
-			modern_powerups: true,
-			limit_bro_movement: true,
-			hands_levels: false, troll_pipes: "off",
-			shuffle_spade_games: false, more_hammer_rocks: "on",
-			hammer_breaks_locks: "on", big_q_blocks: true,
-			// `ghosts` was "off" purely to stop Boo -> Hot Foot, the only
-			// hazard that class can produce in Shuffle. limit_hazards blocks
-			// that directly, so the class goes back on and Boo <-> Dry Bones
-			// variety comes with it.
-			limit_hazards: "all", ghosts: "shuffle", hb_encounters: "shuffle",
-			friendlier_levels: true,
-			world_order: true, random_koopalings: true,
-			hammer_vulnerable_koopalings: true,
-		} },
-	{ id: "jet", label: "Jet",
-		tip: "Shorter games — 5 worlds, wild enemies, quality-of-life speedups.",
-		overrides: {
-			world_order: true, world_count: 5,
-			starting_lives: 20, starting_items: [15, 15, 11],
-			ground: "wild", shell: "wild", flying: "wild", ghosts: "wild",
-			hb_encounters: "wild", rotodiscs: "shuffle",
-			infinite_mushroom_houses: true, fast_mushroom_house: true,
-			no_game_over_penalty: true, faster_tail_speed: true, faster_frog: true,
-			hands_levels: false, troll_pipes: "off", more_hammer_rocks: "on",
-			hammer_breaks_locks: "on", big_q_blocks: true,
-			random_koopalings: true, hammer_vulnerable_koopalings: true,
-		} },
-	{ id: "vanilla", label: "Vanilla Randomizer",
-		tip: "Closer to a classic randomizer feel with beta stages and wild ground/flying enemies.",
-		overrides: {
-			ground: "wild", shell: "wild", flying: "wild",
-			hb_encounters: "shuffle", rotodiscs: "shuffle",
-			wild_injections: ["sun", "bass"], early_sun: true,
-			include_beta_stages: true,
-			shuffle_spade_games: false, shuffle_toad_houses: false,
-			hands_levels: false, troll_pipes: "off",
-			big_q_blocks: true, starting_items: [15, 15, 15],
+			antechamber_shuffle: "on",
+			big_q_blocks: true,
+			cannons: "wild",
+			early_sun: true,
+			eights_are_wild: "on",
+			fast_mushroom_house: true,
 			faster_frog: true,
-			world_order: true, random_koopalings: true,
+			faster_tail_speed: true,
+			flying: "wild",
+			ghosts: "wild",
+			ground: "wild",
+			hammer_breaks_locks: "on",
 			hammer_vulnerable_koopalings: true,
-		} },
-	{ id: "max_chaos", label: "Max Chaos",
-		tip: "Everything wild: every enemy class, all three chasers, wild Fire Flowers, poison mushrooms, beta stages, and every maybe.",
-		overrides: {
-			ground: "wild", shell: "wild", flying: "wild", piranhas: "wild",
-			ghosts: "wild", thwomps: "wild", rotodiscs: "wild", cannons: "wild",
-			water: "wild", bros: "wild", hb_encounters: "wild",
-			wild_injections: ["sun", "lakitu", "bass"], early_sun: true,
-			include_beta_stages: true, swap_start_airship: true,
-			antechamber_shuffle: "maybe", piranha_shuffle: "wild",
-			big_q_blocks: true, starting_items: [15, 15, 15],
-			fire_flower: "wild", poison_mushrooms: true,
-			faster_tail_speed: true, faster_frog: true,
-			world_order: true, random_koopalings: true,
-			hammer_vulnerable_koopalings: true,
-			troll_pipes: "maybe", more_hammer_rocks: "maybe",
-			eights_are_wild: "maybe",
-			hammer_breaks_locks: "maybe", hammer_breaks_bridges: "maybe",
-		} },
-	{ id: "league_s7", label: "League Season 7",
-		tip: "The Season 7 league ruleset: every enemy class wild, beta stages, shuffled lobbies and scattered piranhas, and the race conveniences.",
-		overrides: {
-			ground: "wild", shell: "wild", flying: "wild", piranhas: "wild",
-			ghosts: "wild", thwomps: "wild", rotodiscs: "wild", cannons: "wild",
-			water: "wild", bros: "wild", hb_encounters: "wild",
-			wild_injections: ["sun", "lakitu"], early_sun: true,
-			include_beta_stages: true, swap_start_airship: true,
-			antechamber_shuffle: "on", piranha_shuffle: "wild",
-			troll_pipes: "off", eights_are_wild: "maybe",
-			hammer_breaks_locks: "on", limit_bro_movement: true,
-			big_q_blocks: true, fire_flower: "on", starting_items: [15, 15, 15],
-			fast_mushroom_house: true, faster_tail_speed: true, faster_frog: true,
+			hb_encounters: "wild",
+			include_beta_stages: true,
+			limit_bro_movement: true,
+			limit_hazards: "some",
+			more_hammer_rocks: "maybe",
 			no_game_over_penalty: true,
-			world_order: true, random_koopalings: true,
-			hammer_vulnerable_koopalings: true,
+			piranha_shuffle: "wild",
+			piranhas: "wild",
+			random_koopalings: true,
+			rotodiscs: "shuffle",
+			shell: "wild",
+			shuffle_big_q_rooms: true,
+			starting_items: [15,15,15],
+			swap_start_airship: true,
+			troll_pipes: "off",
+			water: "wild",
+			wild_injections: ["sun","lakitu","bass"],
+			world_order: true,
 		} },
-	{ id: "challenging", label: "Challenging",
-		tip: "Wild enemies, beta stages, poison mushrooms, and one hit back to Small Mario — no quality-of-life crutches.",
+	{ id: "beginner", label: "Beginner Friendly", mode: "standard",
+		tip: "Gentler ruleset: extra lives and items, the roughest levels sat out, no game-over penalty, and hazards kept in check.",
+		// decoded from SMB3R-3PTZZS9ZAW8T05AG27Y120R3
 		overrides: {
-			ground: "wild", shell: "wild", flying: "wild", piranhas: "wild",
-			ghosts: "wild", thwomps: "wild", rotodiscs: "wild", cannons: "wild",
-			water: "wild", bros: "wild", hb_encounters: "wild",
-			wild_injections: ["sun", "lakitu", "bass"], early_sun: true,
-			include_beta_stages: true, swap_start_airship: true,
-			antechamber_shuffle: "on", piranha_shuffle: "wild",
-			big_q_blocks: true, poison_mushrooms: true, japanese_damage: true,
-			world_order: true, random_koopalings: true,
+			big_q_blocks: true,
+			fast_mushroom_house: true,
+			faster_tail_speed: true,
+			friendlier_levels: true,
+			ground: "wild",
+			hammer_breaks_locks: "on",
+			hammer_vulnerable_koopalings: true,
+			hands_levels: false,
+			hb_encounters: "shuffle",
+			infinite_mushroom_houses: true,
+			limit_bro_movement: true,
+			limit_hazards: "all",
+			modern_powerups: true,
+			more_hammer_rocks: "on",
+			no_game_over_penalty: true,
+			piranha_shuffle: "on",
+			random_koopalings: true,
+			shell: "wild",
+			starting_items: [7,2,3],
+			starting_lives: 20,
+			troll_pipes: "off",
+			world_order: true,
+		} },
+	{ id: "vanilla", label: "Vanilla Randomizer", mode: "standard",
+		tip: "Closer to a classic randomizer feel, with beta stages and wild ground and flying enemies.",
+		// decoded from SMB3R-3QKQZVKZ3G0A05JH87XQP3R
+		overrides: {
+			big_q_blocks: true,
+			early_sun: true,
+			faster_frog: true,
+			faster_tail_speed: true,
+			flying: "wild",
+			ground: "wild",
+			hammer_vulnerable_koopalings: true,
+			hb_encounters: "shuffle",
+			include_beta_stages: true,
+			limit_bro_movement: true,
+			no_game_over_penalty: true,
+			random_koopalings: true,
+			rotodiscs: "shuffle",
+			shell: "wild",
+			shuffle_spade_games: false,
+			shuffle_toad_houses: false,
+			starting_items: [15,15,15],
+			troll_pipes: "off",
+			wild_injections: ["sun","bass"],
+			world_order: true,
+		} },
+	{ id: "challenging", label: "Challenging", mode: "standard",
+		tip: "Wild enemies, beta stages, and one hit back to Small Mario — no quality-of-life crutches.",
+		// decoded from SMB3R-3QTZZZZF5J0ADANAW8XG0G04
+		overrides: {
+			antechamber_shuffle: "on",
+			big_q_blocks: true,
+			bro_battle_timer: true,
+			bros: "wild",
+			cannons: "wild",
+			early_sun: true,
+			eights_are_wild: "maybe",
+			faster_frog: true,
+			faster_tail_speed: true,
+			flying: "wild",
+			ghosts: "wild",
+			ground: "wild",
+			hb_encounters: "wild",
+			include_beta_stages: true,
+			japanese_damage: true,
+			limit_bro_movement: true,
+			piranha_shuffle: "wild",
+			piranhas: "wild",
+			poison_mushrooms: true,
+			random_koopalings: true,
+			rotodiscs: "wild",
+			shell: "wild",
+			shuffle_big_q_rooms: true,
+			swap_start_airship: true,
+			thwomps: "wild",
+			troll_pipes: "maybe",
+			water: "wild",
+			wild_injections: ["sun","lakitu","bass"],
+			world_order: true,
+		} },
+	{ id: "max_chaos", label: "Max Chaos", mode: "standard",
+		tip: "Everything wild: every enemy class, all three chasers, wild Fire Flowers, beta stages, and every maybe.",
+		// decoded from SMB3R-3PHZZQVZ5JNANANAXBXQPKSG
+		overrides: {
+			antechamber_shuffle: "maybe",
+			big_q_blocks: true,
+			bros: "wild",
+			cannons: "wild",
+			deja_vu: "wild",
+			deja_vu_forts: true,
+			early_sun: true,
+			eights_are_wild: "maybe",
+			faster_frog: true,
+			faster_tail_speed: true,
+			fire_flower: "wild",
+			flying: "wild",
+			ghosts: "wild",
+			ground: "wild",
+			hammer_breaks_bridges: "maybe",
+			hammer_breaks_locks: "maybe",
+			hammer_vulnerable_koopalings: true,
+			hb_encounters: "wild",
+			include_beta_stages: true,
+			more_hammer_rocks: "maybe",
+			piranha_shuffle: "wild",
+			piranhas: "wild",
+			poison_mushrooms: true,
+			random_koopalings: true,
+			rotodiscs: "wild",
+			shell: "wild",
+			shuffle_big_q_rooms: true,
+			starting_items: [15,15,15],
+			swap_start_airship: true,
+			thwomps: "wild",
+			troll_pipes: "maybe",
+			water: "wild",
+			wild_injections: ["sun","lakitu","bass"],
+			world_order: true,
+		} },
+	{ id: "w8_sprint", label: "W8 Sprint", mode: "standard",
+		tip: "Straight into Dark Land: one world, wild enemies, a hammer to open the way, and the race conveniences.",
+		// decoded from SMB3R-3MTFZVVZ3TGTAAK9WB1JNHG
+		overrides: {
+			antechamber_shuffle: "on",
+			big_q_blocks: true,
+			cannons: "wild",
+			early_sun: true,
+			eights_are_wild: "maybe",
+			fast_mushroom_house: true,
+			faster_frog: true,
+			faster_tail_speed: true,
+			flying: "wild",
+			ghosts: "wild",
+			ground: "wild",
+			hammer_breaks_locks: "on",
+			hammer_vulnerable_koopalings: true,
+			hb_encounters: "wild",
+			include_beta_stages: true,
+			limit_bro_movement: true,
+			limit_hazards: "some",
+			more_hammer_rocks: "maybe",
+			no_game_over_penalty: true,
+			piranha_shuffle: "wild",
+			piranhas: "wild",
+			random_koopalings: true,
+			rotodiscs: "shuffle",
+			shell: "wild",
+			shuffle_big_q_rooms: true,
+			starting_items: [11,5,6],
+			water: "wild",
+			wild_injections: ["sun","lakitu","bass"],
+			world_count: 0,
+			world_order: true,
+		} },
+	{ id: "maze_recommended", label: "Recommended", mode: "maze",
+		tip: "The everyday maze ruleset: most enemies wild, beta stages, three wands for the castle, and lock hints on.",
+		// decoded from SMB3R-3PVZZZVZ3SGT8AK9WBXQQKT00R
+		overrides: {
+			antechamber_shuffle: "on",
+			big_q_blocks: true,
+			cannons: "wild",
+			early_sun: true,
+			eights_are_wild: "on",
+			fast_mushroom_house: true,
+			faster_frog: true,
+			faster_tail_speed: true,
+			flying: "wild",
+			ghosts: "wild",
+			ground: "wild",
+			hammer_breaks_locks: "on",
+			hammer_vulnerable_koopalings: true,
+			hb_encounters: "wild",
+			include_beta_stages: true,
+			limit_bro_movement: true,
+			limit_hazards: "some",
+			more_hammer_rocks: "maybe",
+			no_game_over_penalty: true,
+			piranha_shuffle: "wild",
+			piranhas: "wild",
+			random_koopalings: true,
+			rotodiscs: "shuffle",
+			shell: "wild",
+			shuffle_big_q_rooms: true,
+			starting_items: [15,15,15],
+			swap_start_airship: true,
+			troll_pipes: "off",
+			water: "wild",
+			wild_injections: ["sun","lakitu","bass"],
+			world_maze: true,
+			world_order: true,
+		} },
+	{ id: "maze_beginner", label: "Beginner Friendly", mode: "maze",
+		tip: "A gentler maze: extra lives and items, hazards in check, and full hints so every lock names the world its key is in.",
+		// decoded from SMB3R-3QYZZS9ZAW8T05AG27Y120Y30R
+		overrides: {
+			big_q_blocks: true,
+			fast_mushroom_house: true,
+			faster_tail_speed: true,
+			friendlier_levels: true,
+			ground: "wild",
+			hammer_breaks_locks: "on",
+			hammer_vulnerable_koopalings: true,
+			hands_levels: false,
+			hb_encounters: "shuffle",
+			hints: "full",
+			infinite_mushroom_houses: true,
+			limit_bro_movement: true,
+			limit_hazards: "all",
+			modern_powerups: true,
+			more_hammer_rocks: "on",
+			no_game_over_penalty: true,
+			piranha_shuffle: "on",
+			random_koopalings: true,
+			shell: "wild",
+			starting_items: [7,2,3],
+			starting_lives: 20,
+			troll_pipes: "off",
+			world_maze: true,
+			world_order: true,
+		} },
+	{ id: "maze_challenging", label: "Challenging", mode: "maze",
+		tip: "A maze with nothing given away: wild enemies, no hints, no crutches, and the castle open from the start.",
+		// decoded from SMB3R-3NQFZZZF7J0ADANAW8XG0G2404
+		overrides: {
+			antechamber_shuffle: "on",
+			big_q_blocks: true,
+			bro_battle_timer: true,
+			bros: "wild",
+			cannons: "wild",
+			early_sun: true,
+			eights_are_wild: "maybe",
+			faster_frog: true,
+			faster_tail_speed: true,
+			flying: "wild",
+			ghosts: "wild",
+			ground: "wild",
+			hb_encounters: "wild",
+			hints: "off",
+			include_beta_stages: true,
+			japanese_damage: true,
+			limit_bro_movement: true,
+			maze_wands: 0,
+			no_game_over_penalty: true,
+			piranha_shuffle: "wild",
+			piranhas: "wild",
+			poison_mushrooms: true,
+			random_koopalings: true,
+			rotodiscs: "wild",
+			shell: "wild",
+			shuffle_big_q_rooms: true,
+			swap_start_airship: true,
+			thwomps: "wild",
+			troll_pipes: "maybe",
+			water: "wild",
+			wild_injections: ["sun","lakitu","bass"],
+			world_maze: true,
+			world_order: true,
+		} },
+	{ id: "maze_max_chaos", label: "Max Chaos", mode: "maze",
+		tip: "Everything wild, inside the maze: every enemy class, every maybe, and the castle open from the start.",
+		// decoded from SMB3R-3QVFZQVZ7JNANANAXBXQPKVG
+		overrides: {
+			antechamber_shuffle: "maybe",
+			big_q_blocks: true,
+			bros: "wild",
+			cannons: "wild",
+			deja_vu: "wild",
+			deja_vu_forts: true,
+			early_sun: true,
+			eights_are_wild: "maybe",
+			faster_frog: true,
+			faster_tail_speed: true,
+			fire_flower: "wild",
+			flying: "wild",
+			ghosts: "wild",
+			ground: "wild",
+			hammer_breaks_bridges: "maybe",
+			hammer_breaks_locks: "maybe",
+			hammer_vulnerable_koopalings: true,
+			hb_encounters: "wild",
+			include_beta_stages: true,
+			maze_wands: 0,
+			more_hammer_rocks: "maybe",
+			no_game_over_penalty: true,
+			piranha_shuffle: "wild",
+			piranhas: "wild",
+			poison_mushrooms: true,
+			random_koopalings: true,
+			rotodiscs: "wild",
+			shell: "wild",
+			shuffle_big_q_rooms: true,
+			starting_items: [15,15,15],
+			swap_start_airship: true,
+			thwomps: "wild",
+			troll_pipes: "maybe",
+			water: "wild",
+			wild_injections: ["sun","lakitu","bass"],
+			world_maze: true,
+			world_order: true,
 		} },
 ];
 
@@ -678,6 +985,7 @@ export const PRESETS = [
 // fields untouched (same fields applyOptions skips). Mirrors applyOptions so
 // callers update the flag key + summary the same way afterward.
 export function applyPreset(overrides) {
+	clearForcedMemo();
 	for (const entry of SCHEMA) {
 		if (!entry.inFlagKey) continue;
 		const v = overrides && entry.id in overrides ? overrides[entry.id] : entry.default;
@@ -700,6 +1008,139 @@ export function assertPresetParity() {
 		}
 	}
 	if (bad.length) console.error("Preset references unknown flag-key fields", bad);
+}
+
+// --- Modes ---
+//
+// One option is not a flag but a *mode switch*: World Maze does not add a
+// feature the other options describe, it changes which of them describe
+// anything at all. Three shapes fall out of that, and each is a schema key
+// rather than a special case in the renderer:
+//
+//   mode: "maze" | "standard"  This option only means something in that mode.
+//                              Outside it the row is greyed, badged, and — the
+//                              part that matters — REPLACED BY ITS DEFAULT in
+//                              `getOptions`, so it cannot reach the generator.
+//   forcedInMaze: <value>      The maze decides this one. The row shows the
+//                              value the ROM will use, greyed and badged, and
+//                              the player's own setting comes back when they
+//                              leave the mode.
+//
+// Every mode-specific option stays in the section it belongs to and keeps its
+// own row. Hiding one, or swapping two onto a shared row, was tried and dropped:
+// a control that vanishes teaches a player nothing about why, where a greyed row
+// with "Maze only" on it says the rule out loud in the place they are looking.
+//
+// **Greying alone was never enough.** `readValue` ignores `disabled`, so a
+// greyed control still fed `getOptions`, the flag key and the generator: that is
+// how a maze seed could take its spine length from a World Count pill the page
+// had greyed out. Anything inert here is neutralized in the value, and the
+// greying is only how that is explained to the player.
+//
+// The Rust side neutralizes the same fields independently (`hints` outside the
+// maze, `world_count` inside it, `maze_wands` in the key). That is deliberate
+// duplication: the CLI and a pasted flag key never run this file.
+const MODE_SWITCH = "world_maze";
+
+function currentMode() {
+	const entry = SCHEMA.find(s => s.id === MODE_SWITCH);
+	return entry && readValue(entry) ? "maze" : "standard";
+}
+
+// True when the option describes nothing in the mode the form is currently in.
+function isInert(entry, mode) {
+	return !!entry.mode && entry.mode !== mode;
+}
+
+function modeBadgeText(entry) {
+	if (entry.forcedInMaze !== undefined) {
+		return `Forced ${entry.forcedInMaze ? "on" : "off"} by World Maze`;
+	}
+	return entry.mode === "maze" ? "Maze only" : "Standard only";
+}
+
+// What the player had before the maze pinned a forced option, so turning the
+// mode off gives it back. Kept out of the settings blob: `saveSettings` stores
+// what the inputs currently show, which while the maze is on is the forced
+// value — restoring a page in maze mode would otherwise eat the memo.
+const FORCED_MEMO_KEY = "smb3r-forced-memo";
+
+function loadForcedMemo() {
+	try {
+		return JSON.parse(localStorage.getItem(FORCED_MEMO_KEY) ?? "{}");
+	} catch (_) {
+		return {};
+	}
+}
+
+function saveForcedMemo(memo) {
+	try {
+		localStorage.setItem(FORCED_MEMO_KEY, JSON.stringify(memo));
+	} catch (_) {}
+}
+
+// Forget the pre-maze values. Any wholesale rewrite of the form — a preset, a
+// pasted flag key — states every flag-key field outright, so the memo describes
+// a form that no longer exists: without this, leaving maze mode afterwards would
+// restore settings from before the rewrite, silently overwriting three of the
+// values it had just delivered.
+function clearForcedMemo() {
+	try {
+		localStorage.removeItem(FORCED_MEMO_KEY);
+	} catch (_) {}
+}
+
+// Values first, before anything reads them: the maze pins World Order on, and
+// World Count's `enabledWhen` rides on that.
+function applyForcedValues() {
+	const forced = currentMode() === "maze";
+	const memo = loadForcedMemo();
+	let dirty = false;
+	for (const entry of SCHEMA) {
+		if (entry.forcedInMaze === undefined) continue;
+		if (forced) {
+			if (!(entry.id in memo)) {
+				memo[entry.id] = readValue(entry);
+				dirty = true;
+			}
+			writeValue(entry, entry.forcedInMaze);
+		} else if (entry.id in memo) {
+			writeValue(entry, memo[entry.id]);
+			delete memo[entry.id];
+			dirty = true;
+		}
+	}
+	if (dirty) saveForcedMemo(memo);
+}
+
+function setBadge(entry, text) {
+	const badge = document.getElementById(`badge-${entry.id}`);
+	if (!badge) return;
+	badge.textContent = text ?? "";
+	badge.hidden = !text;
+}
+
+// Fold the current mode into the form: grey and badge what the mode makes
+// inert, and show forced options at the value the ROM will actually use.
+export function applyModeStates() {
+	const mode = currentMode();
+	for (const entry of SCHEMA) {
+		if (entry.forcedInMaze !== undefined) {
+			const forced = mode === "maze";
+			applyEntryEnabled(entry, !forced);
+			setBadge(entry, forced ? modeBadgeText(entry) : null);
+			continue;
+		}
+		if (!entry.mode) continue;
+		const inert = isInert(entry, mode);
+		// Inert always greys. Re-enabling belongs to `applyEnabledWhen` when the
+		// entry has a host to answer to (World Count still rides on World Order),
+		// and to us when it does not; without that second half an option greyed
+		// in one mode would stay greyed after switching into the one it belongs
+		// to.
+		if (inert || !entry.enabledWhen) applyEntryEnabled(entry, !inert);
+		setBadge(entry, inert ? modeBadgeText(entry) : null);
+	}
 }
 
 // --- DOM helpers ---
@@ -891,8 +1332,29 @@ function renderTri(entry) {
 		}));
 		group.appendChild(el("label", { for: inputId }, opt.label));
 	}
+	for (const flag of pillFlagsFor(entry)) {
+		group.appendChild(pillFlagInput(flag));
+		group.appendChild(
+			el("label", { for: domId(flag.id), class: "pill-flag", title: flag.tip }, flag.label),
+		);
+	}
 	wrap.appendChild(group);
 	return wrap;
+}
+
+// A `bool` entry with `pillOf: "<other id>"` is not a row of its own: its
+// single pill rides along on that entry's group, lighting independently of
+// the exclusive choice beside it. Everything else about it — flag-key bit,
+// preset key, saved setting, changes summary — is an ordinary bool.
+function pillFlagsFor(entry) {
+	return SCHEMA.filter(e => e.pillOf === entry.id);
+}
+
+function pillFlagInput(flag) {
+	return el("input", {
+		type: "checkbox", name: radioName(flag.id), id: domId(flag.id),
+		value: "on", checked: !!flag.default,
+	});
 }
 
 // A pill group where the non-"off" pills toggle independently: check Sun,
@@ -1072,10 +1534,27 @@ const RENDERERS = {
 	nescolor: renderNesColor,
 };
 
+// A mode-specific option carries a badge in its own row — "Maze only",
+// "Forced on by World Maze" — so the rule is legible where the control is,
+// rather than only in a note at the top of a section. It renders empty and
+// hidden; `applyModeStates` fills it in for whichever mode the form is in.
+function modeBadge(entry) {
+	if (entry.forcedInMaze === undefined && !entry.mode) return null;
+	return el("span", { class: "opt-badge", id: `badge-${entry.id}`, hidden: true });
+}
+
 function renderEntry(entry) {
 	const r = RENDERERS[entry.type];
 	if (!r) throw new Error(`Unknown schema type: ${entry.type}`);
 	const node = r(entry);
+	const badge = modeBadge(entry);
+	if (badge) {
+		// Before the pills, so it reads as part of the label rather than as
+		// another choice on the right-hand side.
+		const group = node.querySelector?.(".pill-group");
+		if (group) node.insertBefore(badge, group);
+		else node.appendChild?.(badge);
+	}
 	const block = tipBlock(entry);
 	if (!block) return node;
 	const frag = document.createDocumentFragment();
@@ -1093,7 +1572,11 @@ export function renderOptions(rootEl, hosts = {}) {
 		if (group.note) {
 			fieldset.appendChild(el("p", { class: "note group-note" }, group.note));
 		}
-		const entries = SCHEMA.filter(s => s.group === group.id && !s.host);
+		if (group.link) {
+			fieldset.appendChild(el("p", { class: "note group-note" },
+				el("a", { href: group.link.href }, group.link.label)));
+		}
+		const entries = SCHEMA.filter(s => s.group === group.id && !s.host && !s.pillOf);
 		for (const entry of entries) {
 			fieldset.appendChild(renderEntry(entry));
 		}
@@ -1113,6 +1596,10 @@ export function renderOptions(rootEl, hosts = {}) {
 export function readValue(entry) {
 	switch (entry.type) {
 		case "bool": {
+			if (entry.pillOf) {
+				const node = document.getElementById(domId(entry.id));
+				return node ? node.checked : entry.default;
+			}
 			const checked = document.querySelector(`input[name="${radioName(entry.id)}"]:checked`);
 			return checked ? checked.value === "on" : entry.default;
 		}
@@ -1153,6 +1640,11 @@ export function writeValue(entry, value) {
 	if (value === undefined) return;
 	switch (entry.type) {
 		case "bool": {
+			if (entry.pillOf) {
+				const node = document.getElementById(domId(entry.id));
+				if (node) node.checked = !!value;
+				break;
+			}
 			const target = !!value ? "on" : "off";
 			const e = document.querySelector(`input[name="${radioName(entry.id)}"][value="${target}"]`);
 			if (e) e.checked = true;
@@ -1200,8 +1692,13 @@ export function writeValue(entry, value) {
 
 export function getOptions() {
 	const out = { ...CONSTANT_FIELDS };
+	const mode = currentMode();
 	for (const entry of SCHEMA) {
-		out[entry.id] = readValue(entry);
+		// An option the current mode makes inert sends its default, not what its
+		// greyed-out control still shows. This is the load-bearing half of
+		// `mode`: disabling an input does not stop `readValue` reading it, so
+		// without this a stale World Count would still set a maze's spine.
+		out[entry.id] = isInert(entry, mode) ? entry.default : readValue(entry);
 	}
 	return out;
 }
@@ -1210,7 +1707,11 @@ export function getOptions() {
 // the schema default. Used by the changes-summary UI in the control panel.
 export function getChangedFields() {
 	const changed = [];
+	const mode = currentMode();
 	for (const entry of SCHEMA) {
+		// Inert in this mode: it changes nothing about the seed, so listing it
+		// as a change would be a lie of the same kind the badges exist to stop.
+		if (isInert(entry, mode)) continue;
 		const current = readValue(entry);
 		if (!valuesEqual(current, entry.default)) {
 			changed.push({ entry, current });
@@ -1265,6 +1766,7 @@ export function getOptionsJson() {
 // fields (palettes, palette_themed, remove_flashing, skip_rom_validation) so applying a
 // shared key doesn't clobber the user's local cosmetic / ROM choices.
 export function applyOptions(opts) {
+	clearForcedMemo();
 	for (const entry of SCHEMA) {
 		if (!entry.inFlagKey) continue;
 		writeValue(entry, opts[entry.id]);
@@ -1272,16 +1774,28 @@ export function applyOptions(opts) {
 }
 
 export function applyEnabledWhen() {
+	applyForcedValues();
 	for (const entry of SCHEMA) {
 		if (!entry.enabledWhen) continue;
 		const enabled = Object.entries(entry.enabledWhen).every(
 			([id, want]) => {
 				const e = SCHEMA.find(s => s.id === id);
-				return e && readValue(e) === want;
+				if (!e) return false;
+				const v = readValue(e);
+				// A list means "any of these" — deja_vu_forts rides on two of
+				// its host's three states, not one.
+				return Array.isArray(want) ? want.includes(v) : v === want;
 			},
 		);
+		// A pill that cannot be lit is not lit: turning its host off clears it,
+		// so the row never shows a flag that changes nothing.
+		if (!enabled && entry.pillOf) writeValue(entry, false);
 		applyEntryEnabled(entry, enabled);
 	}
+	// Last, so the mode wins: it forces values that `enabledWhen` reads (the
+	// maze pins World Order on, which is what un-greys the row beside it), and
+	// an option the mode has made inert must stay greyed whatever its host says.
+	applyModeStates();
 }
 
 function applyEntryEnabled(entry, enabled) {
@@ -1290,8 +1804,22 @@ function applyEntryEnabled(entry, enabled) {
 		const elNode = document.getElementById(id);
 		if (!elNode) continue;
 		elNode.disabled = !enabled;
-		// Walk up to the wrapping label/div so the visual styling matches today
-		const wrap = elNode.closest("label, .radio-group-vertical, .pill-group");
+		if (entry.pillOf) {
+			// Its wrapper is the host's pill group — greying that out would
+			// grey out the choice it rides on. Only its own label dims.
+			elNode.nextElementSibling?.classList.toggle("pill-disabled", !enabled);
+			continue;
+		}
+		// Walk up to the row that wraps the whole option — its label, or the
+		// vertical group for the types that have no single label.
+		//
+		// `.pill-group` used to be in this list, and since `closest` matches the
+		// NEAREST ancestor rather than the first selector listed, a pill entry
+		// always landed the class on the group div — which no rule styles. So
+		// "greyed out" greyed nothing out for every pill option on the page; the
+		// pills just quietly stopped responding. The class belongs on the row,
+		// where `.select-label.disabled` dims it and the badge explains it.
+		const wrap = elNode.closest("label, .radio-group-vertical");
 		if (wrap) wrap.classList.toggle("disabled", !enabled);
 	}
 }
@@ -1301,6 +1829,7 @@ function entryDomIds(entry) {
 		case "select":
 			return [domId(entry.id)];
 		case "bool":
+			if (entry.pillOf) return [domId(entry.id)];
 			return BOOL_OPTIONS.map(o => `${domId(entry.id)}-${o.value}`);
 		case "tri":
 		case "radio":
@@ -1329,6 +1858,7 @@ function entryDomIds(entry) {
 export function applyRowStates() {
 	for (const entry of SCHEMA) {
 		if (!["bool", "tri", "toggles"].includes(entry.type)) continue;
+		if (entry.pillOf) continue; // no row of its own — its host tints for it
 		const ids = entryDomIds(entry);
 		const first = document.getElementById(ids[0]);
 		if (!first) continue;
@@ -1380,7 +1910,7 @@ export function saveSettings() {
 		const settings = {};
 		for (const entry of SCHEMA) {
 			const v = readValue(entry);
-			if (entry.type === "bool") {
+			if (entry.type === "bool" && !entry.pillOf) {
 				settings[`radio:${radioName(entry.id)}`] = v ? "on" : "off";
 			} else if (entry.type === "toggles") {
 				// Own key prefix: the value is a list, which no single input

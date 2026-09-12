@@ -32,4 +32,4 @@ Present the full output to the user. The output includes:
 - HANDTRAP is currently bound only to `0xE6` (palette page 3). To create a HANDTRAP that uses palette 1 (path-colored), edit `Map_EnterSpecialTiles[9]` at file `0x14DC8` to a byte in `0x40–0x7F`.
 - 115 byte values are unused in any world's grid AND in any behavior table — fully free for repurposing.
 
-See also: `docs/smb3_rom_reference.md` § "World-Map Tile Behavior".
+See also: `docs/smb3_rom_reference.md` § "World-map tile behavior registries".

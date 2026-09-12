@@ -6,7 +6,11 @@ use crate::rom::Rom;
 
 /// File offset of the `INC World_Num; JMP $84A0` instruction (6 bytes).
 /// Original bytes: EE 27 07 4C A0 84
-const WORLD_INC_OFFSET: usize = 0x3D0A1;
+///
+/// Exposed because it is vanilla's airship-cleared world transition, and
+/// [`super::completion_bits`] tests its persistence hooks against the engine's
+/// own bytes rather than a transcription of them.
+pub(crate) const WORLD_INC_OFFSET: usize = 0x3D0A1;
 
 /// File offset of the `LDA #$00` operand that initializes World_Num at game start.
 /// Original: `LDA #$00; STA $0727; STA $0160`. We patch the #$00 to the starting world
@@ -23,7 +27,17 @@ pub(crate) const WORLD_INIT_OPERAND: usize = 0x30CC3;
 /// We NOP this out because patching the LDA operand above would otherwise
 /// set the debug flag to the starting world number.  The reset handler
 /// clears $0160 to zero on power-on, so it's safe to skip this write.
-const DEBUG_FLAG_STA_OFFSET: usize = 0x30CC7;
+///
+/// **Shared with [`super::completion_bits`]**, which puts a three-byte `JSR`
+/// here instead — the world maze's new-game signal, and the only three-byte
+/// instruction that fits (the `RTS` at `+3` is the live branch target
+/// `PRG024_ACBA`). The two writes collide by construction, so the ordering is
+/// part of the contract: **`world_order::randomize` runs first and
+/// `completion_bits::apply` overwrites it.** That direction is the safe one —
+/// the `JSR`'s routine stores 0 to `Debug_Flag` itself, so it does the job the
+/// `NOP`s were there to protect, while the reverse would silently disable the
+/// signal.
+pub(crate) const DEBUG_FLAG_STA_OFFSET: usize = 0x30CC7;
 
 /// CPU address of the lookup table (routine + 12 bytes).
 const TABLE_CPU: u16 = WORLD_ORDER_CPU + 12;
@@ -31,7 +45,12 @@ const TABLE_CPU: u16 = WORLD_ORDER_CPU + 12;
 /// File offset of the display-number table (8 bytes, right after next-world table).
 /// PRG030 is always mapped at $8000–$9FFF (MMC3 fixed bank in mode 1), so CPU $9F24
 /// is accessible from any bank configuration.
-const DISPLAY_TABLE_OFFSET: usize = FS_WORLD_ORDER + 20; // 12 routine + 8 next-world
+/// File offset of the display-number table (8 bytes, right after next-world table).
+///
+/// `pub(crate)` because `lock_keys` reads it: a numbered lock has to show the
+/// world the *player* sees, not the internal index, and world order makes those
+/// two different facts.
+pub(crate) const DISPLAY_TABLE_OFFSET: usize = FS_WORLD_ORDER + 20; // 12 routine + 8 next-world
 const DISPLAY_TABLE_CPU: u16 = TABLE_CPU + 8; // $9F24
 
 /// Map screen "WORLD X" display site (PRG010).
@@ -41,6 +60,20 @@ const MAP_DISPLAY_OFFSET: usize = 0x14372;
 /// Status bar "WORLD X" display site (PRG026).
 /// Original: LDX $0727; INX; TXA; ORA #$F0; STA $0304,Y (10 bytes at 0x350D7).
 const STATUS_DISPLAY_OFFSET: usize = 0x350D7;
+
+/// The two vanilla sites this module overwrites, and what must still be there.
+///
+/// **These turn an ordering rule into a panic.** Both bytes are shared with the
+/// world maze: `wand_gate` chains its wand counter through the `JMP` written at
+/// [`WORLD_INC_OFFSET`], and `completion_bits` puts its new-game signal over the
+/// three bytes at [`DEBUG_FLAG_STA_OFFSET`]. Both of those must run AFTER this
+/// module, and until now nothing said so except a comment in each of them.
+/// Last-writer-wins is silent in the wrong order: the maze's hooks would simply
+/// be overwritten and the mode would half-work.
+const VANILLA_SITES: [(usize, &[u8], &str); 2] = [
+    (WORLD_INC_OFFSET, &[0xEE, 0x27, 0x07], "INC World_Num (the airship transition)"),
+    (DEBUG_FLAG_STA_OFFSET, &[0x8D, 0x60, 0x01], "STA Debug_Flag (the title-screen init)"),
+];
 
 /// Randomize the world progression order.
 ///
@@ -55,8 +88,29 @@ const STATUS_DISPLAY_OFFSET: usize = 0x350D7;
 /// (first entry is the starting world, last is always 7/Dark Land). With
 /// `world_count` < 7 this is shorter than 8 (unvisited worlds are omitted).
 /// Callers such as [`super::credits`] use it to align the ending montage.
+///
+/// **`world_count` 0 is the degenerate end of that range, not a special case.**
+/// The prefix is simply empty, so the progression is `[7]` alone: the player
+/// starts *in* Dark Land and it displays as "WORLD 1". Nothing below branches on
+/// it, but two consequences are worth naming. No airship stands before Bowser's
+/// castle, so no wand exists in the game at all — which is why the world maze
+/// pins this to 7 rather than exposing it (see `randomizer::randomize_inner`).
+/// And the seven unvisited worlds keep display tile `$00`, exactly as any
+/// `world_count` < 7 already leaves them; it is invisible because they cannot be
+/// reached.
 pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R, world_count: u8) -> Vec<u8> {
-    let world_count = world_count.clamp(1, 7) as usize;
+    for (offset, want, what) in VANILLA_SITES {
+        assert_eq!(
+            rom.read_range(offset, want.len()),
+            want,
+            "0x{offset:05X} no longer holds vanilla's {what}, so something has already \
+             patched it. `world_order::randomize` must run BEFORE `wand_gate` and \
+             `completion_bits`, which both chain through bytes it writes — see \
+             `randomizer::randomize_inner` for the order."
+        );
+    }
+
+    let world_count = world_count.min(7) as usize;
 
     // Build shuffled world order: shuffle worlds 0-6, take first world_count, append world 7
     let mut pool: Vec<u8> = (0..7).collect();
@@ -354,5 +408,29 @@ mod tests {
         // Display table: Dark Land should show as "WORLD 4" ($F4)
         let display = rom.read_range(DISPLAY_TABLE_OFFSET, 8);
         assert_eq!(display[7], 0xF4, "Dark Land should display as World 4 with world_count=3");
+    }
+
+    /// `world_count` 0: the whole game is Dark Land, entered from the title
+    /// screen. The old `clamp(1, 7)` silently turned this into a one-world
+    /// prefix plus Dark Land, so the option would have looked like it worked
+    /// while giving two worlds.
+    #[test]
+    fn test_world_count_0_starts_in_dark_land() {
+        let mut rom = make_test_rom();
+        let mut rng = ChaCha8Rng::seed_from_u64(42);
+        let order = randomize(&mut rom, &mut rng, 0);
+
+        assert_eq!(order, vec![7], "world_count=0 is Dark Land alone");
+        assert_eq!(rom.read_byte(WORLD_INIT_OPERAND), 7, "the game must start in Dark Land");
+
+        // Nothing leads into Dark Land, and Dark Land leads to itself — so the
+        // airship transition can never walk out of the one world that exists.
+        let table = rom.read_range(FS_WORLD_ORDER + 12, 8);
+        assert_eq!(table, vec![0, 0, 0, 0, 0, 0, 0, 7]);
+
+        // And it is "WORLD 1", not "WORLD 8": the display table is keyed by
+        // position in the progression, and Dark Land is now position 0.
+        let display = rom.read_range(DISPLAY_TABLE_OFFSET, 8);
+        assert_eq!(display[7], 0xF1, "Dark Land should display as World 1 with world_count=0");
     }
 }
