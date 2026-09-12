@@ -1689,6 +1689,45 @@ PRG007 ($AA8F) caps it:
 Nothing indexes a table with the raw value, so an out-of-range tally cannot
 overrun anything — the worst outcome is an undeserved 1-up.
 
+### The Coin Counter Breaks Above 127 (PRG026)
+
+`Inventory_Coins` is **one binary byte** at `$7DA2` (`$7DC5` for Luigi) — not
+BCD, not a digit pair — and `StatusBar_Fill_Coins` at CPU **$B073**
+(file **0x35083**) is its only reader in the ROM. It converts to the two status-bar
+tiles `StatusBar_CoinH`/`CoinL` (`$7F46`/`$7F47`).
+
+The 100-coin 1-up lives at one site, CPU $B08A (file **0x3509A**, verified bytes
+`C9 64 90 11 38 E9 64 9D`): `CMP #100 / BCC / SEC / SBC #100 / STA` then
+`INC Player_Lives,X`. Nineteen bytes from $B08C to $B09E, reclaimable in place if
+the rollover is ever repurposed.
+
+**The trap:** the tens loop at CPU $B09F (file **0x350AF**, verified bytes
+`C9 0A 30 07 38 E9 0A C8`) branches with **`BMI`, not `BCC`**. At `A >= 128` the
+comparison goes negative and the loop exits immediately, writing tile `$F0 + A` —
+garbage glyphs. So **any patch that lets the coin count exceed 127 corrupts the
+display before it ever needs a third digit.**
+
+Two more facts for anyone widening it:
+
+- **Room for a third digit exists, to the right.** `StatusBar_UpdTemplate` at CPU
+  **$B428** (file **0x35438**, 34 bytes) puts the coin digits at row 25 cols
+  18-19, and the cards start at col 22 (`CardVStartU`), so cols 20-21 are free.
+- **`MapBonusChk_CoinShip` compares the status-bar *tiles*,** not the counter
+  (`prg011.asm:2308-2316`, against `StatusBar_CoinH`/`CoinL` and
+  `StatusBar_Score+5`). Changing the digits or the blanking rule silently changes
+  when the Coin Ship appears.
+
+The counter lives in the cart's WRAM, so it survives levels, world changes and
+deaths — but the game-over **Continue** path clears it. `PRG030_92FE`
+(file **0x3D30E**, verified bytes `A9 06 85 00 A9 00 99 9C 7D 88 C6 00 10 F8`)
+walks `Y` down from 6 storing zero into `Inventory_Cards,Y`, so it wipes
+`$7D9C..$7DA2` — three card slots, three score bytes, and the coin byte. The
+length is written in the disassembly as
+`LDA #(Inventory_Coins - Inventory_Cards)`, i.e. "up to and including coins" by
+construction. **`Inventory_Items` ($7D80..$7D9B) is below the start of that loop
+and is never touched**, which is what lets a permanent-item inventory survive a
+Continue with no new code.
+
 ### Reclaimable Dead *Code* in PRG000 — Invisible to `--free-space`
 
 `smb3-rs --free-space` counts `$FF` filler runs, so it reports PRG000 as having
@@ -1744,10 +1783,16 @@ makes the write-log audit and the overlap tests cover it.
 When the player uses an inventory item on the map, `Inv_UseItem` at CPU $A53A (file 0x3454A)
 loads the item ID from `$7D80,Y` and dispatches via a `DynJump` table at CPU $A540 (file 0x34550).
 
-**DynJump table (14 word entries, little-endian):**
+**DynJump table (14 word entries, little-endian).** Dumped from the ROM
+2026-09-12 — the 28 bytes at 0x34550 are
+`a6a4 b6a5×8 71a6 82a6 bba6 60a7 a1a6`. **Four of the handler addresses below
+were wrong before that dump** (Starman, Hammer, Whistle and Music Box were each
+listed one byte high or, for the last two, at unrelated addresses); they are
+corrected here.
 
 | Index | Item | Handler | CPU Addr | File Offset |
 |-------|------|---------|----------|-------------|
+| 0 | *(empty slot)* | — | $A4A6 | 0x344B6 |
 | 1 | Mushroom | Inv_UseItem_Powerup | $A5B6 | 0x345C6 |
 | 2 | Fire Flower | Inv_UseItem_Powerup | $A5B6 | 0x345C6 |
 | 3 | Super Leaf | Inv_UseItem_Powerup | $A5B6 | 0x345C6 |
@@ -1756,21 +1801,65 @@ loads the item ID from `$7D80,Y` and dispatches via a `DynJump` table at CPU $A5
 | 6 | Hammer Suit | Inv_UseItem_Powerup | $A5B6 | 0x345C6 |
 | 7 | Cloud | Inv_UseItem_Powerup | $A5B6 | 0x345C6 |
 | 8 | P-Wing | Inv_UseItem_Powerup | $A5B6 | 0x345C6 |
-| 9 | Starman | Inv_UseItem_Starman | $A672 | 0x34682 |
+| 9 | Starman | Inv_UseItem_Starman | $A671 | 0x34681 |
 | 10 | Anchor | Inv_UseItem_Anchor | $A682 | 0x34692 |
-| 11 | Hammer | Inv_UseItem_Hammer | $A6BC | 0x346CC |
-| 12 | Whistle | Inv_UseItem_Whistle | $A705 | 0x34715 |
-| 13 | Music Box | Inv_UseItem_MusicBox | $A733 | 0x34743 |
+| 11 | Hammer | Inv_UseItem_Hammer | $A6BB | 0x346CB |
+| 12 | Whistle | Inv_UseItem_Whistle | $A760 | 0x34770 |
+| 13 | Music Box | Inv_UseItem_MusicBox | $A6A1 | 0x346B1 |
 
 Items 1–8 all route to the shared `Inv_UseItem_Powerup` handler. Items 9+ have dedicated
 handlers with incompatible animation/state machine layouts.
 
 Inside `Inv_UseItem_Powerup`, the instruction `LDX $7D80,Y` at CPU $A5C8 (file 0x345D8)
-re-reads the item ID into X. This value drives the powerup animation state machine in
-PRG031 via `$07F5`. The handler also stores the item to `$07F5` at $A5D8.
+re-reads the item ID into X. **`X` is the whole interface** — the handler acts on it
+directly, so a patch that substitutes an item need only leave a different value in `X`.
+
+> **Correction (2026-09-12).** This paragraph used to say the value "drives the
+> powerup animation state machine in PRG031 via `$07F5`", and that the handler
+> stores the item to `$07F5`. **Both halves are wrong.** `$07F5` is
+> `Music2_Hold` (`smb3.asm:2185`) — the sound engine's slot for a Set 2 song to
+> restart after a Set 1 song finishes (`prg031.asm:405/530/554`). Counting the
+> RAM map from the `$07E3-$07EF unused` padding gives `DMC_Queue` $07F0,
+> `DMC_Current` $07F1, `Sound_Sq1_CurFL` $07F2, `Music_NseStart` $07F3, one pad
+> byte $07F4, then `Music2_Hold` $07F5.
+>
+> **What the handler actually does** is `STA World_Map_Power,X` at CPU **$A608**
+> (file **0x34618**, verified bytes `9D 46 07`) — it writes the map-side suit
+> reserve. That is the entire effect of "using" a power-up item; everything else
+> in the handler is palette, sound and the poof animation.
+>
+> This error had a cost: `items.rs`'s mystery-anchor trampoline carried a
+> `STX $07F5` on the strength of it, writing an item ID into the sound engine
+> for no reason. Removed in 2.0.1.
 
 `Inv_UseItem_Anchor` ($A682) sets `Map_Anchored`, plays the anchor sound, removes the
 item from inventory, and returns — it never enters the powerup animation path.
+
+### The Suit Reserve: How a Map Item Becomes a Level Power-Up (PRG008 / PRG030)
+
+Three sites, all verified 2026-09-12, and together they are the whole of it —
+**the inventory panel is already an "equip" screen**, and nothing more elaborate
+exists behind it:
+
+| What | CPU | File | Bytes | Meaning |
+|---|---|---|---|---|
+| Equip | $A608 | 0x34618 | `9D 46 07` | `STA World_Map_Power,X` — `Inv_UseItem_Powerup`'s only lasting effect |
+| Level entry | $A24D | 0x1025D | `BD 46 07 85 ED` | `LDA World_Map_Power,X / STA Player_Suit` in `Level_Initialize` |
+| Level exit | $8F38 | 0x3CF48 | `A5 ED 9D 46 07` | `LDA Player_Suit / STA World_Map_Power,X`, only when `Level_ExitToMap` |
+
+`World_Map_Power` is `$0746`/`$0747` (per player) — the **map-side reserve**.
+`Player_Suit` is `$00ED` — the **in-level current suit**. `Map_Power_Disp`
+(`$03F3`) is display only, re-seeded from the reserve on map load.
+
+Two consequences worth knowing before patching anything here:
+
+- **Death costs the suit through the exit copy, not through a death routine.**
+  `Player_Die` sets `Player_QueueSuit = 1`, which zeroes `Player_Suit`, and the
+  zero is then written back to the reserve by the site above. NOPing the three
+  bytes of the `STA` at 0x3CF48 makes the map suit sticky across a death.
+- **Cloud (7) and P-Wing (8) are special-cased inside the handler.** Cloud skips
+  the `STA World_Map_Power,X` entirely; P-Wing writes 3 (Leaf). Any scheme that
+  treats "the equipped item" as a plain item ID has to account for both.
 
 ### The Inventory Is a Compacted List (PRG026)
 
@@ -1826,7 +1915,9 @@ file `0x3437D` with `LDY #<offset>; NOP`. The `LDA $7D80,Y / BEQ` prologue is pr
 so empty slots still skip; non-empty slots fetch from the chosen row.
 
 **Hilite (cursor-selected slot)** uses a separate routine `Inv_Display_Hilite` at CPU
-**$A86B** (file **0x3487B**) with its own table `InvItem_Hilite_Layout` at CPU **$A84C**
+**$A868** (file **0x34878**, verified bytes `A0 C8 A5 DA F0 08` = `LDY #$C8 /
+LDA Map_UseItem / BEQ`; the previously documented $A86B was three bytes into it)
+with its own table `InvItem_Hilite_Layout` at CPU **$A84C**
 (file **0x3485C**) — 14 rows × 2 bytes (left/right CHR pattern). The routine loads the
 hovered slot's item ID via `LDX $7D80,Y` at CPU $A88E (file 0x3489E) then computes the
 2-byte-stride index with `TXA; ASL A; TAX` at CPU $A899 (file **0x348A9** = `8A 0A AA`).
@@ -1859,6 +1950,76 @@ item ID, RAM `$0669`) three times:
 - `0x05507` `BC 69 06` → `A0 <id> EA` (`LDY #<id>; NOP`) — for Anchor: `A0 0A EA`.
 - `0x0558A` `BD 69 06` → `A9 <id> EA` (`LDA #<id>; NOP`) — for Anchor: `A9 0A EA`.
 - Leave `0x0556A` alone so the player still receives the real item.
+
+#### Which item a house gives: `THouse_Treasure` and two adjacent tables (PRG029)
+
+A Toad House's reward is selected by **its own object-pointer high byte**, not by
+its tileset or position: `PRG030_893F` intercepts tileset 7 and reinterprets the
+entry's object pointer, low byte → `THouse_ID`, **high byte → `THouse_Treasure`**
+(`$03EB`). So a house's "level pointer" *is* its reward selector.
+
+`ToadHouse_ChestPressB` (PRG029, CPU **$D16B**) resolves it. The bytes at file
+**0x3B1AB** onward, read from the ROM 2026-09-12 (PRG029 maps file = CPU +
+`0x2A010`):
+
+```
+AE EB 03   LDX THouse_Treasure
+CA         DEX                    ; X = THouse_Treasure - 1
+E0 05      CPX #$05
+30 0E      BMI +14                ; X < 5 -> straight to the Item2Inventory load
+; --- X >= 5 only: a random draw within a 3-wide window ---
+AD 82 07   LDA RandomN
+29 0F      AND #$0F
+A8         TAY
+B9 54 D1   LDA ToadHouse_RandomItem,Y   ; 0, 1 or 2
+18 7D 4A D1  CLC / ADC ToadHouse_ItemOff,X   ; + the window base
+AA         TAX
+BD 3B D1   LDA ToadHouse_Item2Inventory,X
+AA E8      TAX / INX              ; 0 means "no box opened"
+60         RTS
+```
+
+**The three tables are contiguous, and their exact lengths matter:**
+
+| Table | CPU | File | Length | Vanilla |
+|---|---|---|---|---|
+| `ToadHouse_Item2Inventory` | $D13B | 0x3B14B | **15** | `0C 08 04 05 06 04 05 06 01 02 03 04 02 03 05` |
+| `ToadHouse_ItemOff` | $D14A | 0x3B15A | 10 | `02 03 0A 0A 0A 05 08 0B 0E 11` |
+| `ToadHouse_RandomItem` | $D154 | 0x3B164 | 16 | `00 01 02` ×5 + `00` |
+
+`$D14A − $D13B = 15` is the boundary check — a writer that treats
+`Item2Inventory` as longer than 15 bytes lands in `ItemOff`. **That is a real bug
+this project shipped**: `items.rs` wrote 21 bytes here until 2.0.1, on a "7
+houses × 3 items" misreading of the first table.
+
+`ItemOff[0..4]` are dead in vanilla — the `BMI` at 0x3B1B1 takes a direct index
+for `X < 5`, so the first byte ever read is **`ItemOff[5]`** (`$05`, the "random
+super suit" window: indices 5-7 = Frog / Tanooki / Hammer). `ItemOff[6]` (`$08`)
+is the basic-item window (indices 8-10 = Mushroom / Flower / Leaf) and is the one
+most houses use. Index arithmetic stays inside the 15-entry table as long as the
+item pool caps at `0x0C`: the draw adds 0-2, so `0x0C + 2 = 14`.
+
+**There are 22 Toad Houses, not 7**, and they are identified in the world
+pointer tables by `lay = $AD60` with `obj_lo = $00`. Census by treasure type
+(from the pointer tables, 2026-09-12):
+
+| Type | X | Reads | Count | Worlds |
+|---|---|---|---|---|
+| 3 | 2 | direct — Frog | 2 | W2, W3 |
+| 4 | 3 | direct — Tanooki | 2 | W4, W5 |
+| 5 | 4 | direct — Hammer | 1 | W6 |
+| 6 | 5 | `ItemOff[5]` — random suit | 2 | W7 ×2 |
+| 7 | 6 | `ItemOff[6]` — random basic | 10 | W1-W7 |
+| 8 | 7 | `ItemOff[7]` | 3 | W3 ×3 |
+| 9 | 8 | `ItemOff[8]` | 2 | W4, W5 |
+
+Types 1 (whistle) and 2 (P-Wing) exist in `Item2Inventory` but no house carries
+them in its pointer — they are set at runtime (`prg001.asm:2791` forces
+`THouse_Treasure = 1` for the 1-3 whistle house).
+
+**One item per visit.** Three chest tiles are drawn (`ToadHouse_Box_X`) but all
+three share the single `THouse_Treasure`, and opening any of them sets
+`Map_ReturnStatus = 0` and `INC Level_ExitToMap`.
 
 ### Princess Letter Cutscene Item (PRG027)
 
@@ -1953,6 +2114,39 @@ leaf ? block to beat the level (flying needed).
 | 0x04 | Frog Mario |
 | 0x05 | Tanooki Mario |
 | 0x06 | Hammer Mario |
+
+The suit byte is `Player_Suit` (`$00ED`); the map-side reserve it is loaded from
+on level entry is `World_Map_Power` (`$0746`/`$0747`) — see **The Suit Reserve**
+above.
+
+#### `PowerUp_Ability` — the engine's own per-suit capability table
+
+`PowerUp_Ability` at CPU **$C3E0** (file **0x003F0**, PRG000), 7 bytes indexed by
+`Player_Suit`, verified 2026-09-12:
+
+```
+suit:  0     1     2     3     4     5     6
+      $00   $00   $00   $01   $02   $01   $02
+      small super fire  racc  frog  tanu  hammer
+```
+
+Bit 0 is **can fly**; bit 1 is the Frog/Hammer no-slide behaviour. So a reusable
+"can this player fly" test is 7 bytes and needs no new state:
+
+```
+LDY Player_Suit      ; A4 ED
+LDA PowerUp_Ability,Y ; B9 E0 C3
+AND #$01             ; 29 01
+```
+
+Two things this makes explicit: the **Hammer suit cannot fly** (`$02`, bit 0
+clear), and only Raccoon and Tanooki can. PRG000 must be mapped at `$C000`, so
+this is usable in-level but not from map-side code.
+
+Flight itself gates on *both* the suit and a full P-meter: `Player_Power`
+(`$03DD`) at `$7F` with `Player_FlyTime` (`$056E`) zero starts flight, and on the
+ground the ability bit above is re-tested and clears `FlyTime` if unset. A P-Wing
+sets `Player_FlyTime = $FF` (unlimited).
 
 ---
 
