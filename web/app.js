@@ -593,23 +593,32 @@ generateBtn.addEventListener("click", async () => {
 // as applyFlagKey. No persistent "selected" state; once you tweak an option the
 // settings simply no longer match any single preset.
 
-// Sections, in the order they are shown. A preset's `mode` says which section
-// it belongs to — the same "standard" / "maze" split the schema uses to mark an
-// option inert in the other mode.
-//
-// **Both sections are always rendered, rather than only the current mode's.**
-// Hiding the maze four until World Maze is already ticked would make the mode a
-// prerequisite for discovering the presets that turn it on — and the four
-// labels repeat the standard ones (`Recommended`, `Challenging`, ...), so a
-// heading is doing real work here and not just decoration.
-const PRESET_SECTIONS = [
-	{ mode: "standard", label: "Standard" },
-	{ mode: "maze", label: "World Maze" },
-];
-
 function renderPresetPills() {
+	// Sections, in the order they are shown. A preset's `mode` says which one
+	// it belongs to — the same "standard" / "maze" split the schema uses to
+	// mark an option inert in the other mode.
+	//
+	// **Both sections are always rendered, rather than only the current
+	// mode's.** Hiding the maze four until World Maze is already ticked would
+	// make the mode a prerequisite for discovering the presets that turn it on
+	// — and the four labels repeat the standard ones (`Recommended`,
+	// `Challenging`, ...), so a heading is doing real work here.
+	//
+	// **Declared in here, not at module scope, and that is load-bearing.**
+	// This function is *called* from the init run at the top of the file, far
+	// above this point in the source. A module-scope `const` is not hoisted,
+	// so the call would hit its temporal dead zone and throw — and because the
+	// throw aborts module evaluation, every listener wired below the call site
+	// silently never attaches, the ROM file input included. It looked like the
+	// app had stopped accepting ROMs. `node --check` cannot see it; only
+	// running the page can.
+	const sections = [
+		{ mode: "standard", label: "Standard" },
+		{ mode: "maze", label: "World Maze" },
+	];
+
 	presetPills.replaceChildren();
-	for (const section of PRESET_SECTIONS) {
+	for (const section of sections) {
 		const inSection = PRESETS.filter(p => p.mode === section.mode);
 		if (!inSection.length) continue;
 
