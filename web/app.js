@@ -612,9 +612,12 @@ function renderPresetPills() {
 	// silently never attaches, the ROM file input included. It looked like the
 	// app had stopped accepting ROMs. `node --check` cannot see it; only
 	// running the page can.
+	// World Maze first, matching `GROUPS` in options.js, where the maze is also
+	// the first fieldset: the mode is 2.0's headline, and a player who came for
+	// it should not have to scroll past the standard slate to find it.
 	const sections = [
-		{ mode: "standard", label: "Standard" },
 		{ mode: "maze", label: "World Maze" },
+		{ mode: "standard", label: "Standard" },
 	];
 
 	presetPills.replaceChildren();
