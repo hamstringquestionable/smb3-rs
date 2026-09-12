@@ -472,8 +472,9 @@ struct Cli {
     /// World maze: how much the map tells you about which fortress opens which
     /// lock — off, some, or full (default: some). `some` gives each fortress a
     /// design saying whether its lock is local, elsewhere, or in World 8, and
-    /// tints a lock whose key is in another world; `full` also numbers that lock
-    /// with the world to go to. Ignored outside `--world-maze`.
+    /// tints a lock whose key is in another world; `full` keeps the designs and
+    /// stamps that lock with the world number *instead* of the tint. Ignored
+    /// outside `--world-maze`.
     #[arg(long, default_value = "some", value_parser = parse_hints)]
     hints: HintMode,
 
