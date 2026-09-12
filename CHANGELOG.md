@@ -9,6 +9,28 @@ deploys.
 
 ## [Unreleased]
 
+## [2.0.1] - 2026-09-12
+
+A patch release for two ROM-write bugs found while researching a future mode.
+Neither was player-visible, so nothing that worked before behaves differently —
+but both wrote outside the data they meant to. Seeds are not comparable with
+2.0.0's: the toad-house fix draws six fewer random numbers, which shifts every
+roll after it.
+
+### Fixed
+
+- **Toad-house item randomization no longer writes past its table.** It wrote 21
+  bytes over the 15-byte `ToadHouse_Item2Inventory`, overwriting the start of
+  `ToadHouse_ItemOff` — the table of base indices the engine adds to a random
+  draw. The clobbered byte the game actually reads belongs to the two World 7
+  "random super suit" houses, and because the item table is itself randomized
+  the result stayed a plausible random item, which is why it was never noticed.
+- **The mystery-anchor patch no longer writes into the sound engine.** Its
+  trampoline ended with `STX $07F5`, commented as a fix for power-up animation
+  state; `$07F5` is `Music2_Hold`, which holds a song for the sound engine to
+  restart. The store did no work — the item substitution travels in `X` — so it
+  is gone, and the routine is 3 bytes smaller.
+
 ## [2.0.0] - 2026-09-11
 
 The major number is for **World Maze**: a mode in which the eight world maps

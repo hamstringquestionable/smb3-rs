@@ -149,7 +149,7 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
     ),
     fs(0x33FF0, 32, &["title_screen"], "title menu B-to-mute toggle (32 reserved, 22 used)"),
     // PRG026 (file 0x34010, CPU $A000–$BFFF)
-    fs(0x35572, 13, &["mystery_anchor"], "item redirect trampoline"),
+    fs(0x35572, 13, &["mystery_anchor"], "item redirect trampoline (13 reserved, 10 used)"),
     fs(0x3557F, 50, &["hammer_breaks_tiles"], "hammer_locks: tile check subroutine (32 used)"),
     fs(
         0x3569D,
@@ -729,7 +729,7 @@ pub(crate) const FS_CANOE_BACKUP: usize = 0x17D00; // 66 bytes
 pub(crate) const FS_MARCH_VETO: usize = 0x17D70; // 107 bytes (CPU $BD60)
 
 // PRG026 (cont.)
-pub(crate) const FS_MYSTERY_ANCHOR: usize = 0x35572; // 13 bytes
+pub(crate) const FS_MYSTERY_ANCHOR: usize = 0x35572; // 13 reserved, 10 used
 
 pub(crate) const FS_HAMMER_LOCKS: usize = 0x3557F; // 50 bytes
 
