@@ -67,6 +67,9 @@ build a different ROM.
 
 ### Changed
 
+- **A Discord invite sits beside the GitHub link**, and the "early access — you
+  may encounter bugs" line it replaces is gone.
+
 - **World Maze: a game over sends you back to World 1.** Vanilla drops you at
   the start of whatever world you ran out of lives in, which in a maze can be a
   world you were pad-hopped into and whose only way onward is a lock you have no
@@ -182,6 +185,12 @@ build a different ROM.
   to nearly three quarters. Maze maps will feel noticeably less self-contained.
 
 ### Fixed
+
+- **The Title Hash panel no longer appears empty.** It showed its heading and
+  the mute hint from the moment the page loaded, before there was any ROM or
+  seed to draw icons from. Two other things meant to wait their turn were doing
+  the same: the randomizer-version picker and the ending sign-off at the bottom
+  of the page.
 
 - **World Maze: a seed that could not be finished can no longer be handed out.**
   Nothing was known to produce one, but nothing checked either — the game worked
