@@ -22,6 +22,15 @@ build a different ROM.
 
 ### Added
 
+- **The presets come in two sections, Standard and World Maze.** Standard holds
+  Recommended, Beginner Friendly, Vanilla Randomizer, Challenging, Max Chaos and
+  a new **W8 Sprint** — one world, straight into Dark Land, with a hammer to open
+  the way. World Maze holds a Recommended, Beginner Friendly, Challenging and
+  Max Chaos of its own, tuned for the mode: Beginner gets full lock hints,
+  Challenging gets none, and the two hardest open Bowser's castle from the start
+  rather than asking for wands. League Season 7 is retired now the season is
+  over, and Jet goes with it — W8 Sprint is the short game now.
+
 - **A World Maze tracker page.** Linked from the World Maze section, and a
   paper aid rather than anything the ROM knows about: eight world slots, the
   fortresses and locks in each, and the warp pads between them, which you link
