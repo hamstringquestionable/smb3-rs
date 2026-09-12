@@ -799,11 +799,37 @@ input[type="radio"] {
     background: rgba(228, 68, 52, 0.08);
 }
 
+/* The panel stacks its sections; each section's pills wrap inside their own
+   row, so a two-pill section can't share a line with the next heading. */
 .preset-pills {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    margin-bottom: 0.5rem;
+}
+
+.preset-row {
     display: flex;
     flex-wrap: wrap;
     gap: 0.5rem;
-    margin-bottom: 0.5rem;
+}
+
+.preset-section-label {
+    color: #6a6a85;
+    font-size: 0.65rem;
+    font-weight: bold;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+/* The first heading sits directly under the panel title, which already has
+   space beneath it. */
+.preset-section-label + .preset-row {
+    margin-bottom: 0.15rem;
+}
+
+.preset-row + .preset-section-label {
+    margin-top: 0.35rem;
 }
 
 .preset-pill {

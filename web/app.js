@@ -593,23 +593,54 @@ generateBtn.addEventListener("click", async () => {
 // as applyFlagKey. No persistent "selected" state; once you tweak an option the
 // settings simply no longer match any single preset.
 
+// Sections, in the order they are shown. A preset's `mode` says which section
+// it belongs to — the same "standard" / "maze" split the schema uses to mark an
+// option inert in the other mode.
+//
+// **Both sections are always rendered, rather than only the current mode's.**
+// Hiding the maze four until World Maze is already ticked would make the mode a
+// prerequisite for discovering the presets that turn it on — and the four
+// labels repeat the standard ones (`Recommended`, `Challenging`, ...), so a
+// heading is doing real work here and not just decoration.
+const PRESET_SECTIONS = [
+	{ mode: "standard", label: "Standard" },
+	{ mode: "maze", label: "World Maze" },
+];
+
 function renderPresetPills() {
 	presetPills.replaceChildren();
-	for (const preset of PRESETS) {
-		const btn = document.createElement("button");
-		btn.type = "button";
-		btn.className = "preset-pill";
-		btn.textContent = preset.label;
-		if (preset.tip) btn.title = preset.tip;
-		btn.addEventListener("click", () => {
-			applyPreset(preset.overrides);
-			updateFlagKey();
-			updateChangesSummary();
-			updateSkipValidationWarning();
-			validateLoadedRom();
-			showStatus(`Loaded preset: ${preset.label}`, "success");
-		});
-		presetPills.appendChild(btn);
+	for (const section of PRESET_SECTIONS) {
+		const inSection = PRESETS.filter(p => p.mode === section.mode);
+		if (!inSection.length) continue;
+
+		const heading = document.createElement("div");
+		heading.className = "preset-section-label";
+		heading.textContent = section.label;
+		presetPills.appendChild(heading);
+
+		const row = document.createElement("div");
+		row.className = "preset-row";
+		for (const preset of inSection) {
+			const btn = document.createElement("button");
+			btn.type = "button";
+			btn.className = "preset-pill";
+			btn.textContent = preset.label;
+			if (preset.tip) btn.title = preset.tip;
+			btn.addEventListener("click", () => {
+				applyPreset(preset.overrides);
+				updateFlagKey();
+				updateChangesSummary();
+				updateSkipValidationWarning();
+				validateLoadedRom();
+				// The label alone is ambiguous now that both sections carry a
+				// "Recommended" and a "Challenging".
+				const what =
+					preset.mode === "maze" ? `${preset.label} (World Maze)` : preset.label;
+				showStatus(`Loaded preset: ${what}`, "success");
+			});
+			row.appendChild(btn);
+		}
+		presetPills.appendChild(row);
 	}
 }
 
