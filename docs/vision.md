@@ -75,7 +75,7 @@ What SMB3-RS deliberately is not, and does not intend to become:
 
 ## Released, and what that changed
 
-SMB3-RS **released on 2026-07-27** and is on 1.3.0 as of 2026-09-05. The two
+SMB3-RS **released on 2026-07-27** and is on 2.0.0 as of 2026-09-11. The two
 bars 1.0 was defined against — feature parity with **SMB3R** and enough
 community confidence that seeds are beatable and free of game-breaking bugs —
 were the right bars, and clearing them changed the rules in one specific way:

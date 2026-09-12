@@ -9,6 +9,17 @@ deploys.
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-09-11
+
+The major number is for **World Maze**: a mode in which the eight world maps
+stop being a sequence and become the rooms of one Metroidvania. Everything
+else here is an ordinary release's worth of work alongside it.
+
+Old flag keys still decode — the key version is unchanged at 29, and
+`maze_wands` only spends key space when the mode is on. Seeds are not
+comparable with 1.3.0's, as across any version: the same seed and flags now
+build a different ROM.
+
 ### Added
 
 - **A World Maze tracker page.** Linked from the World Maze section, and a
