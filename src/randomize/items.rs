@@ -59,9 +59,16 @@ const HAMMER_BROS_ITEMS_LEN: usize = 72;
 const PRINCESS_REWARDS_OFFSET: usize = 0x360DE;
 const PRINCESS_REWARDS_LEN: usize = 7;
 
-// Toad House chests: 7 houses x 3 items = 21 bytes.
+// `ToadHouse_Item2Inventory` (PRG029, CPU $D13B): treasure-type index -> item
+// ID. **Exactly 15 bytes**, and the length matters — `ToadHouse_ItemOff`
+// begins at 0x3B15A, immediately after it, and the chest routine indexes both
+// (`ADC $D14A,X` at file 0x3B1BD, `LDA $D13B,X` at 0x3B1C1). Writing 21 here
+// (which this did until 2.0.1, on a "7 houses x 3 items" misreading — there
+// are 22 houses and the table is not per-house) clobbered `ItemOff[0..5]`,
+// including `ItemOff[5]`, the base index the two World-7 "random super suit"
+// houses draw from.
 const TOAD_HOUSE_ITEMS_OFFSET: usize = 0x3B14B;
-const TOAD_HOUSE_ITEMS_LEN: usize = 21;
+const TOAD_HOUSE_ITEMS_LEN: usize = 15;
 
 // In-level treasure chest item offsets (D6 OBJ_TREASURESET Y-byte).
 // The three 8-Hnd entries share a single layout but are given independent
@@ -80,7 +87,7 @@ const TREASURE_CHEST_OFFSETS: &[usize] = &[
 // Known warp whistle byte locations across all item tables.
 const WHISTLE_OFFSETS: &[usize] = &[
     0x1619D, // Hammer Bros W2 obj[4]
-    0x3B14B, // Toad House 0 slot 0
+    0x3B14B, // ToadHouse_Item2Inventory[0] — treasure type 1 (the 1-3 whistle house)
     0x0D36A, // In-level treasure D6 Y-byte
 ];
 
@@ -173,6 +180,42 @@ const MYSTERY_ANCHOR_POOL: &[u8] = &[
     0x08, // P-Wing
 ];
 
+/// CPU address [`FS_MYSTERY_ANCHOR`] is mapped to — PRG026 sits at `$A000`
+/// while the inventory panel is open, which is the only time this runs.
+const MYSTERY_ANCHOR_CPU: u16 = 0xB562;
+
+/// The `LDX Inventory_Items,Y` inside `Inv_UseItem_Powerup` that the hook
+/// displaces (CPU `$A5C8`).
+const POWERUP_INV_READ: usize = 0x345D8;
+
+/// The hook written over [`POWERUP_INV_READ`]: `JSR` to the trampoline, exactly
+/// as wide as the three-byte instruction it replaces.
+fn mystery_anchor_hook() -> [u8; 3] {
+    [0x20, MYSTERY_ANCHOR_CPU as u8, (MYSTERY_ANCHOR_CPU >> 8) as u8]
+}
+
+/// The trampoline body: the displaced `LDX $7D80,Y`, then swap the item ID in
+/// `X` for `target` if the player used an anchor.
+///
+/// `X` is the whole interface — `Inv_UseItem_Powerup` reads it, and the
+/// substitution takes effect purely because `LDX #target` loaded it. The
+/// routine used to end with `STX $07F5`, described in a comment as a "fix for
+/// the PRG031 animation state machine"; `$07F5` is `Music2_Hold`, the sound
+/// engine's slot for a Set-2 song to restart after a Set-1 song finishes
+/// (`prg031.asm:405/530/554`), so that store did no work and wrote into audio
+/// state. Removed in 2.0.1, which is why the branch is `+2` and not `+5`.
+fn mystery_anchor_trampoline(target: u8) -> [u8; 10] {
+    #[rustfmt::skip]
+    let bytes = [
+        0xBE, 0x80, 0x7D,   // LDX Inventory_Items,Y  — displaced instruction
+        0xE0, 0x0A,          // CPX #$0A               — anchor?
+        0xD0, 0x02,          // BNE +2                 — not an anchor: keep X, exit
+        0xA2, target,        // LDX #<target>          — substitute the mystery powerup
+        0x60,                // RTS
+    ];
+    bytes
+}
+
 /// Patch the item-use dispatch so anchors secretly function as a random
 /// powerup chosen at build time. The anchor sprite stays unchanged in the
 /// inventory — only the effect changes when the player uses it.
@@ -180,7 +223,7 @@ const MYSTERY_ANCHOR_POOL: &[u8] = &[
 /// Three patches in PRG026:
 /// 1. DynJump table: redirect anchor entry to Inv_UseItem_Powerup
 /// 2. Hook inside powerup handler: replace LDX $7D80,Y with JSR to trampoline
-/// 3. Trampoline: displaced LDX + anchor check + item substitution + $07F5 fix
+/// 3. Trampoline: displaced LDX + anchor check + item substitution
 pub fn write_mystery_anchor<R: Rng>(rom: &mut Rom, rng: &mut R) {
     let target = *MYSTERY_ANCHOR_POOL.choose(rng).unwrap();
 
@@ -191,27 +234,11 @@ pub fn write_mystery_anchor<R: Rng>(rom: &mut Rom, rng: &mut R) {
     rom.write_range(ANCHOR_DISPATCH_ENTRY, &[0xB6, 0xA5]); // $A5B6 little-endian
 
     // Patch 2: Hook inside Inv_UseItem_Powerup. At file 0x345D8 (CPU $A5C8),
-    // replace `LDX $7D80,Y` (BE 80 7D) with `JSR $B562` (20 62 B5).
-    const POWERUP_INV_READ: usize = 0x345D8;
-    rom.write_range(POWERUP_INV_READ, &[0x20, 0x62, 0xB5]); // JSR $B562
+    // replace `LDX $7D80,Y` (BE 80 7D) with `JSR MYSTERY_ANCHOR_CPU`.
+    rom.write_range(POWERUP_INV_READ, &mystery_anchor_hook());
 
-    // Patch 3: Trampoline at FS_MYSTERY_ANCHOR (file 0x35572, CPU $B562):
-    //   BE 80 7D     LDX $7D80,Y   — displaced instruction
-    //   E0 0A        CPX #$0A      — anchor?
-    //   D0 05        BNE +5        — skip if not anchor
-    //   A2 xx        LDX #<target> — load mystery powerup
-    //   8E F5 07     STX $07F5     — fix $07F5 for PRG031 animation state machine
-    //   60           RTS
-    #[rustfmt::skip]
-    let trampoline: [u8; 13] = [
-        0xBE, 0x80, 0x7D,   // LDX $7D80,Y
-        0xE0, 0x0A,          // CPX #$0A
-        0xD0, 0x05,          // BNE +5
-        0xA2, target,        // LDX #<target>
-        0x8E, 0xF5, 0x07,   // STX $07F5
-        0x60,                // RTS
-    ];
-    rom.write_range(FS_MYSTERY_ANCHOR, &trampoline);
+    // Patch 3: Trampoline at FS_MYSTERY_ANCHOR (file 0x35572, CPU $B562).
+    rom.write_range(FS_MYSTERY_ANCHOR, &mystery_anchor_trampoline(target));
 }
 
 #[cfg(test)]
@@ -399,16 +426,32 @@ mod tests {
         assert_eq!(rom.read_range(FS_MYSTERY_ANCHOR, 3), &[0xBE, 0x80, 0x7D]);
         // CPX #$0A
         assert_eq!(rom.read_range(FS_MYSTERY_ANCHOR + 3, 2), &[0xE0, 0x0A]);
-        // BNE +5
-        assert_eq!(rom.read_range(FS_MYSTERY_ANCHOR + 5, 2), &[0xD0, 0x05]);
+        // BNE +2 — clears the two-byte LDX #imm and lands on the RTS.
+        assert_eq!(rom.read_range(FS_MYSTERY_ANCHOR + 5, 2), &[0xD0, 0x02]);
         // LDX #<target>
         assert_eq!(rom.read_byte(FS_MYSTERY_ANCHOR + 7), 0xA2);
         let target = rom.read_byte(FS_MYSTERY_ANCHOR + 8);
         assert!(MYSTERY_ANCHOR_POOL.contains(&target), "Target 0x{target:02X} not in mystery pool");
-        // STX $07F5
-        assert_eq!(rom.read_range(FS_MYSTERY_ANCHOR + 9, 3), &[0x8E, 0xF5, 0x07]);
         // RTS
-        assert_eq!(rom.read_byte(FS_MYSTERY_ANCHOR + 12), 0x60);
+        assert_eq!(rom.read_byte(FS_MYSTERY_ANCHOR + 9), 0x60);
+    }
+
+    /// The retired `STX $07F5` must not come back: `$07F5` is `Music2_Hold`,
+    /// not power-up state, and the substitution never needed it.
+    #[test]
+    fn test_mystery_anchor_does_not_touch_the_sound_engine() {
+        let mut rom = make_test_rom();
+        let before = rom.read_range(FS_MYSTERY_ANCHOR + 10, 3).to_vec();
+        let mut rng = ChaCha8Rng::seed_from_u64(42);
+        write_mystery_anchor(&mut rom, &mut rng);
+
+        let written = rom.read_range(FS_MYSTERY_ANCHOR, 13);
+        assert!(
+            !written.windows(3).any(|w| w == [0x8E, 0xF5, 0x07]),
+            "trampoline writes to Music2_Hold ($07F5)"
+        );
+        // 10 used of 13 reserved: the tail of the row is left alone.
+        assert_eq!(&written[10..], &before[..], "trampoline overran 10 bytes");
     }
 
     #[test]
@@ -450,8 +493,8 @@ mod tests {
         write_mystery_anchor(&mut rom2, &mut rng2);
 
         assert_eq!(
-            rom1.read_range(FS_MYSTERY_ANCHOR, 13),
-            rom2.read_range(FS_MYSTERY_ANCHOR, 13),
+            rom1.read_range(FS_MYSTERY_ANCHOR, 10),
+            rom2.read_range(FS_MYSTERY_ANCHOR, 10),
             "Same seed should produce identical trampoline"
         );
     }
@@ -471,5 +514,32 @@ mod tests {
         assert_eq!(rom.read_byte(HAMMER_BROS_ITEMS_OFFSET + 2), ANCHOR);
         assert_eq!(rom.read_byte(PRINCESS_REWARDS_OFFSET), ANCHOR);
         assert_eq!(rom.read_byte(TOAD_HOUSE_ITEMS_OFFSET + 1), ANCHOR);
+    }
+}
+
+#[cfg(test)]
+mod asm_checks {
+    //! Decode the trampoline and check the structural properties no assembler
+    //! was around to enforce. See [`crate::randomize::rom_data::asm`].
+    //!
+    //! This routine had its tail removed in 2.0.1, which moved a relative
+    //! branch — the one edit class that "still assembles" while landing
+    //! mid-instruction.
+    use super::*;
+    use crate::randomize::rom_data::asm;
+
+    /// The vanilla instruction the hook displaces: `LDX Inventory_Items,Y`.
+    const VANILLA_INV_READ: [u8; 3] = [0xBE, 0x80, 0x7D];
+
+    #[test]
+    fn mystery_anchor_trampoline_is_well_formed() {
+        for &target in MYSTERY_ANCHOR_POOL {
+            let hook = mystery_anchor_hook();
+            asm::check(&mystery_anchor_trampoline(target))
+                .allocation(FS_MYSTERY_ANCHOR)
+                .origin(MYSTERY_ANCHOR_CPU)
+                .hook(&VANILLA_INV_READ, 0, &hook)
+                .assert_ok();
+        }
     }
 }
