@@ -4,6 +4,22 @@
     padding: 0;
 }
 
+/* The `hidden` attribute only gets `display: none` from the UA stylesheet, and
+   an author rule beats the UA stylesheet whatever its specificity. So ANY rule
+   here that sets `display` on an element also carrying `hidden` silently
+   cancels it — `el.hidden = true` runs, the attribute lands, and the element
+   stays on screen with nothing in it.
+
+   Three elements were in that state: the title-hash row (`display: flex`), the
+   version picker (`flex`) and the "The End" canvas (`block`) — all three meant
+   to stay hidden until a ROM is loaded, all three visible from first paint.
+   Rather than unpick each rule, `hidden` is made to mean hidden. `!important`
+   is what makes that true against the author rules already here, and against
+   the next one somebody writes. */
+[hidden] {
+    display: none !important;
+}
+
 body {
     font-family: "Courier New", Courier, monospace;
     background: #0c0c1e;
