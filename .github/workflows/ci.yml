@@ -187,9 +187,34 @@ jobs:
 
       - name: Stage beta/next into _site/beta/
         run: |
+          set -euo pipefail
           mkdir -p _site/beta
           cp -r beta-src/web/. _site/beta/
           cp -r beta-src/pkg _site/beta/pkg
+
+          # Flag-key format version for the /beta/ build, so the seed bot can
+          # reject a key /beta/ would not accept before it is posted.
+          #
+          # Read from beta-src, NOT main-src. /beta/ runs beta/next's code, and
+          # in the window where the two versions disagree, advertising main's
+          # number here would make the bot reject every valid beta key.
+          #
+          # No `versions` array: the app never reads this file. `deployBase()`
+          # (web/app.js) strips a trailing `beta/` and fetches the ROOT
+          # manifest for its version picker, so this exists only for the bot's
+          # comparison. A `current` here would be a second answer to a question
+          # the root file already answers.
+          FKV=$(sed -n 's/.*FLAG_KEY_VERSION: u8 = \([0-9]*\).*/\1/p' \
+                  beta-src/src/randomizer/flag_key.rs | head -1)
+          if [ -z "$FKV" ]; then
+            echo "::error::Could not read FLAG_KEY_VERSION from beta-src/src/randomizer/flag_key.rs."
+            echo "::error::If the constant was renamed or moved, update this step to match."
+            exit 1
+          fi
+          echo "Beta flag-key format version: $FKV"
+
+          printf '{"flagKeyVersion":%s}\n' "$FKV" > _site/beta/versions.json
+          cat _site/beta/versions.json
 
       # Freeze each main version at /v/<version>/ and carry the whole archive
       # forward into every deploy. Only the current version is ever built (above);
