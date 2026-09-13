@@ -39,6 +39,7 @@ const OPTIONS_JS: &str = "web/options.js";
 const MIN_SCHEMA_ENTRIES: usize = 40;
 const MIN_PRESETS: usize = 3;
 const MIN_CONSTANT_FIELDS: usize = 1;
+const MIN_ITEM_OPTIONS: usize = 10;
 
 fn options_js() -> String {
     fs::read_to_string(OPTIONS_JS)
@@ -496,4 +497,79 @@ fn mode_markings_are_coherent() {
 
     assert!(modes > 0, "no mode-specific entries parsed from {OPTIONS_JS} — parser drift");
     assert!(forced_count > 0, "no forced entries parsed from {OPTIONS_JS} — parser drift");
+}
+
+/// The starting-item ids offered by the web control.
+///
+/// `ITEM_OPTIONS` is a plain `const`, not an `export const`, so it needs its
+/// own opener rather than [`array_block`]; and its rows are
+/// `{ value: N, label: "…" }`, not `{ id: "…" }`, so [`entries`] does not fit
+/// either. Same vacuity rule as everything else here: the count is checked
+/// before the result is used.
+fn item_option_values() -> BTreeSet<u8> {
+    let src = options_js();
+    let head = "const ITEM_OPTIONS = [";
+    let start = src
+        .find(head)
+        .unwrap_or_else(|| panic!("{OPTIONS_JS}: no `{head}` — did the const get renamed?"))
+        + head.len();
+    let rest = &src[start..];
+    let end = rest
+        .find("\n];")
+        .unwrap_or_else(|| panic!("{OPTIONS_JS}: `ITEM_OPTIONS` has no closing `\\n];`"));
+    let block = &rest[..end];
+
+    let out: BTreeSet<u8> = block
+        .split("{ value: ")
+        .skip(1)
+        .map(|e| {
+            let digits: String = e.chars().take_while(|c| c.is_ascii_digit()).collect();
+            digits
+                .parse()
+                .unwrap_or_else(|_| panic!("{OPTIONS_JS}: ITEM_OPTIONS row has no numeric value"))
+        })
+        .collect();
+    assert!(
+        out.len() >= MIN_ITEM_OPTIONS,
+        "parsed only {} ITEM_OPTIONS rows from {OPTIONS_JS} — the parser has almost \
+         certainly stopped matching the file, not the list shrunk",
+        out.len(),
+    );
+    out
+}
+
+/// The web starting-item list must offer exactly Rust's `ITEMS`, plus 0.
+///
+/// This is the one list in `options.js` that the schema parity checks above do
+/// not reach — they compare `SCHEMA` ids and `PRESETS`, and the starting-item
+/// values ride inside a single `items` schema entry. So a value added to Rust
+/// and forgotten here is unreachable from the web app, and a value invented
+/// here is silently zeroed by `sanitize_item` on its way into the flag key.
+/// Both look like the option working right up until it doesn't.
+///
+/// Labels are deliberately **not** compared: Rust says "Random (No Suits)" for
+/// its CLI summaries, the web says "Random - No Suits". That divergence is
+/// intentional and this test is not the place to freeze it.
+#[test]
+fn item_options_match_rust_items() {
+    let web = item_option_values();
+
+    let mut rust: BTreeSet<u8> = smb3_rs::ITEMS.iter().map(|&(_, id, _)| id).collect();
+    // 0 is "no item in this slot". It is a real web choice with no `ITEMS` row,
+    // because it is the absence of an item rather than one of them.
+    rust.insert(0);
+
+    let missing: Vec<u8> = rust.difference(&web).copied().collect();
+    let extra: Vec<u8> = web.difference(&rust).copied().collect();
+
+    assert!(
+        missing.is_empty(),
+        "{OPTIONS_JS}: ITEM_OPTIONS is missing item ids {missing:?} that Rust's ITEMS offers — \
+         they are unreachable from the web app",
+    );
+    assert!(
+        extra.is_empty(),
+        "{OPTIONS_JS}: ITEM_OPTIONS offers item ids {extra:?} that Rust's ITEMS does not — \
+         sanitize_item will zero them on the way into the flag key",
+    );
 }

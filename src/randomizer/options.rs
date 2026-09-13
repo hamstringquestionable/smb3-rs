@@ -41,19 +41,6 @@ pub const ITEMS: &[(&str, u8, &str)] = &[
     ("random-no-suits", 0x11, "Random (No Suits)"),
 ];
 
-impl Options {
-    /// Whether whistles are kept out of the item pools.
-    ///
-    /// The maze forces this on even when the player left the flag off, because
-    /// it grants a permanent whistle of its own — see the long form at the
-    /// `items` call site in `randomizer::randomize_inner`. Read through this
-    /// rather than the raw field wherever "can a whistle be handed out" is the
-    /// question, so the two sites cannot drift apart.
-    pub fn whistles_removed(&self) -> bool {
-        self.remove_whistles || self.world_maze
-    }
-}
-
 /// Look up a starting-item ID by CLI name (case-insensitive, with aliases).
 pub fn item_id(name: &str) -> Option<u8> {
     let lower = name.to_lowercase();

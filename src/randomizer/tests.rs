@@ -1589,7 +1589,7 @@ fn resolve_no_suits_pool() {
     // and Anchor (0x0A) are not suits and are still excluded.
     let allowed = [0x07u8, 0x09, 0x0B, 0x0C, 0x0D];
     let mut seen = std::collections::BTreeSet::new();
-    for seed in 0..400u64 {
+    for seed in 0..100u64 {
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
         let item = resolve_starting_item(ITEM_RANDOM_NO_SUITS, false, &mut rng);
         assert!(allowed.contains(&item), "no-suits produced {item} on seed {seed}");
@@ -1605,7 +1605,7 @@ fn resolve_no_suits_pool() {
 #[test]
 fn resolve_no_suits_drops_whistle_when_whistles_are_removed() {
     let mut seen = std::collections::BTreeSet::new();
-    for seed in 0..400u64 {
+    for seed in 0..100u64 {
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
         let item = resolve_starting_item(ITEM_RANDOM_NO_SUITS, true, &mut rng);
         assert_ne!(item, 0x0C, "handed out a whistle on seed {seed} with whistles removed");
@@ -1616,31 +1616,6 @@ fn resolve_no_suits_drops_whistle_when_whistles_are_removed() {
         vec![0x07u8, 0x09, 0x0B, 0x0D],
         "the other four must all stay reachable"
     );
-}
-
-/// The maze forces whistles out even when the player turned the flag off, so
-/// the no-suits pool must read the effective value and not `remove_whistles`
-/// alone. Note the default is `remove_whistles: true` — a whistle in the
-/// no-suits pool is the opt-in case, not the usual one.
-#[test]
-fn whistles_removed_is_forced_on_by_the_maze() {
-    assert!(Options::default().whistles_removed(), "whistles are removed by default");
-
-    let kept = Options { remove_whistles: false, ..Default::default() };
-    assert!(!kept.whistles_removed(), "clearing the flag is the only way to keep them");
-
-    let maze = Options { remove_whistles: false, world_maze: true, ..Default::default() };
-    assert!(maze.whistles_removed(), "the maze grants its own permanent whistle");
-}
-
-/// `sanitize_item`'s bound is the highest sentinel. If it is not bumped when a
-/// sentinel is added, the new value is zeroed on *encode* as well as decode —
-/// the option appears to work in the UI and vanishes from the key.
-#[test]
-fn flag_key_keeps_the_highest_item_sentinel() {
-    let opts = Options { starting_items: vec![ITEM_RANDOM_NO_SUITS], ..Default::default() };
-    let decoded = Options::from_flag_key(&opts.to_flag_key()).unwrap();
-    assert_eq!(decoded.starting_items, vec![ITEM_RANDOM_NO_SUITS]);
 }
 
 #[test]

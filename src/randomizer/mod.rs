@@ -97,8 +97,14 @@ fn randomize_inner(
 ) {
     let mut rng = ChaCha8Rng::seed_from_u64(seed);
 
-    // Resolve random starting items up front (deterministic from seed)
-    let whistles_removed = options.whistles_removed();
+    // Resolve random starting items up front (deterministic from seed).
+    //
+    // `whistles_removed` is the *effective* value, not the raw flag: the maze
+    // forces whistles out of every item pool even when the player left the
+    // flag off, because it grants a permanent one of its own. The long form is
+    // at the `items` call site below, which is the other reader. Hoisted here
+    // because starting items resolve before that point.
+    let whistles_removed = options.remove_whistles || options.world_maze;
     let resolved_items: Vec<u8> = options
         .starting_items
         .iter()
