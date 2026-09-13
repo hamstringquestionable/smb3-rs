@@ -4,6 +4,7 @@
 *.nes
 *.ips
 !web/visual-patches/*.ips
+!assets/*.ips
 *.zip
 *.cht
 *.wch

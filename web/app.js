@@ -253,6 +253,10 @@ init()
 // randomize an invalid ROM without explicitly opting in.
 let romValid = false;
 
+// "rev1", or "prg0-converted" when the loaded ROM is a Rev 0 dump that will be
+// converted to Rev 1 during generation.
+let romRevision = "rev1";
+
 function getSkipValidation() {
 	return !!document.getElementById("opt-skip-rom-validation-on")?.checked;
 }
@@ -264,11 +268,23 @@ function validateLoadedRom() {
 		return;
 	}
 	try {
-		validate_rom(romBytes, getSkipValidation());
+		romRevision = validate_rom(romBytes, getSkipValidation());
 		romValid = true;
-		statusDiv.hidden = true;
+		if (romRevision === "prg0-converted") {
+			// The ROM they get back isn't the revision they handed over, so say
+			// so before they generate rather than after.
+			showStatus(
+				"This is the original (Rev 0 / PRG0) release. It will be converted to " +
+					"Rev 1 automatically — the patch you download includes that conversion, " +
+					"so apply it to this same ROM.",
+				"notice",
+			);
+		} else {
+			statusDiv.hidden = true;
+		}
 	} catch (err) {
 		romValid = false;
+		romRevision = "rev1";
 		showStatus(`${err.message ?? err}`, "error");
 	}
 	updateGenerateButton();
@@ -580,7 +596,11 @@ generateBtn.addEventListener("click", async () => {
 		}
 
 		const visualSuffix = visualLabel ? ` + visual: ${visualLabel}` : "";
-		showStatus(`Generated ${filename} (${result.length} bytes, seed: ${seed})${visualSuffix}`, "success");
+		const revisionSuffix = romRevision === "prg0-converted" ? " — Rev 0 converted to Rev 1" : "";
+		showStatus(
+			`Generated ${filename} (${result.length} bytes, seed: ${seed})${visualSuffix}${revisionSuffix}`,
+			"success",
+		);
 	} catch (err) {
 		showStatus(`Error: ${err}`, "error");
 	}

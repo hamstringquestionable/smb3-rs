@@ -9,6 +9,20 @@ deploys.
 
 ## [Unreleased]
 
+### Added
+
+- Rev 0 (PRG0) ROMs are accepted. They are converted to Rev 1 automatically
+  before randomizing, with a notice saying so; a patch generated from one
+  includes the conversion, so it applies to that same Rev 0 ROM and produces
+  the same result as the seed run on Rev 1.
+
+### Fixed
+
+- `--toad` and `--sprite-patch` were rejected with "not a recognized SMB3 (USA)
+  dump". They patched the raw bytes before validation, which moved the payload
+  CRC; they now go through the randomizer like the web app's visual patches do,
+  and are tagged in the write log so collisions are attributable.
+
 ## [2.0.1] - 2026-09-12
 
 A patch release for two ROM-write bugs found while researching a future mode.

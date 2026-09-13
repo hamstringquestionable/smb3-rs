@@ -741,6 +741,14 @@ input[type="radio"] {
     color: #9a9ab0;
 }
 
+/* Not an error: the ROM is fine and generation will work. Amber so it reads as
+   "something happened you should know about" rather than "this failed". */
+.status.notice {
+    background: rgba(232, 168, 56, 0.1);
+    color: #e8a838;
+    border: 1px solid rgba(232, 168, 56, 0.3);
+}
+
 /* Applied by showStatus() only when the message repeats verbatim, so the box
    visibly reacts instead of sitting there unchanged. */
 @keyframes status-flash {

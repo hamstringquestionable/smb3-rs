@@ -7,12 +7,21 @@ pub fn version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
 }
 
-/// Validate that `rom` is a recognized SMB3 (USA) (Rev 1) dump. Intended to be
-/// called from JS at upload time so the user sees errors immediately instead of
-/// after clicking Generate. `skip_validation` mirrors the user-facing flag.
+/// Validate that `rom` is a recognized SMB3 (USA) dump. Intended to be called
+/// from JS at upload time so the user sees errors immediately instead of after
+/// clicking Generate. `skip_validation` mirrors the user-facing flag.
+///
+/// Returns `"rev1"` for a Rev 1 dump, or `"prg0-converted"` for a Rev 0 one,
+/// which is accepted and converted to Rev 1 during generation. The app shows a
+/// notice for the latter, because the ROM the player gets back is not the
+/// revision they supplied.
 #[wasm_bindgen]
-pub fn validate_rom(rom: &[u8], skip_validation: bool) -> Result<(), JsError> {
-    crate::validate_rom_bytes(rom, skip_validation).map_err(|e| JsError::new(&e))
+pub fn validate_rom(rom: &[u8], skip_validation: bool) -> Result<String, JsError> {
+    match crate::validate_rom_bytes(rom, skip_validation) {
+        Ok(crate::RomRevision::Rev1) => Ok("rev1".to_string()),
+        Ok(crate::RomRevision::Prg0Converted) => Ok("prg0-converted".to_string()),
+        Err(e) => Err(JsError::new(&e)),
+    }
 }
 
 #[wasm_bindgen]
