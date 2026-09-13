@@ -192,18 +192,11 @@ jobs:
           cp -r beta-src/web/. _site/beta/
           cp -r beta-src/pkg _site/beta/pkg
 
-          # Flag-key format version for the /beta/ build, so the seed bot can
-          # reject a key /beta/ would not accept before it is posted.
-          #
-          # Read from beta-src, NOT main-src. /beta/ runs beta/next's code, and
-          # in the window where the two versions disagree, advertising main's
-          # number here would make the bot reject every valid beta key.
-          #
-          # No `versions` array: the app never reads this file. `deployBase()`
-          # (web/app.js) strips a trailing `beta/` and fetches the ROOT
-          # manifest for its version picker, so this exists only for the bot's
-          # comparison. A `current` here would be a second answer to a question
-          # the root file already answers.
+          # Read from beta-src, NOT main-src: /beta/ runs beta/next's code, so
+          # main's number here would make the bot reject valid beta keys during
+          # exactly the window this exists for.
+          # Bot-only — the app fetches the ROOT manifest even on /beta/
+          # (deployBase(), web/app.js), so no `current`/`versions` here.
           FKV=$(sed -n 's/.*FLAG_KEY_VERSION: u8 = \([0-9]*\).*/\1/p' \
                   beta-src/src/randomizer/flag_key.rs | head -1)
           if [ -z "$FKV" ]; then
