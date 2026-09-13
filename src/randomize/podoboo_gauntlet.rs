@@ -47,7 +47,13 @@ const PINNED_X: &[u8] = &[0x06, 0x0B];
 /// produces a known segment regardless of what bytes the input ROM has at
 /// this offset (matters for integration tests using stub ROMs). 26 entries
 /// in vanilla X order. Targets (Podoboo, Ceiling Podoboo) get jittered;
-/// non-targets (DryBones, Boo) keep these exact (X, Y, ID).
+/// non-targets (DryBones, water jet) keep these exact (X, Y, ID).
+///
+/// One deliberate departure from vanilla: the two entries at X=0x47 and
+/// X=0x6F are `OBJ_BOO` (0x2F) in the ROM, but this table writes
+/// `OBJ_WATERCURRENTUPWARD` (0x65). The substitution began as a
+/// transcription slip and was kept on purpose - the upward jets play
+/// better in the gauntlet than the Boos did (issue #32).
 const VANILLA: &[SegmentEntry] = &[
     SegmentEntry { obj_id: PODOBOO, x: 0x06, y: 0x17 },
     SegmentEntry { obj_id: PODOBOO, x: 0x0B, y: 0x15 },
@@ -62,14 +68,14 @@ const VANILLA: &[SegmentEntry] = &[
     SegmentEntry { obj_id: PODOBOO, x: 0x32, y: 0x11 },
     SegmentEntry { obj_id: PODOBOO, x: 0x36, y: 0x12 },
     SegmentEntry { obj_id: CEILING_PODOBOO, x: 0x3A, y: 0x0F },
-    SegmentEntry { obj_id: 0x65, x: 0x47, y: 0x17 }, // Boo
+    SegmentEntry { obj_id: 0x65, x: 0x47, y: 0x17 }, // water jet (0x2F Boo in vanilla)
     SegmentEntry { obj_id: PODOBOO, x: 0x4B, y: 0x14 },
     SegmentEntry { obj_id: PODOBOO, x: 0x4E, y: 0x17 },
     SegmentEntry { obj_id: PODOBOO, x: 0x51, y: 0x14 },
     SegmentEntry { obj_id: CEILING_PODOBOO, x: 0x56, y: 0x0F },
     SegmentEntry { obj_id: CEILING_PODOBOO, x: 0x5E, y: 0x0F },
     SegmentEntry { obj_id: PODOBOO, x: 0x63, y: 0x11 },
-    SegmentEntry { obj_id: 0x65, x: 0x6F, y: 0x15 }, // Boo
+    SegmentEntry { obj_id: 0x65, x: 0x6F, y: 0x15 }, // water jet (0x2F Boo in vanilla)
     SegmentEntry { obj_id: PODOBOO, x: 0x6A, y: 0x10 },
     SegmentEntry { obj_id: PODOBOO, x: 0x71, y: 0x12 },
     SegmentEntry { obj_id: PODOBOO, x: 0x78, y: 0x13 },
