@@ -5492,6 +5492,78 @@ yields a pixel-identical wall with a distinct identity — which matters because
 `Map_Removable_Tiles` membership is what makes a cell *completable*, and hence
 what sizes the world-maze packed completion store.
 
+## The King and Toad rescue screen (PRG027)
+
+### The king's appearance is indexed by `World_Num`, not by the Koopaling
+
+`TAndK_DrawKingAndToad` loads `X` from `World_Num` (`$0727`) once and uses it
+for everything about how the king looks (`prg027.asm:777`):
+
+| Table | `prg027.asm` | What it selects |
+|---|---|---|
+| `KingPatternTable_ByWorld` | 632 | CHR page into `PatTable_BankSel+4` |
+| `KingPatIndexOff_ByWorld` | 640 | offset into `King_Patterns` (`W1K_Pat`..`W7K_Pat`) |
+| `KingAttr_ByWorld_Top` | 636 | sprite attribute, top half |
+| `KingAttr_ByWorld_Bottom` | 637 | sprite attribute, bottom half |
+
+Nothing about the Koopaling reaches this. Which king you see is a property of
+the world you are standing in.
+
+**Three lookups share that one byte, in the same frame.** The king's sprite
+(above), the king-quote select hook (`LDY $0727`, see `king_quotes.rs`), and the
+per-world Koopaling stomp threshold table (`LDY $0727`, see
+`randomize_koopaling_hits`) all index `World_Num`. They therefore cannot
+disagree with each other, whatever `world_order` or the world maze does to the
+progression — which is what lets `king_quotes` bake a per-world line at
+generation time and still have it arrive in the right king's mouth, with no
+runtime state and no tracing of the world-number remap.
+
+`ORACLE_WORLD` in `king_quotes.rs` relies on exactly this: pinning the world is
+what pins the sprite.
+
+### The letter is level data, and its font has not been located
+
+`TAndK_FadeOutAndGetItem` notes it outright (`prg027.asm:142`):
+
+```
+; Set scroll up high (the letter is actually level data)
+```
+
+The king's letter text is drawn with tile values from `encode_char` in
+`king_quotes.rs`: `'A'..'Z'` → `$B0..$C9`, `'a'..'p'` → `$D0..$DF`,
+`'q'..'v'` → `$CA..$CF`, then `w x y z` at the scattered `$81 $88 $8C $8F`, and
+punctuation at `$9A , $E9 . $AB ' $EA ! $EB ?`. **There are no digits**, and the
+scattered tail suggests the set was scavenged from whatever glyphs existed
+rather than read off a proper font block.
+
+Whether digit tiles exist at all is **still open**. Four approaches failed on
+2026-09-13; recording them so they are not repeated:
+
+1. *Assume a flat BG pattern table.* Rendering tile `$B0` at `page*4096 + 0xB0*16`
+   for every 4 KiB CHR page gives no letterform.
+2. *Assume MMC3 2 KiB granularity.* Tile `$B0` would sit at `+0x300` inside the
+   2 KiB bank mapped at `$0800`; scanning every 2 KiB-aligned candidate gives no
+   letterform either.
+3. *Follow the banks the screen actually loads.* `TAndK_WaitForA`
+   (`prg027.asm:190`) sets `PatTable_BankSel+3/+4/+5` to `$05`/`$24`/`$25`, and
+   every byte `encode_char` emits falls in tiles `$80..$FF`, which banks `$24`
+   and `$25` should cover at 1 KiB granularity. Rendering them shows level
+   tileset graphics, not letters.
+4. *Brute force.* Scanning all 8192 CHR tiles for a run of ≥ 26 consecutive
+   font-shaped glyphs (2-colour, plausible ink density) finds only a filler `X`
+   pattern at CHR offset `0x16940`.
+
+The unexplored lead is (2)'s premise: the letter being level data means its
+glyphs come from a level tileset's banks, so the banks loaded by
+`TAndK_WaitForA` may be superseded before the letter is drawn.
+
+**The cheap way to settle it** is empirical rather than archaeological: write a
+king quote whose bytes sweep `$80..$FF` as raw tile values instead of encoded
+text, build it with `testrom`, and read the letter screen. That renders the
+entire available character set in situ with whatever banks are really live, and
+answers "which digits exist, at which tile numbers" in one screenshot. Fold the
+answer back into this section.
+
 ## World-map tile behavior registries
 
 *(Measured 2026-09-07 while scoping hint-bearing lock variants. Every address
