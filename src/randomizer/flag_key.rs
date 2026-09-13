@@ -471,14 +471,19 @@ mod payload {
 use payload::FlagBits;
 
 /// Reduce a starting-item slot to a value the rest of the app knows: item IDs
-/// `1..=13` and the three `ITEM_RANDOM*` sentinels, or 0 for an empty slot.
+/// `1..=13` and the four `ITEM_RANDOM*` sentinels, or 0 for an empty slot.
 ///
 /// Applied on both sides. On encode it keeps a hand-written JSON or CLI input
-/// inside the 5-bit field; on decode it drops the 17–31 patterns, which are
+/// inside the 5-bit field; on decode it drops the 18–31 patterns, which are
 /// reachable from a corrupt or newer key but mean nothing to the inventory
 /// writer.
+///
+/// The bound is the highest sentinel, so adding one means bumping it here too —
+/// miss this and the new value is silently zeroed on *encode* as well as
+/// decode, which looks like the option working in the UI and vanishing from the
+/// key.
 fn sanitize_item(raw: u8) -> u8 {
-    if raw <= ITEM_RANDOM_SUIT_ONLY { raw } else { 0 }
+    if raw <= ITEM_RANDOM_NO_SUITS { raw } else { 0 }
 }
 
 impl Options {

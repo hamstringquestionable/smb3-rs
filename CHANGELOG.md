@@ -11,6 +11,9 @@ deploys.
 
 ### Added
 
+- A fourth starting-item grouping, **Random - No Suits**: rolls Cloud,
+  Starman, Hammer or Music Box, plus Whistle if the seed hands whistles
+  out at all. The inverse of Random - Suit Only.
 - **Three new king rescue quotes** join the pools — two standard and one
   frog-suit.
 - One king always remarks on the Koopaling stomp counts instead of telling a

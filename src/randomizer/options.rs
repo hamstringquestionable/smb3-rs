@@ -10,6 +10,14 @@ pub const ITEM_RANDOM_NO_WHISTLE: u8 = 15;
 /// Sentinel: resolve to a random suit/powerup (1–6).
 pub const ITEM_RANDOM_SUIT_ONLY: u8 = 16;
 
+/// Sentinel: resolve to a random utility item — Cloud, Starman, Hammer, Music
+/// Box, and Whistle when whistles are kept.
+///
+/// Deliberately *not* the mechanical complement of [`ITEM_RANDOM_SUIT_ONLY`]:
+/// P-Wing and Anchor are not suits either, and are still excluded. The pool is
+/// "a helpful map or utility item to open with", not "everything left over".
+pub const ITEM_RANDOM_NO_SUITS: u8 = 17;
+
 /// Inventory items: (CLI name, item ID, display name). Single source for every
 /// `--starting-items` parser and run-summary printer across the binaries;
 /// extra spellings are handled as aliases in [`item_id`].
@@ -30,7 +38,21 @@ pub const ITEMS: &[(&str, u8, &str)] = &[
     ("random", 0x0E, "Random"),
     ("random-no-whistle", 0x0F, "Random (No Whistle)"),
     ("random-suit-only", 0x10, "Random (Suit Only)"),
+    ("random-no-suits", 0x11, "Random (No Suits)"),
 ];
+
+impl Options {
+    /// Whether whistles are kept out of the item pools.
+    ///
+    /// The maze forces this on even when the player left the flag off, because
+    /// it grants a permanent whistle of its own — see the long form at the
+    /// `items` call site in `randomizer::randomize_inner`. Read through this
+    /// rather than the raw field wherever "can a whistle be handed out" is the
+    /// question, so the two sites cannot drift apart.
+    pub fn whistles_removed(&self) -> bool {
+        self.remove_whistles || self.world_maze
+    }
+}
 
 /// Look up a starting-item ID by CLI name (case-insensitive, with aliases).
 pub fn item_id(name: &str) -> Option<u8> {

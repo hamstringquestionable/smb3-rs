@@ -642,6 +642,7 @@ fn flag_key_per_option_round_trip() {
         vec![3u8],
         vec![3, 6, 9],
         vec![ITEM_RANDOM, ITEM_RANDOM_NO_WHISTLE, ITEM_RANDOM_SUIT_ONLY],
+        vec![ITEM_RANDOM_NO_SUITS],
     ] {
         let opts = Options { starting_items: items.clone(), ..Default::default() };
         let expected = normalized(opts.clone());
@@ -1558,8 +1559,8 @@ fn flag_key_round_trip_mixed_random_and_concrete() {
 fn resolve_starting_item_deterministic() {
     let mut rng1 = ChaCha8Rng::seed_from_u64(42);
     let mut rng2 = ChaCha8Rng::seed_from_u64(42);
-    let a = resolve_starting_item(ITEM_RANDOM, &mut rng1);
-    let b = resolve_starting_item(ITEM_RANDOM, &mut rng2);
+    let a = resolve_starting_item(ITEM_RANDOM, false, &mut rng1);
+    let b = resolve_starting_item(ITEM_RANDOM, false, &mut rng2);
     assert_eq!(a, b, "same seed must produce same item");
 }
 
@@ -1567,7 +1568,7 @@ fn resolve_starting_item_deterministic() {
 fn resolve_suit_only_in_range() {
     for seed in 0..100u64 {
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
-        let item = resolve_starting_item(ITEM_RANDOM_SUIT_ONLY, &mut rng);
+        let item = resolve_starting_item(ITEM_RANDOM_SUIT_ONLY, false, &mut rng);
         assert!((1..=6).contains(&item), "suit-only produced {item}, expected 1-6");
     }
 }
@@ -1576,18 +1577,78 @@ fn resolve_suit_only_in_range() {
 fn resolve_no_whistle_never_whistle() {
     for seed in 0..100u64 {
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
-        let item = resolve_starting_item(ITEM_RANDOM_NO_WHISTLE, &mut rng);
+        let item = resolve_starting_item(ITEM_RANDOM_NO_WHISTLE, false, &mut rng);
         assert_ne!(item, 0x0C, "no-whistle produced a whistle on seed {seed}");
         assert!((1..=13).contains(&item), "no-whistle produced {item}, expected 1-13 (not 12)");
     }
 }
 
 #[test]
+fn resolve_no_suits_pool() {
+    // The pool is curated, not the complement of the suit pool: P-Wing (0x08)
+    // and Anchor (0x0A) are not suits and are still excluded.
+    let allowed = [0x07u8, 0x09, 0x0B, 0x0C, 0x0D];
+    let mut seen = std::collections::BTreeSet::new();
+    for seed in 0..400u64 {
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
+        let item = resolve_starting_item(ITEM_RANDOM_NO_SUITS, false, &mut rng);
+        assert!(allowed.contains(&item), "no-suits produced {item} on seed {seed}");
+        seen.insert(item);
+    }
+    assert_eq!(
+        seen.into_iter().collect::<Vec<_>>(),
+        allowed.to_vec(),
+        "every pool member should be reachable with whistles kept"
+    );
+}
+
+#[test]
+fn resolve_no_suits_drops_whistle_when_whistles_are_removed() {
+    let mut seen = std::collections::BTreeSet::new();
+    for seed in 0..400u64 {
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
+        let item = resolve_starting_item(ITEM_RANDOM_NO_SUITS, true, &mut rng);
+        assert_ne!(item, 0x0C, "handed out a whistle on seed {seed} with whistles removed");
+        seen.insert(item);
+    }
+    assert_eq!(
+        seen.into_iter().collect::<Vec<_>>(),
+        vec![0x07u8, 0x09, 0x0B, 0x0D],
+        "the other four must all stay reachable"
+    );
+}
+
+/// The maze forces whistles out even when the player turned the flag off, so
+/// the no-suits pool must read the effective value and not `remove_whistles`
+/// alone. Note the default is `remove_whistles: true` — a whistle in the
+/// no-suits pool is the opt-in case, not the usual one.
+#[test]
+fn whistles_removed_is_forced_on_by_the_maze() {
+    assert!(Options::default().whistles_removed(), "whistles are removed by default");
+
+    let kept = Options { remove_whistles: false, ..Default::default() };
+    assert!(!kept.whistles_removed(), "clearing the flag is the only way to keep them");
+
+    let maze = Options { remove_whistles: false, world_maze: true, ..Default::default() };
+    assert!(maze.whistles_removed(), "the maze grants its own permanent whistle");
+}
+
+/// `sanitize_item`'s bound is the highest sentinel. If it is not bumped when a
+/// sentinel is added, the new value is zeroed on *encode* as well as decode —
+/// the option appears to work in the UI and vanishes from the key.
+#[test]
+fn flag_key_keeps_the_highest_item_sentinel() {
+    let opts = Options { starting_items: vec![ITEM_RANDOM_NO_SUITS], ..Default::default() };
+    let decoded = Options::from_flag_key(&opts.to_flag_key()).unwrap();
+    assert_eq!(decoded.starting_items, vec![ITEM_RANDOM_NO_SUITS]);
+}
+
+#[test]
 fn resolve_concrete_passthrough() {
     let mut rng = ChaCha8Rng::seed_from_u64(0);
-    assert_eq!(resolve_starting_item(0, &mut rng), 0);
-    assert_eq!(resolve_starting_item(5, &mut rng), 5);
-    assert_eq!(resolve_starting_item(13, &mut rng), 13);
+    assert_eq!(resolve_starting_item(0, false, &mut rng), 0);
+    assert_eq!(resolve_starting_item(5, false, &mut rng), 5);
+    assert_eq!(resolve_starting_item(13, false, &mut rng), 13);
 }
 
 /// **A pad tile stands under every arrival key the ROM carries.**
