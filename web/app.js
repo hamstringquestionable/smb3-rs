@@ -116,6 +116,10 @@ const VISUAL_PATCHES = [
 	},
 ];
 
+// Pill value for "surprise me". Not a catalog entry: it is resolved to a real
+// one at generate time, so it never reaches Rust and never touches the seed.
+const RANDOM_VISUAL_PATCH = "random";
+
 const visualPatchCache = new Map(); // id → Promise<Uint8Array>
 
 // --- IndexedDB ROM persistence ---
@@ -355,6 +359,7 @@ function renderVisualPatchPills() {
 	const opts = [
 		{ id: "", label: "None", preview: "./assets/visual-previews/vanilla.png" },
 		...VISUAL_PATCHES,
+		{ id: RANDOM_VISUAL_PATCH, label: "Random" }, // no preview — renders text-only
 	];
 	visualPatchPills.replaceChildren();
 	for (const opt of opts) {
@@ -404,9 +409,16 @@ function updateVisualPatchAccent() {
 	}
 }
 
-function updateVisualPatchCredit() {
+// `rolled` attributes a patch the Random pill picked: the selection is still
+// "random", which names no author, but the ROM being downloaded has one.
+//
+// Call with NO argument only when the selection itself changed — a bare call
+// after a Random generate wipes the rolled credit back to hidden, and the
+// downloaded ROM is then carrying a third-party re-skin with nothing on the
+// page naming its author.
+function updateVisualPatchCredit(rolled) {
 	const id = selectedVisualPatchId();
-	const entry = id ? VISUAL_PATCHES.find((p) => p.id === id) : null;
+	const entry = rolled ?? (id ? VISUAL_PATCHES.find((p) => p.id === id) : null);
 	if (!entry || (!entry.author && !entry.url)) {
 		visualPatchCredit.hidden = true;
 		visualPatchCredit.replaceChildren();
@@ -465,7 +477,14 @@ seedInput.addEventListener("input", updateSeedHash);
 function previewRom() {
 	if (!romBytes) return null;
 	const id = selectedVisualPatchId();
-	if (!id || !wasmReady) return romBytes;
+	// Random has nothing to preview until the roll happens at generate time.
+	// This is not free: all six patches redraw title-screen sprite CHR behind
+	// hash icons 5, 10 and 13 of the 20 in ICON_TILES, so with Random selected
+	// roughly half of seeds show at least one hash icon whose art will not
+	// match the downloaded ROM's title screen. The hash *identity* is
+	// unaffected — same seed and options pick the same five icons — but a
+	// racer verifying page against title screen can still see a glyph differ.
+	if (!id || id === RANDOM_VISUAL_PATCH || !wasmReady) return romBytes;
 	if (patchedPreviewRom?.source === romBytes && patchedPreviewRom.id === id) {
 		return patchedPreviewRom.bytes;
 	}
@@ -561,10 +580,18 @@ generateBtn.addEventListener("click", async () => {
 		// randomization changes because the diff base is the unmodified input.
 		let visualPatchBytes = undefined;
 		if (visualPatchId) {
-			const entry = VISUAL_PATCHES.find((p) => p.id === visualPatchId);
+			// Roll here, not at selection time: the pill stays on "Random" so the
+			// next generate rolls again. Math.random, not the seed RNG — the
+			// re-skin is cosmetic and must not move what the seed produces.
+			const entry =
+				visualPatchId === RANDOM_VISUAL_PATCH
+					? VISUAL_PATCHES[Math.floor(Math.random() * VISUAL_PATCHES.length)]
+					: VISUAL_PATCHES.find((p) => p.id === visualPatchId);
 			try {
-				visualPatchBytes = await fetchVisualPatch(visualPatchId);
+				visualPatchBytes = await fetchVisualPatch(entry?.id ?? visualPatchId);
 				visualLabel = entry?.label ?? visualPatchId;
+				// Credit the patch actually applied, not the pill.
+				if (visualPatchId === RANDOM_VISUAL_PATCH) updateVisualPatchCredit(entry);
 			} catch (err) {
 				showStatus(`Visual patch '${entry?.label ?? visualPatchId}' failed to load: ${err}`, "error");
 				return;

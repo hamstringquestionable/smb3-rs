@@ -1189,7 +1189,9 @@ Fireball X spread in fred's data spans the whole segment
 #### 5-F2 Sub-Area 1 (file offset `0xD2C9`, 26 entries)
 
 Podoboo gauntlet — 16 Podoboo (0x9E) + 6 Ceiling Podoboo (0x53) + 2
-DryBones (0x3F) + 2 Boos (0x65). Y high nibble = vertical page (page
+DryBones (0x3F) + 2 Boos (0x2F) — the randomizer's composer
+substitutes upward water jets (0x65) there on purpose; see
+`podoboo_gauntlet.rs`. Y high nibble = vertical page (page
 0 for ceiling podoboos, page 1 for regular). The composer preserves
 the high nibble so a ceiling podoboo can't fall to a regular page or
 vice versa.
@@ -2758,7 +2760,7 @@ Four 24-byte tables control where Mario appears on the overworld map after exiti
 
 | Dest | World | Pair |
 |------|-------|------|
-| 0x00 | — | Unused/unknown |
+| 0x00 | W5 | Spiral Tower pair |
 | 0x01 | W2 | Single pipe pair |
 | 0x02–0x03 | W6 | Two pipe pairs |
 | 0x04–0x0B | W7 | Eight pipe pairs |
@@ -2766,6 +2768,26 @@ Four 24-byte tables control where Mario appears on the overworld map after exiti
 | 0x12–0x14 | W3 | Three pipe pairs |
 | 0x15–0x16 | W4 | Two pipe pairs |
 | 0x17 | W5 | Single pipe pair |
+
+**Dest 0x00 is not unused.** It is World 5's Spiral Tower, which is
+functionally an ordinary pipe pair wearing the `$5F` castle tile — see
+`DEST_TO_WORLD` (`rom_data/tables.rs:551`) and `W5_SPIRAL_ENTRIES`
+(`node_catalog/classify.rs:19`). That gives W5 two pairs, which is what
+`VANILLA_PIPE_PAIRS` records.
+
+**All 24 indices are allocated, and the tables cannot grow in place.**
+The per-world pairs sum to exactly 24 — `[0, 1, 3, 2, 2, 2, 8, 6]` for
+W1–W8 — so there is no spare dest byte. The four tables are contiguous
+at stride 24, and in `prg002.asm` the last of them
+(`PipewayCtlr_MapScrlXHi`, line 1378) is followed immediately by
+`ObjNorm_PipewayCtlr` code at line 1404. A 25th entry therefore means
+relocating **all four** tables into free space, and a new pair also
+needs a transit level minted (two `PIPEWAYCONTROLLER` pointer-table
+entries).
+
+The practical consequence, since it prices several ideas at once:
+*moving* a pipe pair between worlds is free — reassign an existing dest
+index — while *adding* one is a ROM-space project.
 
 **Example** — W2 pipe pair (dest 0x01):
 - `MapY[1] = 0x86` → upper=8 (row_nibble 8, entry 19), lower=6 (row_nibble 6, entry 16)
