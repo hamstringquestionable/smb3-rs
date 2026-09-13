@@ -33,6 +33,7 @@ const ITEM_OPTIONS = [
 	{ value: 14, label: "Random" },
 	{ value: 15, label: "Random - No Whistle" },
 	{ value: 16, label: "Random - Suit Only" },
+	{ value: 17, label: "Random - No Suits" },
 ];
 
 // Starting-lives pill options — Mario power-up state names with the

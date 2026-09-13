@@ -18,8 +18,8 @@ use options::*;
 pub use flag_key::{current_flag_key_version, flag_key_fields, flag_key_version_of};
 pub use options::{
     DejaVuMode, EnemyMode, FireFlowerMode, HazardLimit, HintMode, ITEM_RANDOM,
-    ITEM_RANDOM_NO_WHISTLE, ITEM_RANDOM_SUIT_ONLY, ITEMS, Options, PiranhaMode,
-    STARTING_LIVES_VALUES, Tri, WildChaser, item_display_name, item_id,
+    ITEM_RANDOM_NO_SUITS, ITEM_RANDOM_NO_WHISTLE, ITEM_RANDOM_SUIT_ONLY, ITEMS, Options,
+    PiranhaMode, STARTING_LIVES_VALUES, Tri, WildChaser, item_display_name, item_id,
 };
 
 #[cfg(test)]
@@ -29,9 +29,14 @@ mod tests;
 /// The trampoline uses 0x19DD0–0x19DE1; we place the 16-byte stamp at 0x19DF0.
 use crate::randomize::rom_data::FS_SEED_STAMP as STAMP_OFFSET;
 
-/// Resolve a starting item value: sentinels (14/15/16) become random concrete
+/// Resolve a starting item value: sentinels (14–17) become random concrete
 /// items; concrete values (0–13) pass through unchanged.
-pub fn resolve_starting_item(item: u8, rng: &mut ChaCha8Rng) -> u8 {
+///
+/// `whistles_removed` is [`Options::whistles_removed`]. Only
+/// [`ITEM_RANDOM_NO_SUITS`] reads it — the other pools predate the flag and
+/// keep their historical contents, so passing it does not move any seed that
+/// does not use the new sentinel.
+pub fn resolve_starting_item(item: u8, whistles_removed: bool, rng: &mut ChaCha8Rng) -> u8 {
     match item {
         ITEM_RANDOM => {
             // Any item 1–13
@@ -46,6 +51,18 @@ pub fn resolve_starting_item(item: u8, rng: &mut ChaCha8Rng) -> u8 {
         ITEM_RANDOM_SUIT_ONLY => {
             // Suits only: mushroom(1) through hammer suit(6)
             let pool: Vec<u8> = (1..=6).collect();
+            *pool.choose(rng).unwrap()
+        }
+        ITEM_RANDOM_NO_SUITS => {
+            // Utility items only. A curated list, not the complement of the
+            // suit pool: P-Wing (0x08) and Anchor (0x0A) are not suits and are
+            // still out. Whistle joins only when the seed hands whistles out at
+            // all — otherwise this pool would be the one place a mode that
+            // removes whistles still starts you with one.
+            let mut pool: Vec<u8> = vec![0x07, 0x09, 0x0B, 0x0D];
+            if !whistles_removed {
+                pool.push(0x0C);
+            }
             *pool.choose(rng).unwrap()
         }
         _ => item,
@@ -80,9 +97,19 @@ fn randomize_inner(
 ) {
     let mut rng = ChaCha8Rng::seed_from_u64(seed);
 
-    // Resolve random starting items up front (deterministic from seed)
-    let resolved_items: Vec<u8> =
-        options.starting_items.iter().map(|&item| resolve_starting_item(item, &mut rng)).collect();
+    // Resolve random starting items up front (deterministic from seed).
+    //
+    // `whistles_removed` is the *effective* value, not the raw flag: the maze
+    // forces whistles out of every item pool even when the player left the
+    // flag off, because it grants a permanent one of its own. The long form is
+    // at the `items` call site below, which is the other reader. Hoisted here
+    // because starting items resolve before that point.
+    let whistles_removed = options.remove_whistles || options.world_maze;
+    let resolved_items: Vec<u8> = options
+        .starting_items
+        .iter()
+        .map(|&item| resolve_starting_item(item, whistles_removed, &mut rng))
+        .collect();
     // Resolve the player-hidden tri-state flags up front. These draw from a
     // dedicated substream (MAYBE_SALT) so flipping a flag to `Maybe` never
     // perturbs the main `rng` sequence — a seed with no `Maybe` flags is
@@ -540,11 +567,10 @@ fn randomize_inner(
     // from the new-game init, not the item pool — and so none on the safety
     // property that whistle carries. See `world_travel` for that, and for what
     // would have to change if the mode ever shipped without one.
-    let remove_whistles = options.remove_whistles || options.world_maze;
     if options.chest_items {
         rom.set_tag("items");
-        randomize::items::randomize(rom, &mut rng, remove_whistles, piranha_active);
-    } else if remove_whistles {
+        randomize::items::randomize(rom, &mut rng, whistles_removed, piranha_active);
+    } else if whistles_removed {
         rom.set_tag("items/whistles");
         randomize::items::remove_whistles_only(rom, &mut rng);
     }

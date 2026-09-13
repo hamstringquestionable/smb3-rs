@@ -13,6 +13,9 @@ deploys.
 
 - A **Random** pill on the visual patch row picks one of the bundled re-skins
   at generate time — a fresh one per ROM, and it never touches the seed.
+- A fourth starting-item grouping, **Random - No Suits**: rolls Cloud,
+  Starman, Hammer or Music Box, plus Whistle if the seed hands whistles
+  out at all. The inverse of Random - Suit Only.
 - **Three new king rescue quotes** join the pools — two standard and one
   frog-suit.
 - One king always remarks on the Koopaling stomp counts instead of telling a

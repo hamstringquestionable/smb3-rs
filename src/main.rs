@@ -497,7 +497,7 @@ struct Cli {
     starting_lives: u8,
 
     /// Start with up to 3 items in inventory (comma-separated names)
-    /// Valid: mushroom, fire, leaf, frog, tanooki, hammer-suit, cloud, p-wing, star, anchor, hammer, whistle, music-box, random, random-no-whistle, random-suit-only
+    /// Valid: mushroom, fire, leaf, frog, tanooki, hammer-suit, cloud, p-wing, star, anchor, hammer, whistle, music-box, random, random-no-whistle, random-suit-only, random-no-suits
     #[arg(long, value_delimiter = ',')]
     starting_items: Vec<String>,
 
