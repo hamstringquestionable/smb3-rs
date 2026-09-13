@@ -624,6 +624,14 @@ const QUOTES: &[[&str; 6]] = &[
         "Put a Birdo on it!",
         "",
     ],
+    [
+        "They're taking the",
+        "Toads to Dark Land!",
+        "They're taking the",
+        "Toads to Dark Land!",
+        "They're taking the",
+        "Toads to Dark Land!",
+    ],
 ];
 
 /// Suit-specific quotes: shown when Mario visits the king wearing frog suit.
@@ -740,6 +748,14 @@ const FROG_QUOTES: &[[&str; 6]] = &[
         "",
         "Oh, too late.",
         "Sorry, viewers!",
+    ],
+    [
+        "You have my sword.",
+        "",
+        "And my hammer.",
+        "",
+        "And your frog suit.",
+        "",
     ],
 ];
 
