@@ -355,7 +355,9 @@ const KOOPA_HITS_CODE: [u8; 13] = [
 /// threshold, guaranteeing defeat.
 const KOOPA_FIRE_HANDOFF: usize = 0x03035;
 
-pub fn randomize_koopaling_hits<R: Rng>(rom: &mut Rom, rng: &mut R) {
+/// Returns the per-world stomp threshold table it wrote, so
+/// [`super::king_quotes`] can have a king remark on it.
+pub fn randomize_koopaling_hits<R: Rng>(rom: &mut Rom, rng: &mut R) -> [u8; 7] {
     use super::rom_data::{FS_KOOPA_FIRE_PRESET, KOOPA_FIRE_PRESET_CPU};
 
     // Write stomp threshold subroutine into free space
@@ -400,6 +402,8 @@ pub fn randomize_koopaling_hits<R: Rng>(rom: &mut Rom, rng: &mut R) {
     let lo = (KOOPA_FIRE_PRESET_CPU & 0xFF) as u8;
     let hi = (KOOPA_FIRE_PRESET_CPU >> 8) as u8;
     rom.write_range(KOOPA_FIRE_HANDOFF, &[0x20, lo, hi, 0xEA]); // JSR + NOP
+
+    table
 }
 
 // Randomize per-fortress Boom-Boom stomp counts (1–5 hits each).

@@ -565,11 +565,31 @@ fn randomize_inner(
     rom.set_tag("metatile/6a_freeze");
     randomize::overworld_writer::patch_metatile_6a_freeze(rom);
 
+    // The stomp-count randomizers sit here, immediately above `king_quotes`,
+    // rather than with the other boss patches further down: one king remarks on
+    // the thresholds, so they have to exist before the quotes are written.
+    // Everything they were moved past takes `rom` only and draws nothing, so
+    // the move reorders the seed stream against these two calls and nothing
+    // else.
+    let koopaling_hits = if options.koopaling_hits {
+        rom.set_tag("koopalings/random_hits");
+        randomize::koopalings::randomize_koopaling_hits(rom, &mut rng)
+    } else {
+        // Vanilla is three stomps for every Koopaling, which is a real fact
+        // about the ROM the player is about to play, not a placeholder.
+        randomize::king_quotes::VANILLA_KOOPALING_HITS
+    };
+
+    if options.boomboom_hits {
+        rom.set_tag("boomboom/random_hits");
+        randomize::koopalings::randomize_boomboom_hits(rom, &mut rng);
+    }
+
     // Randomize king quotes. Always called, even when the option is off: the
     // module draws its quotes unconditionally and only the ROM writes are
     // gated, so toggling this cannot shift the seed stream for anything below.
     rom.set_tag("king_quotes");
-    randomize::king_quotes::randomize(rom, &mut rng, options.king_quotes);
+    randomize::king_quotes::randomize(rom, &mut rng, options.king_quotes, koopaling_hits);
 
     // Cosmetic: render every item visual (reserve grid, Toad House chests,
     // in-level treasure boxes) as the Anchor sprite.
@@ -629,18 +649,6 @@ fn randomize_inner(
     if options.adjust_boss_hitboxes {
         rom.set_tag("koopalings/adjust_boss_hitboxes");
         randomize::koopalings::adjust_boss_hitboxes(rom);
-    }
-
-    // Per-Koopaling random stomp counts (1–5 hits each).
-    if options.koopaling_hits {
-        rom.set_tag("koopalings/random_hits");
-        randomize::koopalings::randomize_koopaling_hits(rom, &mut rng);
-    }
-
-    // Per-fortress Boom-Boom random stomp counts (1–5 hits each).
-    if options.boomboom_hits {
-        rom.set_tag("boomboom/random_hits");
-        randomize::koopalings::randomize_boomboom_hits(rom, &mut rng);
     }
 
     // Hammer breaks tiles on the overworld map (locks, bridges, or both).

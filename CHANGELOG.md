@@ -11,6 +11,11 @@ deploys.
 
 ### Added
 
+- One king always remarks on the Koopaling stomp counts instead of telling a
+  joke. It is the same king every seed, so he reads as a recurring oracle. If
+  the thresholds have a shape worth noticing he comments on that; otherwise he
+  reports his own world's count. With random stomp counts turned off he notices
+  the thresholds are all identical and asks whether this is even randomized.
 - Rev 0 (PRG0) ROMs are accepted. They are converted to Rev 1 automatically
   before randomizing, with a notice saying so; a patch generated from one
   includes the conversion, so it applies to that same Rev 0 ROM and produces
