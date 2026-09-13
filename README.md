@@ -7,9 +7,14 @@ browser — your ROM never leaves your machine.
 
 **→ https://hamstringquestionable.github.io/smb3-rs/**
 
-Provide your own SMB3 (USA Rev 1) ROM. Choose options or paste a flag key
-to reproduce someone else's settings, then generate an IPS patch or
+Provide your own SMB3 (USA) ROM — Rev 1 is what the randomizer targets, and
+a Rev 0 (PRG0) dump is converted to Rev 1 for you. Choose options or paste a
+flag key to reproduce someone else's settings, then generate an IPS patch or
 patched ROM. All randomization runs locally via WebAssembly.
+
+A patch generated from a Rev 0 ROM carries the revision conversion with it, so
+apply it to that same Rev 0 ROM; the result is identical to the same seed run
+on Rev 1.
 
 The deploy pipeline also publishes branch builds at `/beta/<branch>/` for
 testing in-progress changes.

@@ -791,6 +791,26 @@ fn main() {
         }
     };
 
+    // Identify the revision up front: a Rev 0 dump is converted to Rev 1 on
+    // load, and the player has to be told, because the ROM they get back is
+    // not the revision they supplied. Every path below reloads the bytes, so
+    // this only reports — the conversion itself happens inside `Rom`.
+    match smb3_rs::validate_rom_bytes(&rom_data, cli.skip_rom_validation) {
+        Ok(smb3_rs::RomRevision::Prg0Converted) => {
+            eprintln!(
+                "Note: this is \"Super Mario Bros. 3 (USA)\" (Rev 0 / PRG0). The randomizer\n\
+                 targets Rev 1, so a bundled revision patch is applied first — output is\n\
+                 built on Rev 1. An .ips includes that conversion, so apply it to this same\n\
+                 Rev 0 ROM."
+            );
+        }
+        Ok(smb3_rs::RomRevision::Rev1) => {}
+        Err(e) => {
+            eprintln!("Error: {e}");
+            process::exit(1);
+        }
+    }
+
     if cli.free_space {
         use smb3_rs::randomize::rom_data::{format_bank_budget, format_gaps_fitting};
         match smb3_rs::rom::Rom::from_bytes_lax(&rom_data, cli.skip_rom_validation) {

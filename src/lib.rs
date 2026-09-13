@@ -21,15 +21,39 @@ pub use randomizer::{
     flag_key_version_of, item_display_name, item_id,
 };
 
-/// Validate a ROM blob without doing any randomization. Returns Ok if the bytes
-/// match the expected SMB3 (USA) (Rev 1) layout and payload CRC. When
-/// `skip_validation` is true, only the bare-minimum size check runs (matching
-/// the contract of `Rom::from_bytes_lax`).
+/// Which SMB3 (USA) revision a ROM blob turned out to be.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RomRevision {
+    /// Rev 1 (PRG1) — what the randomizer targets, used as supplied.
+    Rev1,
+    /// Rev 0 (PRG0) — accepted, and converted to Rev 1 at load time. Callers
+    /// should tell the user, since the ROM they get back is not the revision
+    /// they handed over.
+    Prg0Converted,
+}
+
+/// Validate a ROM blob without doing any randomization. Returns which revision
+/// it is if the bytes match the expected SMB3 (USA) layout and one of the two
+/// known payload CRCs. When `skip_validation` is true, only the bare-minimum
+/// size check runs (matching the contract of `Rom::from_bytes_lax`) — and with
+/// no CRC computed there is no revision to report, so the result is `Rev1`
+/// whatever the bytes are.
 ///
 /// Exposed for callers that want to fail fast at upload time (e.g. the web UI
-/// validates as soon as the user picks a file, before they hit Generate).
-pub fn validate_rom_bytes(bytes: &[u8], skip_validation: bool) -> Result<(), String> {
-    Rom::from_bytes_lax(bytes, skip_validation).map(|_| ()).map_err(|e| e.to_string())
+/// validates as soon as the user picks a file, before they hit Generate) and
+/// to warn about the Rev 0 conversion at the same moment.
+pub fn validate_rom_bytes(bytes: &[u8], skip_validation: bool) -> Result<RomRevision, String> {
+    Rom::from_bytes_lax(bytes, skip_validation)
+        .map(
+            |rom| {
+                if rom.converted_from_prg0() {
+                    RomRevision::Prg0Converted
+                } else {
+                    RomRevision::Rev1
+                }
+            },
+        )
+        .map_err(|e| e.to_string())
 }
 
 /// Parse, validate, optionally apply a visual patch, randomize, and return the
@@ -52,7 +76,9 @@ pub fn randomize_rom(
 }
 
 /// Generate an IPS patch from a ROM with the given seed and options.
-/// The IPS captures any visual-patch bytes plus randomization changes.
+/// The IPS captures any visual-patch bytes plus randomization changes — and,
+/// for a Rev 0 input, the Rev 0 -> Rev 1 conversion as well, so the patch
+/// applies to the ROM that was supplied.
 pub fn generate_patch(
     rom_data: &[u8],
     seed: u64,
@@ -60,7 +86,7 @@ pub fn generate_patch(
     visual_patch: Option<&[u8]>,
 ) -> Result<Vec<u8>, String> {
     let rom = randomize_rom(rom_data, seed, options, visual_patch)?;
-    Ok(ips::build_ips_patch(rom.original_bytes(), rom.output_bytes()))
+    Ok(ips::build_ips_patch(rom.ips_baseline_bytes(), rom.output_bytes()))
 }
 
 /// Generate a fully patched ROM (visual patch + randomization applied).
