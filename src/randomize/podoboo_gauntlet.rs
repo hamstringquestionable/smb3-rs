@@ -2,7 +2,8 @@
 //!
 //! 5-F2 sub-area 1 (segment file offset `0xD2C9`, 26 entries) is a long
 //! corridor of podoboos and ceiling podoboos punctuated by 2 DryBones and
-//! 2 Boos. The podoboos are easy to memorize per-seed once known, so we
+//! 2 upward water jets (Boos in vanilla — see [`VANILLA`]). The podoboos
+//! are easy to memorize per-seed once known, so we
 //! jitter each podoboo's (X, Y) per seed while keeping non-target enemies
 //! at vanilla positions.
 //!
@@ -25,6 +26,12 @@ const ENTRY_COUNT: usize = 26;
 const PODOBOO: u8 = 0x9E;
 const CEILING_PODOBOO: u8 = 0x53;
 
+/// `OBJ_WATERCURRENTUPWARD`. Vanilla has `OBJ_BOO` (0x2F) at these two
+/// positions; the substitution began as a transcription slip and was kept on
+/// purpose — the upward jets play better in the gauntlet than the Boos did
+/// (issue #32). Not a jitter target either way.
+const WATER_JET: u8 = 0x65;
+
 /// X bounds: 5-F2 sub-area 1 is 8 screens, so X spans 0..=0x7F.
 const SEG_X_MIN: u8 = 0x02;
 const SEG_X_MAX: u8 = 0x7D;
@@ -45,15 +52,12 @@ const PINNED_X: &[u8] = &[0x06, 0x0B];
 
 /// Vanilla layout of 5-F2 sub-area 1 — hard-coded so the composer
 /// produces a known segment regardless of what bytes the input ROM has at
-/// this offset (matters for integration tests using stub ROMs). 26 entries
-/// in vanilla X order. Targets (Podoboo, Ceiling Podoboo) get jittered;
-/// non-targets (DryBones, water jet) keep these exact (X, Y, ID).
+/// this offset (matters for integration tests using stub ROMs). 26 entries.
+/// Targets (Podoboo, Ceiling Podoboo) get jittered; non-targets (DryBones,
+/// [`WATER_JET`]) keep these exact (X, Y, ID).
 ///
-/// One deliberate departure from vanilla: the two entries at X=0x47 and
-/// X=0x6F are `OBJ_BOO` (0x2F) in the ROM, but this table writes
-/// `OBJ_WATERCURRENTUPWARD` (0x65). The substitution began as a
-/// transcription slip and was kept on purpose - the upward jets play
-/// better in the gauntlet than the Boos did (issue #32).
+/// One deliberate departure from vanilla, documented on [`WATER_JET`]: the
+/// entries at X=0x47 and X=0x6F are `OBJ_BOO` in the ROM.
 const VANILLA: &[SegmentEntry] = &[
     SegmentEntry { obj_id: PODOBOO, x: 0x06, y: 0x17 },
     SegmentEntry { obj_id: PODOBOO, x: 0x0B, y: 0x15 },
@@ -68,14 +72,14 @@ const VANILLA: &[SegmentEntry] = &[
     SegmentEntry { obj_id: PODOBOO, x: 0x32, y: 0x11 },
     SegmentEntry { obj_id: PODOBOO, x: 0x36, y: 0x12 },
     SegmentEntry { obj_id: CEILING_PODOBOO, x: 0x3A, y: 0x0F },
-    SegmentEntry { obj_id: 0x65, x: 0x47, y: 0x17 }, // water jet (0x2F Boo in vanilla)
+    SegmentEntry { obj_id: WATER_JET, x: 0x47, y: 0x17 },
     SegmentEntry { obj_id: PODOBOO, x: 0x4B, y: 0x14 },
     SegmentEntry { obj_id: PODOBOO, x: 0x4E, y: 0x17 },
     SegmentEntry { obj_id: PODOBOO, x: 0x51, y: 0x14 },
     SegmentEntry { obj_id: CEILING_PODOBOO, x: 0x56, y: 0x0F },
     SegmentEntry { obj_id: CEILING_PODOBOO, x: 0x5E, y: 0x0F },
     SegmentEntry { obj_id: PODOBOO, x: 0x63, y: 0x11 },
-    SegmentEntry { obj_id: 0x65, x: 0x6F, y: 0x15 }, // water jet (0x2F Boo in vanilla)
+    SegmentEntry { obj_id: WATER_JET, x: 0x6F, y: 0x15 },
     SegmentEntry { obj_id: PODOBOO, x: 0x6A, y: 0x10 },
     SegmentEntry { obj_id: PODOBOO, x: 0x71, y: 0x12 },
     SegmentEntry { obj_id: PODOBOO, x: 0x78, y: 0x13 },
@@ -91,7 +95,7 @@ pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R) {
     // the per-entry radius around vanilla X). Non-targets stay put.
     //
     // Note: the VANILLA list is roughly sorted but has one inversion at
-    // entries 20 (Podoboo 0x63) and 21 (Boo 0x6F) — index 22 (Podoboo
+    // entries 20 (Podoboo 0x63) and 21 (water jet 0x6F) — index 22 (Podoboo
     // 0x6A) follows. We sort by X up-front so the jitter logic sees a
     // canonical order.
     let mut sorted_vanilla: Vec<SegmentEntry> = VANILLA.to_vec();
@@ -185,8 +189,8 @@ mod tests {
             // Non-targets stay at vanilla X and Y.
             let drybones: Vec<&SegmentEntry> = out.iter().filter(|e| e.obj_id == 0x3F).collect();
             assert_eq!(drybones.len(), 2);
-            let boos: Vec<&SegmentEntry> = out.iter().filter(|e| e.obj_id == 0x65).collect();
-            assert_eq!(boos.len(), 2);
+            let jets: Vec<&SegmentEntry> = out.iter().filter(|e| e.obj_id == WATER_JET).collect();
+            assert_eq!(jets.len(), 2);
             // Ceiling podoboos stay on page 0 (Y high nibble == 0).
             for e in out.iter().filter(|e| e.obj_id == CEILING_PODOBOO) {
                 assert_eq!(e.y & 0xF0, 0x00, "seed {seed}: ceiling podoboo crossed page");
