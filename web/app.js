@@ -116,6 +116,10 @@ const VISUAL_PATCHES = [
 	},
 ];
 
+// Pill value for "surprise me". Not a catalog entry: it is resolved to a real
+// one at generate time, so it never reaches Rust and never touches the seed.
+const RANDOM_VISUAL_PATCH = "random";
+
 const visualPatchCache = new Map(); // id → Promise<Uint8Array>
 
 // --- IndexedDB ROM persistence ---
@@ -355,6 +359,7 @@ function renderVisualPatchPills() {
 	const opts = [
 		{ id: "", label: "None", preview: "./assets/visual-previews/vanilla.png" },
 		...VISUAL_PATCHES,
+		{ id: RANDOM_VISUAL_PATCH, label: "Random" }, // no preview — renders text-only
 	];
 	visualPatchPills.replaceChildren();
 	for (const opt of opts) {
@@ -404,9 +409,11 @@ function updateVisualPatchAccent() {
 	}
 }
 
-function updateVisualPatchCredit() {
+// `rolled` attributes a patch the Random pill picked: the selection is still
+// "random", which names no author, but the ROM being downloaded has one.
+function updateVisualPatchCredit(rolled) {
 	const id = selectedVisualPatchId();
-	const entry = id ? VISUAL_PATCHES.find((p) => p.id === id) : null;
+	const entry = rolled ?? (id ? VISUAL_PATCHES.find((p) => p.id === id) : null);
 	if (!entry || (!entry.author && !entry.url)) {
 		visualPatchCredit.hidden = true;
 		visualPatchCredit.replaceChildren();
@@ -465,7 +472,7 @@ seedInput.addEventListener("input", updateSeedHash);
 function previewRom() {
 	if (!romBytes) return null;
 	const id = selectedVisualPatchId();
-	if (!id || !wasmReady) return romBytes;
+	if (!id || id === RANDOM_VISUAL_PATCH || !wasmReady) return romBytes;
 	if (patchedPreviewRom?.source === romBytes && patchedPreviewRom.id === id) {
 		return patchedPreviewRom.bytes;
 	}
@@ -561,12 +568,20 @@ generateBtn.addEventListener("click", async () => {
 		// randomization changes because the diff base is the unmodified input.
 		let visualPatchBytes = undefined;
 		if (visualPatchId) {
-			const entry = VISUAL_PATCHES.find((p) => p.id === visualPatchId);
+			// Roll here, not at selection time: the pill stays on "Random" so the
+			// next generate rolls again. Math.random, not the seed RNG — the
+			// re-skin is cosmetic and must not move what the seed produces.
+			const rolled =
+				visualPatchId === RANDOM_VISUAL_PATCH
+					? VISUAL_PATCHES[Math.floor(Math.random() * VISUAL_PATCHES.length)]
+					: VISUAL_PATCHES.find((p) => p.id === visualPatchId);
 			try {
-				visualPatchBytes = await fetchVisualPatch(visualPatchId);
-				visualLabel = entry?.label ?? visualPatchId;
+				visualPatchBytes = await fetchVisualPatch(rolled?.id ?? visualPatchId);
+				visualLabel = rolled?.label ?? visualPatchId;
+				// Credit the patch actually applied, not the pill.
+				if (visualPatchId === RANDOM_VISUAL_PATCH) updateVisualPatchCredit(rolled);
 			} catch (err) {
-				showStatus(`Visual patch '${entry?.label ?? visualPatchId}' failed to load: ${err}`, "error");
+				showStatus(`Visual patch '${rolled?.label ?? visualPatchId}' failed to load: ${err}`, "error");
 				return;
 			}
 		}

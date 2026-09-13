@@ -11,6 +11,10 @@ deploys.
 
 ### Added
 
+- A **Random** pill on the visual patch row picks one of the bundled
+  re-skins for you. It rolls at generate time, not when you click it, so
+  each seed you make gets a different one, and the credit line names the
+  hack you actually got. The roll does not touch the seed.
 - **Three new king rescue quotes** join the pools — two standard and one
   frog-suit.
 - One king always remarks on the Koopaling stomp counts instead of telling a
