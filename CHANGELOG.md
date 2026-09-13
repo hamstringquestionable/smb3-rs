@@ -9,8 +9,26 @@ deploys.
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-09-13
+
+**Rev 0 ROMs are accepted.** The other USA dump no longer has to be hunted down
+and converted by hand — hand it over and the randomizer converts it to Rev 1
+itself, says so, and carries the conversion in an emitted patch. Alongside it: a
+fourth starting-item grouping, a Random pill for the visual patches, and a king
+who reads the Koopaling stomp counts instead of telling a joke.
+
+Old flag keys still decode — the key version is unchanged at 29. A key minted
+with Random - No Suits decodes on 2.0.x with that item slot empty rather than
+failing, since the grouping is a new item id inside the slots that already
+existed. Seeds are not comparable with 2.0.1's, as across any version: the same
+seed and flags build a different ROM.
+
 ### Added
 
+- Rev 0 (PRG0) ROMs are accepted. They are converted to Rev 1 automatically
+  before randomizing, with a notice saying so; a patch generated from one
+  includes the conversion, so it applies to that same Rev 0 ROM and produces
+  the same result as the seed run on Rev 1.
 - A **Random** pill on the visual patch row picks one of the bundled re-skins
   at generate time — a fresh one per ROM, and it never touches the seed.
 - A fourth starting-item grouping, **Random - No Suits**: rolls Cloud,
@@ -23,10 +41,6 @@ deploys.
   the thresholds have a shape worth noticing he comments on that; otherwise he
   reports his own world's count. With random stomp counts turned off he notices
   the thresholds are all identical and asks whether this is even randomized.
-- Rev 0 (PRG0) ROMs are accepted. They are converted to Rev 1 automatically
-  before randomizing, with a notice saying so; a patch generated from one
-  includes the conversion, so it applies to that same Rev 0 ROM and produces
-  the same result as the seed run on Rev 1.
 
 ### Fixed
 
@@ -34,6 +48,9 @@ deploys.
   dump". They patched the raw bytes before validation, which moved the payload
   CRC; they now go through the randomizer like the web app's visual patches do,
   and are tagged in the write log so collisions are attributable.
+- The beta site publishes its flag-key version. `/beta/versions.json` was a 404,
+  so the seed bot could not validate a beta flag key at all — and beta is the
+  only place its number can disagree with the release site's.
 
 ## [2.0.1] - 2026-09-12
 
