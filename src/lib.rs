@@ -58,7 +58,7 @@ pub fn validate_rom_bytes(bytes: &[u8], skip_validation: bool) -> Result<RomRevi
 
 /// Parse, validate, optionally apply a visual patch, randomize, and return the
 /// full Rom struct. Visual-patch bytes are applied before randomization, so the
-/// resulting IPS diff (`original` → `data`) captures both visual and
+/// resulting IPS diff (`ips_baseline_bytes` → `data`) captures both visual and
 /// randomization changes in a single output.
 pub fn randomize_rom(
     rom_data: &[u8],
@@ -66,10 +66,32 @@ pub fn randomize_rom(
     options: &Options,
     visual_patch: Option<&[u8]>,
 ) -> Result<Rom, String> {
+    match visual_patch {
+        Some(patch) => {
+            randomize_rom_with_patches(rom_data, seed, options, &[("visual_patch", patch)])
+        }
+        None => randomize_rom_with_patches(rom_data, seed, options, &[]),
+    }
+}
+
+/// [`randomize_rom`] with more than one visual patch, applied in order and each
+/// tagged in the write log so a collision between two of them — or between one
+/// and the randomizer — is attributable rather than an anonymous byte change.
+///
+/// This is the single entry point every caller goes through, which is the point
+/// of it: patches must land *after* the `Rom` is built, because that is where a
+/// Rev 0 input becomes Rev 1. A caller that patches the raw bytes first moves
+/// the payload CRC, and the revision check then recognizes neither revision.
+pub fn randomize_rom_with_patches(
+    rom_data: &[u8],
+    seed: u64,
+    options: &Options,
+    visual_patches: &[(&str, &[u8])],
+) -> Result<Rom, String> {
     let mut rom =
         Rom::from_bytes_lax(rom_data, options.skip_rom_validation).map_err(|e| e.to_string())?;
-    if let Some(patch) = visual_patch {
-        rom.apply_ips_patch(patch, "visual_patch")?;
+    for (tag, patch) in visual_patches {
+        rom.apply_ips_patch(patch, tag)?;
     }
     randomizer::randomize(&mut rom, seed, options);
     Ok(rom)

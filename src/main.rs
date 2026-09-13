@@ -838,53 +838,38 @@ fn main() {
 
     print_summary(&options, seed, &output_path);
 
-    // Apply sprite patch before randomization so randomizer writes take priority.
-    // --toad applies a bundled IPS first; --sprite-patch layers on top of that.
-    // Keep the pristine input bytes so the final IPS diff includes the visual
-    // swap (otherwise the .ips file would only contain the randomization delta
-    // relative to a visual-patched ROM).
-    let pristine_input = rom_data.clone();
+    // Visual patches are handed to the randomizer rather than pre-applied to
+    // the raw bytes, and the distinction is load-bearing: patching first moves
+    // the payload CRC, so the revision check recognizes neither Rev 0 nor Rev 1
+    // and the ROM is rejected. Applied inside, they land after the Rom is built
+    // (so after a Rev 0 input has become Rev 1), before randomization (so the
+    // randomizer's writes take priority), and each one is tagged in the write
+    // log. --toad goes on first; --sprite-patch layers on top.
     const TOAD_IPS: &[u8] = include_bytes!("../web/visual-patches/super-toad-josuecr4ft.ips");
-    let rom_data = if cli.toad {
-        match smb3_rs::ips::apply_ips_patch(&rom_data, TOAD_IPS) {
-            Ok(patched) => {
-                eprintln!("  Sprite swap: Super Toad (Blue) by JosueCr4ft");
-                eprintln!(
-                    "               https://mfgg.net/index.php?act=resdb&param=02&c=7&id=38435"
-                );
-                patched
-            }
-            Err(e) => {
-                eprintln!("Error applying bundled Toad swap: {e}");
-                process::exit(1);
-            }
-        }
-    } else {
-        rom_data
-    };
-    let rom_data = if let Some(ref patch_path) = cli.sprite_patch {
-        let patch_data = match fs::read(patch_path) {
-            Ok(data) => data,
+    let sprite_patch_data = match cli.sprite_patch {
+        Some(ref patch_path) => match fs::read(patch_path) {
+            Ok(data) => Some(data),
             Err(e) => {
                 eprintln!("Error reading sprite patch: {e}");
                 process::exit(1);
             }
-        };
-        match smb3_rs::ips::apply_ips_patch(&rom_data, &patch_data) {
-            Ok(patched) => {
-                eprintln!("  Sprite patch: {}", patch_path.display());
-                patched
-            }
-            Err(e) => {
-                eprintln!("Error applying sprite patch: {e}");
-                process::exit(1);
-            }
-        }
-    } else {
-        rom_data
+        },
+        None => None,
     };
 
-    let rom = match smb3_rs::randomize_rom(&rom_data, seed, &options, None) {
+    let mut visual_patches: Vec<(&str, &[u8])> = Vec::new();
+    if cli.toad {
+        eprintln!("  Sprite swap: Super Toad (Blue) by JosueCr4ft");
+        eprintln!("               https://mfgg.net/index.php?act=resdb&param=02&c=7&id=38435");
+        visual_patches.push(("super-toad-josuecr4ft.ips", TOAD_IPS));
+    }
+    if let (Some(path), Some(data)) = (&cli.sprite_patch, &sprite_patch_data) {
+        eprintln!("  Sprite patch: {}", path.display());
+        visual_patches.push(("sprite_patch", data));
+    }
+
+    let rom = match smb3_rs::randomize_rom_with_patches(&rom_data, seed, &options, &visual_patches)
+    {
         Ok(r) => r,
         Err(e) => {
             eprintln!("Error: {e}");
@@ -918,10 +903,10 @@ fn main() {
     let output_data = if cli.patched_rom {
         rom.output_bytes().to_vec()
     } else {
-        // Diff against the pristine input (pre-visual-patch) so the IPS
-        // is self-contained. When the input is unheadered, output_bytes()
-        // strips the synthetic header back off, matching pristine_input.
-        smb3_rs::ips::build_ips_patch(&pristine_input, rom.output_bytes())
+        // Same baseline the library uses, rather than a second copy of the
+        // rule: what the user supplied, with a synthesized header stripped
+        // back off, and pre-visual-patch so the IPS is self-contained.
+        smb3_rs::ips::build_ips_patch(rom.ips_baseline_bytes(), rom.output_bytes())
     };
 
     if let Err(e) = fs::write(&output_path, &output_data) {
