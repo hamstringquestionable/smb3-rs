@@ -11,6 +11,8 @@ deploys.
 
 ### Added
 
+- **Three new king rescue quotes** join the pools — two standard and one
+  frog-suit.
 - One king always remarks on the Koopaling stomp counts instead of telling a
   joke. It is the same king every seed, so he reads as a recurring oracle. If
   the thresholds have a shape worth noticing he comments on that; otherwise he
