@@ -20,6 +20,11 @@ path = "src/main.rs"
 name = "testrom"
 path = "src/bin/testrom.rs"
 
+# GoatCounter flag-key census. Native-only tooling; not part of the web build.
+[[bin]]
+name = "flagstats"
+path = "src/bin/flagstats.rs"
+
 [dependencies]
 modular-bitfield = "0.13"
 radix-heap = "0.4.2"
