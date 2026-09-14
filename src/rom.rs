@@ -18,6 +18,19 @@ const CHR_PAGE_SIZE: usize = 8192; // 8KB
 const PRG_REV0_PAYLOAD_CRC32: u32 = 0xA0B0_B742;
 const PRG_REV1_PAYLOAD_CRC32: u32 = 0x2E63_01ED;
 
+/// Revision converter: turns a Rev 0 (PRG0) dump into a byte-exact Rev 1 one.
+///
+/// 151 records, 1,939 bytes. Its offsets are *headered* file offsets, which is
+/// why it is applied with the free [`crate::ips::apply_ips_patch`] against the
+/// headered buffer rather than [`Rom::apply_ips_patch`] — that method rebases
+/// records past a synthesized header, which would double-count it here.
+///
+/// Nothing downstream is revision-aware: every patch, offset table and free
+/// space allocation in this crate assumes Rev 1 bytes. Converting at load time
+/// is what lets that stay true, so the conversion happens before the `Rom` is
+/// built and `original` holds the *converted* bytes.
+const PRG0_TO_PRG1_IPS: &[u8] = include_bytes!("../assets/prg0_to_prg1.ips");
+
 /// CRC-32/IEEE (zlib polynomial 0xEDB88320, reflected). Slow byte-by-byte loop,
 /// fine for a single 384 KiB pass at load time.
 fn crc32_ieee(data: &[u8]) -> u32 {
@@ -32,11 +45,11 @@ fn crc32_ieee(data: &[u8]) -> u32 {
     !crc
 }
 
-const SUPPORTED_ROM_HELP: &str = "This randomizer requires \"Super Mario Bros. 3 (USA) (Rev 1)\" — the US Rev 1 release \
-     in iNES (.nes) format, with or without an iNES header. The original (Rev 0 / PRG0) release \
-     is not supported because it has bugs (e.g. the World 7-1 card-graphics glitch) that the \
-     randomizer's hooks rely on having been fixed. Pass --skip-rom-validation \
-     (or check the skip-validation box in the web UI) to bypass this check at your own risk.";
+const SUPPORTED_ROM_HELP: &str = "This randomizer targets \"Super Mario Bros. 3 (USA) (Rev 1)\" — the US Rev 1 release \
+     in iNES (.nes) format, with or without an iNES header. A Rev 0 (PRG0) dump is accepted too: \
+     it is converted to Rev 1 automatically before anything else runs. Pass --skip-rom-validation \
+     (or check the skip-validation box in the web UI) to bypass this check at your own risk — \
+     note that skipping it skips the Rev 0 conversion with it, since the same CRC identifies both.";
 
 #[derive(Debug)]
 pub enum RomError {
@@ -54,8 +67,10 @@ pub enum RomError {
         expected: usize,
         got: usize,
     },
-    /// ROM payload CRC matches the older USA (Rev 0 / PRG0) release.
-    WrongRevisionPrg0,
+    /// ROM payload CRC matched the older USA (Rev 0 / PRG0) release, but the
+    /// bundled revision converter did not turn it into Rev 1. Only reachable
+    /// if the bundled patch itself is corrupt, so it carries the detail.
+    Prg0ConversionFailed(String),
     /// ROM payload CRC matches neither Rev 0 nor Rev 1.
     UnknownRevision {
         payload_crc32: u32,
@@ -102,11 +117,12 @@ impl fmt::Display for RomError {
                      The file may be corrupt or a different version. {SUPPORTED_ROM_HELP}"
                 )
             }
-            RomError::WrongRevisionPrg0 => {
+            RomError::Prg0ConversionFailed(detail) => {
                 write!(
                     f,
                     "This is \"Super Mario Bros. 3 (USA)\" (Rev 0 / PRG0), the original 1990 \
-                     release. {SUPPORTED_ROM_HELP}"
+                     release, but converting it to Rev 1 failed: {detail}. This is a bug in \
+                     the randomizer, not in your ROM — please report it."
                 )
             }
             RomError::UnknownRevision { payload_crc32 } => {
@@ -179,6 +195,15 @@ pub struct Rom {
     pub header: Header,
     /// True when a synthetic iNES header was prepended (unheadered input ROM).
     pub header_synthesized: bool,
+    /// The bytes as the user supplied them, when they were a Rev 0 (PRG0) dump
+    /// that load-time conversion turned into Rev 1. `original` holds the
+    /// converted Rev 1 bytes in that case, so this is the only place the input
+    /// survives — and it is what an emitted IPS patch must diff against, or the
+    /// patch would not apply to the ROM the player actually owns.
+    ///
+    /// Stored headered, like `original`; [`Rom::ips_baseline_bytes`] strips a
+    /// synthesized header the same way [`Rom::original_bytes`] does.
+    prg0_source: Option<Vec<u8>>,
     tag_stack: Vec<String>,
     write_log: Vec<WriteRecord>,
 }
@@ -244,6 +269,10 @@ impl Rom {
             return Err(RomError::BadMagic(magic));
         }
 
+        // Set by the revision check below; acted on after it, so the conversion
+        // sits outside the `!skip_validation` block that decides it.
+        let mut is_prg0 = false;
+
         let prg_pages = bytes[4];
         let chr_pages = bytes[5];
         let flags6 = bytes[6];
@@ -277,10 +306,29 @@ impl Rom {
             let payload_crc = crc32_ieee(&bytes[HEADER_SIZE..]);
             match payload_crc {
                 PRG_REV1_PAYLOAD_CRC32 => {}
-                PRG_REV0_PAYLOAD_CRC32 => return Err(RomError::WrongRevisionPrg0),
+                PRG_REV0_PAYLOAD_CRC32 => is_prg0 = true,
                 other => return Err(RomError::UnknownRevision { payload_crc32: other }),
             }
         }
+
+        // Rev 0 -> Rev 1 before anything reads a byte. Nothing downstream is
+        // revision-aware, so the rest of the crate only ever sees Rev 1.
+        let (rom_bytes, prg0_source) = if is_prg0 {
+            let converted = crate::ips::apply_ips_patch(bytes, PRG0_TO_PRG1_IPS)
+                .map_err(RomError::Prg0ConversionFailed)?;
+            // The converter is exact, so this must land on Rev 1 — and if the
+            // bundled patch is ever corrupted, failing here beats randomizing
+            // a half-converted ROM.
+            let crc = crc32_ieee(&converted[HEADER_SIZE..]);
+            if crc != PRG_REV1_PAYLOAD_CRC32 {
+                return Err(RomError::Prg0ConversionFailed(format!(
+                    "converted payload CRC32 is 0x{crc:08X}, expected 0x{PRG_REV1_PAYLOAD_CRC32:08X}"
+                )));
+            }
+            (converted, Some(bytes.to_vec()))
+        } else {
+            (bytes.to_vec(), None)
+        };
 
         let mapper = (flags6 >> 4) | (flags7 & 0xF0);
         let mirroring_horizontal = (flags6 & 0x01) == 0;
@@ -288,10 +336,11 @@ impl Rom {
         let header = Header { prg_pages, chr_pages, mapper, mirroring_horizontal };
 
         Ok(Rom {
-            original: bytes.to_vec(),
-            data: bytes.to_vec(),
+            original: rom_bytes.clone(),
+            data: rom_bytes,
             header,
             header_synthesized,
+            prg0_source,
             tag_stack: Vec::new(),
             write_log: Vec::new(),
         })
@@ -303,8 +352,39 @@ impl Rom {
     }
 
     /// Returns the original ROM bytes, stripping the synthetic header if one was added.
+    ///
+    /// For a converted Rev 0 input these are the *Rev 1* bytes, not what the
+    /// user handed over — that is deliberate, since every consumer of this
+    /// (the free-space scan above all) is asking "what does vanilla look
+    /// like?" and the answer has to be Rev 1. Use
+    /// [`ips_baseline_bytes`](Self::ips_baseline_bytes) for the other question.
     pub fn original_bytes(&self) -> &[u8] {
         if self.header_synthesized { &self.original[HEADER_SIZE..] } else { &self.original }
+    }
+
+    /// The bytes an emitted IPS patch must be diffed against: what the user
+    /// supplied. Same as [`original_bytes`](Self::original_bytes) except after
+    /// a Rev 0 conversion, where it is the pre-conversion Rev 0 dump — so the
+    /// patch carries the revision conversion along with the randomization and
+    /// applies to the ROM the player actually has. IPS has no checksum, so a
+    /// patch built against the wrong baseline would silently produce garbage.
+    pub fn ips_baseline_bytes(&self) -> &[u8] {
+        match &self.prg0_source {
+            Some(src) => {
+                if self.header_synthesized {
+                    &src[HEADER_SIZE..]
+                } else {
+                    src
+                }
+            }
+            None => self.original_bytes(),
+        }
+    }
+
+    /// True when the supplied ROM was a Rev 0 (PRG0) dump that load-time
+    /// conversion turned into Rev 1. Callers surface this to the user.
+    pub fn converted_from_prg0(&self) -> bool {
+        self.prg0_source.is_some()
     }
 
     /// Apply an IPS patch to the working data, leaving `original` untouched.
@@ -552,6 +632,87 @@ mod tests {
     /// rejected as UnknownRevision).
     fn rom_from(data: &[u8]) -> Rom {
         Rom::from_bytes_lax(data, true).unwrap()
+    }
+
+    /// The bundled converter has to be a well-formed IPS whatever machine this
+    /// runs on — no ROM needed, so this one guards CI too.
+    #[test]
+    fn bundled_prg0_converter_parses() {
+        let records = crate::ips::parse_ips_records(PRG0_TO_PRG1_IPS)
+            .expect("bundled Rev 0 converter must be a valid IPS patch");
+        assert!(!records.is_empty(), "converter has no records");
+        // Its offsets are headered file offsets, so nothing may land past the
+        // end of a headered ROM, and nothing may rewrite the header itself.
+        let headered_len = HEADER_SIZE
+            + EXPECTED_PRG_PAGES as usize * PRG_PAGE_SIZE
+            + EXPECTED_CHR_PAGES as usize * CHR_PAGE_SIZE;
+        for rec in &records {
+            assert!(
+                rec.offset >= HEADER_SIZE,
+                "record at 0x{:06X} rewrites the iNES header",
+                rec.offset
+            );
+            assert!(
+                rec.offset + rec.payload.len() <= headered_len,
+                "record at 0x{:06X} runs past the end of a headered ROM",
+                rec.offset
+            );
+        }
+    }
+
+    /// Both revisions must randomize to the same bytes, and an IPS built from a
+    /// Rev 0 input must apply to that Rev 0 ROM. Needs both dumps, so it skips
+    /// where they are absent — it guards the machine, not CI.
+    #[test]
+    fn prg0_converts_to_rev1_at_load() {
+        let (Ok(prg0), Ok(rev1)) = (
+            std::fs::read("roms/Super Mario Bros. 3 (USA).nes"),
+            std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes"),
+        ) else {
+            eprintln!("skipping: both USA dumps must be present");
+            return;
+        };
+
+        let converted = Rom::from_bytes(&prg0).expect("Rev 0 must load");
+        assert!(converted.converted_from_prg0());
+        // `original` is the Rev 1 bytes: that is what the free-space scan and
+        // every offset table are entitled to assume.
+        assert_eq!(converted.original_bytes(), &rev1[..], "conversion is not byte-exact");
+        // ...while the IPS baseline is still what the user supplied.
+        assert_eq!(converted.ips_baseline_bytes(), &prg0[..]);
+
+        let plain = Rom::from_bytes(&rev1).expect("Rev 1 must load");
+        assert!(!plain.converted_from_prg0());
+        assert_eq!(plain.ips_baseline_bytes(), plain.original_bytes());
+    }
+
+    /// An unheadered Rev 0 dump converts too — the header is synthesized first,
+    /// so the converter's headered offsets line up.
+    #[test]
+    fn unheadered_prg0_converts() {
+        let Ok(prg0) = std::fs::read("roms/Super Mario Bros. 3 (USA).nes") else {
+            eprintln!("skipping: Rev 0 dump not present");
+            return;
+        };
+        let rom = Rom::from_bytes(&prg0[HEADER_SIZE..]).expect("unheadered Rev 0 must load");
+        assert!(rom.converted_from_prg0());
+        assert!(rom.header_synthesized);
+        // Both views drop the synthetic header, so neither leaks 16 extra bytes.
+        assert_eq!(rom.original_bytes().len(), prg0.len() - HEADER_SIZE);
+        assert_eq!(rom.ips_baseline_bytes(), &prg0[HEADER_SIZE..]);
+    }
+
+    /// Skipping validation skips the revision check, and with it the
+    /// conversion — the CRC that identifies Rev 0 is the one being skipped.
+    #[test]
+    fn skip_validation_leaves_prg0_alone() {
+        let Ok(prg0) = std::fs::read("roms/Super Mario Bros. 3 (USA).nes") else {
+            eprintln!("skipping: Rev 0 dump not present");
+            return;
+        };
+        let rom = Rom::from_bytes_lax(&prg0, true).expect("lax load must succeed");
+        assert!(!rom.converted_from_prg0());
+        assert_eq!(rom.original_bytes(), &prg0[..]);
     }
 
     #[test]

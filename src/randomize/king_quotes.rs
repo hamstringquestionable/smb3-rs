@@ -616,6 +616,22 @@ const QUOTES: &[[&str; 6]] = &[
         "distance.",
         "",
     ],
+    [
+        "The wand? Forget the",
+        "wand. This kingdom",
+        "needs decorating.",
+        "",
+        "Put a Birdo on it!",
+        "",
+    ],
+    [
+        "They're taking the",
+        "Toads to Dark Land!",
+        "They're taking the",
+        "Toads to Dark Land!",
+        "They're taking the",
+        "Toads to Dark Land!",
+    ],
 ];
 
 /// Suit-specific quotes: shown when Mario visits the king wearing frog suit.
@@ -732,6 +748,14 @@ const FROG_QUOTES: &[[&str; 6]] = &[
         "",
         "Oh, too late.",
         "Sorry, viewers!",
+    ],
+    [
+        "You have my sword.",
+        "",
+        "And my hammer.",
+        "",
+        "And your frog suit.",
+        "",
     ],
 ];
 
@@ -950,13 +974,214 @@ fn cpu_addr(file_offset: usize) -> u16 {
 ///   Form < 4 (no suit) → index by World_Num for per-world quotes
 const QUOTE_SELECT_PATCH: usize = 0x362A3;
 
+/// The king who reads the Koopaling thresholds — always the same one, so he
+/// reads as a recurring character rather than a random king having a strange
+/// day.
+///
+/// Pinning the *world* is what pins the *sprite*. `TAndK_DrawKingAndToad` picks
+/// the king's CHR page, pattern index and both attribute bytes with
+/// `LDX World_Num` (`prg027.asm:777`), the quote-select hook indexes with
+/// `LDY $0727`, and the stomp threshold table is read the same way — three
+/// lookups off one byte, resolved in the same frame. So whatever `world_order`
+/// or the world maze does to the progression, this quote always arrives in the
+/// mouth of this king, talking about this king's own world.
+const ORACLE_WORLD: usize = 0;
+
+// Only seven kings exist, and the write loop indexes them directly — a bad
+// value here would silently give the oracle's line to nobody. Checked at
+// compile time rather than in a test, because there is nothing to run.
+const _: () = assert!(ORACLE_WORLD < 7, "ORACLE_WORLD must name one of the seven kings");
+
+/// Vanilla's stomp threshold: every Koopaling takes three hits. This is the
+/// table to pass when `koopaling_hits` is off, and it is what makes the
+/// "is this even randomized?" line fire exactly when it is not.
+pub const VANILLA_KOOPALING_HITS: [u8; 7] = [3; 7];
+
+/// One king per seed reacts to the Koopaling stomp thresholds instead of
+/// telling a joke. The table is `FS_KOOPA_HITS_TABLE`, which the generated
+/// stomp code reads with `LDY $0727` — the same `World_Num` the quote-select
+/// hook indexes by. Same index, so a per-world line baked here is still
+/// correct however the player reaches that world, the world maze included.
+///
+/// Indexed by stomp count minus one.
+#[rustfmt::skip]
+const KOOPA_BUCKETS: [[&str; 6]; 5] = [
+    [
+        "One stomp.",
+        "",
+        "I did not even have",
+        "time to finish my",
+        "tea.",
+        "",
+    ],
+    [
+        "Two stomps.",
+        "",
+        "Adequate. I have",
+        "seen better, but I",
+        "have also been a",
+        "dog for a week.",
+    ],
+    [
+        "Three stomps.",
+        "",
+        "The number it has",
+        "always been.",
+        "",
+        "Is this randomized?",
+    ],
+    [
+        "Four stomps.",
+        "",
+        "That one had been",
+        "practising. I could",
+        "hear it through the",
+        "wall.",
+    ],
+    [
+        "Five stomps!",
+        "",
+        "I watched the last",
+        "two through my",
+        "fingers.",
+        "",
+    ],
+];
+
+#[rustfmt::skip]
+const PAT_ALL_EQUAL: [&str; 6] = [
+    "Every one of them",
+    "takes the same",
+    "number of stomps.",
+    "",
+    "Is this even",
+    "randomized?",
+];
+
+#[rustfmt::skip]
+const PAT_ALL_PUSHOVER: [&str; 6] = [
+    "Not one of them",
+    "takes more than two",
+    "stomps.",
+    "",
+    "This is embarrassing",
+    "for all of us.",
+];
+
+#[rustfmt::skip]
+const PAT_ALL_BRUTAL: [&str; 6] = [
+    "Every last one of",
+    "them takes four",
+    "stomps or more.",
+    "",
+    "I would apologise,",
+    "but I did not do it.",
+];
+
+#[rustfmt::skip]
+const PAT_MEAN_LOW: [&str; 6] = [
+    "I have reviewed the",
+    "reports. This is a",
+    "kingdom of",
+    "pushovers.",
+    "",
+    "Enjoy it.",
+];
+
+#[rustfmt::skip]
+const PAT_MEAN_HIGH: [&str; 6] = [
+    "I have reviewed the",
+    "reports.",
+    "",
+    "Every one of them",
+    "is a brute. I am",
+    "sorry.",
+];
+
+#[rustfmt::skip]
+const PAT_THREE_ONES: [&str; 6] = [
+    "Three of my",
+    "brothers are guarded",
+    "by creatures you can",
+    "stomp once.",
+    "",
+    "Do not gloat.",
+];
+
+#[rustfmt::skip]
+const PAT_THREE_FIVES: [&str; 6] = [
+    "Three of them will",
+    "take five stomps",
+    "each.",
+    "",
+    "I shall not say",
+    "which. Sleep well.",
+];
+
+/// A remark about the *shape* of the whole threshold table, or `None` when the
+/// table is unremarkable and the king should fall back to his own world.
+///
+/// Every predicate here is order-invariant — a fact about the seven values,
+/// never about the order the player meets them in. That is deliberate: the
+/// world maze lets a player reach airships in an order chosen at run time, so
+/// "the last one took five" is unknowable when these bytes are written, while
+/// "two of them take five" stays true however the run goes.
+///
+/// Most specific first; the first predicate that holds wins. Firing rates over
+/// all 78,125 uniform 1-5 tables, measured: all-equal 0.006% (but 100% with
+/// `koopaling_hits` off), all-pushover / all-brutal 0.16% each, mean 4.07%
+/// each, three-of-a-kind 14.8% each — about 30% in total, so the per-world
+/// bucket line stays the common case.
+fn table_pattern(table: &[u8; 7]) -> Option<&'static [&'static str; 6]> {
+    let sum: u32 = table.iter().map(|&v| u32::from(v)).sum();
+    let ones = table.iter().filter(|&&v| v == 1).count();
+    let fives = table.iter().filter(|&&v| v == 5).count();
+    let lo = *table.iter().min().expect("table is non-empty");
+    let hi = *table.iter().max().expect("table is non-empty");
+
+    if lo == hi {
+        return Some(&PAT_ALL_EQUAL);
+    }
+    if hi <= 2 {
+        return Some(&PAT_ALL_PUSHOVER);
+    }
+    if lo >= 4 {
+        return Some(&PAT_ALL_BRUTAL);
+    }
+    // 7 worlds, so mean <= 2.0 is sum <= 14 and mean >= 4.0 is sum >= 28.
+    if sum <= 14 {
+        return Some(&PAT_MEAN_LOW);
+    }
+    if sum >= 28 {
+        return Some(&PAT_MEAN_HIGH);
+    }
+    if ones >= 3 {
+        return Some(&PAT_THREE_ONES);
+    }
+    if fives >= 3 {
+        return Some(&PAT_THREE_FIVES);
+    }
+    None
+}
+
+/// The quote for the one king who talks about Koopalings: a remark on the
+/// table's shape if it has one, otherwise his own world's stomp count.
+fn koopaling_quote(table: &[u8; 7], world: usize) -> &'static [&'static str; 6] {
+    table_pattern(table).unwrap_or_else(|| {
+        // The generator only ever writes 1-5; clamp so a future widening of
+        // that range cannot index off the end of the bucket array.
+        let count = usize::from(table[world].clamp(1, 5));
+        &KOOPA_BUCKETS[count - 1]
+    })
+}
+
 /// Write randomized king quotes into the ROM.
 ///
 /// `enabled` gates the ROM writes only. Every RNG draw this module makes
 /// happens above the early return, so a run with quotes off consumes exactly
 /// the same seed stream as one with them on and nothing downstream shifts.
 /// Keep it that way: never move a `choose` call below the return.
-pub fn randomize(rom: &mut Rom, rng: &mut ChaCha8Rng, enabled: bool) {
+pub fn randomize(rom: &mut Rom, rng: &mut ChaCha8Rng, enabled: bool, koopaling_hits: [u8; 7]) {
     // --- 1. Draw every quote, whether or not we are going to write one ---
     // choose_multiple samples without replacement, so the 7 quotes are unique.
     // It draws inside the call, not lazily as the returned iterator is walked —
@@ -975,8 +1200,12 @@ pub fn randomize(rom: &mut Rom, rng: &mut ChaCha8Rng, enabled: bool) {
     }
 
     // --- 2. Write 7 unique standard quotes into free space ---
+    let koopa_quote = koopaling_quote(&koopaling_hits, ORACLE_WORLD);
     let mut std_addrs = Vec::with_capacity(7);
     for (world, quote) in std_picks.iter().enumerate() {
+        // The oracle's drawn quote is replaced rather than skipped, so the pick
+        // above still consumes exactly seven and the stream stays put.
+        let quote: &[&str; 6] = if world == ORACLE_WORLD { koopa_quote } else { quote };
         let encoded = encode_quote(quote);
         let file_offset = KING_QUOTE_BASE + world * 120;
         rom.write_range(file_offset, &encoded);
@@ -1078,6 +1307,66 @@ mod tests {
         validate_pool("FROG_QUOTES", FROG_QUOTES);
         validate_pool("RACCOON_QUOTES", RACCOON_QUOTES);
         validate_pool("HAMMER_QUOTES", HAMMER_QUOTES);
+        validate_pool("KOOPA_BUCKETS", &KOOPA_BUCKETS);
+    }
+
+    /// Every quote the Koopaling king can reach fits the box.
+    ///
+    /// The pattern quotes are separate consts rather than one pool, so walking
+    /// the selector over every possible table is what proves none of them was
+    /// added without being measured. 5^7 tables is 78,125 — cheap to exhaust,
+    /// and exhausting it is the point: a pattern that only fires on a rare
+    /// shape would otherwise ship unchecked.
+    #[test]
+    fn koopaling_quotes_fit_constraints() {
+        let mut table = [1u8; 7];
+        loop {
+            for world in 0..7 {
+                validate_pool(
+                    "koopaling_quote",
+                    std::slice::from_ref(koopaling_quote(&table, world)),
+                );
+            }
+            // Odometer over 1..=5 in seven digits.
+            let mut i = 0;
+            while i < 7 {
+                table[i] += 1;
+                if table[i] <= 5 {
+                    break;
+                }
+                table[i] = 1;
+                i += 1;
+            }
+            if i == 7 {
+                break;
+            }
+        }
+    }
+
+    /// `koopaling_hits` off means vanilla, and vanilla is a flat three — so the
+    /// king who notices flatness is exactly the king who says the flag is off.
+    #[test]
+    fn flag_off_table_reads_as_unrandomized() {
+        assert_eq!(
+            table_pattern(&VANILLA_KOOPALING_HITS),
+            Some(&PAT_ALL_EQUAL),
+            "a flat table must trip the all-equal remark"
+        );
+    }
+
+    /// The bucket fallback names the world's own count, not a neighbour's.
+    #[test]
+    fn bucket_fallback_reports_its_own_world() {
+        // Deliberately unremarkable: mean 3, no three-of-a-kind, not flat.
+        let table = [1u8, 2, 3, 4, 5, 3, 3];
+        assert!(table_pattern(&table).is_none(), "test table must reach the fallback");
+        for (world, &count) in table.iter().enumerate() {
+            assert_eq!(
+                koopaling_quote(&table, world),
+                &KOOPA_BUCKETS[usize::from(count) - 1],
+                "world {world} (count {count}) got the wrong bucket"
+            );
+        }
     }
 
     #[test]
@@ -1115,11 +1404,11 @@ mod tests {
         for seed in 0..16u64 {
             let mut rom_on = Rom::from_bytes(&bytes).expect("test ROM parses");
             let mut rng_on = ChaCha8Rng::seed_from_u64(seed);
-            randomize(&mut rom_on, &mut rng_on, true);
+            randomize(&mut rom_on, &mut rng_on, true, VANILLA_KOOPALING_HITS);
 
             let mut rom_off = Rom::from_bytes(&bytes).expect("test ROM parses");
             let mut rng_off = ChaCha8Rng::seed_from_u64(seed);
-            randomize(&mut rom_off, &mut rng_off, false);
+            randomize(&mut rom_off, &mut rng_off, false, VANILLA_KOOPALING_HITS);
 
             // Identical position in the stream => identical continuations.
             let tail_on: Vec<u64> = (0..8).map(|_| rng_on.next_u64()).collect();

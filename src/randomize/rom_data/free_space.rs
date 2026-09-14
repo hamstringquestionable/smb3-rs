@@ -1389,6 +1389,40 @@ mod free_space_tests {
     /// caring about, not all 32, and requiring every bank with spare filler to
     /// appear would bloat it for no gain.
     ///
+    /// The budget must not depend on which revision the player supplied.
+    ///
+    /// `free_space_map` reads `rom.original`, and for a Rev 0 input that is the
+    /// *converted* Rev 1 bytes — deliberately, because this registry is
+    /// calibrated against Rev 1 and 312 of the 1,634 revision diffs land on
+    /// `$FF`/`$00`. Point the scan at the bytes the user supplied instead and
+    /// the measured gaps move. Nothing else notices, which is why this is
+    /// pinned here rather than left to the doc-table test: that one loads Rev 1,
+    /// where the two baselines are the same bytes and the mistake is invisible.
+    ///
+    /// Skips without both dumps.
+    #[test]
+    fn free_space_is_the_same_for_either_revision() {
+        let (Ok(rev1), Ok(prg0)) = (
+            std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes"),
+            std::fs::read("roms/Super Mario Bros. 3 (USA).nes"),
+        ) else {
+            eprintln!("SKIP: requires both USA dumps, which are not included in the repo");
+            return;
+        };
+        let from_rev1 = free_space_map(&crate::rom::Rom::from_bytes(&rev1).expect("Rev 1"));
+        let from_prg0 = free_space_map(&crate::rom::Rom::from_bytes(&prg0).expect("Rev 0"));
+
+        assert_eq!(from_rev1.len(), from_prg0.len());
+        for (a, b) in from_rev1.iter().zip(from_prg0.iter()) {
+            assert_eq!(
+                (a.bank, a.allocated, a.free_ff, a.free_00, a.largest_gap(), a.largest_gap_at()),
+                (b.bank, b.allocated, b.free_ff, b.free_00, b.largest_gap(), b.largest_gap_at()),
+                "PRG{:03} measures differently from a Rev 0 input",
+                a.bank
+            );
+        }
+    }
+
     /// Skips without the ROM, like every other test that needs it.
     #[test]
     fn free_space_doc_table_is_current() {

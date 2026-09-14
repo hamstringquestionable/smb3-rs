@@ -515,6 +515,11 @@ The map is gitignored since it's derived from the ROM file.
 ## Key Technical Notes
 
 - ROM is SMB3 USA Rev 1: 393,232 bytes (16 header + 256KB PRG + 128KB CHR), Mapper 4 (MMC3)
+- A Rev 0 (PRG0) input is converted to Rev 1 inside `Rom::from_bytes_lax` with a
+  bundled IPS (`assets/prg0_to_prg1.ips`, headered offsets), so **nothing else in
+  the crate is revision-aware** — keep it that way. `rom.original` is the
+  converted Rev 1 bytes; `rom.ips_baseline_bytes()` is what the user supplied and
+  is what an emitted patch must diff against
 - Seedable RNG via ChaCha8Rng — same seed produces identical output on native and WASM
 - IPS generation is diff-based: modify ROM bytes in memory, then diff against original
 - Conditional compilation: `clap` for native only, `wasm-bindgen` for WASM only

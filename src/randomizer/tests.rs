@@ -642,6 +642,7 @@ fn flag_key_per_option_round_trip() {
         vec![3u8],
         vec![3, 6, 9],
         vec![ITEM_RANDOM, ITEM_RANDOM_NO_WHISTLE, ITEM_RANDOM_SUIT_ONLY],
+        vec![ITEM_RANDOM_NO_SUITS],
     ] {
         let opts = Options { starting_items: items.clone(), ..Default::default() };
         let expected = normalized(opts.clone());
@@ -1558,8 +1559,8 @@ fn flag_key_round_trip_mixed_random_and_concrete() {
 fn resolve_starting_item_deterministic() {
     let mut rng1 = ChaCha8Rng::seed_from_u64(42);
     let mut rng2 = ChaCha8Rng::seed_from_u64(42);
-    let a = resolve_starting_item(ITEM_RANDOM, &mut rng1);
-    let b = resolve_starting_item(ITEM_RANDOM, &mut rng2);
+    let a = resolve_starting_item(ITEM_RANDOM, false, &mut rng1);
+    let b = resolve_starting_item(ITEM_RANDOM, false, &mut rng2);
     assert_eq!(a, b, "same seed must produce same item");
 }
 
@@ -1567,7 +1568,7 @@ fn resolve_starting_item_deterministic() {
 fn resolve_suit_only_in_range() {
     for seed in 0..100u64 {
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
-        let item = resolve_starting_item(ITEM_RANDOM_SUIT_ONLY, &mut rng);
+        let item = resolve_starting_item(ITEM_RANDOM_SUIT_ONLY, false, &mut rng);
         assert!((1..=6).contains(&item), "suit-only produced {item}, expected 1-6");
     }
 }
@@ -1576,18 +1577,53 @@ fn resolve_suit_only_in_range() {
 fn resolve_no_whistle_never_whistle() {
     for seed in 0..100u64 {
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
-        let item = resolve_starting_item(ITEM_RANDOM_NO_WHISTLE, &mut rng);
+        let item = resolve_starting_item(ITEM_RANDOM_NO_WHISTLE, false, &mut rng);
         assert_ne!(item, 0x0C, "no-whistle produced a whistle on seed {seed}");
         assert!((1..=13).contains(&item), "no-whistle produced {item}, expected 1-13 (not 12)");
     }
 }
 
 #[test]
+fn resolve_no_suits_pool() {
+    // The pool is curated, not the complement of the suit pool: P-Wing (0x08)
+    // and Anchor (0x0A) are not suits and are still excluded.
+    let allowed = [0x07u8, 0x09, 0x0B, 0x0C, 0x0D];
+    let mut seen = std::collections::BTreeSet::new();
+    for seed in 0..100u64 {
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
+        let item = resolve_starting_item(ITEM_RANDOM_NO_SUITS, false, &mut rng);
+        assert!(allowed.contains(&item), "no-suits produced {item} on seed {seed}");
+        seen.insert(item);
+    }
+    assert_eq!(
+        seen.into_iter().collect::<Vec<_>>(),
+        allowed.to_vec(),
+        "every pool member should be reachable with whistles kept"
+    );
+}
+
+#[test]
+fn resolve_no_suits_drops_whistle_when_whistles_are_removed() {
+    let mut seen = std::collections::BTreeSet::new();
+    for seed in 0..100u64 {
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
+        let item = resolve_starting_item(ITEM_RANDOM_NO_SUITS, true, &mut rng);
+        assert_ne!(item, 0x0C, "handed out a whistle on seed {seed} with whistles removed");
+        seen.insert(item);
+    }
+    assert_eq!(
+        seen.into_iter().collect::<Vec<_>>(),
+        vec![0x07u8, 0x09, 0x0B, 0x0D],
+        "the other four must all stay reachable"
+    );
+}
+
+#[test]
 fn resolve_concrete_passthrough() {
     let mut rng = ChaCha8Rng::seed_from_u64(0);
-    assert_eq!(resolve_starting_item(0, &mut rng), 0);
-    assert_eq!(resolve_starting_item(5, &mut rng), 5);
-    assert_eq!(resolve_starting_item(13, &mut rng), 13);
+    assert_eq!(resolve_starting_item(0, false, &mut rng), 0);
+    assert_eq!(resolve_starting_item(5, false, &mut rng), 5);
+    assert_eq!(resolve_starting_item(13, false, &mut rng), 13);
 }
 
 /// **A pad tile stands under every arrival key the ROM carries.**
@@ -2010,12 +2046,15 @@ fn every_maze_lock_has_exactly_one_key() {
 /// Nothing asserted that until now. Measured at 40/40 seeds when this was
 /// written.
 ///
-/// **Standard mode only, deliberately.** `maze::fill` permutes which fortress
-/// opens which lock, and `secret_exit_safe` is a *per-world* verdict computed
-/// before telepads exist — so in maze mode the property has to be re-asked of
-/// the whole graph at the shipping wand count, which nothing does yet. See
-/// `maze::tests::per_world_sealable_locks_are_sealable_for_the_maze` for the
-/// size of that gap (57% of locks are sealable at K=7 against 81% at K=3).
+/// **Standard mode only.** `maze::fill` permutes which fortress opens which
+/// lock, and `secret_exit_safe` is a *per-world* verdict computed before
+/// telepads exist, so in maze mode the property is a different question asked
+/// of the whole graph at the shipping wand count. `maze::stamp_into` restamps
+/// the flag for that, and the maze half of this check is
+/// `one_f_lands_on_a_lock_that_can_stay_shut_in_the_maze` below. See
+/// `maze::tests::per_world_sealable_locks_are_sealable_for_the_maze` for why
+/// inheriting the builder's verdict would not do (57% of locks are sealable at
+/// K=7 against 81% at K=3).
 #[test]
 fn one_f_lands_on_a_lock_that_can_stay_shut() {
     use crate::randomize::lock_keys;
@@ -2064,6 +2103,161 @@ fn one_f_lands_on_a_lock_that_can_stay_shut() {
         checked += 1;
     }
     assert!(checked > 0, "1-F was never placed; the check is vacuous");
+}
+
+/// **1-F's lock can be left shut in the world maze too.**
+///
+/// The standard-mode sibling above is the same property; this one exists
+/// because the maze re-asks it of a different graph. `maze::fill` permutes
+/// which fortress opens which lock and `relocate` can move the fortress into
+/// another world, so the builder's per-world `secret_exit_safe` verdict is
+/// wrong by construction — `maze::stamp_into` restamps every lock with
+/// `winnable_with_lock_sealed` (castle reachable *and* K airship docks
+/// reachable with the lock sealed forever) before the writer sees it.
+///
+/// Nothing asserted that the restamp survives all the way to where 1-F
+/// actually lands. This does, at three wand counts, because the sealable pool
+/// is K-sensitive: 81% of locks at K=3 against 57% at K=7.
+///
+/// The pairing is read from the captured `BuildResult`, not from the ROM's
+/// lock-key table: in maze mode most entries are `away` and an away entry
+/// stores a packed-store address that does not decode back to a cell.
+///
+/// **What this does and does not catch**, from mutating the source and
+/// re-running (20 seeds x 3 wand counts). `std` is the standard-mode sibling
+/// above, `maze` is `maze::tests::one_f_can_always_decline_its_lock`:
+///
+/// | Mutation | Here | `std` | `maze` |
+/// |---|---|---|---|
+/// | `assign` keys safe slots by the lock's world, not the fortress's | **fails** | passes | passes |
+/// | `assign` stops filtering on `secret_exit_safe` | **fails** | **fails** | passes |
+/// | `stamp_into` inherits the builder verdict | passes | passes | **fails** |
+/// | every lock stamped `secret_exit_safe = true` | **fails** (vacuity guard) | — | — |
+///
+/// **The first row is why this test exists.** A safe slot is the *fortress*
+/// that opens a sealable lock, which is not the same as "a sealable lock in
+/// this world" — and outside the maze those two are always the same world, so
+/// no standard-mode seed can tell them apart. 76% of maze locks are opened
+/// from elsewhere, so here they diverge on the first seed.
+///
+/// The third row is the honest limit: this test reads the same flag `assign`
+/// read, so it checks that the writer *used* the verdict, not that the verdict
+/// is *true*. The maze-side test owns truth, at the source, before the writer.
+///
+/// The `unsealable > 0` assert at the end is what stops the main assert
+/// passing for the wrong reason: about a quarter of locks in a run genuinely
+/// cannot be left shut (3689 of 15300 at `CENSUS_SEEDS=300`), so a 1-F placed
+/// blindly would hit one roughly every fourth seed.
+///
+/// ```sh
+/// CENSUS_SEEDS=200 cargo test --release --lib one_f_maze -- --nocapture
+/// ```
+#[test]
+fn one_f_lands_on_a_lock_that_can_stay_shut_in_the_maze() {
+    use crate::randomize::overworld_build::{FortRef, LockAssignment, SlotKind};
+    use crate::randomize::rom_data::{self, FORTRESS_1F_OBJ_PTR, WORLDS};
+
+    let Some(raw) = make_test_rom() else {
+        eprintln!("SKIP: requires the ROM, which is not included in the repo");
+        return;
+    };
+    let seeds: u64 = std::env::var("CENSUS_SEEDS").ok().and_then(|s| s.parse().ok()).unwrap_or(5);
+    let mut checked = 0usize;
+    let mut unplaced = 0usize;
+    let mut no_lock = 0usize;
+    let mut unsealable = 0usize;
+    let mut total_locks = 0usize;
+    for wands in [0u8, 3, 7] {
+        for seed in 1..=seeds {
+            let opts = Options { world_maze: true, maze_wands: wands, ..audit_options() };
+            let (rom, build) =
+                crate::randomize_rom_with_overworld_capture(raw.output_bytes(), seed, &opts, None)
+                    .expect("randomize");
+
+            // Where did the 1-F fortress level end up?
+            let mut at: Option<(usize, (usize, usize))> = None;
+            for (wi, w) in WORLDS.iter().enumerate() {
+                for idx in 0..w.entry_count {
+                    let e = rom_data::read_entry(&rom, w, idx);
+                    if u16::from_le_bytes([e.obj_lo, e.obj_hi]) == FORTRESS_1F_OBJ_PTR {
+                        at = Some((wi, rom_data::entry_grid_position(&rom, w, idx)));
+                    }
+                }
+            }
+            let Some((fw, fpos)) = at else {
+                unplaced += 1;
+                continue;
+            };
+
+            // Which fortress id is that cell? `relocate` can have moved the
+            // slot's world, so the slot list is read at its final world.
+            let section = build.worlds[fw]
+                .slots
+                .iter()
+                .find(|s| s.kind == SlotKind::Fortress && s.pos == fpos)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "K={wands} seed {seed}: 1-F at W{} {fpos:?} is on no fortress slot",
+                        fw + 1
+                    )
+                })
+                .section;
+
+            // How many locks in this run could *not* be left shut. Counted
+            // because it is what gives the assert below its teeth: if every
+            // lock were sealable, 1-F could not miss and the check would pass
+            // for the wrong reason.
+            unsealable += build
+                .worlds
+                .iter()
+                .flat_map(|w| w.locks.iter())
+                .filter(|l| !l.secret_exit_safe)
+                .count();
+            total_locks += build.worlds.iter().map(|w| w.locks.len()).sum::<usize>();
+
+            // The lock it opens can be in any world — that is the point of the
+            // maze. A fortress with no lock at all cannot strand anyone.
+            //
+            // **Every** match is asserted, not the first. A fortress opening
+            // two locks is its own bug, caught separately by
+            // `lock_keys::one_fortress_cannot_open_two_locks`, and a `find`
+            // here would quietly pass on the safe one of the pair.
+            let fort = FortRef { world: fw, section };
+            let opened: Vec<(usize, &LockAssignment)> = build
+                .worlds
+                .iter()
+                .enumerate()
+                .flat_map(|(lw, w)| w.locks.iter().map(move |l| (lw, l)))
+                .filter(|(_, l)| l.fort == fort)
+                .collect();
+            if opened.is_empty() {
+                no_lock += 1;
+                continue;
+            }
+            for (lw, lock) in &opened {
+                assert!(
+                    lock.secret_exit_safe,
+                    "K={wands} seed {seed}: 1-F stands at W{} {fpos:?} and opens the lock at \
+                     W{} {:?}, which the maze did NOT mark safe to leave shut — taking 1-F's \
+                     secret exit strands the run",
+                    fw + 1,
+                    lw + 1,
+                    lock.pos
+                );
+            }
+            checked += 1;
+        }
+    }
+    eprintln!(
+        "1-F maze safety: {checked} checked, {no_lock} opened no lock, {unplaced} never placed; \
+         {unsealable} of {total_locks} locks could NOT be left shut"
+    );
+    assert!(checked > 0, "1-F never opened a lock; the check is vacuous");
+    assert!(
+        unsealable > 0,
+        "every lock in every seed was sealable, so 1-F could not possibly have missed — the \
+         assert above proved nothing"
+    );
 }
 
 /// **How many map-object slots are actually free, under real options?**

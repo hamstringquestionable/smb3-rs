@@ -70,12 +70,14 @@ What SMB3-RS deliberately is not, and does not intend to become:
   not a content-authoring tool.
 - **Not a different game.** It does not alter core mechanics (physics, controls)
   beyond quality-of-life. It is SMB3, made fresh — not a new platformer.
-- **Not multi-version.** Targets SMB3 USA Rev 1 (PRG1). Other revisions are out
-  of scope. (PRG0 is text-only today; see `docs`/memory for the current limit.)
+- **Not multi-version.** Targets SMB3 USA Rev 1 (PRG1); every patch, offset
+  table and free-space allocation assumes those bytes. A Rev 0 (PRG0) dump is
+  accepted, but by *converting* it to Rev 1 at load time with a bundled patch —
+  not by being revision-aware. Other revisions are out of scope.
 
 ## Released, and what that changed
 
-SMB3-RS **released on 2026-07-27** and is on 2.0.1 as of 2026-09-12. The two
+SMB3-RS **released on 2026-07-27** and is on 2.1.0 as of 2026-09-13. The two
 bars 1.0 was defined against — feature parity with **SMB3R** and enough
 community confidence that seeds are beatable and free of game-breaking bugs —
 were the right bars, and clearing them changed the rules in one specific way:
