@@ -614,8 +614,27 @@ fn randomize_inner(
     // Randomize king quotes. Always called, even when the option is off: the
     // module draws its quotes unconditionally and only the ROM writes are
     // gated, so toggling this cannot shift the seed stream for anything below.
+    // What the oracle king is allowed to know. Every field is a fact already
+    // committed to the ROM by this point — the stomp table just above, the
+    // progression from `world_order`, and 1-F's chest, whose item `items` wrote
+    // and whose world the overworld writer reports. Reading the chest byte back
+    // out of the ROM rather than plumbing it through keeps the king right under
+    // every flag combination, chest randomization off included.
+    let one_f_chest = written.one_f_world().map(|world| randomize::king_quotes::OneFChest {
+        world,
+        item: rom.read_byte(randomize::items::ONE_F_CHEST_ITEM),
+    });
     rom.set_tag("king_quotes");
-    randomize::king_quotes::randomize(rom, &mut rng, options.king_quotes, koopaling_hits);
+    randomize::king_quotes::randomize(
+        rom,
+        &mut rng,
+        options.king_quotes,
+        &randomize::king_quotes::OracleFacts {
+            koopaling_hits,
+            world_progression: credits_progression.as_deref(),
+            one_f_chest,
+        },
+    );
 
     // Cosmetic: render every item visual (reserve grid, Toad House chests,
     // in-level treasure boxes) as the Anchor sprite.

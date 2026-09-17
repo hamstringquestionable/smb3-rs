@@ -861,8 +861,15 @@ randomized by `items::randomize` via a hardcoded `TREASURE_CHEST_OFFSETS` list i
 | `0x0C427` | `$C414` | MusicBox (0x0D) | Princess cutscene chest |
 | `0x0CE9F` | `$CE89` | Cloud (0x07) | 3-7 coin-heaven sub-area |
 | `0x0D0E2` | `$D0CF` | Leaf (0x03) | Shared 8-Hnd1/2/3 treasure room |
-| `0x0D36A` | `$D351` | Whistle (0x0C) | Hidden warp-whistle chest |
+| `0x0D36A` | `$D351` | Whistle (0x0C) | 1-F's sub-area — the warp-whistle chest |
 | `0x0DA3F` | `$DA29` | Star (0x09) | Star chest |
+
+`0x0D36A` is the one worth naming: that chest sits in 1-F's sub-area, in the
+room the level's *secret exit* reaches, so it can be taken without fighting
+Boom-Boom — which is why whether the detour pays depends entirely on what
+randomization put in it. `items::ONE_F_CHEST_ITEM` names the offset for readers
+(the oracle king reads it back), and `overworld_writer`'s `one_f_world` reports
+which world the deal put that fortress in.
 
 Any new chest (e.g. via cloning an enemy stream or redirecting a junction) must
 have its new Y-byte offset appended to `TREASURE_CHEST_OFFSETS` or it will stay

@@ -9,6 +9,15 @@ deploys.
 
 ## [Unreleased]
 
+### Added
+
+- **The oracle king has a repertoire.** The king who read the Koopaling stomp
+  counts now picks at random from whichever of them he can speak to this seed.
+  He can predict which world the airship will take you to next (world shuffle
+  and the world maze only — in vanilla order it is not a prediction), and he
+  will tell you whether the chest in 1-F is worth the detour and which world
+  that fortress ended up in, for the items he has an opinion about.
+
 ## [2.1.0] - 2026-09-13
 
 **Rev 0 ROMs are accepted.** The other USA dump no longer has to be hunted down
