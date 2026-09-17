@@ -43,9 +43,40 @@
 //!
 //! So the map's clock digits are live output, not leftover template data. The
 //! lever is the RAM buffer those fills write through: [`STATUS_BAR_TIME`], the
-//! three tiles the bar commits to VRAM `$2B51`-`$2B53`. Write it and the
-//! vanilla machinery does the rest — on map entry, on every level return, and
-//! on every open and close of the item box, with no repaint hook of our own.
+//! three tiles the bar commits to VRAM `$2B51`-`$2B53`. Write it and the map's
+//! own status-bar update carries it to the screen.
+//!
+//! # The item box flip does not carry it, and that needs a second hook
+//!
+//! **This module shipped claiming the flip repainted the readout for free. It
+//! does not, and the claim is corrected here rather than quietly dropped.**
+//! `InvFlipFrame_DrawMLLivesScore` patches exactly two things into the copied
+//! template — lives at buffer `+8`/`+9`, and the six score digits at `+11`
+//! through `+16`. It never touches `+$14`-`+$16`, the timer cells. So closing
+//! the item box repaints that row from `Flip_MidBStatCards`' static
+//! `$ED $F0 $F0 $F0` and the readout reverts to a clock and "000".
+//!
+//! It comes back, but not promptly: the map loop's `StatusBar_UpdateValues` at
+//! `$8729` is gated on `Map_Operation >= 2`, so it runs when the map is *doing*
+//! something rather than every frame. The player sees a flash of "000" that
+//! heals on their next move — which is exactly how it was reported, and why it
+//! was hard to reproduce on purpose.
+//!
+//! [`FLIP_CARRY`] closes it by copying [`STATUS_BAR_TIME`] into the flip's own
+//! buffer, twenty bytes hooked over the `JSR StatusBar_Fill_Score` inside that
+//! routine.
+//!
+//! **That hook site is chosen for its gate, not its convenience.** Vanilla
+//! skips the score fill while the box is *opening*
+//! (`LDA InvFlip_Frame / AND #$08 / BNE rts`), and the call sits after that
+//! test, so the patch inherits the gate. It has to: while the box is opening,
+//! `$2B52`/`$2B53` are the bottom half of item slot 4, and writing the readout
+//! there would shred an item icon. The two writes do not collide either —
+//! vanilla's score lands at `+11`-`+16`, ours at `+20`-`+22`.
+//!
+//! The `400` that flashes on *map entry* is a different bug with the same
+//! shape, and is deliberately left alone: it comes from PRG030's macro copy,
+//! which is shared with the level status bar.
 //!
 //! # The hook
 //!
@@ -75,13 +106,22 @@ use crate::rom::Rom;
 
 use super::maze_state::WANDS_TABLE;
 use super::rom_data::{
-    FS_WAND_READOUT, LEVEL_TILESET, PRG026_FILE_BASE, STATUS_BAR_FILL_TIME_CALL,
-    STATUS_BAR_FILL_TIME_CPU, STATUS_BAR_TIME, STATUS_GLYPH_DIGIT0, STATUS_GLYPH_SLASH,
+    FLIP_FILL_SCORE_CALL, FS_WAND_READOUT, FS_WAND_READOUT_FLIP, GRAPHICS_BUFFER, LEVEL_TILESET,
+    PRG026_FILE_BASE, STATUS_BAR_FILL_SCORE_CPU, STATUS_BAR_FILL_TIME_CALL,
+    STATUS_BAR_FILL_TIME_CPU, STATUS_BAR_TIME, STATUS_GLYPH_DIGIT0, STATUS_GLYPH_SLASH, TEMP_VAR9,
 };
 use super::wand_gate::MAX_WANDS;
 
 /// Where [`wand_readout_routine`]'s output is assembled to run. `$B520`.
 const WAND_READOUT_CPU: u16 = (0xA000 + (FS_WAND_READOUT - PRG026_FILE_BASE)) as u16;
+
+/// Where [`FLIP_CARRY`] is assembled to run. `$B6ED`.
+const FLIP_CARRY_CPU: u16 = (0xA000 + (FS_WAND_READOUT_FLIP - PRG026_FILE_BASE)) as u16;
+
+/// Buffer index of the first timer cell within the row the flip is drawing:
+/// payload index 16 (`$2B50`) plus the three header bytes, plus one to reach
+/// `$2B51`, the first cell the readout owns.
+const FLIP_TIMER_BUFFER_INDEX: u16 = 0x14;
 
 /// The routine that replaces the one `JSR StatusBar_Fill_Time`.
 ///
@@ -126,6 +166,35 @@ fn wand_readout_routine(k: u8) -> [u8; 35] {
     code
 }
 
+/// Carry [`STATUS_BAR_TIME`] through the item-box flip.
+///
+/// Replaces the flip's `JSR StatusBar_Fill_Score`, replays it, and then copies
+/// the three readout tiles into the flip's own buffer — which vanilla leaves
+/// holding the template's static clock and "000". See the module docs for why
+/// this call site and no other: it is the one inside the opening-frame gate.
+///
+/// A loop rather than three unrolled stores: 20 bytes against 24, and the four
+/// saved belong to whatever needs PRG026 next.
+fn flip_carry_routine() -> [u8; 20] {
+    let [score_lo, score_hi] = STATUS_BAR_FILL_SCORE_CPU.to_le_bytes();
+    let [time_lo, time_hi] = STATUS_BAR_TIME.to_le_bytes();
+    let [buf_lo, buf_hi] = (GRAPHICS_BUFFER + FLIP_TIMER_BUFFER_INDEX).to_le_bytes();
+    #[rustfmt::skip]
+    let code = [
+        0x20, score_lo, score_hi,   //  0: JSR StatusBar_Fill_Score   (displaced)
+        0xA6, TEMP_VAR9,            //  3: LDX <Temp_Var9   (this row's buffer base)
+        0xA0, 0x00,                 //  5: LDY #$00
+        0xB9, time_lo, time_hi,     //  7: LDA StatusBar_Time,Y   <- loop
+        0x9D, buf_lo, buf_hi,       // 10: STA Graphics_Buffer+$14,X
+        0xE8,                       // 13: INX
+        0xC8,                       // 14: INY
+        0xC0, 0x03,                 // 15: CPY #$03
+        0xD0, 0xF4,                 // 17: BNE loop     (-> 7)
+        0x60,                       // 19: RTS
+    ];
+    code
+}
+
 /// Install the readout. K = 0 writes nothing.
 ///
 /// See the module docs for the ordering rule: this must run after
@@ -140,6 +209,11 @@ pub(crate) fn apply(rom: &mut Rom, wands_required: u8) {
     rom.write_range(
         STATUS_BAR_FILL_TIME_CALL,
         &[0x20, WAND_READOUT_CPU as u8, (WAND_READOUT_CPU >> 8) as u8],
+    );
+    rom.write_range(FS_WAND_READOUT_FLIP, &flip_carry_routine());
+    rom.write_range(
+        FLIP_FILL_SCORE_CALL,
+        &[0x20, FLIP_CARRY_CPU as u8, (FLIP_CARRY_CPU >> 8) as u8],
     );
 }
 
@@ -188,14 +262,64 @@ mod asm_checks {
         );
     }
 
-    /// K = 0 is the pure maze: no gate, so no progress to report, and the hook
-    /// must be left alone entirely.
+    /// K = 0 is the pure maze: no gate, so no progress to report, and both
+    /// hooks must be left alone entirely.
     #[test]
     fn k_zero_writes_nothing() {
         let Some(mut rom) = vanilla() else { return };
-        let before = rom.read_range(STATUS_BAR_FILL_TIME_CALL, 3).to_vec();
+        let time_call = rom.read_range(STATUS_BAR_FILL_TIME_CALL, 3).to_vec();
+        let score_call = rom.read_range(FLIP_FILL_SCORE_CALL, 3).to_vec();
         apply(&mut rom, 0);
-        assert_eq!(rom.read_range(STATUS_BAR_FILL_TIME_CALL, 3), &before[..]);
+        assert_eq!(rom.read_range(STATUS_BAR_FILL_TIME_CALL, 3), &time_call[..]);
+        assert_eq!(rom.read_range(FLIP_FILL_SCORE_CALL, 3), &score_call[..]);
+    }
+
+    #[test]
+    fn flip_carry_is_well_formed() {
+        let Some(rom) = vanilla() else { return };
+        asm::check(&flip_carry_routine())
+            .allocation(FS_WAND_READOUT_FLIP)
+            .origin(FLIP_CARRY_CPU)
+            .hook(
+                &rom.data,
+                FLIP_FILL_SCORE_CALL,
+                &[0x20, FLIP_CARRY_CPU as u8, (FLIP_CARRY_CPU >> 8) as u8],
+            )
+            .assert_ok();
+    }
+
+    /// The hook must land *inside* vanilla's opening-frame gate, because on the
+    /// opening frames those buffer cells are item slot 4's lower half. The gate
+    /// is `LDA InvFlip_Frame / AND #$08 / BNE rts` and the call we displace has
+    /// to sit after it — so the three bytes before our site are the branch that
+    /// skips us.
+    #[test]
+    fn the_flip_hook_sits_inside_the_opening_gate() {
+        let Some(rom) = vanilla() else { return };
+        assert_eq!(
+            rom.read_range(FLIP_FILL_SCORE_CALL, 3),
+            &[0x20, STATUS_BAR_FILL_SCORE_CPU as u8, (STATUS_BAR_FILL_SCORE_CPU >> 8) as u8],
+            "the flip's JSR StatusBar_Fill_Score has moved"
+        );
+        // `AND #$08` then a `BNE` forward over the call: the opening-frame skip.
+        assert_eq!(
+            rom.read_range(FLIP_FILL_SCORE_CALL - 4, 4),
+            &[0x29, 0x08, 0xD0, 0x13],
+            "the opening-frame gate no longer guards this call"
+        );
+    }
+
+    /// Ours and vanilla's writes share a row and must not overlap: vanilla
+    /// patches score into buffer +11..+16, we write +20..+22.
+    #[test]
+    fn the_flip_writes_miss_vanillas_score_digits() {
+        const SCORE_FIRST: u16 = 11;
+        const SCORE_LAST: u16 = 16;
+        let ours = FLIP_TIMER_BUFFER_INDEX;
+        assert!(
+            ours > SCORE_LAST,
+            "timer cells at +{ours} collide with score digits +{SCORE_FIRST}..+{SCORE_LAST}"
+        );
     }
 
     /// A K above the seven airships would print a total the player can never
