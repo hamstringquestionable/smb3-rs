@@ -5714,3 +5714,156 @@ variant is a new row rather than a per-instance field.
   this randomizer does (`FORTRESS_TILES`). **Fixed** — `lock_keys.rs`'s
   `REMOVABLE_PAIRS` carries the row pairing `$6A` → `$60` (large fortress →
   rubble).
+
+---
+
+## The status bar as a drawing surface (PRG026 / PRG030)
+
+*(Measured 2026-09-17 while building the world-maze wand readout. Every offset
+here was read back out of the ROM or rendered from its CHR; where a claim comes
+from the disassembly alone it says so.)*
+
+The world map's bottom bar is the only always-visible surface on the map, which
+makes it the natural home for a readout. It is also more tangled than it looks:
+two copies of its template, a mid-frame CHR swap, and a set of RAM buffers that
+overwrite the templates immediately after they are drawn.
+
+### Its CHR is not the map's CHR
+
+The map loads BG pages `$20`-`$23`, but the bar is drawn during the MMC3 raster
+split with **pages `$5C`-`$5F`**, from `prg031`:
+
+```
+; Set of pages "normal" IRQ sets when tileset is 0 (World Map) or 7 (Toad House)
+StatusBarMTCHR_0000:	.byte $5c	; tiles $00-$7F
+StatusBarMTCHR_0800:	.byte $5e	; tiles $80-$FF
+```
+
+Decoding bar art out of the map's own banks yields garbage; this is the mistake
+to avoid. In `web/chr-viewer.html` the whole space is **page `0x17`** (CHR file
+`0x57010`), and its intra-page tile numbers are exactly the bytes that appear in
+`InvItem_Tile_Layout` — so the viewer's click preview, which renders
+`(t, t+1, t+16, t+17)`, shows an inventory icon directly.
+
+### Glyph inventory
+
+Rendered from the ROM unless noted:
+
+| Tiles | Glyph |
+|---|---|
+| `$F0`-`$F9` | digits 0-9. Every counter in the bar builds a digit as `$F0 + n` |
+| **`$FA`** | **a slash.** Makes an "N of K" readout possible with no new CHR |
+| `$FB` | `×` (per disassembly comment) |
+| `$FC` / `$FD` / `$FE` | solid fills, colors 1 / 2 / 3. `$FE` is the blank |
+| `$EC` / `$ED` | coin symbol / timer clock |
+| `$EE` / `$EF` | power-meter arrow, glowing / dark (`StatusBar_Fill_PowerMT`) |
+| `$70`-`$73` | "WORLD" as four packed tiles |
+| `$74`-`$77` | the `<M>` and `<L>` pairs |
+
+**There is no alphabet** — "WORLD" and M/L are word-glyphs, not a font — so a
+readout here can use digits, a slash and borrowed icons, and cannot spell a word.
+
+### Two template copies, and neither owns its cells
+
+| Copy | File | VRAM | Used by |
+|---|---|---|---|
+| `Flip_MidTStatCards` | `0x34203` | `$2B20` | PRG026 item-box flip (map only) |
+| `Flip_MidBStatCards` | `0x34227` | `$2B40` | ditto |
+| `StatusBar` macro | `0x3C0C4` | `$2720` | `Video_DoStatusBarV`, vertical levels |
+| `StatusBar` macro | `0x3C143` | `$2B00` | `Video_DoStatusBar` — **levels *and* the map** |
+| `StatusBar` macro | `0x3C1C2` | `$2320` | `Video_DoStatusBarHM`, horizontal mirroring |
+
+The map's entry path runs the `$2B00` expansion (`LDA #$02` / `JSR
+Video_Do_Update`) and then **calls `StatusBar_UpdateValues`**, whose fills
+overwrite the cells the template just painted. So editing a template is close to
+useless for anything dynamic, and editing the `$2B00` copy is actively dangerous:
+it is the typical *level* status bar as well as the map's.
+
+> **A naming trap worth stating outright.** Every `JSR StatusBar_UpdateValues`
+> lives in `prg030.asm`, which reads like "level code only". It is not —
+> `prg030.asm` holds the world-map init too (`prg030:761`, immediately after the
+> map's own `Video_Do_Update`). **A file or bank name in the disassembly is not a
+> context**; trace the calling routine instead.
+
+The map loop calls it again at `prg030:958`, but gated on `Map_Operation >= 2`
+— when the map is *doing* something, not every frame. Anything wrong in those
+cells therefore persists visibly until the player's next action.
+
+### The lever: RAM buffers, not templates
+
+`StatusBar_UpdateValues` runs five fills, each writing a small RAM buffer that is
+then committed:
+
+| Buffer | RAM | VRAM | Filled by |
+|---|---|---|---|
+| `StatusBar_PMT` | `$7F3E`-`$7F45` | `$2B28`-`$2B2F` | `StatusBar_Fill_PowerMT` — **no world-map branch**, always writes from `Player_Power` |
+| `StatusBar_Score` | `$7F4A`-`$7F4F` | `$2B48`-`$2B4D` | `StatusBar_Fill_Score` |
+| `StatusBar_Time` | `$7F50`-`$7F52` | `$2B51`-`$2B53` | `StatusBar_Fill_Time` |
+
+`StatusBar_Fill_Time` (`$AF9D`, file `0x34FAD`) opens `LDA Level_Tileset` /
+`BEQ Timer_NoChange` — commented "no timer on map EVER" — but that skips only
+the **countdown**. `Timer_NoChange` (`$AFF0`, file `0x35000`) still runs
+`LDX #2 / LDA Level_TimerMSD,X / ORA #$F0 / STA StatusBar_Time,X`. So the map's
+clock digits are live output from stale level state, not leftover template data.
+
+`StatusBar_Fill_Time` has **exactly one caller ROM-wide**, the last of the five
+fills, at file `0x35466` — which makes a three-for-three `JSR` swap there total.
+
+### Graphics_Buffer indexing
+
+`Graphics_Buffer` is `$0301`; `Temp_Var9` (`$08`) holds the base index of the row
+being drawn. For a copied template stream, **buffer index = payload index + 3**
+(the two-byte VRAM address plus the length byte). Confirmed against vanilla:
+lives are payload 5 → `Graphics_Buffer+8`, and vanilla's bytes there are
+`$FE $F3`, a blank and a "3" — the three lives a new game starts with.
+
+The item-box flip patches only some of the row it copies:
+
+| Frame | Routine | Patches |
+|---|---|---|
+| 4 | `InvFlipFrame_DrawWorldCoins` | world number, coins at `+$15`/`+$16` |
+| 5 | `InvFlipFrame_DrawMLLivesScore` | lives at `+8`/`+9`, six score digits at `+11`-`+16` |
+
+Everything else in the row keeps whatever the template said — **including the
+timer cells at `+$13`-`+$16`**. A value that lives in `StatusBar_Time` therefore
+survives a map update but *not* an item-box flip, unless something carries it.
+
+`InvFlipFrame_DrawMLLivesScore` sits at `$A3CD` (file `0x343DD`); its `JSR
+StatusBar_Fill_Score` is at file `0x343F8`. That call is **inside vanilla's
+opening-frame gate** (`LDA InvFlip_Frame / AND #$08 / BNE rts`, bytes
+`29 08 D0 13`), which matters for anyone hooking it: while the box is opening,
+`$2B52`/`$2B53` are the lower half of item slot 4.
+
+### The item box is a poor drawing surface
+
+| Table | CPU | File | Shape |
+|---|---|---|---|
+| `InvItem_Tile_Layout` | `$A27C` | `0x3428C` | 14 × 4 bytes (UL, UR, LL, LR) |
+| `InvCard_Tile_Layout` | `$A2B4` | `0x342C4` | 4 × 4 bytes |
+| `InvItem_Hilite_Layout` | `$A84C` | `0x3485C` | 14 × 2, the 8×16 highlight sprite |
+| `InvItem_Pal` | `$A514` | `0x34524` | 14 × 1 |
+
+Item `$0C` (warp whistle) is `04 05 14 15` — a vertical recorder with finger
+holes, occupying the middle six columns and straddling both quadrant columns, so
+it has no spare quadrant to hang a digit in.
+
+Two findings that rule the box out for anything but static art:
+
+- **Per-item color applies only to the highlighted slot.** `InvItem_Pal` feeds
+  `Palette_Buffer+30` (`$07DF`, sprite palette 3) for the icon under the cursor.
+  Every unhighlighted icon is a BG metatile in one shared palette, and the
+  inventory's own video-update streams write only nametable bytes in
+  `$2B00`-`$2B7F`. Recoloring one item means recoloring the whole bar.
+- **There is no free art.** Every 2×2 in `$00`-`$7F` of page `0x17` that the item
+  and card tables do not claim already holds something (`$26/$27/$36/$37`
+  included), and the page is shared with the in-level status bar — so anything
+  overwritten appears in every level too.
+
+### Cells that cannot be reclaimed
+
+The clock icon at `$2B50` is static in both template copies, but PRG030's
+`$2B00` expansion is the level status bar as well, and `StatusBar_UpdTemplate`
+(the stream `StatusBar_UpdateValues` commits, `vaddr $2B28` and `vaddr $2B45`)
+is likewise shared. Blanking the icon in any of them removes it from every
+level. A readout placed in these cells wears the clock whether it wants to or
+not.
