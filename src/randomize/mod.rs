@@ -60,6 +60,7 @@ pub mod troll_pipes;
 /// the player holds K of the seven wands, plus the counter that the wands are
 /// counted in. See `docs/world_maze_design.md`, "The wand gate".
 pub mod wand_gate;
+pub mod wand_readout;
 pub mod world_order;
 /// World-maze persistence: a world you leave is the world you come back to.
 /// Applied by `randomize_inner` on both targets whenever `world_maze` is set —

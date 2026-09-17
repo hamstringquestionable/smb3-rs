@@ -441,6 +441,10 @@ fn randomize_inner(
         randomize::maze::writer::install_pad_metatile(rom, &state);
         rom.set_tag("wand_gate");
         randomize::wand_gate::apply(rom, wands);
+        // After wand_gate: it installs the marker that fills WANDS_TABLE, and
+        // the readout counts what that marker records.
+        rom.set_tag("wand_readout");
+        randomize::wand_readout::apply(rom, wands);
         rom.set_tag("world_persist");
         randomize::world_persist::apply(
             rom,
