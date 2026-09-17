@@ -364,6 +364,8 @@ src/
     flag_key.rs        #   Options <-> the shareable flag key
   testrom.rs           # Playtest ROM builder (native-only) — see below
   bin/testrom.rs       # `testrom` CLI: thin clap wrapper over testrom.rs
+  bin/flagstats.rs     # `flagstats`: decode the flag keys GoatCounter recorded into
+                       #   a per-option census (needs GOATCOUNTER_TOKEN)
   wasm.rs              # wasm-bindgen glue (only compiled for wasm32)
   randomize/
     mod.rs             # THE LIVING MODULE INDEX — 46 modules, several documented
