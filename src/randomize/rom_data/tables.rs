@@ -413,6 +413,10 @@ pub(crate) const TILE_NODE: u8 = 0x47;
 /// Number of rows in every overworld map.
 pub(crate) const ROWS: usize = 9;
 
+/// File offset where PRG026 begins. PRG026 is loaded at CPU $A000-$BFFF for
+/// the world map and the item box; file offset = 0x34010 + (cpu_addr - 0xA000).
+pub(crate) const PRG026_FILE_BASE: usize = 0x34010;
+
 /// File offset where PRG012 begins. PRG012 is loaded at CPU $A000-$BFFF
 /// during the map screen; file offset = 0x18010 + (cpu_addr - 0xA000).
 /// Holds the map metatile quadrant tables and the InitIndex master table.
@@ -1157,5 +1161,115 @@ mod fortress_table_tests {
                 w + 1
             );
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// World-map status bar
+// ---------------------------------------------------------------------------
+//
+// The bar is drawn from *two* copies of the same template. PRG026 holds the
+// item-box flip set (`Flip_MidTStatCards` `$A1F3`, `Flip_MidBStatCards`
+// `$A217`); PRG030 holds a `StatusBar` macro expanded three times, once per
+// mirroring style, and the map's entry path runs the `$2B00` one via
+// `Video_Do_Update` with `A = 2`.
+//
+// **Neither copy owns the cells it paints.** Right after that draw, the map
+// init banks in PRG026 and calls `StatusBar_UpdateValues`, which refills the
+// power meter and the timer from RAM. `StatusBar_Fill_PowerMT` has no
+// world-map branch at all, and `StatusBar_Fill_Time` takes one
+// (`Level_Tileset == 0`, "no timer on map EVER") that skips only the
+// *countdown* — `Timer_NoChange` still writes three digits from
+// `Level_TimerMSD`. So the arrows and the clock digits on the map are live
+// output, not leftover template data, and anything written into the templates
+// is overwritten on the next map entry.
+//
+// The consequence for a patch: own the RAM buffer, not the template.
+//
+// **And the clock icon at `$2B50` cannot be reclaimed at all.** It is static in
+// both copies, so blanking it means editing both — but PRG030's `$2B00`
+// expansion is `Video_DoStatusBar`, the *typical level* status bar as well as
+// the map's, and `StatusBar_UpdTemplate` (the other place the icon appears) is
+// likewise shared. Blanking any of them takes the clock out of every level. So
+// a readout in these cells wears the clock whether it wants to or not.
+
+/// `StatusBar_Time` — the three tiles the bar commits to VRAM `$2B51`-`$2B53`,
+/// refilled by `StatusBar_Fill_Time` on every status-bar update, on the map as
+/// well as in a level.
+pub(crate) const STATUS_BAR_TIME: u16 = 0x7F50;
+
+/// `Level_Tileset`. Zero is the world map, which is how every status-bar fill
+/// tells the two contexts apart.
+pub(crate) const LEVEL_TILESET: u16 = 0x070A;
+
+/// `StatusBar_Fill_Time`, PRG026 CPU `$AF9D`.
+pub(crate) const STATUS_BAR_FILL_TIME_CPU: u16 = 0xAF9D;
+
+/// The single `JSR StatusBar_Fill_Time` in `StatusBar_UpdateValues` — the last
+/// of its five fills. Exactly one caller exists in the ROM, which is what makes
+/// this a safe three-for-three hook.
+pub(crate) const STATUS_BAR_FILL_TIME_CALL: usize = 0x35466;
+
+/// Status-bar glyphs, in the `$80`-`$FF` half of the bar's pattern table (CHR
+/// pages `$5E`/`$5F`, banked by `StatusBarMTCHR_0800`). `SLASH` is the one that
+/// makes an "N of K" readout possible without adding CHR.
+pub(crate) const STATUS_GLYPH_DIGIT0: u8 = 0xF0;
+pub(crate) const STATUS_GLYPH_SLASH: u8 = 0xFA;
+
+#[cfg(test)]
+mod status_bar_tests {
+    use super::*;
+
+    /// Pin the hook site, both template copies, and the RAM buffer the fill
+    /// writes through. A shifted offset here would be found by overwriting a
+    /// live status-bar cell — the score, or the world number — which is not a
+    /// failure a unit test would otherwise catch. Skipped without the ROM.
+    #[test]
+    fn map_status_bar_offsets_match_real_rom() {
+        let Ok(bytes) = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes") else {
+            eprintln!("SKIP: requires the ROM, which is not included in the repo");
+            return;
+        };
+
+        // The hook site is `JSR StatusBar_Fill_Time`, and nothing else in the
+        // ROM calls that routine — the whole basis for hooking here.
+        let jsr = [0x20, STATUS_BAR_FILL_TIME_CPU as u8, (STATUS_BAR_FILL_TIME_CPU >> 8) as u8];
+        assert_eq!(
+            &bytes[STATUS_BAR_FILL_TIME_CALL..STATUS_BAR_FILL_TIME_CALL + 3],
+            &jsr,
+            "STATUS_BAR_FILL_TIME_CALL is not a JSR to StatusBar_Fill_Time"
+        );
+        assert_eq!(
+            bytes.windows(3).filter(|w| *w == jsr).count(),
+            1,
+            "StatusBar_Fill_Time gained a second caller; the hook is no longer total"
+        );
+
+        // `StatusBar_Fill_Time` opens by testing Level_Tileset for the map.
+        let entry = 0x34010 + (STATUS_BAR_FILL_TIME_CPU as usize - 0xA000);
+        assert_eq!(
+            &bytes[entry..entry + 4],
+            &[0xAD, LEVEL_TILESET as u8, (LEVEL_TILESET >> 8) as u8, 0xF0],
+            "StatusBar_Fill_Time no longer starts with LDA Level_Tileset / BEQ"
+        );
+
+        // Timer_NoChange writes the digits through StatusBar_Time.
+        let no_change = 0x34010 + 0xFF0;
+        assert_eq!(
+            &bytes[no_change..no_change + 10],
+            &[
+                0xA2,
+                0x02,
+                0xBD,
+                0xEE,
+                0x05,
+                0x09,
+                STATUS_GLYPH_DIGIT0,
+                0x9D,
+                STATUS_BAR_TIME as u8,
+                (STATUS_BAR_TIME >> 8) as u8,
+            ],
+            "Timer_NoChange no longer fills StatusBar_Time from Level_TimerMSD"
+        );
     }
 }

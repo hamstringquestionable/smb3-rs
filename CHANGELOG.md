@@ -11,6 +11,11 @@ deploys.
 
 ### Added
 
+- **The world map says how many wands you hold.** In the world maze, the status
+  bar shows `N/K` where the level timer sits — how many of the seven wands you
+  have against how many Bowser's bridge wants. Always on when the gate is, since
+  a wall you cannot measure your progress against is just a wall.
+
 - **The oracle king has a repertoire.** The king who read the Koopaling stomp
   counts now picks at random from whichever of them he can speak to this seed.
   He can predict which world the airship will take you to next (world shuffle

@@ -149,6 +149,12 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
     ),
     fs(0x33FF0, 32, &["title_screen"], "title menu B-to-mute toggle (32 reserved, 22 used)"),
     // PRG026 (file 0x34010, CPU $A000–$BFFF)
+    fs(
+        0x35530,
+        48,
+        &["wand_readout"],
+        "world-maze: N/K wand count in the map status bar (48 reserved, 35 used)",
+    ),
     fs(0x35572, 13, &["mystery_anchor"], "item redirect trampoline (13 reserved, 10 used)"),
     fs(0x3557F, 50, &["hammer_breaks_tiles"], "hammer_locks: tile check subroutine (32 used)"),
     fs(
@@ -729,6 +735,12 @@ pub(crate) const FS_CANOE_BACKUP: usize = 0x17D00; // 66 bytes
 pub(crate) const FS_MARCH_VETO: usize = 0x17D70; // 107 bytes (CPU $BD60)
 
 // PRG026 (cont.)
+// PRG026 — the world-maze wand readout (wand_readout.rs). Sits in the 66-byte
+// run that opened up when big_q_blocks was relocated off 0x35530 into the bank
+// tail; the run ends exactly where FS_MYSTERY_ANCHOR begins, so the reserve
+// below is the most it can ever hold.
+pub(crate) const FS_WAND_READOUT: usize = 0x35530; // 48 reserved, 35 used (CPU $B520)
+
 pub(crate) const FS_MYSTERY_ANCHOR: usize = 0x35572; // 13 reserved, 10 used
 
 pub(crate) const FS_HAMMER_LOCKS: usize = 0x3557F; // 50 bytes
@@ -1304,6 +1316,7 @@ mod free_space_tests {
             (FS_SAS_BLOCK, "FS_SAS_BLOCK"),
             (FS_SAS_GAMEOVER_FINALIZE, "FS_SAS_GAMEOVER_FINALIZE"),
             (FS_BIG_Q_LOOKUP, "FS_BIG_Q_LOOKUP"),
+            (FS_WAND_READOUT, "FS_WAND_READOUT"),
             (FS_MYSTERY_ANCHOR, "FS_MYSTERY_ANCHOR"),
             (FS_HAMMER_LOCKS, "FS_HAMMER_LOCKS"),
             (FS_ANCHOR_ITEM_GUARD, "FS_ANCHOR_ITEM_GUARD"),
