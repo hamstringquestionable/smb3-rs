@@ -1210,6 +1210,28 @@ pub(crate) const STATUS_BAR_FILL_TIME_CPU: u16 = 0xAF9D;
 /// this a safe three-for-three hook.
 pub(crate) const STATUS_BAR_FILL_TIME_CALL: usize = 0x35466;
 
+/// The `JSR StatusBar_Fill_Score` inside `InvFlipFrame_DrawMLLivesScore`
+/// (PRG026 CPU `$A3E8`) — the item-box flip's bottom-row draw.
+///
+/// Hooked for its **gate**: vanilla skips the score fill while the box is
+/// opening (`LDA InvFlip_Frame / AND #$08 / BNE rts`) and this call sits after
+/// that test. A patch here therefore cannot run on the opening frames, which
+/// matters because `$2B52`/`$2B53` are item slot 4's lower half while the
+/// panel is up.
+pub(crate) const FLIP_FILL_SCORE_CALL: usize = 0x343F8;
+
+/// `StatusBar_Fill_Score`, PRG026 CPU `$B175`.
+pub(crate) const STATUS_BAR_FILL_SCORE_CPU: u16 = 0xB175;
+
+/// `Graphics_Buffer` (`$0301`), the delayed-write buffer the flip copies a
+/// template into and then patches live values over. An entry's buffer index is
+/// its payload index plus three — the two-byte VRAM address and the length.
+pub(crate) const GRAPHICS_BUFFER: u16 = 0x0301;
+
+/// `Temp_Var9`, zero page: the flip's base index into [`GRAPHICS_BUFFER`] for
+/// the row being drawn this frame.
+pub(crate) const TEMP_VAR9: u8 = 0x08;
+
 /// Status-bar glyphs, in the `$80`-`$FF` half of the bar's pattern table (CHR
 /// pages `$5E`/`$5F`, banked by `StatusBarMTCHR_0800`). `SLASH` is the one that
 /// makes an "N of K" readout possible without adding CHR.
