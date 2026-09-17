@@ -70,6 +70,16 @@ const PRINCESS_REWARDS_LEN: usize = 7;
 const TOAD_HOUSE_ITEMS_OFFSET: usize = 0x3B14B;
 const TOAD_HOUSE_ITEMS_LEN: usize = 15;
 
+/// The item byte of 1-F's treasure chest — the `D6` object's Y-byte in that
+/// fortress's sub-area, which in vanilla holds the Warp Whistle.
+///
+/// Named on its own because the oracle king reads it back: 1-F's chest sits in
+/// the room its secret exit reaches, so whether the detour is worth taking is
+/// exactly "what is in this byte". Randomized like every other chest below;
+/// reading it after [`randomize`] has run is what makes the king right under
+/// any combination of flags, including the ones that leave the whistle alone.
+pub(crate) const ONE_F_CHEST_ITEM: usize = 0x0D36A;
+
 // In-level treasure chest item offsets (D6 OBJ_TREASURESET Y-byte).
 // The three 8-Hnd entries share a single layout but are given independent
 // enemy streams by `hand_rooms::patch_clone_hand_rooms`, so each rolls
@@ -80,7 +90,7 @@ const TREASURE_CHEST_OFFSETS: &[usize] = &[
     0x0D0E2,                                   // 8-Hnd1 chest (vanilla shared sub-area)
     super::hand_rooms::HAND_ROOM_CLONE_A_ITEM, // 8-Hnd2 chest (clone A)
     super::hand_rooms::HAND_ROOM_CLONE_B_ITEM, // 8-Hnd3 chest (clone B)
-    0x0D36A,                                   // Warp Whistle chest
+    ONE_F_CHEST_ITEM,                          // 1-F's chest (vanilla: Warp Whistle)
     0x0DA3F,                                   // Star chest
 ];
 
@@ -246,6 +256,27 @@ mod tests {
     use super::*;
     use rand::SeedableRng;
     use rand_chacha::ChaCha8Rng;
+
+    /// [`ONE_F_CHEST_ITEM`] points at 1-F's chest and not a neighbour's.
+    ///
+    /// The oracle king reads this byte and tells the player whether the detour
+    /// is worth taking, so an offset that slipped by three would have him
+    /// describing a different level's prize with total confidence. In vanilla
+    /// that chest is the Warp Whistle, which is what makes this checkable at
+    /// all: the object stream either holds `0x0C` here or the offset is wrong.
+    #[test]
+    fn one_f_chest_offset_is_the_whistle_chest() {
+        let Ok(bytes) = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes") else {
+            eprintln!("SKIP: requires the ROM, which is not included in the repo");
+            return;
+        };
+        let rom = Rom::from_bytes(&bytes).expect("the test ROM parses");
+        assert_eq!(
+            rom.read_byte(ONE_F_CHEST_ITEM),
+            WARP_WHISTLE,
+            "0x{ONE_F_CHEST_ITEM:05X} is not vanilla's whistle chest any more"
+        );
+    }
 
     fn make_test_rom() -> Rom {
         let mut data = vec![0u8; 393232];

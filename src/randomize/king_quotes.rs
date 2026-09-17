@@ -29,10 +29,13 @@ fn encode_char(c: char) -> u8 {
 }
 
 /// Encode a quote (6 lines, each up to 20 chars) into 120 ROM bytes.
-fn encode_quote(lines: &[&str; 6]) -> [u8; 120] {
+///
+/// Generic over the line type because the joke pools are `&'static str` picked
+/// off a shelf while the oracle composes his with `format!` — see [`Lines`].
+fn encode_quote<S: AsRef<str>>(lines: &[S; 6]) -> [u8; 120] {
     let mut buf = [0xFE; 120]; // fill with spaces
     for (i, line) in lines.iter().enumerate() {
-        for (j, c) in line.chars().enumerate() {
+        for (j, c) in line.as_ref().chars().enumerate() {
             if j < 20 {
                 buf[i * 20 + j] = encode_char(c);
             }
@@ -974,9 +977,8 @@ fn cpu_addr(file_offset: usize) -> u16 {
 ///   Form < 4 (no suit) → index by World_Num for per-world quotes
 const QUOTE_SELECT_PATCH: usize = 0x362A3;
 
-/// The king who reads the Koopaling thresholds — always the same one, so he
-/// reads as a recurring character rather than a random king having a strange
-/// day.
+/// The king who speaks for the oracle — always the same one, so he reads as a
+/// recurring character rather than a random king having a strange day.
 ///
 /// Pinning the *world* is what pins the *sprite*. `TAndK_DrawKingAndToad` picks
 /// the king's CHR page, pattern index and both attribute bytes with
@@ -1118,6 +1120,164 @@ const PAT_THREE_FIVES: [&str; 6] = [
     "which. Sleep well.",
 ];
 
+/// Everything the oracle is allowed to know.
+///
+/// One field per fact, every one of them already decided by the time the quotes
+/// are written — `randomizer::randomize_inner` fills this in immediately before
+/// the call. A topic that cannot be answered out of these fields is a topic the
+/// king may not raise: he is believed, so a line naming the wrong world is
+/// worse than no line at all.
+pub struct OracleFacts<'a> {
+    /// Per-world Koopaling stomp thresholds; [`VANILLA_KOOPALING_HITS`] when
+    /// the option is off, which is a real fact about the ROM and not a
+    /// placeholder.
+    pub koopaling_hits: [u8; 7],
+    /// The world progression in play order, or `None` when the worlds run in
+    /// their vanilla sequence and "what comes next" is not a prediction.
+    ///
+    /// The world maze supplies it too: clearing an airship there follows this
+    /// same table (the spine), so the remark stays true in both modes.
+    pub world_progression: Option<&'a [u8]>,
+    /// 1-F's treasure chest, or `None` when the fort deal left that level off
+    /// every map this seed.
+    pub one_f_chest: Option<OneFChest>,
+}
+
+/// The chest in 1-F's sub-area — what is in it, and where the level landed.
+///
+/// That chest is the one the player has to make a real decision about: the room
+/// holding it *is* the level's secret exit, so it can be taken without fighting
+/// Boom-Boom, and whether the detour pays depends entirely on the item.
+#[derive(Clone, Copy, Debug)]
+pub struct OneFChest {
+    /// Internal world number of the map the level was dealt to.
+    pub world: usize,
+    /// Global item ID, read back from `items::ONE_F_CHEST_ITEM`.
+    pub item: u8,
+}
+
+/// Six composed lines. The oracle names worlds and items, so unlike the joke
+/// pools his text cannot be a `&'static` array picked off a shelf.
+type Lines = [String; 6];
+
+fn say(lines: [&str; 6]) -> Lines {
+    lines.map(String::from)
+}
+
+/// What the oracle says this seed: one of the topics he can speak to, drawn at
+/// random.
+///
+/// The stomp thresholds never decline, so there is always at least one.
+fn oracle_remark(facts: &OracleFacts, rng: &mut ChaCha8Rng) -> Lines {
+    let mut repertoire = vec![topic_stomp_thresholds(facts)];
+    repertoire.extend(topic_next_world(facts));
+    repertoire.extend(topic_one_f_chest(facts));
+    repertoire.choose(rng).expect("the stomp topic never declines").clone()
+}
+
+/// The eight worlds by name, indexed by internal world number.
+///
+/// Names, not display numbers, and that is a correctness point rather than a
+/// stylistic one: `world_order` renumbers the maps, so "World 6" means one
+/// thing on the map screen and another in `World_Num`, while "Ice Land" means
+/// the same thing in every mode.
+const WORLD_NAMES: [&str; 8] = [
+    "Grass Land",
+    "Desert Land",
+    "Water Land",
+    "Giant Land",
+    "Sky Land",
+    "Ice Land",
+    "Pipe Land",
+    "Dark Land",
+];
+
+/// One closing line per world for the next-world remark, indexed the same way.
+const NEXT_WORLD_FLAVOUR: [&str; 8] = [
+    "You have been there.",
+    "Take water with you.",
+    "Hold your breath.",
+    "Nothing there fits.",
+    "Do not look down.",
+    "Nothing holds still.",
+    "I got lost there.",
+    "I am sorry.",
+];
+
+/// The thresholds, either as a remark on the table's shape or as his own
+/// world's count. The one topic that never declines, which is what keeps the
+/// repertoire non-empty.
+fn topic_stomp_thresholds(facts: &OracleFacts) -> Lines {
+    let table = &facts.koopaling_hits;
+    match table_pattern(table) {
+        Some(quote) => say(*quote),
+        None => {
+            // The generator only ever writes 1-5; clamp so a future widening of
+            // that range cannot index off the end of the bucket array.
+            let count = usize::from(table[ORACLE_WORLD].clamp(1, 5));
+            say(KOOPA_BUCKETS[count - 1])
+        }
+    }
+}
+
+/// Where the airship is about to take the player.
+///
+/// Silent without a shuffled progression: in vanilla order the answer is always
+/// the next world along, and a prediction nobody could have got wrong is not a
+/// prediction. Silent too when the oracle's own world is not on the
+/// progression at all (`world_count` cut it), though in that case his king is
+/// never rescued and nobody was going to hear it.
+fn topic_next_world(facts: &OracleFacts) -> Option<Lines> {
+    let order = facts.world_progression?;
+    let here = order.iter().position(|&w| usize::from(w) == ORACLE_WORLD)?;
+    let next = usize::from(*order.get(here + 1)?);
+    Some([
+        "I have seen where".into(),
+        "the airship takes".into(),
+        "you next.".into(),
+        String::new(),
+        format!("{}.", WORLD_NAMES[next]),
+        NEXT_WORLD_FLAVOUR[next].into(),
+    ])
+}
+
+/// Whether 1-F's chest is worth the detour.
+///
+/// **Only the strong verdicts.** Five of the twelve possible items are a matter
+/// of taste — a leaf is welcome and never urgent — and the king declines those
+/// rather than shrugging on the record.
+fn topic_one_f_chest(facts: &OracleFacts) -> Option<Lines> {
+    let chest = facts.one_f_chest?;
+    let (item, verdict) = one_f_verdict(chest.item)?;
+    Some([
+        "A fortress hides a".into(),
+        "chest. Look for it".into(),
+        format!("in {}.", WORLD_NAMES[chest.world]),
+        String::new(),
+        item.into(),
+        verdict.into(),
+    ])
+}
+
+/// The item line and the verdict line, or `None` where the king has no strong
+/// opinion. Global item IDs, as written into the chest's `D6` object.
+fn one_f_verdict(item: u8) -> Option<(&'static str, &'static str)> {
+    Some(match item {
+        // Worth the walk: two map items that save whole levels, the box that
+        // walks a world for free, and the whistle that skips several.
+        0x07 => ("A cloud is inside.", "Go. Go now."),
+        0x0B => ("A hammer is inside.", "You will want that."),
+        0x0C => ("A whistle is inside.", "Yes. That whistle."),
+        0x0D => ("A music box.", "Sleep is a weapon."),
+        // Not worth it: a powerup you will find in the next block, a suit for
+        // water the fortress does not have, and a star that expires on the way.
+        0x01 => ("One mushroom.", "Do not walk for it."),
+        0x04 => ("A frog suit.", "Not worth the walk."),
+        0x09 => ("A starman.", "It will not wait."),
+        _ => return None,
+    })
+}
+
 /// A remark about the *shape* of the whole threshold table, or `None` when the
 /// table is unremarkable and the king should fall back to his own world.
 ///
@@ -1127,11 +1287,7 @@ const PAT_THREE_FIVES: [&str; 6] = [
 /// "the last one took five" is unknowable when these bytes are written, while
 /// "two of them take five" stays true however the run goes.
 ///
-/// Most specific first; the first predicate that holds wins. Firing rates over
-/// all 78,125 uniform 1-5 tables, measured: all-equal 0.006% (but 100% with
-/// `koopaling_hits` off), all-pushover / all-brutal 0.16% each, mean 4.07%
-/// each, three-of-a-kind 14.8% each — about 30% in total, so the per-world
-/// bucket line stays the common case.
+/// Most specific first; the first predicate that holds wins.
 fn table_pattern(table: &[u8; 7]) -> Option<&'static [&'static str; 6]> {
     let sum: u32 = table.iter().map(|&v| u32::from(v)).sum();
     let ones = table.iter().filter(|&&v| v == 1).count();
@@ -1164,24 +1320,13 @@ fn table_pattern(table: &[u8; 7]) -> Option<&'static [&'static str; 6]> {
     None
 }
 
-/// The quote for the one king who talks about Koopalings: a remark on the
-/// table's shape if it has one, otherwise his own world's stomp count.
-fn koopaling_quote(table: &[u8; 7], world: usize) -> &'static [&'static str; 6] {
-    table_pattern(table).unwrap_or_else(|| {
-        // The generator only ever writes 1-5; clamp so a future widening of
-        // that range cannot index off the end of the bucket array.
-        let count = usize::from(table[world].clamp(1, 5));
-        &KOOPA_BUCKETS[count - 1]
-    })
-}
-
 /// Write randomized king quotes into the ROM.
 ///
 /// `enabled` gates the ROM writes only. Every RNG draw this module makes
 /// happens above the early return, so a run with quotes off consumes exactly
 /// the same seed stream as one with them on and nothing downstream shifts.
 /// Keep it that way: never move a `choose` call below the return.
-pub fn randomize(rom: &mut Rom, rng: &mut ChaCha8Rng, enabled: bool, koopaling_hits: [u8; 7]) {
+pub fn randomize(rom: &mut Rom, rng: &mut ChaCha8Rng, enabled: bool, facts: &OracleFacts) {
     // --- 1. Draw every quote, whether or not we are going to write one ---
     // choose_multiple samples without replacement, so the 7 quotes are unique.
     // It draws inside the call, not lazily as the returned iterator is walked —
@@ -1190,6 +1335,8 @@ pub fn randomize(rom: &mut Rom, rng: &mut ChaCha8Rng, enabled: bool, koopaling_h
     let frog_pick = FROG_QUOTES.choose(rng).unwrap();
     let raccoon_pick = RACCOON_QUOTES.choose(rng).unwrap();
     let hammer_pick = HAMMER_QUOTES.choose(rng).unwrap();
+    // The oracle picks his topic here too, for the same reason: it is a draw.
+    let oracle = oracle_remark(facts, rng);
 
     // Off leaves vanilla's own king text in place — the kings still speak, they
     // just say what they say in the original game. Nothing reads the free-space
@@ -1200,13 +1347,12 @@ pub fn randomize(rom: &mut Rom, rng: &mut ChaCha8Rng, enabled: bool, koopaling_h
     }
 
     // --- 2. Write 7 unique standard quotes into free space ---
-    let koopa_quote = koopaling_quote(&koopaling_hits, ORACLE_WORLD);
     let mut std_addrs = Vec::with_capacity(7);
     for (world, quote) in std_picks.iter().enumerate() {
         // The oracle's drawn quote is replaced rather than skipped, so the pick
         // above still consumes exactly seven and the stream stays put.
-        let quote: &[&str; 6] = if world == ORACLE_WORLD { koopa_quote } else { quote };
-        let encoded = encode_quote(quote);
+        let encoded =
+            if world == ORACLE_WORLD { encode_quote(&oracle) } else { encode_quote(quote) };
         let file_offset = KING_QUOTE_BASE + world * 120;
         rom.write_range(file_offset, &encoded);
         std_addrs.push(cpu_addr(file_offset));
@@ -1301,6 +1447,18 @@ mod tests {
         }
     }
 
+    /// The box the NES draws: six lines, 20 columns, and a charset with no
+    /// digits in it. Composed lines have to clear the same bar as picked ones.
+    fn validate_lines(name: &str, lines: &[String; 6]) {
+        let borrowed: [&str; 6] = std::array::from_fn(|i| lines[i].as_str());
+        validate_pool(name, &[borrowed]);
+    }
+
+    /// Facts with nothing in them but a stomp table: the shape most tests want.
+    fn facts(koopaling_hits: [u8; 7]) -> OracleFacts<'static> {
+        OracleFacts { koopaling_hits, world_progression: None, one_f_chest: None }
+    }
+
     #[test]
     fn all_quotes_fit_constraints() {
         validate_pool("QUOTES", QUOTES);
@@ -1321,12 +1479,7 @@ mod tests {
     fn koopaling_quotes_fit_constraints() {
         let mut table = [1u8; 7];
         loop {
-            for world in 0..7 {
-                validate_pool(
-                    "koopaling_quote",
-                    std::slice::from_ref(koopaling_quote(&table, world)),
-                );
-            }
+            validate_lines("stomp thresholds", &topic_stomp_thresholds(&facts(table)));
             // Odometer over 1..=5 in seven digits.
             let mut i = 0;
             while i < 7 {
@@ -1358,15 +1511,135 @@ mod tests {
     #[test]
     fn bucket_fallback_reports_its_own_world() {
         // Deliberately unremarkable: mean 3, no three-of-a-kind, not flat.
-        let table = [1u8, 2, 3, 4, 5, 3, 3];
-        assert!(table_pattern(&table).is_none(), "test table must reach the fallback");
-        for (world, &count) in table.iter().enumerate() {
+        let mut table = [1u8, 2, 3, 4, 5, 3, 3];
+        for count in 1..=5u8 {
+            table[ORACLE_WORLD] = count;
+            assert!(table_pattern(&table).is_none(), "test table must reach the fallback");
             assert_eq!(
-                koopaling_quote(&table, world),
-                &KOOPA_BUCKETS[usize::from(count) - 1],
-                "world {world} (count {count}) got the wrong bucket"
+                topic_stomp_thresholds(&facts(table)),
+                say(KOOPA_BUCKETS[usize::from(count) - 1]),
+                "count {count} got the wrong bucket"
             );
         }
+    }
+
+    /// Every line the oracle can compose fits the box — worlds and items are
+    /// substituted into his text, so the width check has to walk the products,
+    /// not the templates.
+    #[test]
+    fn every_composed_oracle_line_fits() {
+        for next in 0..8u8 {
+            // A progression whose oracle world is followed by `next`.
+            let order = [ORACLE_WORLD as u8, next];
+            let f = OracleFacts {
+                koopaling_hits: VANILLA_KOOPALING_HITS,
+                world_progression: Some(&order),
+                one_f_chest: None,
+            };
+            let lines = topic_next_world(&f).expect("the oracle world has a successor here");
+            validate_lines("next world", &lines);
+        }
+
+        for world in 0..8 {
+            for item in 0..=0xFFu8 {
+                let f = OracleFacts {
+                    koopaling_hits: VANILLA_KOOPALING_HITS,
+                    world_progression: None,
+                    one_f_chest: Some(OneFChest { world, item }),
+                };
+                if let Some(lines) = topic_one_f_chest(&f) {
+                    validate_lines("1-F chest", &lines);
+                }
+            }
+        }
+    }
+
+    /// The oracle declines what he cannot know, rather than guessing.
+    #[test]
+    fn the_oracle_declines_what_it_cannot_know() {
+        // Vanilla world order: "next" is not a prediction.
+        assert!(topic_next_world(&facts(VANILLA_KOOPALING_HITS)).is_none());
+
+        // A progression that never reaches the oracle's world (world_count cut
+        // it), and one where his world is the last entry.
+        for order in [vec![3u8, 5, 7], vec![3, 5, ORACLE_WORLD as u8]] {
+            let f = OracleFacts {
+                koopaling_hits: VANILLA_KOOPALING_HITS,
+                world_progression: Some(&order),
+                one_f_chest: None,
+            };
+            assert!(topic_next_world(&f).is_none(), "order {order:?} has no successor to name");
+        }
+
+        // 1-F off every map this seed.
+        assert!(topic_one_f_chest(&facts(VANILLA_KOOPALING_HITS)).is_none());
+
+        // The five middling items: no strong opinion, so no remark.
+        for item in [0x02, 0x03, 0x05, 0x06, 0x08] {
+            let f = OracleFacts {
+                koopaling_hits: VANILLA_KOOPALING_HITS,
+                world_progression: None,
+                one_f_chest: Some(OneFChest { world: 0, item }),
+            };
+            assert!(topic_one_f_chest(&f).is_none(), "item {item:#04X} must not draw a verdict");
+        }
+    }
+
+    /// **The world he names is the world the level is in.**
+    ///
+    /// The 1-F remark is the one line in the game that sends a player somewhere
+    /// specific, and the world it names comes from the writer's report rather
+    /// than from anything the console reads. This checks that report against
+    /// the finished ROM the other way round: find the fortress level in the
+    /// pointer tables, then read what the king actually said about it.
+    ///
+    /// A wrong answer here is silent everywhere else — the ROM boots, the king
+    /// speaks, and the player walks to the wrong map.
+    #[test]
+    fn the_king_names_the_world_1f_is_really_in() {
+        use crate::randomize::rom_data;
+        use crate::randomizer::Options;
+
+        let Ok(bytes) = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes") else {
+            eprintln!("SKIP: requires the ROM, which is not included in the repo");
+            return;
+        };
+
+        // One encoded 20-column line, which is how the quote is stored.
+        let line = |s: &str| encode_quote(&[s, "", "", "", "", ""])[..20].to_vec();
+        let opener = line("A fortress hides a");
+
+        let mut spoke = 0;
+        for seed in 0..24u64 {
+            let out = crate::generate_patched_rom(&bytes, seed, &Options::default(), None)
+                .expect("a default randomize succeeds");
+            let rom = Rom::from_bytes_lax(&out, true).expect("the output parses");
+
+            let quote = rom.read_range(KING_QUOTE_BASE + ORACLE_WORLD * 120, 120).to_vec();
+            if quote[..20] != opener[..] {
+                continue; // he talked about something else this seed
+            }
+            spoke += 1;
+
+            // Where 1-F actually ended up, read back out of the pointer tables.
+            let world = (0..8)
+                .find(|&wi| {
+                    let wt = &rom_data::WORLDS[wi];
+                    (0..wt.entry_count).any(|idx| {
+                        let e = rom_data::read_entry(&rom, wt, idx);
+                        u16::from_le_bytes([e.obj_lo, e.obj_hi]) == rom_data::FORTRESS_1F_OBJ_PTR
+                    })
+                })
+                .unwrap_or_else(|| panic!("seed {seed}: he named a fortress that is not placed"));
+
+            assert_eq!(
+                quote[40..60],
+                line(&format!("in {}.", WORLD_NAMES[world]))[..],
+                "seed {seed}: the king sent the player to the wrong world (1-F is in {})",
+                WORLD_NAMES[world]
+            );
+        }
+        assert!(spoke > 0, "no seed reached the 1-F remark, so this test proved nothing");
     }
 
     #[test]
@@ -1404,11 +1677,11 @@ mod tests {
         for seed in 0..16u64 {
             let mut rom_on = Rom::from_bytes(&bytes).expect("test ROM parses");
             let mut rng_on = ChaCha8Rng::seed_from_u64(seed);
-            randomize(&mut rom_on, &mut rng_on, true, VANILLA_KOOPALING_HITS);
+            randomize(&mut rom_on, &mut rng_on, true, &facts(VANILLA_KOOPALING_HITS));
 
             let mut rom_off = Rom::from_bytes(&bytes).expect("test ROM parses");
             let mut rng_off = ChaCha8Rng::seed_from_u64(seed);
-            randomize(&mut rom_off, &mut rng_off, false, VANILLA_KOOPALING_HITS);
+            randomize(&mut rom_off, &mut rng_off, false, &facts(VANILLA_KOOPALING_HITS));
 
             // Identical position in the stream => identical continuations.
             let tail_on: Vec<u64> = (0..8).map(|_| rng_on.next_u64()).collect();
