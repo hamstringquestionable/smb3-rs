@@ -370,6 +370,50 @@ fn all_world_targets_reachable() {
     }
 }
 
+/// The valley — W8 screen 3, the bridge approach to Bowser's castle — never
+/// holds a Toad House or a spade panel. The last stretch of the game is its
+/// climax; a free item or a free life parked on the bridge deflates it. The
+/// ban lives in `capacity::promote_hb_slots` (see `capacity::is_w8_valley`),
+/// which is the only production path that creates either slot kind.
+///
+/// Both promotions are budgeted in proportion to each world's candidate count,
+/// so the failure this guards is silent: the slots simply reappear on the
+/// bridge. Override the seed count with `CENSUS_SEEDS=N`.
+#[test]
+fn w8_valley_has_no_toad_houses_or_spades() {
+    let rom = match load_rom() {
+        Some(r) => r,
+        None => return,
+    };
+    let seeds: u64 = std::env::var("CENSUS_SEEDS").ok().and_then(|s| s.parse().ok()).unwrap_or(50);
+
+    for seed in 0..seeds {
+        let (catalog, pickup) = build_catalog_pickup(&rom, seed);
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
+        let result = build(
+            &rom,
+            &OverworldData { pickup: &pickup, catalog: &catalog },
+            &mut rng,
+            BuildFlags {
+                shuffle_toad_houses: true,
+                shuffle_hammer_bros: true,
+                ..Default::default()
+            },
+        );
+        let w8 = result.worlds.iter().find(|b| b.world_idx == rom_data::W8_IDX).unwrap();
+        for slot in &w8.slots {
+            if matches!(slot.kind, SlotKind::ToadHouse | SlotKind::BonusGame) {
+                assert!(
+                    slot.pos.1 / 16 != 3,
+                    "seed {seed}: {:?} at {:?} is in the valley",
+                    slot.kind,
+                    slot.pos,
+                );
+            }
+        }
+    }
+}
+
 /// Tuning diagnostic: sweep the level-spread exponent and show the resulting
 /// per-world mean assigned-level count, plus how often we hit "overflow" —
 /// a world's fair share exceeding its hard capacity (clamp), or the total

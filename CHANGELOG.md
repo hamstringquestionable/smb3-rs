@@ -9,6 +9,12 @@ deploys.
 
 ## [Unreleased]
 
+### Changed
+
+- **Nothing breaks the walk to Bowser's castle.** Toad Houses and spade panels
+  no longer place on World 8's last screen — the bridge approach is the climax,
+  not a place to stop for a free item.
+
 ### Added
 
 - **The world map says how many wands you hold.** In the world maze, the status
