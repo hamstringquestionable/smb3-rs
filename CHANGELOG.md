@@ -20,6 +20,11 @@ deploys.
   another world, so the shortcut to the castle is something you go looking for
   rather than something you trip over.
 
+- **The wand gate is built out of Dark Land's own wall.** The barrier on
+  Bowser's bridge now wears World 8's skull block instead of a plain lattice, so
+  it reads as masonry the castle put there rather than a tile from somewhere
+  else.
+
 ### Added
 
 - **The world map says how many wands you hold.** In the world maze, the status

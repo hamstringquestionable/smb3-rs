@@ -356,30 +356,40 @@ pub(crate) const TELEPAD_QUADRANTS: [u8; 4] = [0x80, 0x82, 0x81, 0x83];
 /// The world maze's wand gate: the wall that stands on the last span of
 /// World 8's bridge until the player holds K of the seven wands.
 ///
-/// `0xD5` is one of the page-3 bytes that appear in no world's grid. Below the
-/// page's `0xE9` threshold those are `0xC0`, `0xC1`, `0xC6`, `0xC7`, `0xCF`,
-/// `0xD5`, `0xDF`, `0xE3` and `0xE7` — the last two spoken for by
-/// `Map_RemoveTo_Tiles` and `Map_Bottom_Tiles`, and `0xDF` now by
-/// [`TILE_TELEPAD`]. It was picked on
-/// looks: its four metatile quadrants are all the same CHR tile, so the 16x16
-/// reads as a regular 2x2 lattice rather than a torn scrap of coastline, and it
-/// wears that art unaltered — `wand_gate` writes no CHR and repoints no
-/// quadrant.
+/// `0xE2` is **Dark Land's own wall** — the skull block World 8 already builds
+/// its masonry from, in 155 cells of the vanilla grid. That is the whole
+/// argument for it: a barrier on the bridge should look like the castle it
+/// belongs to, and a tile that already means "wall" everywhere else on the map
+/// needs no explaining. It wears that art unaltered — `wand_gate` writes no CHR
+/// and repoints no quadrant.
 ///
 /// What makes it usable as a barrier is what it is *absent* from. The engine
 /// has no per-tile "blocks movement" flag: a tile blocks a direction by not
-/// appearing in [`VALID_HORZ`] / [`VALID_VERT`], and `0xD5` appears in
-/// neither, so it walls all four directions for free — the same way `0xE2`,
-/// the Dark Land wall it stands among, does. It is likewise in no other
+/// appearing in [`VALID_HORZ`] / [`VALID_VERT`], and `0xE2` appears in neither,
+/// so it walls all four directions for free. It is likewise in no other
 /// registry: not `Map_Removable_Tiles` (so the packed completion stencil does
 /// not grow and no completion bit can ever open it), not the rock lists (so
 /// `hammer_breaks_tiles` cannot touch it), not `LOCKABLE_TILES`, not
-/// [`VALID_BLANK_TILES`]. The only thing that opens it is
-/// `wand_gate`'s own routine.
+/// [`VALID_BLANK_TILES`]. Below page 3's `0xE9` threshold, so it is not
+/// completion-tracked. The only thing that opens it is `wand_gate`'s own
+/// routine.
+///
+/// **It is deliberately not a unique byte, and that costs one property.** Until
+/// 2026-09-18 this was `0xD5`, picked because no world's grid used it, which
+/// let `wand_gate` assert that a built ROM held the gate byte in exactly one
+/// cell. That assertion is gone, and what replaces it is stricter about the
+/// thing it was really guarding: the builder must introduce no wall cell
+/// *vanilla did not already have* (`the_gate_is_the_only_new_wall`). A stray
+/// wall on a path is a stranding hazard whatever byte it wears; a wall standing
+/// where Dark Land already had one is terrain.
+///
+/// Nothing in the mechanism wanted uniqueness. The opener is position-keyed —
+/// it stamps a bridge over one fixed `Tile_Mem` address — so it can neither
+/// open another wall cell nor be fooled by one.
 ///
 /// Palette follows the byte's top two bits, so page 3 puts it on the same
 /// palette entry as the surrounding Dark Land masonry.
-pub(crate) const WAND_GATE_TILE: u8 = 0xD5;
+pub(crate) const WAND_GATE_TILE: u8 = 0xE2;
 
 /// Where the wand gate stands: World 8, row 5, column 59 — the last span of
 /// the bridge approach, between the final node at (5,58) and Bowser's castle
