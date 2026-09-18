@@ -13,14 +13,19 @@
 //! # The gate is a wall, not a lock
 //!
 //! A lock that no fortress opens teaches the player the wrong rule about every
-//! other lock on the map. So the gate is a *wall*, standing among World 8's
-//! own masonry: [`WAND_GATE_TILE`] (`$D5`), a tile byte no world's grid uses. The engine has no per-tile "blocks movement" flag — a tile
-//! blocks a direction by being absent from `Map_Object_Valid_Left/Right/Up/
-//! Down` — so an unused byte walls all four directions for nothing. It is in
-//! no other registry either, which is the point: it is not in
-//! `Map_Removable_Tiles`, so the packed completion stencil does not grow by
-//! World 8's 155 wall cells and no completion bit can open it; it is in
+//! other lock on the map. So the gate is a *wall*, and it is literally World
+//! 8's own masonry: [`WAND_GATE_TILE`] (`$E2`), the Dark Land skull block the
+//! map already builds its walls from in 155 other cells. The engine has no
+//! per-tile "blocks movement" flag — a tile blocks a direction by being absent
+//! from `Map_Object_Valid_Left/Right/Up/Down` — so this byte walls all four
+//! directions for nothing. It is in no other registry either, which is the
+//! point: it is not in `Map_Removable_Tiles`, so the packed completion stencil
+//! does not grow by those 155 cells and no completion bit can open it; it is in
 //! neither rock list, so `hammer_breaks_tiles` cannot break it.
+//!
+//! Sharing the byte with ordinary wall costs nothing here, because **the opener
+//! is position-keyed**: it stamps a bridge tile over one fixed `Tile_Mem`
+//! address, so no other wall cell can be opened by it or mistaken for it.
 //!
 //! # How it opens, and why that needs no persistence
 //!
@@ -437,24 +442,58 @@ mod tests {
         for i in 0..5 {
             assert_ne!(rom.read_byte(0x18457 + i), WAND_GATE_TILE, "gate byte is completable");
         }
-        // ...and no world's vanilla grid uses it, so nothing else can be
-        // standing on it when the gate goes down.
-        assert_eq!(gate_bytes_in(&rom, false), 0, "a vanilla grid uses the gate byte");
+        // ...and every vanilla cell wearing it is World 8 wall. The gate byte
+        // is Dark Land's own masonry, so "nothing else uses it" was never
+        // available — what has to hold is that nothing *outside* World 8 does,
+        // and that the gate's own cell is not already wall.
+        let (r, c) = W8_WAND_GATE_POS;
+        assert_ne!(
+            rom.read_byte(map_tile_offset(W8_IDX, r, c)),
+            WAND_GATE_TILE,
+            "vanilla already walls the gate cell",
+        );
+        for world in (0..8).filter(|&w| w != W8_IDX) {
+            let grid = crate::randomize::rom_data::read_tile_grid(&rom, world);
+            for r in 0..grid.rows() {
+                for c in 0..grid.cols {
+                    assert_ne!(
+                        grid.get(r, c),
+                        WAND_GATE_TILE,
+                        "W{} ({r},{c}) wears the gate byte",
+                        world + 1,
+                    );
+                }
+            }
+        }
     }
 
-    /// The same claim against the grids the player will actually walk, which
-    /// is the version that matters: the overworld writer redraws every world
-    /// wholesale, so "vanilla does not use `$D5`" says nothing about what a
-    /// built map holds. A second `$D5` anywhere would turn into a bridge the
-    /// moment the wand count was reached, on a cell nothing chose.
+    /// **The builder introduces no wall World 8 did not already have.**
+    ///
+    /// This replaces `a_built_maze_uses_the_gate_byte_exactly_once`, which
+    /// counted the gate byte and demanded exactly one. That claim died with
+    /// `$D5`: the gate now wears `$E2`, Dark Land's own wall, so the byte
+    /// appears in 155 cells before the randomizer touches anything and counting
+    /// it says nothing.
+    ///
+    /// The property underneath it survives intact, and is the one worth having.
+    /// The hazard was never "two cells share a byte" — the opener is
+    /// position-keyed and cannot open a cell it was not pointed at. It was **a
+    /// wall appearing somewhere a route needs to pass**, which is a stranding
+    /// bug whatever byte the wall wears. So: diff the built grids against
+    /// vanilla, and allow exactly one new wall cell — the gate.
     #[test]
-    fn a_built_maze_uses_the_gate_byte_exactly_once() {
+    fn the_gate_is_the_only_new_wall() {
         let Ok(rom_bytes) = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes") else {
             eprintln!("SKIP: requires the ROM");
             return;
         };
         let seeds: u64 =
             std::env::var("CENSUS_SEEDS").ok().and_then(|s| s.parse().ok()).unwrap_or(8);
+        // The oracle is the untouched ROM: whatever Dark Land already walls is
+        // terrain, and anything else is the bug this is looking for.
+        let van = vanilla().unwrap();
+        let vanilla_grids: Vec<_> =
+            (0..8).map(|w| crate::randomize::rom_data::read_tile_grid(&van, w)).collect();
         let mut built = 0usize;
         for seed in 0..seeds {
             let options = crate::Options {
@@ -475,34 +514,23 @@ mod tests {
                 WAND_GATE_TILE,
                 "seed {seed}: the gate cell is not the gate byte",
             );
-            assert_eq!(
-                gate_bytes_in(&rom, true),
-                0,
-                "seed {seed}: a built map holds the gate byte somewhere other than the gate cell",
-            );
-        }
-        assert!(built > 0, "no seed built — the census measured nothing");
-    }
-
-    /// How many cells across all eight grids hold [`WAND_GATE_TILE`], not
-    /// counting the gate cell itself when `skip_gate` is set.
-    fn gate_bytes_in(rom: &Rom, skip_gate: bool) -> usize {
-        let mut found = 0;
-        for world in 0..8 {
-            let grid = crate::randomize::rom_data::read_tile_grid(rom, world);
-            for r in 0..grid.rows() {
-                for c in 0..grid.cols {
-                    if skip_gate && world == W8_IDX && (r, c) == W8_WAND_GATE_POS {
-                        continue;
-                    }
-                    if grid.get(r, c) == WAND_GATE_TILE {
-                        eprintln!("gate byte at W{} ({r},{c})", world + 1);
-                        found += 1;
+            for (world, van) in vanilla_grids.iter().enumerate() {
+                let grid = crate::randomize::rom_data::read_tile_grid(&rom, world);
+                for r in 0..grid.rows() {
+                    for c in 0..grid.cols {
+                        if grid.get(r, c) != WAND_GATE_TILE || van.get(r, c) == WAND_GATE_TILE {
+                            continue;
+                        }
+                        assert!(
+                            world == W8_IDX && (r, c) == W8_WAND_GATE_POS,
+                            "seed {seed}: W{} ({r},{c}) is a wall vanilla did not have",
+                            world + 1,
+                        );
                     }
                 }
             }
         }
-        found
+        assert!(built > 0, "no seed built — the census measured nothing");
     }
 
     /// The vanilla contents of [`BOX_CORNER_TILES`]: the four corners of the
