@@ -15,6 +15,11 @@ deploys.
   no longer place on World 8's last screen — the bridge approach is the climax,
   not a place to stop for a free item.
 
+- **A telepad onto Bowser's bridge has to be earned.** In the world maze, a pad
+  that lands on World 8's last screen is now fed from behind a fortress in
+  another world, so the shortcut to the castle is something you go looking for
+  rather than something you trip over.
+
 ### Added
 
 - **The world map says how many wands you hold.** In the world maze, the status
