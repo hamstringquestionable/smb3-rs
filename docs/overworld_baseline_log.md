@@ -34,6 +34,41 @@ hashes they describe are gone; the reasoning is not.
 
 ## Entries
 
+### 2026-09-17 — Toad Houses and spades leave World 8's valley (PR #272)
+
+**Late, and that is the first thing to say.** This recapture was owed by PR
+#272 and is landing a commit after it, so `beta/next` carried a red baseline
+between the two. The cause was mine and it was procedural: the change was
+verified with `cargo test --lib`, which does not run `tests/`. Nothing shipped
+wrong — the output was *meant* to move — but the guard was blind for a merge.
+
+**Intended.** `capacity::promote_hb_slots` no longer promotes a HammerBro slot
+to a Toad House or a spade panel on World 8's screen 3, the bridge approach to
+Bowser's castle. Both promotions budget per world in proportion to each world's
+*candidate count*, so removing candidates from the valley re-splits the budget
+across all eight worlds — which is why a rule scoped to one screen of one world
+moves nearly every seed's map.
+
+**17 of 20 seeds moved. Seeds 11, 13 and 18 kept their previous hashes exactly**
+(`0x12C446F2CE54AB4A`, `0x10A6499058D8AB92`, `0x1B5A89FD1AEFCFCD`), and that is
+the attribution rather than a coincidence: those are the seeds whose valley
+offered no promotion candidate in the first place — every cell there already
+taken by content, standing under a Hammer Bro sprite, or barred by the row-7/8
+rule — so their budget split was unchanged and nothing downstream re-dealt.
+A change that re-splits a shared budget cannot leave a seed alone *except* by
+contributing nothing to it, so the three fixed points are the expected shape.
+
+**Established by** running the sweep at `47997b1` (the merge before #272, green)
+and at `0f700d5` (the merge commit, 17 mismatches), then again with the wand
+gate's tile change in the tree — same 17. That last run is the evidence the
+tile change is *not* in this recapture: `Options::default()` has
+`world_maze: false`, so the harness never writes a wand gate and `$D5` → `$E2`
+cannot reach the fingerprint.
+
+The same PR also required a maze telepad into the valley to be fed from a gated
+site in another world (`graph::valley_earned`). That rule likewise cannot appear
+here, for the same reason — it only runs in maze mode.
+
 ### 2026-09-10 — connectivity stops building a star through the start island
 
 **Intended, and it moves every seed.** Pipe placement changed, so the pocket
