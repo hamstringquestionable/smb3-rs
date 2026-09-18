@@ -2965,3 +2965,124 @@ fn relocation_decouples_lock_and_fort_counts() {
          the pass did nothing a player could see"
     );
 }
+
+// ---------------------------------------------------------------------------
+// The valley
+// ---------------------------------------------------------------------------
+
+/// W8's screen 3 — the bridge approach to Bowser's castle.
+fn in_valley((world, pos): super::MazePos) -> bool {
+    world == crate::randomize::rom_data::W8_IDX && pos.1 / 16 == 3
+}
+
+/// **A pad into the valley has to be earned.** `graph::valley_earned` allows a
+/// pad on Bowser's bridge only when its partner is a gated site
+/// ([`PadRole::Shortcut`] — behind a fortress) in a different world, so finding
+/// the shortcut costs a crossing and a fort rather than being tripped over.
+///
+/// Two assertions, and the second is the one that matters. "Every valley pad is
+/// earned" passes vacuously if the rule bans valley pads outright — which is
+/// the *other* failure, and the one the design deliberately declined. So the
+/// sample must also contain valley pads at all. Same shape, same reason, as
+/// `a_fortress_tile_says_where_its_lock_is`.
+#[test]
+fn a_valley_pad_is_earned() {
+    let Some(raw) = load_rom() else { return };
+    let knobs = Knobs::default();
+    let mut seen = 0usize;
+
+    for seed in 0..census_seeds(60) {
+        let (_, _, report) = generated(&raw, seed, &knobs, 3);
+        for pad in &report.pads {
+            let MazeEdge::Pad { from, to } = pad.edge else { unreachable!() };
+            if !in_valley(to) {
+                continue;
+            }
+            seen += 1;
+            assert!(
+                pad.granted == super::roles::PadRole::Shortcut,
+                "seed {seed}: the valley pad at {to:?} is fed from {from:?}, \
+                 which is not gated ({:?})",
+                pad.granted,
+            );
+            assert!(
+                from.0 != to.0,
+                "seed {seed}: the valley pad at {to:?} is fed from {from:?} \
+                 in its own world — the hunt has to cross",
+            );
+        }
+    }
+
+    assert!(
+        seen > 0,
+        "no valley pad in the whole sample: the rule is banning them outright \
+         rather than pricing them, which is the shape this design declined",
+    );
+}
+
+/// How the valley rule actually landed: how often a pad reaches Bowser's
+/// bridge, what it cost the run, and **how deep the hunt is** — the open
+/// question `graph::valley_earned` names. Gatedness is a terrain property, not
+/// a depth one, so if the partners cluster in the early worlds the rule is
+/// buying less than it looks.
+///
+/// Spine position is the world index here because the census walks
+/// `IDENTITY_SPINE`.
+///
+/// ```sh
+/// CENSUS_SEEDS=300 cargo test --release --lib valley_pad_census \
+///     -- --ignored --nocapture
+/// ```
+#[test]
+#[ignore]
+fn valley_pad_census() {
+    let Some(raw) = load_rom() else { return };
+    let seeds = census_seeds(100);
+    let knobs = Knobs::default();
+
+    eprintln!("\n=== the valley (W8 screen 3), {seeds} seeds ===");
+    eprintln!(
+        "  {:>3} {:>8} {:>8} {:>9} {:>9}  partner world",
+        "K", "valley%", "redeal%", "content", "content|v"
+    );
+    for k in [0u8, 3, 7] {
+        let mut with_valley = 0usize;
+        let mut redeal = 0usize;
+        let mut all: Vec<usize> = Vec::new();
+        let mut valley_content: Vec<usize> = Vec::new();
+        let mut partner_world = [0usize; 8];
+
+        for seed in 0..seeds {
+            let (_, _, report) = generated(&raw, seed, &knobs, k);
+            let mut hit = false;
+            for pad in &report.pads {
+                let MazeEdge::Pad { from, to } = pad.edge else { unreachable!() };
+                if in_valley(to) {
+                    hit = true;
+                    partner_world[from.0] += 1;
+                }
+            }
+            with_valley += hit as usize;
+            redeal += (report.deals > 1) as usize;
+            all.push(report.content);
+            if hit {
+                valley_content.push(report.content);
+            }
+        }
+
+        let pct = |n: usize| 100.0 * n as f64 / seeds as f64;
+        let mean = |v: &[usize]| {
+            if v.is_empty() { f64::NAN } else { v.iter().sum::<usize>() as f64 / v.len() as f64 }
+        };
+        let hist: Vec<String> =
+            partner_world.iter().enumerate().map(|(w, n)| format!("W{}:{n}", w + 1)).collect();
+        eprintln!(
+            "  {k:>3} {:>7.1}% {:>7.1}% {:>9.1} {:>9.1}  {}",
+            pct(with_valley),
+            pct(redeal),
+            mean(&all),
+            mean(&valley_content),
+            hist.join(" "),
+        );
+    }
+}

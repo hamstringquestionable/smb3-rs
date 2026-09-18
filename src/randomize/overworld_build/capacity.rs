@@ -63,6 +63,16 @@ pub(super) fn is_row78_conflict(
     }
 }
 
+/// The valley: W8's screen 3, the bridge approach to Bowser's castle.
+///
+/// The last stretch of the game is its climax, and a Toad House or a spade
+/// panel parked on the bridge deflates it — a free item and a free life are
+/// the wrong beat there. Only promotion is banned: levels, fortresses, locks
+/// and pipes still place across the screen as usual.
+pub(super) fn is_w8_valley(world_idx: usize, pos: (usize, usize)) -> bool {
+    world_idx == rom_data::W8_IDX && pos.1 / 16 == 3
+}
+
 /// All blank placement slots on a grid, minus fixed positions.
 pub(super) fn find_blank_slots(
     grid: &Grid,
@@ -194,6 +204,7 @@ pub(super) fn promote_hb_slots<R: Rng>(
             .map(|s| s.pos)
             .filter(|p| !sprite_positions.contains(p))
             .filter(|p| !is_row78_conflict(*p, &completable))
+            .filter(|p| !is_w8_valley(wi, *p))
             .collect();
         cands.shuffle(rng);
         candidates_by_world.push(cands);
