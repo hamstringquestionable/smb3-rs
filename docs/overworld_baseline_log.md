@@ -492,3 +492,27 @@ Three of the twenty seeds moved: 8, 16 and 18 — the ones with a sky lock on
 the finished map. `randomizer::tests::hints_change_nothing_without_the_maze`
 pins the rule now, and fails by 33 bytes on seed 8 if the gate is removed.
 
+
+Re-captured 2026-09-19 for the item-roll move. `items::randomize` (Hammer Bro
+rewards, Princess letter rewards, Toad House treasures, in-level chests) used
+to run late, *after* the writer had already stamped the rewards the builder
+distributed — so the reward table had two authorities and the builder always
+lost. It now runs ahead of `overworld_pickup`, which is what reads that table
+to build the pool the builder reattaches, and it draws from a dedicated
+substream (`ITEM_SALT`) so the main RNG sequence is untouched.
+
+All twenty seeds moved, and **`MAP_OBJ_REWARDS` is the only fingerprint region
+that did.** Attribution is by byte diff, seed 12345 in both a standard and a
+world-maze arm, `--no-palettes --patched-rom` before and after: of the 910
+(standard) / 819 (maze) changed bytes, exactly 17 / 16 land in
+`MAP_OBJ_REWARDS`, and **zero** land anywhere else in PRG010-012. Every other
+region this hashes — the eight tile grids, the eight world pointer tables, the
+map-object masters and their slot sub-tables, the four pipe-destination tables
+and `FS_LOCK_ENTRIES` — is byte-identical. No map moved; the rewards standing
+on those maps are different items.
+
+The remaining changed bytes are the other item tables (the seven chest offsets,
+`0x360DE` letters, `0x3B14B` Toad House) and the four passes that used to sit
+downstream of the old `items` call and therefore saw a shifted main stream:
+the mystery-anchor target, Koopaling and Boom-Boom hit counts, and the king
+quotes.

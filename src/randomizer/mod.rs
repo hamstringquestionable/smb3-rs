@@ -117,6 +117,11 @@ fn randomize_inner(
     // determinism contract: do not reorder, and append any future tri flags
     // at the end.
     let mut maybe_rng = ChaCha8Rng::seed_from_u64(seed ^ MAYBE_SALT);
+    // Chest/Toad House/Hammer Bro/letter items draw from their own substream
+    // for the same reason (see `ITEM_SALT`): they are rolled before the
+    // overworld pickup now, and a substream keeps that out of the main
+    // sequence so no map moves.
+    let mut item_rng = ChaCha8Rng::seed_from_u64(seed ^ ITEM_SALT);
     let hammer_breaks_locks = options.hammer_breaks_locks.resolve(&mut maybe_rng);
     let hammer_breaks_bridges = options.hammer_breaks_bridges.resolve(&mut maybe_rng);
     let troll_pipes = options.troll_pipes.resolve(&mut maybe_rng);
@@ -307,6 +312,62 @@ fn randomize_inner(
     if options.swap_start_airship {
         randomize::start_airship_swap::pick_swaps(&mut catalog, &mut rng);
     }
+    // --- Item tables, before the pickup reads them ----------------------
+    //
+    // These four tables — Hammer Bro rewards, Princess letter rewards, Toad
+    // House treasures and the in-level chests — are rolled here rather than
+    // late in the run, because `overworld_pickup` below reads the Hammer Bro
+    // reward table straight out of the ROM to build the pool the builder
+    // reattaches to redistributed encounters. Rolled afterwards, as they were,
+    // the same table got picked up, shuffled, stamped by the writer and then
+    // re-rolled over the top: two authorities on one table, and the builder's
+    // assignment always lost.
+    //
+    // Now it is decided once, and `(position -> item)` is settled in the model
+    // by the time the overworld is built. Nothing downstream rewrites it.
+    //
+    // They draw from `item_rng`, so moving them perturbs no other subsystem.
+
+    // Give each W8 Hand its own treasure-room enemy stream so the chest
+    // randomizer can roll a unique item per Hand. Must precede the chest
+    // rolls, or the clone overwrites the item byte the roll just wrote.
+    rom.set_tag("hand_rooms");
+    randomize::hand_rooms::patch_clone_hand_rooms(rom);
+
+    // Piranha shuffle: once 7-P1/7-P2 leave their vanilla map-object spots
+    // they can be entered like any level tile, so their chests must carry
+    // their own OBJ_TREASURESET. Same ordering rule as the Hands above.
+    if piranha_active {
+        rom.set_tag("piranha_rooms");
+        randomize::piranha_rooms::install_treasure_sets(rom);
+    }
+
+    // The maze turns the whistle into fast travel between worlds already
+    // visited, so `remove_whistles`' intent — "no skipping ahead" — is moot
+    // here: a maze whistle can never reach anywhere new.
+    //
+    // **Forced ON in the maze, not off.** The mode grants a permanent whistle
+    // of its own — `completion_bits`' new-game init writes one into inventory
+    // slot 0, and it is never consumed — so a whistle in a chest, a Hammer Bro
+    // drop or a Toad House is a duplicate of an item the player cannot run out
+    // of: it occupies a slot and does nothing.
+    //
+    // This used to force the flag OFF, which put whistles *back* into the item
+    // pool for the one mode with no use for them, and ignored the player's
+    // setting in the process (it defaults to on).
+    //
+    // Note this flag has **no bearing on the maze's own whistle** — that comes
+    // from the new-game init, not the item pool — and so none on the safety
+    // property that whistle carries. See `world_travel` for that, and for what
+    // would have to change if the mode ever shipped without one.
+    if options.chest_items {
+        rom.set_tag("items");
+        randomize::items::randomize(rom, &mut item_rng, whistles_removed, piranha_active);
+    } else if whistles_removed {
+        rom.set_tag("items/whistles");
+        randomize::items::remove_whistles_only(rom, &mut item_rng);
+    }
+
     let pickup = randomize::overworld_pickup::pick_up(
         rom,
         &catalog,
@@ -536,47 +597,6 @@ fn randomize_inner(
         rom.set_tag("credits/world_order");
         let order = randomize::credits::order_from_progression(progression);
         randomize::credits::reorder_world_pictures(rom, &order);
-    }
-
-    // Give each W8 Hand its own treasure-room enemy stream so the chest
-    // randomizer can roll a unique item per Hand. Runs before items::randomize
-    // so the cloned Y-bytes are in place when chests roll.
-    rom.set_tag("hand_rooms");
-    randomize::hand_rooms::patch_clone_hand_rooms(rom);
-
-    // Piranha shuffle: once 7-P1/7-P2 leave their vanilla map-object spots
-    // they can be entered like any level tile, so their chests must carry
-    // their own OBJ_TREASURESET. Runs before items::randomize so the cloned
-    // item bytes are in place when chests roll.
-    if piranha_active {
-        rom.set_tag("piranha_rooms");
-        randomize::piranha_rooms::install_treasure_sets(rom);
-    }
-
-    // The maze turns the whistle into fast travel between worlds already
-    // visited, so `remove_whistles`' intent — "no skipping ahead" — is moot
-    // here: a maze whistle can never reach anywhere new.
-    //
-    // **Forced ON in the maze, not off.** The mode grants a permanent whistle
-    // of its own — `completion_bits`' new-game init writes one into inventory
-    // slot 0, and it is never consumed — so a whistle in a chest, a Hammer Bro
-    // drop or a Toad House is a duplicate of an item the player cannot run out
-    // of: it occupies a slot and does nothing.
-    //
-    // This used to force the flag OFF, which put whistles *back* into the item
-    // pool for the one mode with no use for them, and ignored the player's
-    // setting in the process (it defaults to on).
-    //
-    // Note this flag has **no bearing on the maze's own whistle** — that comes
-    // from the new-game init, not the item pool — and so none on the safety
-    // property that whistle carries. See `world_travel` for that, and for what
-    // would have to change if the mode ever shipped without one.
-    if options.chest_items {
-        rom.set_tag("items");
-        randomize::items::randomize(rom, &mut rng, whistles_removed, piranha_active);
-    } else if whistles_removed {
-        rom.set_tag("items/whistles");
-        randomize::items::remove_whistles_only(rom, &mut rng);
     }
     // Set starting lives (patched later by starting_items trampoline if items present)
     rom.set_tag("qol/starting_lives");
