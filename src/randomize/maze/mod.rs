@@ -182,16 +182,26 @@ pub(crate) const CONTENT_FLOOR: usize = 14;
 /// the browser, measured).
 pub(crate) const MAX_DEALS: usize = 8;
 
-/// A cell the player cannot pass until they have found [`Key`].
+/// A cell the player cannot pass until they have found **every** item in
+/// `items`.
 ///
 /// The cell is a Level slot, and "cannot pass" is not enforcement this layer
 /// adds — a level tile is already a wall until it is beaten, and a level that
 /// requires a power-up carries its own source of it, so gating that source
 /// makes the level unbeatable. See `docs/mimaze_layer_design.md`.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+///
+/// **A set, not one item, because a suit requirement always implies the
+/// mushroom.** The gate routine sends a *small* player to the mushroom row
+/// whichever block they bump, so with the mushroom unfound that block pays a
+/// coin, the player never gets big, and the suit behind it is unreachable
+/// even if its own key was found. 6-5 is therefore `{Mushroom, Leaf}` and
+/// 7-F1 `{Mushroom, Tanooki}`. The star is the exception: `LATP_Star` has no
+/// `Player_Suit` split, so a starman goes to anyone and 7-7 is `{Star}`
+/// alone.
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub(crate) struct ItemGate {
     pub pos: MazePos,
-    pub item: Key,
+    pub items: Vec<Key>,
 }
 
 /// A cell that hands [`Key`] over when the player reaches it — a Toad House,
@@ -495,8 +505,12 @@ impl GlobalState {
         loop {
             if !self.gates.is_empty() {
                 let mut shut_cells = blocked.clone();
-                shut_cells
-                    .extend(self.gates.iter().filter(|g| !found.contains(&g.item)).map(|g| g.pos));
+                shut_cells.extend(
+                    self.gates
+                        .iter()
+                        .filter(|g| !g.items.iter().all(|i| found.contains(i)))
+                        .map(|g| g.pos),
+                );
                 bases = self.base_grids(&shut_cells);
             }
             let shut = self.shut_locks_sealed(&open, sealed);
@@ -575,8 +589,12 @@ impl GlobalState {
 
         let unbeaten: Vec<FortRef> =
             forts.iter().map(|&(f, _)| f).filter(|f| !open.contains(f)).collect();
-        let unopened: Vec<ItemGate> =
-            self.gates.iter().copied().filter(|g| !found.contains(&g.item)).collect();
+        let unopened: Vec<ItemGate> = self
+            .gates
+            .iter()
+            .filter(|g| !g.items.iter().all(|i| found.contains(i)))
+            .cloned()
+            .collect();
         Spheres {
             solvable: goal_sphere.is_some() && unbeaten.is_empty(),
             spheres,

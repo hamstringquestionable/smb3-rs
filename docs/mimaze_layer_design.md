@@ -85,14 +85,37 @@ in front. There is no shortage of places.
 it needs a power-up, and the levels known to satisfy that are the ones the
 randomizer already had to protect — `powerups.rs`:
 
-| Level | Item | Why |
+| Level | Items | Why |
 |---|---|---|
-| 6-5 | **leaf** | flight; its Q-leaf is `PROTECTED_OFFSETS[0]` |
+| 6-5 | **mushroom + leaf** | flight; its Q-leaf is `PROTECTED_OFFSETS[0]` — and see the rule below |
 | 7-7 | **star** | four Q-stars cross the muncher fields |
 | 8-F | **mushroom** | must be big to break a block in sub-area 2 |
 | 7-F1 | **mushroom + tanooki** | big → bricks → Big [?] → tanooki → flight |
 
-**Four, and 7-F1 is a conjunction.** That is the budget until someone analyses
+### Every suit key implies the mushroom
+
+Corrected 2026-09-19, from playing it. The gate routine splits where vanilla
+splits: a **small** player bumping *any* suit block is sent to the mushroom
+row, whichever block it is. So with the mushroom unfound that block pays a
+coin, the player never becomes big, and the suit behind it is unreachable —
+**even when the suit's own key has been found.** A leaf without a mushroom is
+inert.
+
+So a requirement naming a suit is always a conjunction with the mushroom, and
+`ItemGate` carries a *set* rather than one item for exactly this reason. Three
+of the four rows above are conjunctions; only 7-7 is not, because `LATP_Star`
+has no `Player_Suit` split and a starman goes to anyone.
+
+Two consequences worth carrying into the placement pass:
+
+* **The key graph has a single root.** Nothing except the star is reachable
+  before a mushroom, so the first mushroom source dominates the whole sphere
+  structure. "Mushroom placement is the pacing lever" understates it — it is a
+  gate on everything else.
+* **A suit gate needs two sources in front of it**, not one, which tightens the
+  acyclicity check the key census measured with one key in mind.
+
+**Four gates, and three of them conjunctions.** That is the budget until someone analyses
 more levels, and it is the single most important number in this document: gates
 per seed are bounded by **4**, not by the 18.8 the geometry offers. The scarce
 resource is levels that genuinely require something, not places to put them.

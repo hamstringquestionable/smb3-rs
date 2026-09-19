@@ -3813,7 +3813,7 @@ fn a_key_in_front_opens_its_gate() {
 
         // The start tile is reachable in round 0 whatever else is shut, so it
         // is "in front" of every gate by construction.
-        state.gates = vec![ItemGate { pos: cell, item: Key::Leaf }];
+        state.gates = vec![ItemGate { pos: cell, items: vec![Key::Leaf] }];
         state.sources = vec![ItemSource { pos: state.start, item: Key::Leaf }];
 
         let after = state.spheres();
@@ -3845,7 +3845,7 @@ fn a_key_behind_its_gate_strands_it() {
 
         // The item sits inside the cut the gate makes — so reaching it
         // requires passing the gate it opens.
-        state.gates = vec![ItemGate { pos: cell, item: Key::Leaf }];
+        state.gates = vec![ItemGate { pos: cell, items: vec![Key::Leaf] }];
         state.sources = vec![ItemSource { pos: lost[0], item: Key::Leaf }];
 
         let after = state.spheres();
@@ -3877,7 +3877,7 @@ fn the_loop_does_not_stop_on_an_item_only_round() {
         if !state.spheres().solvable {
             continue;
         }
-        state.gates = vec![ItemGate { pos: cell, item: Key::Leaf }];
+        state.gates = vec![ItemGate { pos: cell, items: vec![Key::Leaf] }];
         state.sources = vec![ItemSource { pos: state.start, item: Key::Leaf }];
 
         // Whatever the shape, the run still finishes: the gate opened, every
@@ -3885,6 +3885,41 @@ fn the_loop_does_not_stop_on_an_item_only_round() {
         let after = state.spheres();
         assert!(after.solvable, "seed {seed}");
         assert!(after.unbeaten.is_empty(), "seed {seed}");
+        return;
+    }
+    panic!("no seed produced a usable cut — the test proved nothing");
+}
+
+/// **A gate wants every item it names.** 6-5 is `{Mushroom, Leaf}`, not
+/// `{Leaf}`: the gate routine sends a small player to the mushroom row
+/// whichever block they bump, so the leaf alone leaves them small and the
+/// leaf itself out of reach. One of two keys in front must not open it.
+#[test]
+fn a_conjunction_needs_all_of_its_keys() {
+    let Some(raw) = load_rom() else { return };
+    let knobs = Knobs::default();
+    for seed in 0..12 {
+        let (_, mut state, _) = generated(&raw, seed, &knobs, super::DEFAULT_WANDS_REQUIRED);
+        let Some((cell, _)) = a_cut(&state) else { continue };
+        if !state.spheres().solvable {
+            continue;
+        }
+        state.gates = vec![ItemGate { pos: cell, items: vec![Key::Mushroom, Key::Leaf] }];
+
+        // Only the leaf, in front: not enough.
+        state.sources = vec![ItemSource { pos: state.start, item: Key::Leaf }];
+        assert_eq!(
+            state.spheres().unopened.len(),
+            1,
+            "seed {seed}: the leaf alone must not open it"
+        );
+
+        // Both, in front: open.
+        state.sources = vec![
+            ItemSource { pos: state.start, item: Key::Leaf },
+            ItemSource { pos: state.start, item: Key::Mushroom },
+        ];
+        assert!(state.spheres().unopened.is_empty(), "seed {seed}: both keys open it");
         return;
     }
     panic!("no seed produced a usable cut — the test proved nothing");

@@ -400,7 +400,7 @@ is the output of a chain a human read off the level.
 
 | Level | Logic item | Why |
 |---|---|---|
-| 6-5 | **Leaf** | flight required; the level's dispenser is a Q-leaf (`0x22D74`) |
+| 6-5 | **Mushroom + Leaf** | flight required; the level's dispenser is a Q-leaf (`0x22D74`) — and a small player bumping it is sent to the mushroom row, so the leaf alone is inert. See `mimaze_layer_design.md`, "Every suit key implies the mushroom" |
 | 7-7 | **Star** | stars required to cross the muncher fields (4 Q-stars) |
 | 7-F1 | **Mushroom + Tanooki** | big to break bricks → Big [?] → tanooki → flight |
 | 8-F | **Mushroom** | must be big to break a block in sub-area 2 (`0x2B900`) |
