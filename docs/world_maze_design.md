@@ -1602,6 +1602,10 @@ wand counts — which is also the hardest setting. Nothing asks today.
   Parked: canoe edges gate on dock walk-reachability in the walker and that is
   load-bearing, so a portable boat changes walker semantics rather than adding
   an item.
+  Revisited 2026-09-19 in [item_keys_design.md](item_keys_design.md), which
+  proposes gating `canoe_summon.rs` rather than boarding. **That does not answer
+  this objection** — a summon conditional on the anchor still makes canoe edges
+  conditional in the walker, which is the cost recorded here.
 - **Same-world locks through the foreign-lock table.** It would free FX slots at
   the cost of the crumble animation, but the 4-byte rows do not fit a store that
   would then need both the packed `(byte, mask)` and the live
