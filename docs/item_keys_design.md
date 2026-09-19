@@ -192,7 +192,11 @@ bonus pipe opens) is not where this goes. One site decides the product:
 `BigQBlock_StarManFlash-…,X` into `PUp_StarManFlash` — the emerging object plus
 the frame that turns a starman into the tanooki, frog or hammer suit. So the
 gate is again a substitution at a single site, indexed by the block's own object
-id, and 7-F1's tanooki (`OBJ_BIGQBLOCK_TANOOKI`, `$98`) goes through it. The "no
+id, and the tanooki **7-F1 depends on** goes through it. That block is not *in*
+7-F1: it lives in whichever bonus room 7-F1's pipe draws, and
+`randomizer/mod.rs:519` forces that room's block to `OBJ_BIGQBLOCK_TANOOKI`
+(`$98`) after the contents roll — which is why the roll itself
+(`enemies/mod.rs:56`) exempts nothing and needs no offset pin. The "no
 mushroom rung" reading holds: the table is one item per block type, with no
 `Player_Suit` branch anywhere in it.
 
