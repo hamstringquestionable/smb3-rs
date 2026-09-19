@@ -365,24 +365,25 @@ census-equivalent (`test_route_census`, read per-world, not on the global mean).
 
 ## Allocation — verified 2026-09-19
 
-`smb3-rs <rom> --free-space` plus label ranges from the disassembly. During a
-block bump the four slots hold:
+`smb3-rs <rom> --free-space`, the `FREE_SPACE_ALLOCATIONS` registry, and label
+ranges plus raw bytes from the ROM.
 
-| Slot | Bank | Free | Largest gap |
+### The banks that are resident
+
+During a block bump the four slots hold:
+
+| Slot | Bank | `$FF` free | Largest gap |
 |---|---|---|---|
-| `$8000` | PRG030 (fixed) | 42 | **42** @ `0x3DFE6` |
+| `$8000` | PRG030 (fixed) | 42 | 42 @ `0x3DFE6` |
 | `$A000` | **PRG008** — all the LATP code (`$A0C8`–`$BFF9`) | **0** | — |
 | `$C000` | **PRG000** (`$C3E7`–`$DEBB`) | **0** | — |
-| `$E000` | PRG031 (fixed) | 81 | **30** @ `0x3E972` |
+| `$E000` | PRG031 (fixed) | 81 | 30 @ `0x3E972` |
 
 PRG008 and PRG000 are co-resident — proven by PRG008 reading `PowerUp_Ability`
-at `$C3E0` in PRG000 — and **both are completely full**. So:
-
-- The handlers **cannot be patched in place.** There is not one spare byte in
-  PRG008 for a `JSR`. Repointing the jump-table words is not merely the cheapest
-  option, it is the only one: the word is overwritten, costing nothing.
-- The gate routine has exactly **two possible homes**: PRG030's 42-byte gap or
-  PRG031's 30-byte gap.
+at `$C3E0` in PRG000 — and neither has a byte of `$FF` filler. So the handlers
+**cannot be patched in place**: there is not one spare byte in PRG008 for a
+`JSR`. Repointing the jump-table words is not merely the cheapest option, it is
+the only one, and it costs nothing because the word is overwritten.
 
 > **Correction.** An earlier draft named PRG006 (1392 bytes at `$C000`) as the
 > first candidate. That is wrong — PRG006 is a *data* bank swapped in to read
@@ -390,24 +391,52 @@ at `$C3E0` in PRG000 — and **both are completely full**. So:
 > `$C000` row of the CLAUDE.md table without checking which bank is actually
 > resident at the moment your code runs.
 
-**Budget.** A shared routine with two entry stubs, a mask table indexed by the
-`Bouncer_PUp` index the handler already computes, and `JMP LATP_Coin` on the
-locked path, sketches to **roughly 37 bytes** — under PRG030's 42 with ~5 spare,
-over PRG031's 30. That is the whole budget for `LATP_Flower` and `LATP_Leaf`
-together, before Big [?] and chests are considered at all.
+### Reclaimed space the scan cannot see
 
-PRG030's gap is the bank's **only** usable run, and CLAUDE.md flags it as the
-last resort for always-mapped code. Spending it here is a real cost to weigh,
-not a formality. Two things to try before committing to it:
+Neither existing PRG000/PRG001 allocation helps, and it is worth recording why,
+because both look like they should:
 
-1. **Tighten the routine** to 30 bytes so PRG031's gap serves instead, leaving
-   PRG030's 42 intact. The size techniques CLAUDE.md records — deriving an index
-   from one already held, reaching a shared exit with a conditional branch,
-   picking the instruction that preserves the live register — are aimed at
-   exactly this shape.
-2. **Check whether Big [?] and chests dispense through a different bank**, where
-   space is not scarce. If they do, only the two LATP handlers compete for the
-   always-mapped gaps.
+- `FS_POISON_MUSHROOM` (`0x02713`, CPU `$A703`) and `FS_POISON_HOOK`
+  (`0x02724`) are in **PRG001**, which sits at `$A000` — the same slot as
+  PRG008. Mutually exclusive; unusable here.
+- PRG000's only reclaimed row is `fs(0x00928, 7, ["macobra"])`, dead code at CPU
+  `$C918` skipped by a vanilla `JMP $C927`. Seven bytes, already spent.
+
+### The answer: repointing frees the handlers themselves
+
+`LATP_Flower` and `LATP_Leaf` are each referenced from **exactly one place** —
+their own word in `LATP_JumpTable`. Verified across the whole disassembly.
+Repointing those two words therefore frees both bodies outright, and they are
+adjacent. From the ROM at `0x117FC` (CPU `$B7EC`):
+
+```
+a9 00  8d 86 05  a0 05  a5 ed  f0 02  a0 02  60   ; LATP_Flower, 14 bytes
+a9 00  8d 86 05  a0 05  a5 ed  f0 02  a0 03  60   ; LATP_Leaf,   14 bytes
+a9 80  8d 86 ...                                   ; LATP_Star begins
+```
+
+**28 contiguous bytes in PRG008 itself** — the dispatcher's own bank, so there
+is no mapping question at all, and **the always-mapped gaps do not have to be
+spent.** This is the project's own recorded lesson in miniature: repointing a
+jump-table vector reclaims the code it pointed at.
+
+**Budget.** A shared routine — two entry stubs merged with the `$2C` skip trick,
+the flash clear, the `Player_Suit` branch the vanilla handlers already had, a
+mask table indexed by the `Bouncer_PUp` index, and `JMP LATP_Coin` on the locked
+path — sketches to **about 32 bytes**, roughly 4 over the 28 reclaimed. That is
+an optimization problem, not a relocation problem. Two ways out, in order:
+
+1. Tighten the routine to 28. The size techniques CLAUDE.md records are aimed at
+   exactly this shape, and the vanilla pair wastes a duplicated 5-byte flash
+   clear that the merged version only needs once.
+2. Put the 4-byte mask table in PRG031's 30-byte gap and keep the code in the
+   reclaimed 28.
+
+Entry 0 (`LATP_None`, `LDY #1 / RTS`) sits just above and is 3 more bytes if it
+is ever worth repointing too — but it is live, reached from `LATP_QBlocks`.
+
+**Still to check:** whether Big [?] and chests dispense through a bank where
+space is not scarce. If they do, nothing else competes for these 28 bytes.
 
 ## Open decisions
 
