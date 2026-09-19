@@ -1,125 +1,127 @@
 # MiMaze — the item-gate layer
 
 > **Status: design. Nothing is implemented.** Written 2026-09-19 against the
-> measurements in `maze::tests`' `wall_site_census`, `key_placement_census`,
-> `canoe_gate_census` and `level_gate_census`, all of which are in the tree and
-> reproducible. Where a number appears here it came from one of those.
+> censuses in `maze::tests` (`level_gate_census`, `key_placement_census`,
+> `wall_site_census`, `canoe_gate_census`), all in the tree and reproducible.
 >
 > This is the **generator** side. `item_keys_design.md` is the ROM side — the
-> found-mask, the dispenser hooks, the carriers — and it stays the authority on
-> everything in the cartridge. Read that first; this says how a seed decides
-> what to gate.
+> found-mask and the dispenser hooks — and this design *depends* on it rather
+> than standing beside it. See "The dispenser layer is not optional".
+>
+> **Corrected once already, on the first day.** The first draft had the layer
+> gating map *positions* through a new map-side entry refusal, on the grounds
+> that level identity is decided downstream. That was wrong in both halves, and
+> the corrections are the design: identity is not out of reach, and no new
+> enforcement is needed because vanilla already supplies it.
 
 ## The shape in one paragraph
 
-After the maze is generated and before it is written, walk the finished map and
-choose a handful of **levels** to seal behind items the player has not found
-yet, and a handful of **sources** to hand those items out. Nothing is placed:
-the layer reads a map the existing builder already dealt and assigns meaning to
-what is standing there. A gated level cannot be entered, and because vanilla
-will not let the player walk off an uncompleted level tile, a level that cannot
-be entered is a wall.
+After the maze is generated and before it is written, walk the finished map,
+pick cells whose sealing would gate something worth gating, and ask the writer
+to put a **level that genuinely requires an item** on each of them — 6-5 on a
+cut that should need the leaf. The item's source is placed in an earlier
+sphere. Nothing is placed on the map and nothing new enforces anything: the
+level's own contents are the wall, and the dispenser layer is what stops the
+player bringing a leaf from somewhere else.
 
-## Why a level is a wall
+## Why this works with no new map machinery
 
-This is the whole reason the layer is cheap, so it is worth stating exactly.
+Three facts, each already true.
 
-`MO_NormalMoveEnter` refuses to let the player walk *off* a tile at or above its
-palette page's threshold in `Tile_AttrTable+4` until that tile is completed, and
-a level tile is above its threshold by definition — that is what makes it
-enterable. So in vanilla, **every level is already a wall until you beat it**.
-Gating entry therefore gates passage, with no new tile, no new map object and
-no change to any level's contents.
+**1. A level tile is a wall until it is beaten.** `MO_NormalMoveEnter` will not
+let the player walk *off* a tile at or above its palette page's threshold until
+it is completed, and a level tile is above its threshold by definition — that
+is what makes it enterable. So a level that cannot be beaten seals every route
+through its cell.
 
-The maze walker already agrees, which is what made the measurement possible:
-`walk::expand` rejects a destination cell whose tile is in `BACKGROUND_TILES`,
-and `GlobalState::base_grids` blanks a blocked cell to background. So
-`spheres_with_blocked({that level's cell})` *is* "this level is gated and the
-player has not found the key".
+**2. A level that requires a power-up carries its own source.** `vision.md`'s
+fourth charter point: *"if a level requires a power-up, the level itself
+provides a renewable (effectively unlimited) source of it"*. 6-5 needs flight
+and holds the Q-leaf that grants it (`0x22D74`). That is why the level is
+beatable entering small, and it is also the hook — **turn that source off and
+the level becomes unbeatable.**
 
-### What that buys, measured
+**3. The dispenser layer turns it off.** With power-up blocks gated on the
+found-mask (`item_keys_design.md`), 6-5's leaf block pays a coin until the
+player has found a leaf from an overworld source. 6-5 is then a wall keyed on
+"leaf found", enforced by vanilla's own level design.
 
-`level_gate_census`, 100 seeds, K=3, of 62 levels:
+The walker already agrees with all of this, which is what made the measurement
+possible: `walk::expand` rejects a destination cell that is background and
+`base_grids` blanks a blocked cell to background, so
+`spheres_with_blocked({that cell})` *is* "this level is gated and the key is
+not found yet".
 
-| | |
-|---|---|
-| gateable levels per seed (sealing something) | **18.8**, min 11, max 29 |
-| of those, sealing enough to make the game unwinnable | 8.5 |
-| with a key site in front of them | **98.2%**, mean 36.7 sources |
-| cut sizes | 1384 under a tenth, 165 a tenth to a half, 160 a half to nine tenths, 166 nearly all |
+## The layer picks which level lands where
 
-No seed had fewer than 11. The layer is choosing from a comfortable supply, not
-scraping.
+The first draft claimed it could not, because `overworld_writer::assign_pool`
+binds pool entries to slots downstream. The binding is downstream; the
+*constraint* need not be.
 
-## Where it runs
+**The precedent is troll pipes.** `troll_pipes::mark_troll_pipes(&mut build)`
+runs before the capture point and sets `SlotAssignment::is_troll_pipe`. The
+writer honours it: `assign_pool` orders marked slots first and draws each one a
+pool entry satisfying a predicate (`!holds_unique_item`), demoting the slot if
+the pool cannot supply one. A model-side mark, a writer-side constraint
+solve — exactly the shape this needs.
 
-`randomizer/mod.rs:405`, the existing `// --- OVERWORLD CAPTURE POINT ---`,
-between `maze::stamp_into` and `write_overworld`. A third model pass in the
-slot the maze already occupies — read the finished `GlobalState`, decide,
-hand the decision to the writer.
+**And level identity is already a first-class thing there.** `CHEST_LEVELS` and
+`is_chest_level(world_idx, entry_idx)` name specific levels, and `assign_pool`
+reasons about them today. A `LEVEL_REQUIREMENTS: &[(world, entry, Item)]`
+registry is the same kind of table, and `requires(pi) == Some(item)` is the
+same kind of predicate.
 
-Everything it needs is settled by then:
+So the layer's output for a gate is `(slot position, required item)`, and the
+writer draws a level with that requirement onto that slot. Same machinery,
+one more predicate.
 
-* **the map** — levels, forts, locks, pipes, telepads, the winnability fixpoint
-* **the sources and what they hand out** — since the item tables now roll ahead
-  of `overworld_pickup` (see `CHANGELOG`), `(position -> item)` is a fact in the
-  model rather than something re-rolled afterwards
-* **Hammer Bro homes and rewards** — `BuiltWorld::hb_sprites`, both fields
+## What can be a gate: the real supply
 
-One thing is **not** settled and shapes the design: which *level* sits on a
-given slot is decided by `overworld_writer::assign_pool`, downstream. The model
-knows "a Level slot stands here", never "6-5 stands here". The layer therefore
-gates **positions, not levels**, and never reasons about a level's contents.
+The geometry is not the constraint. `level_gate_census`, 100 seeds: **18.8
+positions per seed** seal something when gated, min 11; 98.2% have a key site
+in front. There is no shortage of places.
 
-## The model
+**The vocabulary is the constraint.** A level is gate-capable only if beating
+it needs a power-up, and the levels known to satisfy that are the ones the
+randomizer already had to protect — `powerups.rs`:
 
-Three sets, and the layer's job is to choose the second and third.
+| Level | Item | Why |
+|---|---|---|
+| 6-5 | **leaf** | flight; its Q-leaf is `PROTECTED_OFFSETS[0]` |
+| 7-7 | **star** | four Q-stars cross the muncher fields |
+| 8-F | **mushroom** | must be big to break a block in sub-area 2 |
+| 7-F1 | **mushroom + tanooki** | big → bricks → Big [?] → tanooki → flight |
 
-* **Items** — the key vocabulary. The Global Item IDs the sources already deal
-  in: mushroom `$01`, fire `$02`, leaf `$03`, frog `$04`, tanooki `$05`, hammer
-  suit `$06`, and room to grow. A bitmask; two SRAM bytes covers sixteen, and
-  `maze_state.rs` has six free (`$7ADA-$7ADF`).
-* **Gates** — `(position, required item)`. Positions are Level slots.
-* **Key placements** — `(source position, item)`. Sources are the three kinds
-  the model can address: Toad Houses (22 per seed), Hammer Bro encounters (15),
-  Princess letters (8). **Not in-level chests** — those are levels, and the
-  level binding is downstream.
+**Four, and 7-F1 is a conjunction.** That is the budget until someone analyses
+more levels, and it is the single most important number in this document: gates
+per seed are bounded by **4**, not by the 18.8 the geometry offers. The scarce
+resource is levels that genuinely require something, not places to put them.
 
-### The found-mask
+Two ways the vocabulary grows, both out of scope here:
 
-One or two bytes in `maze_state.rs`' run, so `completion_bits::NEW_GAME_INIT`
-clears it for free by clearing the whole declared range. That clear is installed
-only in maze mode, which is exactly this mode, so the game-wide cost
-`item_keys_design.md` records does not apply here.
+* **Analysis.** Any level whose completion needs its own power-up qualifies;
+  the four above are only the ones the randomizer had to protect to avoid
+  breaking them. Nobody has swept the other 58.
+* **Manufacture.** `PROTECTED_OFFSETS` and `FLOWER_OR_LEAF_QBLOCK_OFFSETS` pin
+  what those blocks dispense. Unpinned, the requirement becomes whatever byte2
+  the roll put there — a per-seed requirement rather than an authored one, as
+  `item_keys_design.md` notes. Cheap, and it changes the character of the mode.
 
-A bit is set where an item is granted: `ToadHouse_ChestPressB` (PRG029, 2568
-bytes free), the Hammer Bro reward path, the letter award. Sticky, never
-cleared — which is what keeps the fixpoint monotone.
+## The dispenser layer is not optional
 
-### Enforcement: refuse the entry
+The first draft called it "a separate, independent layer" that this one stands
+without. **It does not stand without it.** Without the dispenser gate, a leaf
+from any other level satisfies 6-5, so 6-5 gates nothing and the whole design
+is decoration.
 
-The gate is a **map-side entry refusal**, not a tile swap:
-
-* the level tile stays exactly what it is
-* pressing A on a gated cell whose bit is clear does not enter
-* the player cannot walk off the cell, because the level is not complete
-* when the bit is set, the level behaves normally with no state to restore
-
-That needs one position-keyed table and one hook. Both patterns are shipped:
-`lock_keys.rs` is already a position-keyed table that replaced vanilla's
-fortress-FX slots, and `world_persist::PAD_ENTER` already hooks the level-entry
-path at `PRG010_CEA7` for telepads. Map-side code has PRG010/PRG011 mapped for
-the whole map, so this does not touch the nearly-full always-mapped banks.
-
-**A tile swap was the alternative and is deferred, not rejected.** Swapping the
-level tile for a wall tile is more legible but costs a minted tile family, CHR,
-and a restore path, and `ML_RANGE` deliberately put the free `$6B-$7F` tail
-*outside* the M/L window so those bytes carry obstacles. See "Legibility".
+The dependency is exact: the gate is "level L requires item I", and what makes
+it bite is that **no block anywhere dispenses I until I is found**. That is the
+LATP and Big [?] work in `item_keys_design.md`, and it is a prerequisite.
 
 ## The solver
 
-`GlobalState::spheres()` is a fixpoint over one accumulator — beaten forts.
-This needs a second: found items. The shape is unchanged.
+`GlobalState::spheres()` is a fixpoint over one accumulator, beaten forts. This
+needs a second — found items — and the shape is unchanged:
 
 ```
 open_forts = {}, found = {}
@@ -132,83 +134,81 @@ loop:
     until neither grew
 ```
 
-Monotone in both accumulators, so it terminates in at most one round per
-fort-plus-item and no assumption is made about play order — the same argument
-the existing fixpoint rests on. A sphere is still a round, so `Sphere::width`,
-`completion_cost` and the spoiler log keep working with the item dimension
-folded in.
+Monotone in both, so it terminates and assumes no play order — the same
+argument the existing fixpoint rests on. A sphere is still a round, so
+`Sphere::width`, `completion_cost` and the spoiler log keep working.
 
-**This is the only genuinely new machinery in the layer.** Everything else is
-recombination.
+**This is the only new machinery in the layer.** Everything else is a mark, a
+predicate, or a table.
 
 ## Choosing the gates
 
-Generate and test, which is what the builder already does for shaping and for
-the same reason: the property wanted is emergent, and the placement is cheap to
-retry.
+Generate and test, like the builder's shaping and for the same reason.
 
-1. Rank the gateable Level slots by cut size, keeping the band that seals
-   something worth sealing. The census says roughly 8 per seed fall in the
-   10–90% band, with the rest sealing a tail of one or two nodes.
-2. Deal gates from that band, and for each, deal its key onto a source **in
-   front of the cut** — the acyclicity rule, and the reason the key census
-   exists. 98.2% of cuts have somewhere; the 1.8% that do not are skipped.
-3. Run the item-aware fixpoint. Solvable and every fort still beatable, or
-   redeal.
-4. Keep the deal, hand it to the writer.
+1. Rank gateable Level slots by what they seal. Prefer the band that seals
+   something meaningful — the census puts roughly 8 per seed above a tenth of
+   the content, with the rest sealing a node or two.
+2. Assign the four requirement levels to four of them, and place each item's
+   source **in front of its own cut** — the acyclicity rule, which the key
+   census says is satisfiable for 98.2% of cuts.
+3. Run the item-aware fixpoint. Solvable, every fort beatable, or redeal.
+4. Emit the slot marks and the source assignments.
 
-Budget is deliberately **not a knob yet**. Pick a count from the measurement,
-ship it, and let a knob be earned if the census says the spread matters.
+Budget is not a knob. It is at most four, and whether all four should always be
+used is a measurement nobody has taken.
 
-## What the writer does
+## The sphere rule
 
-Three writes, none of which touch a map grid:
+A gate's key must be collectable strictly before the gate is needed. The
+fixpoint enforces it structurally — if the key is behind the gate, the round
+never grows and the seed is rejected — so this is an invariant, not a scoring
+term. 7-F1's conjunction needs *both* a mushroom and a tanooki source earlier,
+and if 7-F1 holds a lock key, that lock's fortress must not be what gates
+either one.
 
-* the gate table — `(world, row, col, item bit)` per gate, position-keyed the
-  way `lock_keys` is
-* the source assignments — a Toad House's treasure type, a Hammer Bro's reward
-  byte, a letter's reward byte, all now decided before anything reads them
-* the found-mask setters at the three grant sites
+## What the writer receives
+
+* **slot marks** — `(position, required item)`, honoured by `assign_pool` the
+  way `is_troll_pipe` is
+* **source assignments** — a Toad House's treasure type, a Hammer Bro's reward,
+  a letter's reward; all now decided before anything reads them, since the item
+  tables roll ahead of `overworld_pickup`
+* **found-mask setters** at the three grant sites
 
 ## Invariants
 
-1. **Never gate behind its own key.** No gate's cut may contain the source of
-   the item that opens it. Generalises `locks.rs:27`; across many gates it is
-   acyclicity of the key graph, and the fixpoint in step 3 is what enforces it
-   in practice rather than a separate check.
-2. **Order-free.** The fixpoint assumes no play order, so a seed is winnable
-   however the player routes.
-3. **Nothing sealed out.** Every fortress still beatable, every world still
-   completable — the existing invariant, now also over items.
-4. **Standard mode untouched.** `rom_identity` byte-identical with the mode off.
-5. **Sequence breaks stay legal.** A player who carries a suit in and beats a
-   level the logic called gated has earned it. The generator must never try to
-   prevent this.
+1. **Never gate behind its own key.** Generalises `locks.rs:27`; across gates
+   it is acyclicity of the key graph, enforced by the fixpoint rather than by a
+   separate check.
+2. **Order-free.** No assumption about the order the player takes gates in.
+3. **Nothing sealed out.** Every fortress beatable, every world completable.
+4. **Standard mode untouched**, `rom_identity` byte-identical with the mode off.
+5. **Sequence breaks stay legal.** A player who carries a tanooki into 6-5 and
+   beats it without the leaf has earned it. The generator must never try to
+   prevent this — `item_keys_design.md` says so and means it.
 
 ## Known gaps
 
-* **Multi-gate composition is unmeasured.** Every census blocked exactly one
-  cell. Two individually-sound gates can compound; step 3's fixpoint is the
-  defence, but how often a deal survives it is unknown until the solver exists.
-  This is the one risk that could change the design.
+* **Four gates is thin for a Metroidvania.** The mode's depth is bounded by the
+  requirement vocabulary until it is grown. Whether four is enough to feel like
+  anything is the first question a prototype should answer.
+* **Multi-gate composition is unmeasured.** Every census blocked one cell. With
+  at most four gates the risk is smaller than it looked, but the fixpoint is
+  still the only defence and nobody has run it.
 * **Toad House items are not independently assignable.** 22 houses share a
   15-entry `ToadHouse_Item2Inventory` keyed by treasure *type* (the type is the
-  house's own `obj_ptr` high byte, `prg030.asm:1351`). Two houses of the same
-  type cannot hold different items. The effective source count is below 45 and
-  nobody has measured by how much.
-* **Legibility.** A gated level looks like a level. The player learns by
-  pressing A, and "nothing happens" is the failure mode `item_keys_design.md`
-  rejects for `Player_QueueSuit`. At minimum this needs a sound or a bubble;
-  the marker-tile family is the real answer and is costed in that document.
-* **The dispenser layer is not in this.** Gating power-up blocks on the
-  found-mask — the LATP and Big [?] work in `item_keys_design.md` — is a
-  separate, independent layer. This one stands without it, and it should be
-  judged on its own before the two are combined.
+  house's own `obj_ptr` high byte, `prg030.asm:1351`), so two houses of one type
+  cannot hold different items.
+* **Legibility.** A gated level looks like an ordinary level, and the player
+  learns by walking into it and failing. That is arguably correct for a
+  Metroidvania — you learn the wall by hitting it — but it is undecided, and
+  the marker-tile family in `item_keys_design.md` is the alternative.
 
 ## Related
 
-* [item_keys_design.md](item_keys_design.md) — the ROM side, and the authority
-  on the found-mask, the dispenser hooks and the carrier vocabulary.
+* [item_keys_design.md](item_keys_design.md) — the ROM side, and a hard
+  dependency, not a companion.
 * [world_maze_design.md](world_maze_design.md) — the mode this extends.
-* [seed_stability.md](seed_stability.md) — the bar: standard byte-identical,
-  maze census-equivalent per world.
+* [vision.md](vision.md) — charter point 4 is what makes a requirement level a
+  gate at all.
+* [seed_stability.md](seed_stability.md) — the bar for landing any of it.
