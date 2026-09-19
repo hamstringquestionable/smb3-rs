@@ -5649,9 +5649,17 @@ vanilla grids):**
 
 Above its page threshold, vanilla places only: `$67` fort, `$68` 2-Pyramid,
 `$69` 2-Quicksand (both real pointer-table entries — W2 entry 32 and 42), `$6A`
-(unused), `$E9` W5 star, `$EA` Dark Land fill (67 uses), `$EB` alt fort. A tile
-being above a threshold is often accidental — `$68`/`$69`/`$EA` are unwalkable
-or non-completing, so the classification never fires.
+(placed by no vanilla grid, but this randomizer places it as
+`TILE_FORTRESS_W8` — see "`$6A` `TILE_LARGEFORT` has no completion path"
+below), `$E9` W5 star, `$EA` Dark Land fill (67 uses), `$EB` alt fort. A tile
+being above a threshold is often accidental, and vanilla's classification never
+fires on `$68`/`$69`/`$EA` — but **that is a fact about where vanilla puts
+them, not about the bytes** (corrected 2026-09-19). All three are inside their
+page's M/L window, so a *completed* cell wearing one flips to an M/L marker on
+reload and claims a completion bit like any other panel. Vanilla is safe
+because it never completes those cells; anything that places one of these bytes
+on a cell the player can clear gets the M/L flip, and the row 7/8 shared-bit
+rule with it.
 
 **Turning a threshold into a range** unlocks the undefined tail of a page for
 the *obstacle* role. `$A545`'s test is exactly five bytes, so

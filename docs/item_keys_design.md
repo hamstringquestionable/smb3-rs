@@ -1,9 +1,16 @@
 # Item Keys — gating power-ups on what the player has found
 
-> **Status: design note. Nothing is implemented.** No branch, no flag, no code.
+> **Status: design note. Nothing is implemented.** No flag, no code; the branch
+> `docs/item-keys-design` carries this document and nothing else.
 > This records a design conversation (2026-09-19) to the point where it could be
 > built, and marks what is still undecided. Line numbers and offsets cited from
 > Rust will drift; the disassembly citations will not.
+>
+> **Prerequisite pass, 2026-09-19 (second session).** Two of step 0's three
+> prerequisites are discharged from source and one is not — see "Build order".
+> That pass also settled the last allocation unknown, corrected the second
+> dispenser, and found one claim in `smb3_rom_reference.md` wrong (now fixed
+> there).
 >
 > It supersedes the *approach* of the parked item-economy research
 > ([artifact, 2026-09-12](https://claude.ai/code/artifact/d4bd2f24-1cfa-4e34-969e-04f365339c42),
@@ -14,7 +21,7 @@
 ## The mode in one paragraph
 
 A power-up block only dispenses an item the player has already **found** from an
-overworld source (Toad House, treasure chest, the Peach letter). Finding one is
+overworld source (a Toad House chest, the Peach letter). Finding one is
 permanent and world-wide: find a leaf and every leaf block in the game starts
 working. Until then that block pays a coin. Because "has found X" is a durable,
 monotone fact, it can gate content — a level that genuinely needs flight, a canoe
@@ -171,11 +178,54 @@ already on screen and in the player's hands, so the only achievable behaviour is
 **Not the level data.** A block's content byte is read-only at runtime while the
 unlock is runtime state, so the substitution cannot be baked in at generation.
 
-### Two dispensers with no mushroom rung
+### The second dispenser is the Big [?] block — and the chest is not one
 
-**Big [?] blocks** (`qol/big_q.rs`) and **treasure chests** are separate paths and
-have no ladder rung to preserve. Coin is the right degrade for both. 7-F1's
-tanooki comes from a Big [?], so this path is required, not optional.
+**Verified 2026-09-19.** An earlier draft named "Big [?] blocks and treasure
+chests" as two dispensers with no mushroom rung. Half of that is right.
+
+**Big [?] blocks are a dispenser, and a well-shaped one.** They are *objects*
+`$94`–`$9A` (`OBJ_BIGQBLOCK_3UP` … `_HAMMER`) with their AI in **PRG005** — not
+a `LATP_` handler at all, so `qol/big_q.rs` (which only fixes *which room* the
+bonus pipe opens) is not where this goes. One site decides the product:
+`BigQBlock_EmergePowerup` (`prg005.asm:4662`) reads
+`BigQBlock_Item-OBJ_BIGQBLOCK_3UP,X` into `Level_ObjectID,Y` and
+`BigQBlock_StarManFlash-…,X` into `PUp_StarManFlash` — the emerging object plus
+the frame that turns a starman into the tanooki, frog or hammer suit. So the
+gate is again a substitution at a single site, indexed by the block's own object
+id, and 7-F1's tanooki (`OBJ_BIGQBLOCK_TANOOKI`, `$98`) goes through it. The "no
+mushroom rung" reading holds: the table is one item per block type, with no
+`Player_Suit` branch anywhere in it.
+
+**The coin degrade is not free here, though.** `LATP_Coin` is in PRG008, and
+PRG008 is not resident while object AI runs — PRG002, PRG005 and PRG008 all map
+to `$A000`. Nor is there a level *object* for a coin; the popped-out coin is a
+special object (`SOBJ_POPPEDOUTCOIN`, spawned by writing `SpecialObj_ID` /
+`_XLo` / `_YLo`, the pattern at `prg002.asm:6190`). Three candidate degrades,
+undecided:
+
+1. **Emerge nothing, and leave the block shut.** `BigQBlock_Open`
+   (`prg005.asm:4627`) is the single hit site, and it calls
+   `BigQBlock_EmergePowerup` *before* setting the opened frame and the
+   `BigQBlock_GotIt` bit — so an early return costs a handful of bytes and the
+   block is still there to hit after the unlock. It is the only degrade that
+   loses the player nothing. Its problem is feedback: a Big [?] that does
+   nothing reads as a bug, which is the objection that ruled out
+   `Player_QueueSuit`.
+2. **Spawn the popped-out coin.** Consistent with the LATP degrade, and a
+   straight run of stores — no cross-bank call. Costs a free special-object slot
+   and more bytes.
+3. **Emerge a 1-Up.** Cheapest of all (one table byte), but it pays out a
+   currency the mode does not otherwise use.
+
+**Treasure chests are a source, not a dispenser.** The only "treasure chest" in
+this ROM is the Toad House box (`LoadLevel_ToadChest`, `prg018.asm:1675`), and
+opening one runs `ToadHouse_ChestPressB` (`prg029.asm:891`), which resolves
+`THouse_Treasure` through `ToadHouse_ItemOff` / `ToadHouse_RandomItem` /
+`ToadHouse_Item2Inventory` and returns an **inventory index**. It hands the
+player an item; it never dispenses one into a level. So it is one of the places
+step 1 *sets* the found-mask, and gating it on the mask would be circular.
+PRG029 maps at `$C000` and has 2568 free bytes (largest gap 1528), so the setter
+has room.
 
 ## Gate carriers
 
@@ -251,26 +301,68 @@ references anywhere in the overworld code. Both sit above the page-1 enterable
 threshold `$67`, so vanilla enters them as levels: the hard requirement for a
 marker tile, met for free.
 
-**Verify before committing:** both are absent from `Map_Removable_Tiles` *and*
-`Map_Completable_Tiles`, and `smb3_rom_reference.md:5651` states they are
-"non-completing, so the classification never fires." A gated level that can never
-render as cleared is a problem on its own; whether the clear still registers in
-`completion_bits` (and the row 7/8 shared bit) is the question that could sink
-the tile choice.
+**Verified 2026-09-19 — they complete, and the reference was wrong.** Both are
+absent from `Map_Removable_Tiles` *and* `Map_Completable_Tiles`, which is what
+sent the first draft to `smb3_rom_reference.md:5651` and its "non-completing, so
+the classification never fires". That sentence is a fact about where vanilla
+*puts* those bytes, not about the bytes themselves, and it has been corrected
+there. The M/L test is not even a threshold any more: `lock_keys::ML_RANGE` made
+it a window, and page 1's is `[$67, $6A)` (`ML_RANGE_UPPER = [0x16, 0x6A, 0xC0,
+0xEC]`). So:
 
-**The bigger opportunity is the free tail.** Page 1's undefined indices are
-`$6B`–`$7F` — 21 slots, same palette page, all above the enterable threshold. So
-a marker *family* is possible, one per item, rather than two generic markers.
-`hint_locks` set the precedent for composing hint tiles per seed; a new tile
-family has to be taught to `hint_orientation`.
+- `$68` and `$69` are **inside** the window, so a completed cell wearing one
+  flips to an M/L marker on reload. A gated level renders as cleared.
+- `is_completion_unsafe($68)` is therefore true (`overworld_build/capacity.rs`),
+  so the cell **claims a completion bit** in the packed stencil and the clear
+  survives world hops.
+- Entry reads the *other* row — `+4`, through the `$7E94` RAM copy — with the
+  same thresholds, and `$68 >= $67`, so the tile is enterable and a clear FX
+  plays.
 
-The trade: the vanilla pair is free but carries **desert** semantics, and a
-pyramid in World 6's ice reads as a bug. A minted marker reads the same
-everywhere but costs CHR.
+What comes out of this is a placement constraint rather than a blocker: because
+a marker claims a completion bit, it is subject to the **row 7/8 shared bit**
+like every other completable cell, so a marker at row 7 collides with a level at
+row 8. Whatever places markers has to go through `completable_positions`, the
+same as everything else.
 
-> **Doc drift found on the way.** `smb3_rom_reference.md:5650` calls `$6A`
-> unused; `rom_data/tables.rs:254` claims it as `TILE_FORTRESS_W8`. Fix when
-> touching that section.
+**The bigger opportunity is the free tail** — but it costs more than CHR.
+Page 1's undefined indices are `$6B`–`$7F`: 21 slots, same palette page, all
+above the enterable threshold. So a marker *family* is possible, one per item,
+rather than two generic markers. `hint_locks` set the precedent for composing
+hint tiles per seed; a new tile family has to be taught to `hint_orientation`.
+
+**The catch found on 2026-09-19: that tail is exactly what `ML_RANGE` cut out
+of the M/L window.** `ML_RANGE_UPPER[1]` is `$6A` *on purpose* — bounding the
+top of each page released the undefined tail to the **obstacle** role, so a tile
+there falls through to the removable scan instead of becoming an M/L panel. A
+marker minted at `$6B`–`$7F` therefore does **not** flip to M/L and takes **no**
+completion bit: precisely the failure this section feared and did not find in
+`$68`/`$69`. Re-admitting one costs a choice:
+
+- **Widen page 1's window.** One byte in the bound table. It re-admits the whole
+  span it covers as panels, so every index it reaches stops being available as
+  an obstacle — the 21 slots are one pool, shared with `hint_locks`.
+- **Give it a row in `Map_Completable_Tiles`.** That list is checked *first* and
+  unconditionally, so it re-admits a tile whatever the window says. But it is 5
+  bytes at `$A447`, contiguous with the removable pair on one side and
+  `Map_CompleteByML_Tiles` on the other, so it needs the same relocation
+  `FS_MAP_REMOVABLE` did for its neighbours — **and a matching row in
+  `Map_ForcePoofTiles`** (`$A9D5`, PRG011), which is a second, separate copy of
+  the same five bytes answering "which clear FX plays". Two tables, two banks,
+  neither aware of the other.
+
+So the trade is not "free but desert-flavoured" versus "costs CHR". It is: the
+vanilla pair completes for nothing and carries **desert** semantics — a pyramid
+in World 6's ice reads as a bug — while a minted family reads the same
+everywhere and costs CHR *plus* a table relocation in two banks, or a slice of
+the same 21 slots the obstacle role wants.
+
+> **Doc drift found on the way — fixed 2026-09-19.** One sentence of
+> `smb3_rom_reference.md` called `$6A` unused while `rom_data/tables.rs:254`
+> claims it as `TILE_FORTRESS_W8`; the same sentence carried the wrong
+> `$68`/`$69` claim above. Both are corrected, and the passage now points at
+> that section's own "`$6A` `TILE_LARGEFORT` has no completion path", which had
+> been right all along.
 
 ### Gated forts — the open problem
 
@@ -343,15 +435,45 @@ mechanic.
 
 ## Build order
 
-0. **Prerequisites.** Confirm the found-mask byte survives Game Over → Continue.
-   Confirm `$68`/`$69` completion behaviour. Resolve #266.
+0. **Prerequisites.** Two of the three are discharged (2026-09-19); one is not.
+
+   * ~~Confirm the found-mask byte survives Game Over → Continue.~~ **It does**,
+     by shipped precedent. The mask belongs in the `$7A73–$7ADF` run, and
+     `maze_state.rs`'s header states the rule the code keeps: the only thing
+     that clears that run is the new-game signal,
+     `completion_bits::NEW_GAME_INIT`, hooked onto the title menu's
+     `STA Debug_Flag` — which a Continue never reaches. `WANDS_TABLE` and
+     `MAP_OBJ_DEAD` already rest on exactly this, and have shipped and been
+     playtested. Six bytes are free: `MAZE_STATE_NEXT` is `$7ADA`,
+     `MAZE_STATE_END` is `$7ADF`. A mask declared in `maze_state.rs` is zeroed
+     for free, because `NEW_GAME_INIT` clears the whole declared run rather than
+     a list.
+
+     **But that clear is maze-gated.** `world_persist::apply` runs only inside
+     `if let Some((state, wands)) = maze` (`randomizer/mod.rs:438`). A maze-only
+     flag inherits the new-game clear; a **game-wide** one has to install its
+     own, or a second game in one session opens with the first game's unlocks
+     still lit. That turns open decision 4 from a scoping question into a costed
+     one.
+
+   * ~~Confirm `$68`/`$69` completion behaviour.~~ **They complete** — see
+     "Marker tiles for gated levels". The feared blocker is not there; what came
+     out of it is the row 7/8 placement constraint.
+
+   * **Resolve #266.** Still open, still labelled `needs refinement`, and its own
+     "Settle before building" list — scope, which tiles, what a second clear
+     does, farming — is undecided. This is the one real blocker, and it is a
+     design decision rather than code.
 1. **The found-mask.** One byte of persistent RAM; per the parked research
    `$7ABD` and `$7ADA–$7ADF` are proven-free at runtime (not re-verified here).
-   Set the bit wherever an item is granted from a Toad House, chest or letter —
-   vanilla behaviour otherwise unchanged, so the acquisition moment still reads
-   as a normal reward.
+   Set the bit wherever an item is granted from a Toad House, chest or letter.
+   The Toad House and the chest are the same site — `ToadHouse_ChestPressB`
+   (`prg029.asm:891`), which returns an inventory index — and PRG029 has room to
+   spare. Vanilla behaviour otherwise unchanged, so the acquisition moment still
+   reads as a normal reward.
 2. **The dispenser gate.** The split hook in `LATP_Flower` and `LATP_Leaf`, then
-   Big [?] and chests. Reached by **repointing the `LATP_JumpTable` words** for
+   the Big [?] block in PRG005 — the chest belongs to step 1, because it is a
+   source. Reached by **repointing the `LATP_JumpTable` words** for
    entries 1 and 2 — the project's cheapest move, and the only one available
    here, because PRG008 cannot absorb even a `JSR` (see below).
 3. **Walls.** The `wand_gate.rs` pattern with a found-mask predicate.
@@ -435,8 +557,14 @@ an optimization problem, not a relocation problem. Two ways out, in order:
 Entry 0 (`LATP_None`, `LDY #1 / RTS`) sits just above and is 3 more bytes if it
 is ever worth repointing too — but it is live, reached from `LATP_QBlocks`.
 
-**Still to check:** whether Big [?] and chests dispense through a bank where
-space is not scarce. If they do, nothing else competes for these 28 bytes.
+**Settled 2026-09-19: nothing else competes for these 28 bytes.** The Big [?]
+path lives in PRG005 and the chest is not a dispenser at all — see "The second
+dispenser is the Big [?] block" above. PRG005 has one 58-byte gap at `0x0BFD6`
+(CPU `$BFC6`, the bank's tail), so the Big [?] gate pays its own rent in its own
+bank. It has no choice: PRG002, PRG005 and PRG008 all map at `$A000`, so the
+LATP gate and the Big [?] gate can never be one routine — no sharing, and no
+call between them. What they *can* share is the found-mask itself, which is SRAM
+and belongs to no bank.
 
 ## Open decisions
 
@@ -448,8 +576,15 @@ space is not scarce. If they do, nothing else competes for these 28 bytes.
    `$6B`–`$7F`, legible, costs CHR)? Leaning toward the family: a wall you cannot
    read sends the player nowhere in particular, and the genre runs on knowing
    what you are looking for.
-3. **Vanilla tiles or minted ones**, given the desert-semantics problem.
-4. **Maze-only, or a game-wide flag.**
+3. **Vanilla tiles or minted ones.** Now a costed question, not just an
+   aesthetic one: `$68`/`$69` complete for free but read as desert, while the
+   `$6B`–`$7F` family sits outside the M/L window `ML_RANGE` deliberately drew
+   and has to be re-admitted — see "Marker tiles for gated levels".
+4. **Maze-only, or a game-wide flag.** No longer free either way: the found-mask
+   is cleared by `completion_bits::NEW_GAME_INIT`, which is installed only when
+   the maze is on (`randomizer/mod.rs:438`). Game-wide means installing that
+   clear outside the maze too, or a second game in one session starts with the
+   first game's unlocks. See the prerequisites in "Build order".
 
 ## Parked, with reasons
 
@@ -499,9 +634,24 @@ disassembly label ranges (see "Allocation"). The `$68`/`$69` "never placed"
 claim is from a reference search of
 `src/randomize/`.
 
-Inherited from the parked artifact and **not re-verified here**: the free
-persistent-RAM bytes, `walk.rs:193`, `locks.rs:27` and `:60-65`, `mod.rs:433`
-and `:499`, and the PRG026 free-space figures.
+**Second pass, 2026-09-19** (the prerequisite sweep). Read: `maze_state.rs`
+(the `$7AC1–$7ADF` map and its const assertions), `completion_bits.rs`
+(`NEW_GAME_INIT` and its hook, the stencil, and
+`is_completable_matches_rust_for_every_tile`),
+`overworld_build/capacity.rs::is_completion_unsafe`, `lock_keys.rs`'s `ML_RANGE`
+and `ML_RANGE_UPPER`, `randomizer/mod.rs:430-470`, `prg012.asm:125-400`
+(`Map_Reload_with_Completions` and the three tile tables), `prg005.asm:4440-4710`
+(the whole Big [?] object), `prg029.asm:860-965` (`ToadHouse_ChestPressB`),
+`prg018.asm:1645-1710` (`LoadLevel_ToadChest`), `prg002.asm:6175-6200`
+(`SOBJ_POPPEDOUTCOIN`), and `--free-space` against the Rev 1 ROM for the PRG005
+and PRG029 figures. Bank CPU ranges were read off the disassembly's own label
+prefixes (`PRG002_A…`/`PRG005_A…`/`PRG008_A…` at `$A000`, `PRG029_C…` at
+`$C000`).
+
+Inherited from the parked artifact and **not re-verified here**: `walk.rs:193`,
+`locks.rs:27` and `:60-65`, `mod.rs:433` and `:499`, and the PRG026 free-space
+figures. The free persistent-RAM bytes *were* re-verified this time — they are
+`maze_state.rs`'s own six remaining bytes, `$7ADA–$7ADF`.
 
 The census figures quoted in the parked artifact (4.92 spheres, 60 seeds/arm,
 2026-09-12) are a dated snapshot. Re-measure before settling a decision on one.
