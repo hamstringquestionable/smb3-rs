@@ -6,8 +6,15 @@
 //! point); so **gating that source turns the level into a wall.** This is the
 //! gating.
 //!
-//! Reached only from `testrom` so far — no flag key, no web control, nothing
-//! in a shipped seed.
+//! **Reached only from `testrom`, and it must stay that way until the MiMaze
+//! layer exists — a seed built with this today can be unwinnable.** The found
+//! table starts empty, so the player is permanently small until a mushroom is
+//! found, and `powerups.rs`' `PROTECTED_OFFSETS` records that 8-F requires
+//! being big to break a block in sub-area 2. Nothing here guarantees a
+//! mushroom source is reachable before a fortress that needs one. Producing
+//! that guarantee is exactly the job of the item-aware fixpoint in
+//! `docs/mimaze_layer_design.md`, and the reason this has no option, no flag
+//! key bit and no web control yet.
 //!
 //! # The split, and why it is load-bearing
 //!

@@ -177,14 +177,15 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
         &["big_q_blocks"],
         "big_q_block: two-pass lookup + slot seeding + 7 13-entry tables (224 reserved, 207 used)",
     ),
-    // PRG029's tail (0x3B81A, CPU $D80A) is spoken for by `item_keys`' found
-    // recorder — 48 reserved, 41 used — but has **no row here yet**, and
-    // deliberately. Every registered allocation must be written by a real
-    // randomizer run or `free_space_audit_matches_registry` fails, because an
-    // audit over nothing proves nothing; `item_keys` is reachable only from
-    // `testrom` so far. The row lands in the commit that wires it into
-    // `randomize_inner`. `prg029.asm` ends by declaring "Rest of ROM bank was
-    // empty", so the run is checked filler rather than data.
+    // `item_keys` claims four runs and has **no rows here yet**, deliberately:
+    // 0x3E972 (30, the shared found recorder), 0x3E2C6 (10, the
+    // `Player_GetItem` tail hook), 0x3B81A (16, the Toad House recorder) and
+    // 0x37D57 (16, the letter recorder). Every registered allocation must be
+    // written by a real randomizer run or `free_space_audit_matches_registry`
+    // fails, because an audit over nothing proves nothing — and the feature is
+    // reachable only from `testrom` until the MiMaze layer that makes it safe
+    // exists. The rows land with that. All four runs are checked filler:
+    // `prg029.asm` and the PRG031/PRG027 gaps are `$FF` tails.
     // PRG008 (file 0x10010, CPU $A000–$BFFF while a block is bumped)
     //
     // Three handlers, not two: `LATP_Star` ($B808, 8 bytes) joins the pair once

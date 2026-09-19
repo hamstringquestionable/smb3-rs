@@ -189,6 +189,15 @@ either one.
 
 ## Known gaps
 
+* **Until the solver exists, the ROM half can strand a run — so it stays out
+  of the randomizer.** `randomize::item_keys` works and is playtested, but on
+  its own it is unsafe: the found table starts empty, the player is
+  permanently small until a mushroom turns up, and `PROTECTED_OFFSETS` records
+  8-F as requiring big. Nothing guarantees a mushroom source is reachable
+  before a fortress that needs one. That guarantee is the whole point of the
+  fixpoint above, which is why the feature has no option, no flag key bit and
+  no web control, and why wiring one before the layer lands would ship a
+  softlock. A flag key bit in particular is permanent once released.
 * **Four gates is thin for a Metroidvania.** The mode's depth is bounded by the
   requirement vocabulary until it is grown. Whether four is enough to feel like
   anything is the first question a prototype should answer.
