@@ -3353,3 +3353,213 @@ fn canoe_gate_census() {
     println!("  W3 alone                      {}", stat(&cut_w3));
     println!("  W8 alone (8s-are-Wild arm)    {}   arms: {arms_w8}", stat(&cut_w8));
 }
+
+/// **If a wall goes here, is there anywhere in front of it to put the key?**
+///
+/// `wall_site_census` says the maps are full of places to cut. A cut is only a
+/// *gate*, though, if the item that opens it can be placed on the near side —
+/// the acyclicity rule `docs/item_keys_design.md` states as "never place a
+/// gate whose cut contains a source of the key that opens it". This counts the
+/// near side.
+///
+/// **What can serve as a key source, at the point the layer would run.** Three
+/// things, and the list is shorter than the design note's for a structural
+/// reason worth recording:
+///
+/// * **Toad Houses** — a placed slot, so its position is known here.
+/// * **Hammer Bro encounters** — `GlobalState::reserved` is exactly their home
+///   cells, and the reward is per-instance in `BuiltWorld::hb_sprites`.
+/// * **The Princess letter** — one per world, awarded for the airship, so it
+///   attaches to the world's target cell.
+///
+/// **In-level treasure chests cannot be placed by geometry.** Which *level*
+/// sits on a given slot is decided by `overworld_writer::assign_pool`, after
+/// this point: the model knows "a Level slot stands here", never "1-F stands
+/// here". Using a chest as a key site means hoisting that binding into the
+/// build phase. The same gap stops a level *requirement* ("6-5 needs a leaf")
+/// from being located, which is the other half of the same problem.
+///
+/// Reachability with a wall shut is one fixpoint plus one walk: the fixpoint
+/// says which forts still fall (so which locks still open), and the walk over
+/// that lock state answers for any cell, not just the content cells
+/// `Sphere::reached` carries — Hammer Bro homes are not content.
+///
+/// ```sh
+/// CENSUS_SEEDS=100 cargo test --release --lib key_placement_census \
+///     -- --ignored --nocapture
+/// ```
+#[test]
+#[ignore]
+fn key_placement_census() {
+    use crate::randomize::overworld_build::FortRef;
+
+    let Some(raw) = load_rom() else { return };
+    let seeds = census_seeds(100);
+    let knobs = Knobs::default();
+    let k = super::DEFAULT_WANDS_REQUIRED;
+
+    let (mut unsolvable, mut cuts_seen, mut cuts_viable) = (0usize, 0usize, 0usize);
+    let (mut prog_seen, mut prog_viable) = (0usize, 0usize);
+    let (mut src_th, mut src_hb, mut src_lt) = (0usize, 0usize, 0usize);
+    let mut in_front: Vec<usize> = Vec::new();
+    let mut prog_in_front: Vec<usize> = Vec::new();
+    let mut starved_seeds = 0usize;
+    let mut shuffled_arm_missing = 0usize;
+
+    for seed in 0..seeds {
+        let (rom, state, _) = generated(&raw, seed, &knobs, k);
+        let full = state.spheres();
+        if !full.solvable {
+            unsolvable += 1;
+            continue;
+        }
+
+        // --- the key sources this layer could actually address ---
+        let mut sources: Vec<MazePos> = Vec::new();
+        for w in state.worlds.iter().filter(|w| state.in_maze[w.world_idx]) {
+            for s in w.slots.iter().filter(|s| s.kind == SlotKind::ToadHouse) {
+                sources.push((w.world_idx, s.pos));
+                src_th += 1;
+            }
+            if let Some(t) = w.target {
+                sources.push((w.world_idx, t));
+                src_lt += 1;
+            }
+        }
+        // `reserved` holds the Hammer Bro homes only when the builder moved
+        // them, and `census_build` leaves `shuffle_hammer_bros` off while a
+        // real run defaults it ON. So when the builder redistributed none,
+        // read the sprites where they still stand. Either way the map has
+        // hammer bros on it and this is counting sites, not positions.
+        if state.reserved.is_empty() {
+            shuffled_arm_missing += 1;
+            for wi in 0..8 {
+                if !state.in_maze[wi] {
+                    continue;
+                }
+                for pos in crate::randomize::rom_data::read_hb_sprite_positions(&rom, wi) {
+                    sources.push((wi, pos));
+                    src_hb += 1;
+                }
+            }
+        } else {
+            for &p in &state.reserved {
+                sources.push(p);
+                src_hb += 1;
+            }
+        }
+
+        let links = state.links();
+        let all_forts: Vec<FortRef> = state.forts().iter().map(|&(f, _)| f).collect();
+        let all_reached: std::collections::HashSet<MazePos> =
+            full.spheres.iter().flat_map(|s| s.reached.iter().copied()).collect();
+
+        let grids = state.base_grids(&std::collections::HashSet::new());
+        let mut cells: Vec<MazePos> = Vec::new();
+        for (wi, g) in grids.iter().enumerate() {
+            if !state.in_maze[wi] {
+                continue;
+            }
+            for r in 0..g.rows() {
+                for c in 0..g.cols {
+                    let t = g.get(r, c);
+                    if crate::randomize::rom_data::VALID_HORZ.contains(&t)
+                        || crate::randomize::rom_data::VALID_VERT.contains(&t)
+                    {
+                        cells.push((wi, (r, c)));
+                    }
+                }
+            }
+        }
+
+        let mut seen: std::collections::HashSet<Vec<MazePos>> = std::collections::HashSet::new();
+        let mut seed_viable = 0usize;
+        for &cell in &cells {
+            let blocked: std::collections::HashSet<MazePos> = std::iter::once(cell).collect();
+            let sp = state.spheres_with_blocked(&blocked);
+            let still: std::collections::HashSet<MazePos> =
+                sp.spheres.iter().flat_map(|s| s.reached.iter().copied()).collect();
+            let mut lost: Vec<MazePos> = all_reached.difference(&still).copied().collect();
+            lost.sort_unstable();
+            if lost.is_empty() && sp.solvable {
+                continue;
+            }
+            if !seen.insert(lost) {
+                continue; // same cut, a different cell of the same corridor
+            }
+
+            // Which sources survive on the near side of this wall?
+            let unbeaten: std::collections::HashSet<FortRef> =
+                sp.unbeaten.iter().copied().collect();
+            let open: std::collections::HashSet<FortRef> =
+                all_forts.iter().copied().filter(|f| !unbeaten.contains(f)).collect();
+            let bases = state.base_grids(&blocked);
+            let shut = state.shut_locks(&open);
+            let reach = walk_maze(&state.view(&bases, &shut), &links, state.start);
+            let near = sources.iter().filter(|&&s| reach.contains(s)).count();
+
+            cuts_seen += 1;
+            in_front.push(near);
+            if near > 0 {
+                cuts_viable += 1;
+                seed_viable += 1;
+            }
+            if !sp.solvable {
+                prog_seen += 1;
+                prog_in_front.push(near);
+                if near > 0 {
+                    prog_viable += 1;
+                }
+            }
+        }
+        if seed_viable == 0 {
+            starved_seeds += 1;
+        }
+    }
+
+    let n = (seeds as usize - unsolvable).max(1);
+    let mean_u = |v: &[usize]| v.iter().sum::<usize>() as f64 / v.len().max(1) as f64;
+    let pct = |a: usize, b: usize| 100.0 * a as f64 / b.max(1) as f64;
+    let mut hist = [0usize; 5]; // 0, 1, 2, 3-5, 6+
+    for &x in &in_front {
+        let i = match x {
+            0 => 0,
+            1 => 1,
+            2 => 2,
+            3..=5 => 3,
+            _ => 4,
+        };
+        hist[i] += 1;
+    }
+
+    println!("\n=== key placement, {seeds} seeds, K={k} ===");
+    println!("  UNWINNABLE, excluded       {unsolvable}  (must be 0)");
+    println!(
+        "  sources per seed           toad houses {:.1}  hammer bros {:.1}  letters {:.1}",
+        src_th as f64 / n as f64,
+        src_hb as f64 / n as f64,
+        src_lt as f64 / n as f64
+    );
+    println!("  distinct cuts examined     {cuts_seen}");
+    println!(
+        "  cuts with a key site in front {cuts_viable}  ({:.1}%)",
+        pct(cuts_viable, cuts_seen)
+    );
+    println!("  sources in front, mean     {:.1}", mean_u(&in_front));
+    println!(
+        "     histogram  0:{} 1:{} 2:{} 3-5:{} 6+:{}",
+        hist[0], hist[1], hist[2], hist[3], hist[4]
+    );
+    println!("  PROGRESS gates             {prog_seen}");
+    println!(
+        "     with a key site in front {prog_viable}  ({:.1}%),  mean {:.1}",
+        pct(prog_viable, prog_seen),
+        mean_u(&prog_in_front)
+    );
+    println!("  seeds with no viable cut   {starved_seeds}");
+    println!(
+        "  NOTE: {shuffled_arm_missing}/{n} seeds had no redistributed hammer bros \
+(census_build leaves shuffle_hammer_bros off; a real run defaults it on), so \
+their homes were read from the ROM instead"
+    );
+}
