@@ -101,7 +101,19 @@ pub(crate) const MAP_OBJ_DEAD_LEN: usize = 9;
 pub(crate) const FOUND_PRODUCTS: u16 = MAP_OBJ_DEAD + MAP_OBJ_DEAD_LEN as u16;
 pub(crate) const FOUND_PRODUCTS_LEN: usize = 4;
 
-pub(crate) const MAZE_STATE_NEXT: u16 = FOUND_PRODUCTS + FOUND_PRODUCTS_LEN as u16;
+/// Set once the player has been handed an **anchor** — the canoe key.
+///
+/// A byte of its own rather than a fifth row of [`FOUND_PRODUCTS`], because
+/// the anchor is not a block product: no `? ` block dispenses one, so it has
+/// no `Bouncer_PUp` index and the gate routine never indexes it. Keeping it
+/// out of that table also keeps the table's bound exact — the recorder writes
+/// rows 0-3 and nothing else, so a stray index cannot run off the end into
+/// the rest of this run.
+///
+/// Non-zero means found; the value itself is whatever the recorder stored.
+pub(crate) const FOUND_ANCHOR: u16 = FOUND_PRODUCTS + FOUND_PRODUCTS_LEN as u16;
+
+pub(crate) const MAZE_STATE_NEXT: u16 = FOUND_ANCHOR + 1;
 
 /// Every byte the maze owns, as one contiguous run.
 ///
