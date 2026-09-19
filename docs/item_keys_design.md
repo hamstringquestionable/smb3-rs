@@ -221,15 +221,26 @@ undecided:
 3. **Emerge a 1-Up.** Cheapest of all (one table byte), but it pays out a
    currency the mode does not otherwise use.
 
-**Treasure chests are a source, not a dispenser.** The only "treasure chest" in
-this ROM is the Toad House box (`LoadLevel_ToadChest`, `prg018.asm:1675`), and
-opening one runs `ToadHouse_ChestPressB` (`prg029.asm:891`), which resolves
+**Treasure chests are a source, not a dispenser.** There are two kinds, and an
+earlier draft of this paragraph claimed there was only one — corrected
+2026-09-19. The Toad House box (`LoadLevel_ToadChest`, `prg018.asm:1675`) is
+opened by `ToadHouse_ChestPressB` (`prg029.asm:891`), which resolves
 `THouse_Treasure` through `ToadHouse_ItemOff` / `ToadHouse_RandomItem` /
-`ToadHouse_Item2Inventory` and returns an **inventory index**. It hands the
-player an item; it never dispenses one into a level. So it is one of the places
-step 1 *sets* the found-mask, and gating it on the mask would be circular.
-PRG029 maps at `$C000` and has 2568 free bytes (largest gap 1528), so the setter
-has room.
+`ToadHouse_Item2Inventory`. And seven **in-level** chests exist as well — the
+`D6` `OBJ_TREASURESET` object, whose row sets `Level_TreasureItem`: the Music
+Box, Cloud and Star chests, 1-F's whistle chest, and the three 8-Hnd chests
+(`TREASURE_CHEST_OFFSETS` in `items.rs`).
+
+Both kinds hand the player an item **into the inventory**; neither dispenses
+one into a level. So the conclusion stands and is if anything stronger: chests
+are where step 1 *sets* the found-mask, and gating one on the mask would be
+circular. PRG029 maps at `$C000` and has 2568 free bytes (largest gap 1528), so
+the Toad House setter has room.
+
+One consequence for the generator, recorded in `mimaze_layer_design.md`: the
+in-level chests cannot be placed by geometry, because which *level* sits on a
+given map slot is decided by `overworld_writer::assign_pool`, downstream of
+where a planner would run.
 
 ## Gate carriers
 
