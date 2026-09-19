@@ -3086,3 +3086,270 @@ fn valley_pad_census() {
         );
     }
 }
+
+/// **Is there anywhere on these maps to put an item wall?**
+///
+/// The item-keys layer (`docs/item_keys_design.md`) wants to stand a gate on a
+/// *path cell* and open it with something the player finds. That only works if
+/// the geometry the maze already deals has cells worth walling: a wall across
+/// a corridor nothing routes through is decoration, and a map made entirely of
+/// such corridors cannot carry the mode at all.
+///
+/// Nothing measured this before. [`metrics::required_levels`] answers the
+/// neighbouring question for the *level* carrier — how many levels are
+/// load-bearing — and `forced_crossing_census` answers it for telepads. The
+/// path cell, which the design note calls the backbone of the vocabulary, had
+/// no instrument.
+///
+/// Method: for every walkable corridor cell in every in-maze world, blank it
+/// and re-run the fixpoint. `spheres_with_blocked` already expresses exactly
+/// that, and a slot's cell wears its node tile rather than a path tile, so
+/// filtering on [`rom_data::VALID_HORZ`]/[`VALID_VERT`] picks out corridors
+/// and excludes content without a second test.
+///
+/// A cell is a **site** when blanking it puts content out of reach. The size
+/// of the cut is what separates the kinds:
+///
+/// * cut == 0 — decoration. The player walks around it.
+/// * cut < half the content — an optional-content gate.
+/// * goal in the cut — a progress gate: the key must lie in front of the wall,
+///   which is the acyclicity rule the design note states.
+///
+/// ```sh
+/// CENSUS_SEEDS=30 cargo test --release --lib wall_site_census \
+///     -- --ignored --nocapture
+/// ```
+#[test]
+#[ignore]
+fn wall_site_census() {
+    let Some(raw) = load_rom() else { return };
+    let seeds = census_seeds(30);
+    let knobs = Knobs::default();
+    let k = super::DEFAULT_WANDS_REQUIRED;
+
+    let (mut unsolvable, mut no_sites) = (0usize, 0usize);
+    let (mut cands, mut sites, mut progress_gates) = (Vec::new(), Vec::new(), Vec::new());
+    let mut distinct_cuts: Vec<usize> = Vec::new();
+    let mut cut_frac: Vec<f64> = Vec::new();
+    let mut per_world_sites = [0usize; 8];
+    let mut per_world_cands = [0usize; 8];
+
+    for seed in 0..seeds {
+        let (_, state, _) = generated(&raw, seed, &knobs, k);
+        let full = state.spheres();
+        if !full.solvable {
+            unsolvable += 1;
+            continue;
+        }
+        let total: usize = full.spheres.iter().map(|s| s.reached.len()).sum();
+
+        let grids = state.base_grids(&std::collections::HashSet::new());
+        let mut cells: Vec<MazePos> = Vec::new();
+        for (wi, g) in grids.iter().enumerate() {
+            if !state.in_maze[wi] {
+                continue;
+            }
+            for r in 0..g.rows() {
+                for c in 0..g.cols {
+                    let t = g.get(r, c);
+                    if crate::randomize::rom_data::VALID_HORZ.contains(&t)
+                        || crate::randomize::rom_data::VALID_VERT.contains(&t)
+                    {
+                        cells.push((wi, (r, c)));
+                        per_world_cands[wi] += 1;
+                    }
+                }
+            }
+        }
+
+        let (mut seed_sites, mut seed_progress) = (0usize, 0usize);
+        // Adjacent cells on one corridor cut the same content, so counting
+        // cells overstates how many gates a map can hold. The set of content
+        // put out of reach is the cut's identity; distinct sets are distinct
+        // gates, and the cells sharing one are placement freedom, not choice.
+        let mut distinct: std::collections::HashSet<Vec<MazePos>> =
+            std::collections::HashSet::new();
+        let all_reached: std::collections::HashSet<MazePos> =
+            full.spheres.iter().flat_map(|s| s.reached.iter().copied()).collect();
+        for &cell in &cells {
+            let blocked: std::collections::HashSet<MazePos> = std::iter::once(cell).collect();
+            let sp = state.spheres_with_blocked(&blocked);
+            let still: std::collections::HashSet<MazePos> =
+                sp.spheres.iter().flat_map(|s| s.reached.iter().copied()).collect();
+            let mut lost: Vec<MazePos> = all_reached.difference(&still).copied().collect();
+            lost.sort_unstable();
+            let cut = lost.len();
+            if cut == 0 && sp.solvable {
+                continue;
+            }
+            seed_sites += 1;
+            per_world_sites[cell.0] += 1;
+            cut_frac.push(cut as f64 / total as f64);
+            if !sp.solvable {
+                seed_progress += 1;
+            }
+            if cut > 0 {
+                distinct.insert(lost);
+            }
+        }
+        distinct_cuts.push(distinct.len());
+        if seed_sites == 0 {
+            no_sites += 1;
+        }
+        cands.push(cells.len());
+        sites.push(seed_sites);
+        progress_gates.push(seed_progress);
+    }
+
+    let n = sites.len().max(1);
+    let mean = |v: &[usize]| v.iter().sum::<usize>() as f64 / n as f64;
+    let minmax =
+        |v: &[usize]| (v.iter().copied().min().unwrap_or(0), v.iter().copied().max().unwrap_or(0));
+    let (smin, smax) = minmax(&sites);
+    let (pmin, pmax) = minmax(&progress_gates);
+
+    let mut buckets = [0usize; 4]; // <10%, 10-50%, 50-90%, >=90% of content cut
+    for &f in &cut_frac {
+        let i = if f < 0.10 {
+            0
+        } else if f < 0.50 {
+            1
+        } else if f < 0.90 {
+            2
+        } else {
+            3
+        };
+        buckets[i] += 1;
+    }
+
+    println!("\n=== wall sites, {seeds} seeds, K={k} ===");
+    println!("  UNWINNABLE, excluded      {unsolvable}  (must be 0)");
+    println!("  corridor cells per seed   mean {:.1}", mean(&cands));
+    println!("  of those, SITES           mean {:.1}  min {smin}  max {smax}", mean(&sites));
+    println!(
+        "     ... progress gates     mean {:.1}  min {pmin}  max {pmax}",
+        mean(&progress_gates)
+    );
+    let (dmin, dmax) = minmax(&distinct_cuts);
+    println!(
+        "  DISTINCT cuts             mean {:.1}  min {dmin}  max {dmax}",
+        mean(&distinct_cuts)
+    );
+    println!("  seeds with NO site at all {no_sites}");
+    println!(
+        "  cut size, over all sites: <10% {}  10-50% {}  50-90% {}  >=90% {}",
+        buckets[0], buckets[1], buckets[2], buckets[3]
+    );
+    print!("  sites per world:         ");
+    for w in 0..8 {
+        print!(" W{}:{}/{}", w + 1, per_world_sites[w], per_world_cands[w]);
+    }
+    println!();
+}
+
+/// **Are W3's islands and W8's Wild water actually gates?**
+///
+/// The item-keys design wants the anchor to be a traversal key: no anchor, no
+/// boat, and the water is a wall. That is only worth building if the water
+/// separates something — if every island is also reachable on foot or through
+/// a pipe, an anchor gate gates nothing.
+///
+/// The walker already models the boat (`walk::walk_maze`'s canoe fixpoint:
+/// `canoe_on[w]` flips once any dock cell is walk-reachable), so the
+/// counterfactual needs no production change. Blanking every dock cell makes
+/// no dock reachable, which switches the boat off for good — the "no anchor"
+/// arm, expressed entirely through `spheres_with_blocked`.
+///
+/// **Read it as an upper bound.** A dock is also an ordinary walkable cell, so
+/// blanking it removes a step of footpath as well as the crossing. The figure
+/// is "what the water plus its landings carry", not "what the boat carries".
+///
+/// ```sh
+/// CENSUS_SEEDS=100 cargo test --release --lib canoe_gate_census \
+///     -- --ignored --nocapture
+/// ```
+#[test]
+#[ignore]
+fn canoe_gate_census() {
+    let Some(raw) = load_rom() else { return };
+    let seeds = census_seeds(100);
+    let knobs = Knobs::default();
+    let k = super::DEFAULT_WANDS_REQUIRED;
+
+    let (mut unsolvable, mut arms_w8) = (0usize, 0usize);
+    let (mut cut_any, mut cut_w3, mut cut_w8) = (Vec::new(), Vec::new(), Vec::new());
+    let (mut unwinnable_without, mut gated_seeds) = (0usize, 0usize);
+
+    for seed in 0..seeds {
+        let (_, state, _) = generated(&raw, seed, &knobs, k);
+        let full = state.spheres();
+        if !full.solvable {
+            unsolvable += 1;
+            continue;
+        }
+        let total: usize = full.spheres.iter().map(|s| s.reached.len()).sum();
+        let grids = state.base_grids(&std::collections::HashSet::new());
+
+        let docks = |wi: usize| -> std::collections::HashSet<MazePos> {
+            crate::randomize::rom_data::active_canoe_edges(wi, grids[wi].eights_are_wild)
+                .iter()
+                .map(|&((r, c), _)| (wi, (r, c)))
+                .collect()
+        };
+        let cut_of = |blocked: &std::collections::HashSet<MazePos>| -> (usize, bool) {
+            let sp = state.spheres_with_blocked(blocked);
+            let reached: usize = sp.spheres.iter().map(|s| s.reached.len()).sum();
+            (total.saturating_sub(reached), sp.solvable)
+        };
+
+        let mut all: std::collections::HashSet<MazePos> = std::collections::HashSet::new();
+        for wi in 0..8 {
+            if state.in_maze[wi] {
+                all.extend(docks(wi));
+            }
+        }
+        if all.is_empty() {
+            continue;
+        }
+        let (cut, solvable) = cut_of(&all);
+        cut_any.push(cut);
+        if cut > 0 {
+            gated_seeds += 1;
+        }
+        if !solvable {
+            unwinnable_without += 1;
+        }
+
+        let w3 = docks(2);
+        if !w3.is_empty() {
+            cut_w3.push(cut_of(&w3).0);
+        }
+        let w8 = docks(7);
+        if !w8.is_empty() {
+            arms_w8 += 1;
+            cut_w8.push(cut_of(&w8).0);
+        }
+    }
+
+    let stat = |v: &[usize]| -> String {
+        if v.is_empty() {
+            return "n/a".into();
+        }
+        let mean = v.iter().sum::<usize>() as f64 / v.len() as f64;
+        let nonzero = v.iter().filter(|&&x| x > 0).count();
+        format!(
+            "mean {mean:.2}  max {}  nonzero {nonzero}/{}",
+            v.iter().copied().max().unwrap_or(0),
+            v.len()
+        )
+    };
+
+    println!("\n=== canoe as a gate, {seeds} seeds, K={k} ===");
+    println!("  UNWINNABLE, excluded          {unsolvable}  (must be 0)");
+    println!("  seeds with any dock           {}", cut_any.len());
+    println!("  content cut, all docks shut   {}", stat(&cut_any));
+    println!("     of those, seeds gating >0  {gated_seeds}");
+    println!("     maze unwinnable without    {unwinnable_without}");
+    println!("  W3 alone                      {}", stat(&cut_w3));
+    println!("  W8 alone (8s-are-Wild arm)    {}   arms: {arms_w8}", stat(&cut_w8));
+}
