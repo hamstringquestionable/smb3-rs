@@ -353,6 +353,13 @@ pub struct TestRomSpec {
     pub remove_locks: bool,
     /// Replace water-gap tiles with bridges.
     pub remove_gaps: bool,
+    /// Gate every power-up block to a coin — the item-keys POC.
+    ///
+    /// No found-mask: nothing is ever found, so the whole game runs in the
+    /// most restricted state the mode can produce. See
+    /// `randomize::item_keys` for why that is the question worth asking
+    /// first, and `docs/mimaze_layer_design.md` for what rests on it.
+    pub item_keys_poc: bool,
     /// Item IDs to start with, up to 3 (the trampoline's slot count).
     pub starting_items: Vec<u8>,
     /// Starting lives. Only written when `starting_items` is non-empty, since
@@ -1131,6 +1138,15 @@ pub fn build(vanilla: &[u8], spec: &TestRomSpec) -> Result<TestRom, String> {
         report.push("world persist: completions packed per world".to_string());
     }
 
+    // 6b. The item-keys POC. Before the inventory, so a `--starting-items`
+    //     suit is still handed over intact: carrying a power-up *in* is the
+    //     sequence break the design deliberately allows, and the whole point
+    //     of testing this with and without one.
+    if spec.item_keys_poc {
+        crate::randomize::item_keys::apply_poc(&mut rom);
+        report.push("item keys POC: every ? block pays a coin (nothing is ever found)".to_string());
+    }
+
     // 7. Starting inventory. Last, mirroring the randomizer's own ordering —
     //    the trampoline overwrites title-screen bytes and must win.
     if !spec.starting_items.is_empty() {
@@ -1218,6 +1234,7 @@ mod tests {
 
     fn spec() -> TestRomSpec {
         TestRomSpec {
+            item_keys_poc: false,
             base: Base::Vanilla,
             placements: Vec::new(),
             place_all: None,

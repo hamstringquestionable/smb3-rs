@@ -126,6 +126,12 @@ struct Cli {
     #[arg(long)]
     keep_locks: bool,
 
+    /// Item-keys POC: every power-up block pays a coin, forever. Tests
+    /// whether a level that needs its own power-up is genuinely unbeatable
+    /// once that power-up stops being dispensed.
+    #[arg(long)]
+    item_keys_poc: bool,
+
     /// Leave water gaps in place (default: bridged).
     #[arg(long)]
     keep_gaps: bool,
@@ -445,6 +451,7 @@ fn main() {
         telepads: cli.telepad.clone(),
         remove_locks: !cli.keep_locks,
         remove_gaps: !cli.keep_gaps,
+        item_keys_poc: cli.item_keys_poc,
         starting_items,
         starting_lives: cli.starting_lives,
         bro_battle_timer: cli.bro_battle_timer,
