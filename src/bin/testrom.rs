@@ -126,11 +126,12 @@ struct Cli {
     #[arg(long)]
     keep_locks: bool,
 
-    /// Item-keys POC: every power-up block pays a coin, forever. Tests
-    /// whether a level that needs its own power-up is genuinely unbeatable
-    /// once that power-up stops being dispensed.
-    #[arg(long)]
-    item_keys_poc: bool,
+    /// Item-keys POC: gate every power-up block on what has been "found".
+    /// Pass the found items as a comma list (mushroom, flower, leaf, star),
+    /// or an empty string for nothing found. Every block dispensing an
+    /// unfound item pays a coin instead.
+    #[arg(long, value_name = "ITEMS")]
+    item_keys: Option<String>,
 
     /// Leave water gaps in place (default: bridged).
     #[arg(long)]
@@ -404,6 +405,23 @@ fn main() {
     let set_enemies: Vec<EnemyOverride> =
         cli.set_enemy.iter().map(|s| parse_set_enemy(s).unwrap_or_else(|e| die(e))).collect();
 
+    // `--item-keys ""` means "nothing found", which is the most restricted
+    // arm and a legitimate thing to ask for, so an empty list is not an error.
+    let item_keys_found: Option<Vec<smb3_rs::randomize::item_keys::Key>> =
+        cli.item_keys.as_deref().map(|list| {
+            list.split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(|name| {
+                    smb3_rs::randomize::item_keys::Key::parse(name).unwrap_or_else(|| {
+                        die(format!(
+                            "unknown item key {name:?}\n       valid: mushroom, flower, leaf, star"
+                        ))
+                    })
+                })
+                .collect()
+        });
+
     let starting_items: Vec<u8> = cli
         .starting_items
         .iter()
@@ -451,7 +469,7 @@ fn main() {
         telepads: cli.telepad.clone(),
         remove_locks: !cli.keep_locks,
         remove_gaps: !cli.keep_gaps,
-        item_keys_poc: cli.item_keys_poc,
+        item_keys: item_keys_found,
         starting_items,
         starting_lives: cli.starting_lives,
         bro_battle_timer: cli.bro_battle_timer,

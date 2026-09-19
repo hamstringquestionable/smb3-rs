@@ -353,13 +353,14 @@ pub struct TestRomSpec {
     pub remove_locks: bool,
     /// Replace water-gap tiles with bridges.
     pub remove_gaps: bool,
-    /// Gate every power-up block to a coin — the item-keys POC.
+    /// Install the item-keys dispenser gate — the POC.
     ///
-    /// No found-mask: nothing is ever found, so the whole game runs in the
-    /// most restricted state the mode can produce. See
-    /// `randomize::item_keys` for why that is the question worth asking
-    /// first, and `docs/mimaze_layer_design.md` for what rests on it.
-    pub item_keys_poc: bool,
+    /// `Some(found)` installs it; only those items are dispensed and every
+    /// other power-up block pays a coin. `Some(vec![])` is the most
+    /// restricted state the mode can produce. The found set is baked in at
+    /// build time rather than read from SRAM, which is the one thing that
+    /// makes this a POC — see `randomize::item_keys`.
+    pub item_keys: Option<Vec<crate::randomize::item_keys::Key>>,
     /// Item IDs to start with, up to 3 (the trampoline's slot count).
     pub starting_items: Vec<u8>,
     /// Starting lives. Only written when `starting_items` is non-empty, since
@@ -1142,9 +1143,16 @@ pub fn build(vanilla: &[u8], spec: &TestRomSpec) -> Result<TestRom, String> {
     //     suit is still handed over intact: carrying a power-up *in* is the
     //     sequence break the design deliberately allows, and the whole point
     //     of testing this with and without one.
-    if spec.item_keys_poc {
-        crate::randomize::item_keys::apply_poc(&mut rom);
-        report.push("item keys POC: every ? block pays a coin (nothing is ever found)".to_string());
+    if let Some(found) = &spec.item_keys {
+        crate::randomize::item_keys::apply_poc(&mut rom, found);
+        report.push(format!(
+            "item keys POC: found = {} (every other ? block pays a coin)",
+            if found.is_empty() {
+                "nothing".to_string()
+            } else {
+                found.iter().map(|k| format!("{k:?}")).collect::<Vec<_>>().join(", ")
+            }
+        ));
     }
 
     // 7. Starting inventory. Last, mirroring the randomizer's own ordering —
@@ -1234,7 +1242,7 @@ mod tests {
 
     fn spec() -> TestRomSpec {
         TestRomSpec {
-            item_keys_poc: false,
+            item_keys: None,
             base: Base::Vanilla,
             placements: Vec::new(),
             place_all: None,

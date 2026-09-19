@@ -177,6 +177,26 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
         &["big_q_blocks"],
         "big_q_block: two-pass lookup + slot seeding + 7 13-entry tables (224 reserved, 207 used)",
     ),
+    // PRG008 (file 0x10010, CPU $A000–$BFFF while a block is bumped)
+    //
+    // Two owners, and they are **mutually exclusive**. `qol/modern_powerups`
+    // (MaCobra52's Easy Power-up System) writes two bytes inside this run --
+    // 0x11802 and 0x11810, the `LDY #$05` operands that make a *small* player
+    // get a mushroom -- changing them to the suit so Small Mario is powered up
+    // directly. `item_keys` retires both handlers wholesale and rebuilds that
+    // decision from a products table. Whichever runs second wins, so a build
+    // may install one or the other and never both; `item_keys::apply_poc`
+    // asserts it.
+    //
+    // This is also a correction to `docs/item_keys_design.md`, which called
+    // these 28 bytes free. 26 of them are; two are spoken for whenever that
+    // option is on.
+    fs(
+        0x117FC,
+        28,
+        &["item_keys", "qol/modern_powerups"],
+        "LATP_Flower + LATP_Leaf, retired by repointing (28 reserved, 27 used)",
+    ),
     // PRG027 (file 0x36010, CPU $A000–$BFFF)
     fs(0x379D9, 894, &["king_quotes"], "7 quotes + hook (7×120 + 54)"),
     // PRG010 (file 0x14010, CPU $C000–$DFFF during map)
@@ -673,6 +693,18 @@ pub(crate) const FS_LOCK_ENTRIES: usize = 0x15554; // 112 reserved, 4 per lock
 // bank, and the routine takes all of it — the mirror lives in PRG011 so this
 // one can grow without anything moving.
 pub(crate) const FS_FORTRESS_FX: usize = 0x147CD; // 537 reserved, 484 used
+
+// NOT $FF filler — PRG008 has none at all. These are the bodies of
+// `LATP_Flower` ($B7EC, 14 bytes) and `LATP_Leaf` ($B7FA, 14), each referenced
+// from exactly one place: its own word in `LATP_JumpTable`. Repointing those
+// two words frees both outright, and they are adjacent, so the 28 bytes are
+// one contiguous run in the dispatcher's own bank — no mapping question, and
+// none of the nearly-full always-mapped banks spent.
+//
+// Origin-locked: the routine addresses its own products table absolutely, so
+// it cannot be relocated without recomputing that word. `asm::check(...)
+// .origin(GATE_CPU)` is what catches it.
+pub(crate) const FS_ITEM_GATE: usize = 0x117FC; // 28 reserved, 27 used
 
 // World-maze POC. Sits in the tail of the same $FF run as
 // FS_LOCK_ENTRIES, which reserves 112 from 0x15554 and leaves the run

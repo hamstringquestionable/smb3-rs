@@ -41,6 +41,7 @@ pub use fingerprint::overworld_fingerprint;
 
 // Part of the lib's public API: the CLI's `--write-log` dump audits free space
 // against the run it just produced.
+pub(crate) use free_space::FS_ITEM_GATE;
 pub use free_space::{
     AllocUsage, BankFree, FREE_SPACE_ALLOCATIONS, FreeSpaceAlloc, Gap, audit_free_space,
     format_alloc_audit, format_bank_budget, format_free_space_report, format_gaps_fitting,
