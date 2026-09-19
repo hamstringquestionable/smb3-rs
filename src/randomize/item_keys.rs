@@ -83,17 +83,18 @@ const LATP_COIN_CPU: u16 = 0xB810;
 /// handler's own address.
 const GATE_CPU: u16 = LATP_FLOWER_CPU;
 
-/// A key, as the ROM tables encode one.
+/// A key: an item whose blocks stay shut until the player has found one.
 ///
-/// Test-only: [`FOUND_RECORD`]'s tables and the gate's rows are the source of
-/// truth, and this exists so a test can cross-check them against a statement
-/// of the domain rather than against themselves.
+/// Four, because those are the products the gated handlers dispense. The
+/// enum is the domain statement the ROM tables are checked against — the
+/// recorder's `PROD` table and the gate's rows are the things that actually
+/// run, and a test cross-checks them against this rather than against each
+/// other.
 ///
-/// The value is the `Bouncer_PUp` index the block returns when the item is
-/// found — `prg001.asm:1015`: `$00, $00, FIREFLOWER, SUPERLEAF, STARMAN,
-/// MUSHROOM, GROWINGVINE, 1UP`.
-#[cfg(test)]
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+/// The model side uses it too: `maze::ItemGate` and `maze::ItemSource` are
+/// keyed on it, so "what a block dispenses" and "what a gate demands" are the
+/// same vocabulary and cannot drift into two spellings of the same item.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub enum Key {
     Mushroom,
     Flower,
@@ -101,10 +102,10 @@ pub enum Key {
     Star,
 }
 
-#[cfg(test)]
 impl Key {
     /// The `Bouncer_PUp` index this key's block dispenses once found.
-    const fn product(self) -> u8 {
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) const fn product(self) -> u8 {
         match self {
             Key::Mushroom => 5,
             Key::Flower => 2,
@@ -115,7 +116,8 @@ impl Key {
 
     /// The routine's row for this key. Rows 1-3 are the block type the
     /// dispatcher already has in `Y`; row 0 is where a small player is sent.
-    const fn row(self) -> usize {
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) const fn row(self) -> usize {
         match self {
             Key::Mushroom => 0,
             Key::Flower => 1,

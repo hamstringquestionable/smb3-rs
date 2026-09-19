@@ -35,6 +35,7 @@ use rand::Rng;
 
 use std::collections::{HashMap, HashSet};
 
+use super::item_keys::Key;
 use super::map_walker::walk_reachable_blocked;
 use super::overworld_build::{
     BuildResult, FortRef, LockHint, SlotKind, WorldState, from_built, stamp_slots,
@@ -181,6 +182,26 @@ pub(crate) const CONTENT_FLOOR: usize = 14;
 /// the browser, measured).
 pub(crate) const MAX_DEALS: usize = 8;
 
+/// A cell the player cannot pass until they have found [`Key`].
+///
+/// The cell is a Level slot, and "cannot pass" is not enforcement this layer
+/// adds — a level tile is already a wall until it is beaten, and a level that
+/// requires a power-up carries its own source of it, so gating that source
+/// makes the level unbeatable. See `docs/mimaze_layer_design.md`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) struct ItemGate {
+    pub pos: MazePos,
+    pub item: Key,
+}
+
+/// A cell that hands [`Key`] over when the player reaches it — a Toad House,
+/// a Hammer Bro encounter, or a world's airship (its Princess letter).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) struct ItemSource {
+    pub pos: MazePos,
+    pub item: Key,
+}
+
 /// Eight worlds and the edges between them. A thin wrapper: the per-world
 /// state is the existing [`WorldState`], untouched.
 pub(crate) struct GlobalState {
@@ -207,6 +228,12 @@ pub(crate) struct GlobalState {
     /// goal does not count as reached until K wands are collectable, which is
     /// exact because the gate cell is the only way into the castle.
     pub wands_required: u8,
+    /// Level cells sealed until their item is found. **Empty unless the item
+    /// layer placed some**, and the fixpoint takes its old shape exactly when
+    /// it is empty, so no existing seed moves.
+    pub gates: Vec<ItemGate>,
+    /// Cells that hand an item over. Empty alongside `gates`.
+    pub sources: Vec<ItemSource>,
 }
 
 impl GlobalState {
@@ -253,7 +280,18 @@ impl GlobalState {
             in_maze[w] = true;
         }
 
-        GlobalState { worlds, edges, locks, start, goal, in_maze, reserved, wands_required }
+        GlobalState {
+            worlds,
+            edges,
+            locks,
+            start,
+            goal,
+            in_maze,
+            reserved,
+            wands_required,
+            gates: Vec::new(),
+            sources: Vec::new(),
+        }
     }
 
     /// Add telepads. Each pad tile owns one arrival row, so the count is
@@ -430,19 +468,37 @@ impl GlobalState {
     }
 
     fn spheres_inner(&self, blocked: &HashSet<MazePos>, sealed: Option<usize>) -> Spheres {
-        let bases = self.base_grids(blocked);
         let links = self.links();
         let forts = self.forts();
         let content = self.content();
         let wand_tiles = self.wand_tiles();
 
         let mut open: HashSet<FortRef> = HashSet::new();
+        let mut found: HashSet<Key> = HashSet::new();
         let mut seen: HashSet<MazePos> = HashSet::new();
         let mut spheres: Vec<Sphere> = Vec::new();
         let mut goal_sphere = None;
         let mut wands_at_goal = 0;
 
+        // A shut gate is a blanked cell, which is what `base_grids` already
+        // does with `blocked` — so gates cost no new mechanism in the walker,
+        // only a set that grows as items are found.
+        //
+        // **That is why the grids move inside the loop**, and only when there
+        // are gates: `shut` was always rebuilt per round while `bases` was
+        // built once, which is exactly the scheduling defect
+        // `docs/mimaze_layer_design.md` predicted. With no gates the set never
+        // changes, so the old single build is kept and no existing seed pays
+        // for this.
+        let mut bases = self.base_grids(blocked);
+
         loop {
+            if !self.gates.is_empty() {
+                let mut shut_cells = blocked.clone();
+                shut_cells
+                    .extend(self.gates.iter().filter(|g| !found.contains(&g.item)).map(|g| g.pos));
+                bases = self.base_grids(&shut_cells);
+            }
             let shut = self.shut_locks_sealed(&open, sealed);
             let reach = walk_maze(&self.view(&bases, &shut), &links, self.start);
 
@@ -467,6 +523,18 @@ impl GlobalState {
                 .collect();
             open.extend(beaten.iter().copied());
 
+            // Items are the second accumulator, and the reason a round can
+            // grow without a fortress falling.
+            let mut collected: Vec<Key> = self
+                .sources
+                .iter()
+                .filter(|src| !found.contains(&src.item) && reach.contains(src.pos))
+                .map(|src| src.item)
+                .collect();
+            collected.sort_unstable();
+            collected.dedup();
+            found.extend(collected.iter().copied());
+
             let wands = wand_tiles.iter().filter(|&&p| reach.contains(p)).count();
             // The wand gate. A cloned wall tile sits on the unique chokepoint
             // of World 8's bridge and lifts when K wands are held, so the
@@ -486,27 +554,34 @@ impl GlobalState {
             // "gates openable on entry" and "forts beatable on entry" are the
             // same number. `opened` is the one that stays right if that ever
             // stops holding.
+            let grew = !beaten.is_empty() || !collected.is_empty();
             spheres.push(Sphere {
                 reached,
                 beaten: beaten.clone(),
                 width: opened.len(),
                 opened,
                 wands,
+                found: collected,
             });
 
-            // No new fort means no new key, and reachability is monotone —
-            // nothing can grow again.
-            if beaten.is_empty() {
+            // Neither accumulator grew, and both are monotone, so nothing can
+            // grow again. Before items this was "no new fort" alone; a round
+            // that finds an item opens gates without beating anything, and
+            // stopping there would report content sealed out that is not.
+            if !grew {
                 break;
             }
         }
 
         let unbeaten: Vec<FortRef> =
             forts.iter().map(|&(f, _)| f).filter(|f| !open.contains(f)).collect();
+        let unopened: Vec<ItemGate> =
+            self.gates.iter().copied().filter(|g| !found.contains(&g.item)).collect();
         Spheres {
             solvable: goal_sphere.is_some() && unbeaten.is_empty(),
             spheres,
             unbeaten,
+            unopened,
             goal_sphere,
             wands_at_goal,
         }
@@ -663,6 +738,9 @@ pub(crate) struct Sphere {
     pub width: usize,
     /// Wands collectable by the end of this sphere (cumulative).
     pub wands: usize,
+    /// Items first collectable this round. The second accumulator, and what
+    /// lets a sphere open gates without a fortress falling.
+    pub found: Vec<Key>,
 }
 
 /// The fixpoint's output: a spoiler log, not a bool.
@@ -677,6 +755,13 @@ pub(crate) struct Spheres {
     pub solvable: bool,
     pub spheres: Vec<Sphere>,
     pub unbeaten: Vec<FortRef>,
+    /// Gates whose item is never found. **Not part of [`Self::solvable`]**,
+    /// which keeps its old meaning — the castle reachable and every fortress
+    /// beatable — so every existing caller reads the same answer it always
+    /// did. A gate sealing only levels strands content without stranding a
+    /// fortress, which the placement pass must reject and the fill must not,
+    /// so the two questions stay separate fields rather than one verdict.
+    pub unopened: Vec<ItemGate>,
     /// The sphere in which the castle first became reachable.
     pub goal_sphere: Option<usize>,
     /// Wands collectable before the castle came into reach — what a K-of-7

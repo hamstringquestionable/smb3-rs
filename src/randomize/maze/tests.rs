@@ -14,7 +14,8 @@ use rand::seq::SliceRandom;
 use rand_chacha::ChaCha8Rng;
 
 use super::graph::{Knobs, PAD_BUDGET};
-use super::{GenReport, GlobalState, IDENTITY_SPINE, MazeEdge};
+use super::{GenReport, GlobalState, IDENTITY_SPINE, ItemGate, ItemSource, MazeEdge};
+use crate::randomize::item_keys::Key;
 
 use crate::randomize::map_walker::walk_reachable;
 use crate::randomize::maze::walk::{MazePos, MazeWorld, walk_maze};
@@ -3746,4 +3747,145 @@ fn level_gate_census() {
         per_seed_lv.iter().min().copied().unwrap_or(0),
         per_seed_lv.iter().max().copied().unwrap_or(0)
     );
+}
+
+// ---------------------------------------------------------------------------
+// The item-aware fixpoint
+// ---------------------------------------------------------------------------
+
+/// With no gates the fixpoint must be the one it always was. This is the
+/// property the whole extension rests on — every shipped seed runs through
+/// this code now, and `tests/overworld_baseline.rs` only notices a change if
+/// it reaches the map.
+#[test]
+fn no_gates_means_the_old_fixpoint() {
+    let Some(raw) = load_rom() else { return };
+    let knobs = Knobs::default();
+    for seed in 0..8 {
+        let (_, state, _) = generated(&raw, seed, &knobs, super::DEFAULT_WANDS_REQUIRED);
+        assert!(state.gates.is_empty() && state.sources.is_empty());
+        let sp = state.spheres();
+        assert!(sp.unopened.is_empty(), "no gates, so nothing can be unopened");
+        for sphere in &sp.spheres {
+            assert!(sphere.found.is_empty(), "no sources, so nothing can be found");
+        }
+    }
+}
+
+/// Pick a level cell whose gating seals content, and return it with the set
+/// of content that goes out of reach when it is shut.
+fn a_cut(state: &GlobalState) -> Option<(MazePos, Vec<MazePos>)> {
+    let full = state.spheres();
+    let reached: std::collections::HashSet<MazePos> =
+        full.spheres.iter().flat_map(|s| s.reached.iter().copied()).collect();
+    for w in state.worlds.iter().filter(|w| state.in_maze[w.world_idx]) {
+        for slot in w.slots.iter().filter(|s| s.kind == SlotKind::Level) {
+            let cell: MazePos = (w.world_idx, slot.pos);
+            let blocked: std::collections::HashSet<MazePos> = std::iter::once(cell).collect();
+            let sp = state.spheres_with_blocked(&blocked);
+            let still: std::collections::HashSet<MazePos> =
+                sp.spheres.iter().flat_map(|s| s.reached.iter().copied()).collect();
+            let lost: Vec<MazePos> =
+                reached.difference(&still).copied().filter(|&p| p != cell).collect();
+            if !lost.is_empty() {
+                return Some((cell, lost));
+            }
+        }
+    }
+    None
+}
+
+/// **A key in front of its gate opens it.** The gate seals content, the item
+/// sits where the player can reach it with the gate shut, and the fixpoint
+/// converges with nothing left locked.
+#[test]
+fn a_key_in_front_opens_its_gate() {
+    let Some(raw) = load_rom() else { return };
+    let knobs = Knobs::default();
+    let mut checked = 0;
+    for seed in 0..12 {
+        let (_, mut state, _) = generated(&raw, seed, &knobs, super::DEFAULT_WANDS_REQUIRED);
+        let Some((cell, _)) = a_cut(&state) else { continue };
+        let before = state.spheres();
+        if !before.solvable {
+            continue;
+        }
+
+        // The start tile is reachable in round 0 whatever else is shut, so it
+        // is "in front" of every gate by construction.
+        state.gates = vec![ItemGate { pos: cell, item: Key::Leaf }];
+        state.sources = vec![ItemSource { pos: state.start, item: Key::Leaf }];
+
+        let after = state.spheres();
+        assert!(after.unopened.is_empty(), "seed {seed}: the key was in front, so the gate opens");
+        assert!(after.solvable, "seed {seed}: an opened gate cannot change solvability");
+        assert!(
+            after.spheres.iter().any(|s| s.found.contains(&Key::Leaf)),
+            "seed {seed}: the leaf should be recorded in the round it was collected"
+        );
+        checked += 1;
+    }
+    assert!(checked > 0, "no seed produced a usable cut — the test proved nothing");
+}
+
+/// **A key behind its own gate never opens it.** This is the acyclicity rule
+/// the design note states, and the reason the placement pass needs no
+/// separate check: the fixpoint simply stalls.
+#[test]
+fn a_key_behind_its_gate_strands_it() {
+    let Some(raw) = load_rom() else { return };
+    let knobs = Knobs::default();
+    let mut checked = 0;
+    for seed in 0..12 {
+        let (_, mut state, _) = generated(&raw, seed, &knobs, super::DEFAULT_WANDS_REQUIRED);
+        let Some((cell, lost)) = a_cut(&state) else { continue };
+        if !state.spheres().solvable {
+            continue;
+        }
+
+        // The item sits inside the cut the gate makes — so reaching it
+        // requires passing the gate it opens.
+        state.gates = vec![ItemGate { pos: cell, item: Key::Leaf }];
+        state.sources = vec![ItemSource { pos: lost[0], item: Key::Leaf }];
+
+        let after = state.spheres();
+        assert_eq!(
+            after.unopened.len(),
+            1,
+            "seed {seed}: the only key is behind the gate, so it must stay shut"
+        );
+        for sphere in &after.spheres {
+            assert!(sphere.found.is_empty(), "seed {seed}: nothing was collectable");
+        }
+        checked += 1;
+    }
+    assert!(checked > 0, "no seed produced a usable cut — the test proved nothing");
+}
+
+/// **A round may grow on an item alone.** Before items the loop stopped as
+/// soon as no fortress fell, which would cut the walk short the moment a
+/// sphere's only progress was a pickup. A gate that seals a fortress, with
+/// its key in front, is exactly that shape: the round that finds the key
+/// beats nothing, and the round after it beats the fort.
+#[test]
+fn the_loop_does_not_stop_on_an_item_only_round() {
+    let Some(raw) = load_rom() else { return };
+    let knobs = Knobs::default();
+    for seed in 0..12 {
+        let (_, mut state, _) = generated(&raw, seed, &knobs, super::DEFAULT_WANDS_REQUIRED);
+        let Some((cell, _)) = a_cut(&state) else { continue };
+        if !state.spheres().solvable {
+            continue;
+        }
+        state.gates = vec![ItemGate { pos: cell, item: Key::Leaf }];
+        state.sources = vec![ItemSource { pos: state.start, item: Key::Leaf }];
+
+        // Whatever the shape, the run still finishes: the gate opened, every
+        // fort fell, and the loop terminated rather than spinning.
+        let after = state.spheres();
+        assert!(after.solvable, "seed {seed}");
+        assert!(after.unbeaten.is_empty(), "seed {seed}");
+        return;
+    }
+    panic!("no seed produced a usable cut — the test proved nothing");
 }
