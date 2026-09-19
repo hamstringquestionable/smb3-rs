@@ -1,85 +1,63 @@
-//! Item keys — the dispenser gate, as a proof of concept.
+//! Item keys — a power-up block only dispenses what the player has found.
 //!
-//! **This is not the feature.** It is the smallest thing that answers the one
-//! question MiMaze rests on: *is a level that needs its own power-up genuinely
-//! unbeatable once that power-up stops being dispensed, and does a locked
-//! block read as a locked door rather than a bug?* See
-//! `docs/mimaze_layer_design.md`; if the answer is no, nothing downstream is
-//! worth writing.
+//! The ROM half of `docs/mimaze_layer_design.md`, which turns on one chain: a
+//! level tile is a wall until it is beaten; a level that requires a power-up
+//! carries its own renewable source of it (`vision.md`'s fourth charter
+//! point); so **gating that source turns the level into a wall.** This is the
+//! gating.
 //!
-//! What is real here is the **routine and its allocation** — the same 28 bytes
-//! and the same shape the shipping feature needs. What is fake is where the
-//! mask comes from: the found set is baked in at build time as a table of
-//! products rather than read from SRAM. Turning this into the feature means
-//! changing that one thing.
+//! Reached only from `testrom` so far — no flag key, no web control, nothing
+//! in a shipped seed.
 //!
 //! # The split, and why it is load-bearing
 //!
 //! `LATP_Flower` and `LATP_Leaf` each have **two** products, chosen by
 //! vanilla's own `Player_Suit` test: a mushroom for a small player, the suit
 //! for a big one. They have to be gated *independently*. Degrading the whole
-//! handler would take the mushroom default with it, so a player who has found
-//! a leaf but no mushroom could not get big, could not break a brick, and
-//! would be stuck in a level nothing authored as a gate.
+//! handler would take the mushroom default with it, so a player who found a
+//! leaf but no mushroom could not get big, could not break a brick, and would
+//! be stuck in a level nothing authored as a gate.
 //!
 //! So the gate splits where vanilla already splits, and the mushroom becomes a
 //! first-class key: locked, the player is permanently small.
 //!
-//! # The routine
+//! # Two halves
 //!
-//! ```text
-//!   LDA #$00 / STA PUp_StarManFlash   vanilla's own flash clear
-//!   TYA / LSR A                       Y is the block type * 2 on entry, so
-//!                                     this is the row: 1 flower, 2 leaf
-//!   LDY Player_Suit / BNE big
-//!   LDA #$00                          small -> row 0, the mushroom
-//! big:
-//!   TAY / LDA PRODUCTS,Y              0 means locked
-//!   BEQ locked
-//!   TAY / RTS                         Y = the Bouncer_PUp index
-//! locked:
-//!   JMP LATP_Coin
-//! ```
+//! **The gate** replaces all three power-up handlers. Repointing their
+//! jump-table words frees `LATP_Flower`, `LATP_Leaf` and `LATP_Star` outright
+//! — 36 adjacent bytes at `$B7EC`, in the dispatcher's own bank, so there is
+//! no mapping question and none of the nearly-full always-mapped banks are
+//! spent. PRG008 has **zero** `$FF` filler, so reclaiming is not the cheapest
+//! option here, it is the only one.
 //!
-//! Three things make it fit in 28 bytes with one to spare.
+//! **The found table** is four bytes of SRAM
+//! ([`maze_state::FOUND_PRODUCTS`](crate::randomize::maze_state::FOUND_PRODUCTS)),
+//! one row per key, written by whoever grants an item. A row holds the
+//! `Bouncer_PUp` index to dispense and **zero means locked**, so the gate's
+//! "is it unlocked" test and its "what does it give" lookup are a single
+//! `LDA` and no mask ever appears in the code. That is also what let the table
+//! move from ROM to SRAM without the routine changing.
+//!
+//! # Three things that keep the gate small
 //!
 //! **`Y` already holds the block type.** The dispatcher does
 //! `LDA Temp_Var1 / ASL A / TAY` and never touches `Y` again before
-//! `JMP [Temp_Var1]`, so the handler is entered with `type * 2` in `Y` and the
-//! row index costs two bytes rather than a pair of entry stubs.
+//! `JMP [Temp_Var1]`, so the row index is `TYA / LSR A` rather than a pair of
+//! entry stubs.
 //!
-//! **One table, not two.** A row holds the `Bouncer_PUp` index to return, and
-//! **zero means locked** — so the "is it unlocked" test and the "what does it
-//! give" lookup are one `LDA`, and the mask never appears in the code at all.
-//! That is what makes the found set a build-time table here and an SRAM read
-//! later: only the table's *source* changes.
+//! **The star rides along.** It has no `Player_Suit` split, so one `CMP #$03`
+//! sends it past that test, and a flash-value table row keeps its `$80` where
+//! the others want `$00` — no second routine and no branch.
 //!
 //! **`X` is never touched.** It carries the tile-check index into these
-//! handlers — `LATP_Brick` reads it with `CPX #$04`, and
-//! `LATP_GetCoinAboveBlock` backs it up around a call — so the row index goes
-//! in `Y`, which the handler owns. Indexing with `X` would have been the same
-//! byte count and a live-register bug.
+//! handlers — `LATP_Brick` reads it with `CPX #$04`, `LATP_GetCoinAboveBlock`
+//! backs it up around a call — so the row index goes in `Y`, which the handler
+//! owns. Indexing with `X` was the same byte count and a live-register bug.
 //!
-//! # Where it lives
+//! # What is not covered
 //!
-//! `LATP_Flower`, `LATP_Leaf` and `LATP_Star` are each referenced from exactly
-//! one place — their own word in `LATP_JumpTable`. Repointing those three
-//! words frees all three bodies outright, and they are adjacent: **36
-//! contiguous bytes** at CPU `$B7EC`, in the dispatcher's own bank, so there
-//! is no mapping question and none of the nearly-full always-mapped banks are
-//! spent. PRG008 has **zero** bytes of `$FF` filler, so reclaiming is not
-//! merely the cheapest option here, it is the only one.
-//!
-//! # The star is all-or-nothing
-//!
-//! `LATP_Star` has no `Player_Suit` split — a star block gives a starman to
-//! anyone — so it needs no routine. When the star is not found, entry 3 is
-//! pointed at `LATP_Coin` directly; when it is found, the entry is left alone.
-//! Its 8-byte body stays intact either way, because the found case still runs
-//! it.
-//!
-//! The Big [?] block (7-F1's tanooki) is **not** covered: it is an object in
-//! PRG005, a different bank and a different mechanism. One bank at a time.
+//! The Big [?] block (7-F1's tanooki) is an object in PRG005, a different bank
+//! and a different mechanism. One bank at a time.
 
 use crate::randomize::rom_data::FS_ITEM_GATE;
 use crate::rom::Rom;
@@ -266,70 +244,145 @@ pub fn apply(rom: &mut Rom, easier: bool) {
     repoint(rom, 3, LATP_STAR_CPU, GATE_CPU);
     rom.pop_tag();
 
-    // The one source wired so far. Without it the found table never changes
-    // and the gate is the all-coin POC again.
-    rom.push_tag("item_keys/found");
-    assert_eq!(
-        rom.read_range(TOAD_GRANT, 3),
-        &TOAD_GRANT_VANILLA[..],
-        "the Toad House grant site is not vanilla's LDA"
-    );
-    rom.write_range(FS_FOUND_RECORD, &FOUND_RECORD);
-    rom.write_range(TOAD_GRANT, &[0x20, RECORD_CPU as u8, (RECORD_CPU >> 8) as u8]);
-    rom.pop_tag();
+    install_found_recorder(rom);
 }
 
 // --- Finding an item -------------------------------------------------
 //
-// One source is wired so far: the Toad House chest. The Hammer Bro reward and
-// the Princess letter are the other two the design names, and they are
-// separate sites in other banks.
+// **There is no single "an item entered the inventory" routine.** Vanilla
+// open-codes the free-slot scan in three places, and each writes
+// `Inventory_Items` itself:
+//
+// | site | bank | grants |
+// |---|---|---|
+// | `Player_GetItem` `$FD6C` | PRG031 | in-level chests, **Hammer Bro rewards**, N-Spade card matches |
+// | `ToadHouse_GiveItem` | PRG000 | Toad House chests |
+// | `Letter_GiveIncludedItem` `$A1D9` | PRG027 | Princess letters |
+//
+// So there are three hooks — but only **one recorder**, and it lives in
+// PRG031 because that bank is always mapped and can therefore be `JSR`ed
+// from all three regardless of what is banked at the time. That is what
+// always-mapped space is for, and it is the whole reason this costs 25 bytes
+// rather than three copies of them.
+//
+// It also puts the item-id-to-row mapping in exactly one place. A second
+// copy is how a leaf ends up recorded in the mushroom's row.
 
-/// `PRG029_D1B1`, the tail of `ToadHouse_ChestPressB`: `LDA
-/// ToadHouse_Item2Inventory,X / TAX / INX / RTS`. `A` holds the Global Item ID
-/// the chest is about to hand over, which is exactly what the found table
-/// needs to record.
-const TOAD_GRANT: usize = 0x3B1C1;
-/// What stands there in vanilla — the `LDA` this pass displaces.
-const TOAD_GRANT_VANILLA: [u8; 3] = [0xBD, 0x3B, 0xD1];
-
-/// Where the recorder lives: the tail of PRG029, which `prg029.asm` ends by
-/// declaring "Rest of ROM bank was empty" — so the run from here to the bank
-/// end is filler, not data something reads.
-const FS_FOUND_RECORD: usize = 0x3B81A;
-const RECORD_CPU: u16 = 0xD80A;
-const ROW_CPU: u16 = RECORD_CPU + 21;
-const PROD_CPU: u16 = RECORD_CPU + 31;
-
-/// Record a granted item in the found table, then carry on as vanilla did.
+/// The shared recorder: `A` is a Global Item ID on entry, and the found table
+/// row for it (if any) is set to the product that row dispenses.
 ///
-/// Reached by replacing the `LDA` at [`TOAD_GRANT`] with a `JSR` here: the
-/// routine performs that load itself, records what it saw, and returns with
-/// `A` still holding the item id so the caller's `TAX / INX / RTS` is
-/// untouched. `X` is free to clobber — the caller overwrites it with `TAX` on
-/// the next instruction — but `A` is not, which is why the id is parked in
-/// `Y` and restored.
+/// The mapping is regular enough to compute rather than look up: ids 1, 2, 3
+/// are rows 0, 1, 2, and id 9 (the starman) is row 3. Id 0 wraps to `$FF`
+/// under the subtract and falls out of the same bound check that rejects 4
+/// and up, so "not a key" costs no test of its own.
 ///
-/// Two tables rather than one packed byte: unpacking a nibble pair costs more
-/// than the ten bytes it would save, and `$FF` in the row table is a clean
-/// "not a key" that `BMI` tests for nothing.
+/// Clobbers `A` and `X`; **preserves `Y`**, which every caller needs — two of
+/// them are holding an inventory offset or a world number across the call.
 #[rustfmt::skip]
-const FOUND_RECORD: [u8; 41] = [
-    0xBD, 0x3B, 0xD1,                              //  0: LDA ToadHouse_Item2Inventory,X
-    0xA8,                                          //  3: TAY            ; keep the id
-    0xC0, 0x0A,                                    //  4: CPY #$0A
-    0xB0, 0x0B,                                    //  6: BCS done       ; ids $0A+ are not keys
-    0xBE, ROW_CPU as u8, (ROW_CPU >> 8) as u8,     //  8: LDX ROW,Y
-    0x30, 0x06,                                    // 11: BMI done       ; $FF = not a key
-    0xB9, PROD_CPU as u8, (PROD_CPU >> 8) as u8,   // 13: LDA PROD,Y
-    0x9D, PRODUCTS as u8, (PRODUCTS >> 8) as u8,   // 16: STA FOUND_PRODUCTS,X
-    0x98,                                          // 19: done: TYA      ; A = id, as the caller expects
-    0x60,                                          // 20: RTS
-    // 21: ROW — the gate's row for each Global Item ID, $FF for "not a key".
-    0xFF, 0x00, 0x01, 0x02, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x03,
-    // 31: PROD — the Bouncer_PUp index that row then dispenses.
-    0x00, 0x05, 0x02, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04,
+const RECORD: [u8; 25] = [
+    0xA2, 0x03,                                    //  0: LDX #$03      ; the starman's row
+    0xC9, 0x09,                                    //  2: CMP #$09
+    0xF0, 0x08,                                    //  4: BEQ have
+    0x38,                                          //  6: SEC
+    0xE9, 0x01,                                    //  7: SBC #$01      ; row = id - 1
+    0xC9, 0x03,                                    //  9: CMP #$03
+    0xB0, 0x07,                                    // 11: BCS done      ; id 0 -> $FF, ids 4+ -> out
+    0xAA,                                          // 13: TAX
+    0xBD, PROD_CPU as u8, (PROD_CPU >> 8) as u8,   // 14: have: LDA PROD,X
+    0x9D, PRODUCTS as u8, (PRODUCTS >> 8) as u8,   // 17: STA FOUND_PRODUCTS,X
+    0x60,                                          // 20: done: RTS
+    0x05, 0x02, 0x03, 0x04,                        // 21: PROD by row
 ];
+
+const FS_RECORD: usize = 0x3E972;
+const RECORD_CPU: u16 = 0xE962;
+const PROD_CPU: u16 = RECORD_CPU + 21;
+
+/// `Player_GetItem`'s tail — `PLA / STA Inventory_Items,Y / RTS`. Hooked at
+/// the `STA` rather than the entry because `A` is the item there and nothing
+/// has to be saved around the call.
+const GETITEM_TAIL: usize = 0x3FD90;
+const GETITEM_TAIL_VANILLA: [u8; 4] = [0x99, 0x80, 0x7D, 0x60];
+const FS_GETITEM_TAIL: usize = 0x3E2C6;
+const GETITEM_TAIL_CPU: u16 = 0xE2B6;
+
+#[rustfmt::skip]
+const GETITEM_TAIL_HOOK: [u8; 7] = [
+    0x99, 0x80, 0x7D,                                      // 0: STA Inventory_Items,Y (displaced)
+    0x20, RECORD_CPU as u8, (RECORD_CPU >> 8) as u8,       // 3: JSR RECORD
+    0x60,                                                  // 6: RTS
+];
+
+/// `Letter_GiveIncludedItem`: `LDA LetterItem_ByWorld,Y / STA CineKing_Var`,
+/// then a `BEQ` on "no item this world". The hook re-reads `CineKing_Var`
+/// before returning so that branch still sees the right `Z`.
+const LETTER_SITE: usize = 0x361EC;
+const LETTER_SITE_VANILLA: [u8; 5] = [0xB9, 0xCE, 0xA0, 0x85, 0x9A];
+const FS_LETTER_HOOK: usize = 0x37D57;
+const LETTER_HOOK_CPU: u16 = 0xBD47;
+
+#[rustfmt::skip]
+const LETTER_HOOK: [u8; 11] = [
+    0xB9, 0xCE, 0xA0,                                      // 0: LDA LetterItem_ByWorld,Y
+    0x85, 0x9A,                                            // 3: STA CineKing_Var
+    0x20, RECORD_CPU as u8, (RECORD_CPU >> 8) as u8,       // 5: JSR RECORD
+    0xA5, 0x9A,                                            // 8: LDA CineKing_Var  ; restore A and Z
+    0x60,                                                  // 10: RTS
+];
+
+/// `ToadHouse_ChestPressB`'s tail. `A` is the item and the caller's next
+/// instruction is `TAX`, so `X` is free to clobber but `A` is not — hence the
+/// `PHA`/`PLA` around the call rather than a reload, which would need an `X`
+/// the recorder has already spent.
+const TOAD_GRANT: usize = 0x3B1C1;
+const TOAD_GRANT_VANILLA: [u8; 3] = [0xBD, 0x3B, 0xD1];
+const FS_TOAD_HOOK: usize = 0x3B81A;
+const TOAD_HOOK_CPU: u16 = 0xD80A;
+
+#[rustfmt::skip]
+const TOAD_HOOK: [u8; 9] = [
+    0xBD, 0x3B, 0xD1,                                      // 0: LDA Item2Inventory,X (displaced)
+    0x48,                                                  // 3: PHA
+    0x20, RECORD_CPU as u8, (RECORD_CPU >> 8) as u8,       // 4: JSR RECORD
+    0x68,                                                  // 7: PLA
+    0x60,                                                  // 8: RTS
+];
+
+fn splice(rom: &mut Rom, site: usize, vanilla: &[u8], patch: &[u8]) {
+    assert_eq!(rom.read_range(site, vanilla.len()), vanilla, "site {site:#07X} is not vanilla");
+    rom.write_range(site, patch);
+}
+
+/// Install the recorder and every hook that feeds it.
+fn install_found_recorder(rom: &mut Rom) {
+    rom.push_tag("item_keys/found");
+    rom.write_range(FS_RECORD, &RECORD);
+
+    rom.write_range(FS_GETITEM_TAIL, &GETITEM_TAIL_HOOK);
+    splice(
+        rom,
+        GETITEM_TAIL,
+        &GETITEM_TAIL_VANILLA,
+        &[0x4C, GETITEM_TAIL_CPU as u8, (GETITEM_TAIL_CPU >> 8) as u8, 0xEA],
+    );
+
+    rom.write_range(FS_LETTER_HOOK, &LETTER_HOOK);
+    splice(
+        rom,
+        LETTER_SITE,
+        &LETTER_SITE_VANILLA,
+        &[0x20, LETTER_HOOK_CPU as u8, (LETTER_HOOK_CPU >> 8) as u8, 0xEA, 0xEA],
+    );
+
+    rom.write_range(FS_TOAD_HOOK, &TOAD_HOOK);
+    splice(
+        rom,
+        TOAD_GRANT,
+        &TOAD_GRANT_VANILLA,
+        &[0x20, TOAD_HOOK_CPU as u8, (TOAD_HOOK_CPU >> 8) as u8],
+    );
+    rom.pop_tag();
+}
 
 #[cfg(test)]
 mod tests {
@@ -384,39 +437,56 @@ mod tests {
         }
     }
 
-    /// The grant site calls the recorder and keeps its own tail.
+    /// Every grant site calls the recorder and keeps its own behaviour.
     #[test]
-    fn the_toad_house_grant_is_hooked() {
+    fn all_three_sources_are_hooked() {
         let Some(mut rom) = vanilla() else {
             eprintln!("SKIP: requires the ROM");
             return;
         };
         apply(&mut rom, false);
+        let jsr = |cpu: u16| [0x20, cpu as u8, (cpu >> 8) as u8];
+
+        // Toad House: JSR, and the caller's TAX / INX / RTS still follows.
+        assert_eq!(rom.read_range(TOAD_GRANT, 3), &jsr(TOAD_HOOK_CPU)[..]);
+        assert_eq!(rom.read_range(TOAD_GRANT + 3, 3), &[0xAA, 0xE8, 0x60]);
+        // Player_GetItem's tail: JMP, since the hook ends the routine.
         assert_eq!(
-            rom.read_range(TOAD_GRANT, 3),
-            &[0x20, RECORD_CPU as u8, (RECORD_CPU >> 8) as u8],
-            "the LDA should have become a JSR"
+            rom.read_range(GETITEM_TAIL, 4),
+            &[0x4C, GETITEM_TAIL_CPU as u8, (GETITEM_TAIL_CPU >> 8) as u8, 0xEA]
         );
-        assert_eq!(rom.read_range(TOAD_GRANT + 3, 3), &[0xAA, 0xE8, 0x60], "TAX / INX / RTS");
-        assert_eq!(rom.read_range(FS_FOUND_RECORD, 41), &FOUND_RECORD[..]);
+        // The letter: JSR plus the two NOPs the five-byte site leaves over.
+        assert_eq!(
+            rom.read_range(LETTER_SITE, 5),
+            &[0x20, LETTER_HOOK_CPU as u8, (LETTER_HOOK_CPU >> 8) as u8, 0xEA, 0xEA]
+        );
+        assert_eq!(rom.read_range(FS_RECORD, RECORD.len()), &RECORD[..]);
     }
 
-    /// The recorder's two tables agree with the gate's rows, for every key.
-    /// A drift here would record a leaf into the mushroom's row and unlock
-    /// the wrong thing.
+    /// Every hook reaches the *same* recorder. Three copies of the item-id
+    /// mapping is how a leaf gets recorded into the mushroom's row.
     #[test]
-    fn recorder_rows_match_the_gate_rows() {
-        const ROW: usize = 21;
-        const PROD: usize = 31;
-        for (id, key) in [(1usize, Key::Mushroom), (2, Key::Flower), (3, Key::Leaf), (9, Key::Star)]
-        {
-            assert_eq!(FOUND_RECORD[ROW + id] as usize, key.row(), "row for {key:?}");
-            assert_eq!(FOUND_RECORD[PROD + id], key.product(), "product for {key:?}");
+    fn one_recorder_serves_every_hook() {
+        let call = [0x20, RECORD_CPU as u8, (RECORD_CPU >> 8) as u8];
+        for (name, hook) in [
+            ("toad", &TOAD_HOOK[..]),
+            ("get_item", &GETITEM_TAIL_HOOK[..]),
+            ("letter", &LETTER_HOOK[..]),
+        ] {
+            assert!(
+                hook.windows(3).any(|w| w == call),
+                "{name} hook does not call the shared recorder"
+            );
         }
-        // Everything else is "not a key", and must be, or an unrelated item
-        // would silently open a gate.
-        for id in [0usize, 4, 5, 6, 7, 8] {
-            assert_eq!(FOUND_RECORD[ROW + id], 0xFF, "item {id} must not be a key");
+    }
+
+    /// The recorder's product table agrees with the gate's rows, for every
+    /// key and only the keys.
+    #[test]
+    fn recorder_products_match_the_gate_rows() {
+        const PROD: usize = 21;
+        for key in [Key::Mushroom, Key::Flower, Key::Leaf, Key::Star] {
+            assert_eq!(RECORD[PROD + key.row()], key.product(), "product for {key:?}");
         }
     }
 
@@ -460,14 +530,35 @@ mod asm_checks {
             .assert_ok();
     }
 
-    /// The recorder is reached by a  that displaces a whole instruction,
-    /// and its two tables are data, not code.
+    /// The shared recorder: decodes, ends in `RTS`, both branches land on
+    /// instruction boundaries, and `LDA PROD,X` resolves into its own tail.
     #[test]
-    fn found_record_is_well_formed() {
-        asm::check(&FOUND_RECORD)
-            .origin(RECORD_CPU)
-            .data_from(21)
-            .hook(&TOAD_GRANT_VANILLA, 0, &[0x20, RECORD_CPU as u8, (RECORD_CPU >> 8) as u8])
+    fn recorder_is_well_formed() {
+        asm::check(&RECORD).origin(RECORD_CPU).data_from(21).assert_ok();
+    }
+
+    /// Each hook displaces whole instructions and names its own origin.
+    #[test]
+    fn hooks_are_well_formed() {
+        asm::check(&TOAD_HOOK)
+            .origin(TOAD_HOOK_CPU)
+            .hook(&TOAD_GRANT_VANILLA, 0, &[0x20, TOAD_HOOK_CPU as u8, (TOAD_HOOK_CPU >> 8) as u8])
+            .assert_ok();
+        asm::check(&GETITEM_TAIL_HOOK)
+            .origin(GETITEM_TAIL_CPU)
+            .hook(
+                &GETITEM_TAIL_VANILLA,
+                0,
+                &[0x4C, GETITEM_TAIL_CPU as u8, (GETITEM_TAIL_CPU >> 8) as u8, 0xEA],
+            )
+            .assert_ok();
+        asm::check(&LETTER_HOOK)
+            .origin(LETTER_HOOK_CPU)
+            .hook(
+                &LETTER_SITE_VANILLA,
+                0,
+                &[0x20, LETTER_HOOK_CPU as u8, (LETTER_HOOK_CPU >> 8) as u8, 0xEA, 0xEA],
+            )
             .assert_ok();
     }
 }
