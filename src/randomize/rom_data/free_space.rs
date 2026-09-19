@@ -177,7 +177,20 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
         &["big_q_blocks"],
         "big_q_block: two-pass lookup + slot seeding + 7 13-entry tables (224 reserved, 207 used)",
     ),
+    // PRG029's tail (0x3B81A, CPU $D80A) is spoken for by `item_keys`' found
+    // recorder — 48 reserved, 41 used — but has **no row here yet**, and
+    // deliberately. Every registered allocation must be written by a real
+    // randomizer run or `free_space_audit_matches_registry` fails, because an
+    // audit over nothing proves nothing; `item_keys` is reachable only from
+    // `testrom` so far. The row lands in the commit that wires it into
+    // `randomize_inner`. `prg029.asm` ends by declaring "Rest of ROM bank was
+    // empty", so the run is checked filler rather than data.
     // PRG008 (file 0x10010, CPU $A000–$BFFF while a block is bumped)
+    //
+    // Three handlers, not two: `LATP_Star` ($B808, 8 bytes) joins the pair once
+    // the found set lives in SRAM, because a star's locked state then changes
+    // while the game runs and can no longer be decided by repointing at build
+    // time. All three are adjacent, so the run is $B7EC..$B810.
     //
     // Two owners, and they are **mutually exclusive**. `qol/modern_powerups`
     // (MaCobra52's Easy Power-up System) writes two bytes inside this run --
@@ -193,9 +206,9 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
     // option is on.
     fs(
         0x117FC,
-        28,
+        36,
         &["item_keys", "qol/modern_powerups"],
-        "LATP_Flower + LATP_Leaf, retired by repointing (28 reserved, 27 used)",
+        "LATP_Flower + LATP_Leaf + LATP_Star, retired by repointing (36 reserved, 33 used)",
     ),
     // PRG027 (file 0x36010, CPU $A000–$BFFF)
     fs(0x379D9, 894, &["king_quotes"], "7 quotes + hook (7×120 + 54)"),

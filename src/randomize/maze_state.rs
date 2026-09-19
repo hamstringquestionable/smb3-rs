@@ -82,7 +82,26 @@ pub(crate) const MAP_OBJ_DEAD_LEN: usize = 9;
 
 /// First byte after everything allocated above — where the next allocation
 /// starts.
-pub(crate) const MAZE_STATE_NEXT: u16 = MAP_OBJ_DEAD + MAP_OBJ_DEAD_LEN as u16;
+/// Which power-up a block may dispense, one byte per key — **the found-mask,
+/// and the gate routine's own lookup table.**
+///
+/// A row holds the `Bouncer_PUp` index the block returns, and **zero means
+/// locked**, which is what `item_keys`' routine branches on. Storing the
+/// product rather than a bit is what keeps that routine at the size it is:
+/// "has the player found this" and "what does it give" are one `LDA`, and the
+/// table can move from ROM to here without the code changing at all.
+///
+/// Four rows, and the order is the routine's row index, not an item id:
+/// 0 mushroom, 1 fire flower, 2 super leaf, 3 starman. Rows 1-3 are the block
+/// type the dispatcher already has in `Y`; row 0 is where a *small* player is
+/// sent, which is what makes the mushroom a key of its own.
+///
+/// Zeroed by the new-game signal along with the rest of this run, so a fresh
+/// game starts with nothing found — the mode's opening state.
+pub(crate) const FOUND_PRODUCTS: u16 = MAP_OBJ_DEAD + MAP_OBJ_DEAD_LEN as u16;
+pub(crate) const FOUND_PRODUCTS_LEN: usize = 4;
+
+pub(crate) const MAZE_STATE_NEXT: u16 = FOUND_PRODUCTS + FOUND_PRODUCTS_LEN as u16;
 
 /// Every byte the maze owns, as one contiguous run.
 ///

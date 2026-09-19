@@ -62,13 +62,13 @@
 //!
 //! # Where it lives
 //!
-//! `LATP_Flower` and `LATP_Leaf` are each referenced from exactly one place —
-//! their own word in `LATP_JumpTable`. Repointing those two words frees both
-//! bodies outright, and they are adjacent: 28 contiguous bytes at CPU `$B7EC`,
-//! in the dispatcher's own bank, so there is no mapping question and none of
-//! the nearly-full always-mapped banks are spent. PRG008 has **zero** bytes of
-//! `$FF` filler, so reclaiming is not merely the cheapest option here, it is
-//! the only one.
+//! `LATP_Flower`, `LATP_Leaf` and `LATP_Star` are each referenced from exactly
+//! one place — their own word in `LATP_JumpTable`. Repointing those three
+//! words frees all three bodies outright, and they are adjacent: **36
+//! contiguous bytes** at CPU `$B7EC`, in the dispatcher's own bank, so there
+//! is no mapping question and none of the nearly-full always-mapped banks are
+//! spent. PRG008 has **zero** bytes of `$FF` filler, so reclaiming is not
+//! merely the cheapest option here, it is the only one.
 //!
 //! # The star is all-or-nothing
 //!
@@ -97,13 +97,17 @@ const LATP_COIN_CPU: u16 = 0xB810;
 /// The gate routine replaces `LATP_Flower` in place, so its origin is that
 /// handler's own address.
 const GATE_CPU: u16 = LATP_FLOWER_CPU;
-/// Offset of the products table inside the routine.
-const PRODUCTS_OFFSET: usize = 24;
-const PRODUCTS_CPU: u16 = GATE_CPU + PRODUCTS_OFFSET as u16;
 
-/// A key. The value is the `Bouncer_PUp` index the block returns when the item
-/// is found — `prg001.asm:1015`: `$00, $00, FIREFLOWER, SUPERLEAF, STARMAN,
+/// A key, as the ROM tables encode one.
+///
+/// Test-only: [`FOUND_RECORD`]'s tables and the gate's rows are the source of
+/// truth, and this exists so a test can cross-check them against a statement
+/// of the domain rather than against themselves.
+///
+/// The value is the `Bouncer_PUp` index the block returns when the item is
+/// found — `prg001.asm:1015`: `$00, $00, FIREFLOWER, SUPERLEAF, STARMAN,
 /// MUSHROOM, GROWINGVINE, 1UP`.
+#[cfg(test)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Key {
     Mushroom,
@@ -112,6 +116,7 @@ pub enum Key {
     Star,
 }
 
+#[cfg(test)]
 impl Key {
     /// The `Bouncer_PUp` index this key's block dispenses once found.
     const fn product(self) -> u8 {
@@ -123,46 +128,98 @@ impl Key {
         }
     }
 
-    pub fn parse(name: &str) -> Option<Key> {
-        match name.trim().to_ascii_lowercase().as_str() {
-            "mushroom" | "big" => Some(Key::Mushroom),
-            "flower" | "fire" => Some(Key::Flower),
-            "leaf" => Some(Key::Leaf),
-            "star" | "starman" => Some(Key::Star),
-            _ => None,
+    /// The routine's row for this key. Rows 1-3 are the block type the
+    /// dispatcher already has in `Y`; row 0 is where a small player is sent.
+    const fn row(self) -> usize {
+        match self {
+            Key::Mushroom => 0,
+            Key::Flower => 1,
+            Key::Leaf => 2,
+            Key::Star => 3,
         }
     }
 }
 
-/// The routine, with its products table left blank for [`gate_bytes`].
+/// Where the found table lives: [`maze_state::FOUND_PRODUCTS`], four bytes of
+/// SRAM. Row 0 mushroom, 1 fire flower, 2 super leaf, 3 starman — rows 1-3 are
+/// the block type the dispatcher already has in `Y`.
+const PRODUCTS: u16 = crate::randomize::maze_state::FOUND_PRODUCTS;
+
+/// `PUp_StarManFlash`. Vanilla's flower and leaf handlers clear it; the star
+/// handler sets it. One row per product row, so the merged routine keeps both
+/// behaviours for a three-byte table and no branch.
+const FLASH_OFFSET: usize = 29;
+const FLASH_CPU: u16 = GATE_CPU + FLASH_OFFSET as u16;
+
+/// The gate, covering all three power-up entries.
+///
+/// ```text
+///   TYA / LSR A        Y is type*2 on entry, so A is the row: 1 flower,
+///                      2 leaf, 3 star
+///   CMP #$03 / BEQ     a star ignores Player_Suit, as vanilla does
+///   LDY Player_Suit
+///   BNE have
+///   LDA #$00           small -> row 0, the mushroom
+/// have:
+///   TAY
+///   LDA FLASH,Y / STA PUp_StarManFlash
+///   LDA PRODUCTS,Y     SRAM; zero means locked
+///   BEQ locked
+///   TAY / RTS          Y = the Bouncer_PUp index
+/// locked:
+///   JMP LATP_Coin
+/// ```
+///
+/// 33 bytes of the 36 reclaimed by repointing all three jump-table words.
 #[rustfmt::skip]
-const GATE: [u8; 27] = [
-    0xA9, 0x00,                                              //  0: LDA #$00
-    0x8D, 0x86, 0x05,                                        //  2: STA PUp_StarManFlash
-    0x98,                                                    //  5: TYA        ; type * 2
-    0x4A,                                                    //  6: LSR A      ; -> row
-    0xA4, 0xED,                                              //  7: LDY Player_Suit
-    0xD0, 0x02,                                              //  9: BNE big
-    0xA9, 0x00,                                              // 11: LDA #$00   ; small -> row 0
-    0xA8,                                                    // 13: big: TAY
-    0xB9, PRODUCTS_CPU as u8, (PRODUCTS_CPU >> 8) as u8,     // 14: LDA PRODUCTS,Y
-    0xF0, 0x02,                                              // 17: BEQ locked
-    0xA8,                                                    // 19: TAY
-    0x60,                                                    // 20: RTS
-    0x4C, LATP_COIN_CPU as u8, (LATP_COIN_CPU >> 8) as u8,   // 21: locked: JMP LATP_Coin
-    0x00, 0x00, 0x00,                                        // 24: PRODUCTS: mushroom, flower, leaf
+const GATE: [u8; 33] = [
+    0x98,                                              //  0: TYA
+    0x4A,                                              //  1: LSR A
+    0xC9, 0x03,                                        //  2: CMP #$03      ; star?
+    0xF0, 0x06,                                        //  4: BEQ have
+    0xA4, 0xED,                                        //  6: LDY Player_Suit
+    0xD0, 0x02,                                        //  8: BNE have
+    0xA9, 0x00,                                        // 10: LDA #$00      ; small -> row 0
+    0xA8,                                              // 12: have: TAY
+    0xB9, FLASH_CPU as u8, (FLASH_CPU >> 8) as u8,     // 13: LDA FLASH,Y
+    0x8D, 0x86, 0x05,                                  // 16: STA PUp_StarManFlash
+    0xB9, PRODUCTS as u8, (PRODUCTS >> 8) as u8,       // 19: LDA PRODUCTS,Y
+    0xF0, 0x02,                                        // 22: BEQ locked
+    0xA8,                                              // 24: TAY
+    0x60,                                              // 25: RTS
+    0x4C, LATP_COIN_CPU as u8, (LATP_COIN_CPU >> 8) as u8, // 26: locked: JMP LATP_Coin
+    0x00, 0x00, 0x00, 0x80,                            // 29: FLASH: -, -, -, starman
 ];
 
-/// The routine with its products table filled in for `found`. A row of zero is
-/// a locked item, and zero is also what the routine tests, which is the whole
-/// trick — see the module docs.
-fn gate_bytes(found: &[Key]) -> [u8; 27] {
-    let mut out = GATE;
-    for (row, key) in [Key::Mushroom, Key::Flower, Key::Leaf].into_iter().enumerate() {
-        out[PRODUCTS_OFFSET + row] = if found.contains(&key) { key.product() } else { 0 };
-    }
-    out
-}
+/// The **easier arm**: the same gate with the `Player_Suit` test removed.
+///
+/// `qol::apply_modern_powerups` rewrites the two `LDY #$05` operands inside
+/// the vanilla handlers so a *small* player is handed the suit directly. Under
+/// it both of a handler's paths return the same product, so the suit test is
+/// dead weight — and, more to the point, the mushroom stops being a rung to
+/// gate at all. Dropping the test is what expresses that: the row is always
+/// the block type, row 0 is never read, and the player never has to find a
+/// mushroom to start using what they find.
+///
+/// 23 bytes, in the same allocation. See the allocation section of
+/// `docs/item_keys_design.md`.
+#[rustfmt::skip]
+const GATE_EASY: [u8; 23] = [
+    0x98,                                              //  0: TYA
+    0x4A,                                              //  1: LSR A         ; row = block type
+    0xA8,                                              //  2: TAY
+    0xB9, EASY_FLASH_CPU as u8, (EASY_FLASH_CPU >> 8) as u8, //  3: LDA FLASH,Y
+    0x8D, 0x86, 0x05,                                  //  6: STA PUp_StarManFlash
+    0xB9, PRODUCTS as u8, (PRODUCTS >> 8) as u8,       //  9: LDA PRODUCTS,Y
+    0xF0, 0x02,                                        // 12: BEQ locked
+    0xA8,                                              // 14: TAY
+    0x60,                                              // 15: RTS
+    0x4C, LATP_COIN_CPU as u8, (LATP_COIN_CPU >> 8) as u8, // 16: locked: JMP LATP_Coin
+    0x00, 0x00, 0x00, 0x80,                            // 19: FLASH
+];
+
+const EASY_FLASH_OFFSET: usize = 19;
+const EASY_FLASH_CPU: u16 = GATE_CPU + EASY_FLASH_OFFSET as u16;
 
 /// File offset of jump-table entry `n`'s word.
 const fn entry_offset(n: usize) -> usize {
@@ -179,35 +236,100 @@ fn repoint(rom: &mut Rom, entry: usize, vanilla: u16, to: u16) {
     rom.write_range(off, &to.to_le_bytes());
 }
 
-/// Install the dispenser gate. Only the items in `found` are dispensed; every
-/// other power-up block pays a coin.
-pub fn apply_poc(rom: &mut Rom, found: &[Key]) {
-    // Refuses to run after `qol::apply_modern_powerups`, which rewrites the two
-    // `LDY #$05` operands inside these very handlers (0x11802, 0x11810) so a
-    // small player is powered up directly. That deletes the mushroom rung this
-    // gate turns into a key, and whichever pass ran second would silently win.
-    //
-    // **The combination is wanted, not forbidden** — it is the mode's easier
-    // arm, where the mushroom stops being a gate (see the allocation section
-    // of `docs/item_keys_design.md`). It needs a 21-byte variant of this
-    // routine with the `Player_Suit` test dropped, because under that patch
-    // both paths return the same product. Until that exists, refusing is the
-    // honest answer; silently producing a gate the player cannot open is not.
-    assert_eq!(
-        rom.read_byte(0x11802),
-        0x05,
-        "LATP_Flower's small product is not vanilla's mushroom — \
-         Modern Power-ups is already installed, and the two cannot both be on"
-    );
+/// Install the dispenser gate.
+///
+/// `easier` selects the arm: `false` keeps the mushroom as a key, `true` is
+/// the Modern Power-ups arm where it is not a gate. The found set itself lives
+/// in SRAM at [`PRODUCTS`] and is written by whoever grants an item, so
+/// nothing here bakes it in.
+pub fn apply(rom: &mut Rom, easier: bool) {
+    // Modern Power-ups rewrites the two `LDY #$05` operands inside these very
+    // handlers (0x11802, 0x11810), so a small player is powered up directly.
+    // With `easier` that is the intent and the routine accounts for it; the
+    // combination is only wrong when this arm does not know about it.
+    if !easier {
+        assert_eq!(
+            rom.read_byte(0x11802),
+            0x05,
+            "LATP_Flower's small product is not vanilla's mushroom — Modern Power-ups \
+             is installed, so pass `easier` and use the arm that expects it"
+        );
+    }
     rom.push_tag("item_keys/gate");
-    rom.write_range(FS_ITEM_GATE, &gate_bytes(found));
+    if easier {
+        rom.write_range(FS_ITEM_GATE, &GATE_EASY);
+    } else {
+        rom.write_range(FS_ITEM_GATE, &GATE);
+    }
     repoint(rom, 1, LATP_FLOWER_CPU, GATE_CPU);
     repoint(rom, 2, LATP_LEAF_CPU, GATE_CPU);
-    if !found.contains(&Key::Star) {
-        repoint(rom, 3, LATP_STAR_CPU, LATP_COIN_CPU);
-    }
+    repoint(rom, 3, LATP_STAR_CPU, GATE_CPU);
+    rom.pop_tag();
+
+    // The one source wired so far. Without it the found table never changes
+    // and the gate is the all-coin POC again.
+    rom.push_tag("item_keys/found");
+    assert_eq!(
+        rom.read_range(TOAD_GRANT, 3),
+        &TOAD_GRANT_VANILLA[..],
+        "the Toad House grant site is not vanilla's LDA"
+    );
+    rom.write_range(FS_FOUND_RECORD, &FOUND_RECORD);
+    rom.write_range(TOAD_GRANT, &[0x20, RECORD_CPU as u8, (RECORD_CPU >> 8) as u8]);
     rom.pop_tag();
 }
+
+// --- Finding an item -------------------------------------------------
+//
+// One source is wired so far: the Toad House chest. The Hammer Bro reward and
+// the Princess letter are the other two the design names, and they are
+// separate sites in other banks.
+
+/// `PRG029_D1B1`, the tail of `ToadHouse_ChestPressB`: `LDA
+/// ToadHouse_Item2Inventory,X / TAX / INX / RTS`. `A` holds the Global Item ID
+/// the chest is about to hand over, which is exactly what the found table
+/// needs to record.
+const TOAD_GRANT: usize = 0x3B1C1;
+/// What stands there in vanilla — the `LDA` this pass displaces.
+const TOAD_GRANT_VANILLA: [u8; 3] = [0xBD, 0x3B, 0xD1];
+
+/// Where the recorder lives: the tail of PRG029, which `prg029.asm` ends by
+/// declaring "Rest of ROM bank was empty" — so the run from here to the bank
+/// end is filler, not data something reads.
+const FS_FOUND_RECORD: usize = 0x3B81A;
+const RECORD_CPU: u16 = 0xD80A;
+const ROW_CPU: u16 = RECORD_CPU + 21;
+const PROD_CPU: u16 = RECORD_CPU + 31;
+
+/// Record a granted item in the found table, then carry on as vanilla did.
+///
+/// Reached by replacing the `LDA` at [`TOAD_GRANT`] with a `JSR` here: the
+/// routine performs that load itself, records what it saw, and returns with
+/// `A` still holding the item id so the caller's `TAX / INX / RTS` is
+/// untouched. `X` is free to clobber — the caller overwrites it with `TAX` on
+/// the next instruction — but `A` is not, which is why the id is parked in
+/// `Y` and restored.
+///
+/// Two tables rather than one packed byte: unpacking a nibble pair costs more
+/// than the ten bytes it would save, and `$FF` in the row table is a clean
+/// "not a key" that `BMI` tests for nothing.
+#[rustfmt::skip]
+const FOUND_RECORD: [u8; 41] = [
+    0xBD, 0x3B, 0xD1,                              //  0: LDA ToadHouse_Item2Inventory,X
+    0xA8,                                          //  3: TAY            ; keep the id
+    0xC0, 0x0A,                                    //  4: CPY #$0A
+    0xB0, 0x0B,                                    //  6: BCS done       ; ids $0A+ are not keys
+    0xBE, ROW_CPU as u8, (ROW_CPU >> 8) as u8,     //  8: LDX ROW,Y
+    0x30, 0x06,                                    // 11: BMI done       ; $FF = not a key
+    0xB9, PROD_CPU as u8, (PROD_CPU >> 8) as u8,   // 13: LDA PROD,Y
+    0x9D, PRODUCTS as u8, (PRODUCTS >> 8) as u8,   // 16: STA FOUND_PRODUCTS,X
+    0x98,                                          // 19: done: TYA      ; A = id, as the caller expects
+    0x60,                                          // 20: RTS
+    // 21: ROW — the gate's row for each Global Item ID, $FF for "not a key".
+    0xFF, 0x00, 0x01, 0x02, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x03,
+    // 31: PROD — the Bouncer_PUp index that row then dispenses.
+    0x00, 0x05, 0x02, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04,
+];
 
 #[cfg(test)]
 mod tests {
@@ -224,10 +346,10 @@ mod tests {
         u16::from_le_bytes([rom.read_byte(off), rom.read_byte(off + 1)])
     }
 
-    /// The table is where this module says it is. Without this every write
-    /// here lands in the middle of something else.
+    /// Both sites are where this module says they are. Without this the
+    /// writes land in the middle of something else.
     #[test]
-    fn jump_table_is_where_we_think() {
+    fn the_rom_is_shaped_the_way_this_assumes() {
         let Some(rom) = vanilla() else {
             eprintln!("SKIP: requires the ROM");
             return;
@@ -237,60 +359,74 @@ mod tests {
         assert_eq!(word(&rom, 2), LATP_LEAF_CPU);
         assert_eq!(word(&rom, 3), LATP_STAR_CPU);
         assert_eq!(word(&rom, 4), LATP_COIN_CPU);
+        assert_eq!(rom.read_range(TOAD_GRANT, 3), &TOAD_GRANT_VANILLA[..]);
         assert_eq!(FS_ITEM_GATE, 0x117FC, "the routine goes where LATP_Flower was");
     }
 
-    /// A found item returns its product; an unfound one returns zero, which is
-    /// what the routine branches on.
+    /// All three power-up entries reach the routine, and no other vector
+    /// moves. The star has to come through it now: with the found set in SRAM
+    /// its locked state changes while the game runs, so it can no longer be
+    /// decided by repointing at build time.
     #[test]
-    fn products_table_encodes_the_found_set() {
-        let none = gate_bytes(&[]);
-        assert_eq!(&none[PRODUCTS_OFFSET..], &[0, 0, 0]);
-
-        let both = gate_bytes(&[Key::Mushroom, Key::Leaf]);
-        assert_eq!(&both[PRODUCTS_OFFSET..], &[5, 0, 3]);
-
-        // The star has no row: it is all-or-nothing at the jump table.
-        let star = gate_bytes(&[Key::Star]);
-        assert_eq!(&star[PRODUCTS_OFFSET..], &[0, 0, 0]);
-    }
-
-    /// The star entry is repointed only when the star is locked, and the
-    /// `LATP_Star` body survives either way — the found case still runs it.
-    #[test]
-    fn star_is_all_or_nothing() {
-        let Some(mut locked) = vanilla() else {
-            eprintln!("SKIP: requires the ROM");
-            return;
-        };
-        let mut found = locked.clone();
-        let body = locked.read_range(0x11818, 8).to_vec();
-
-        apply_poc(&mut locked, &[]);
-        assert_eq!(word(&locked, 3), LATP_COIN_CPU);
-        assert_eq!(locked.read_range(0x11818, 8), &body[..]);
-
-        apply_poc(&mut found, &[Key::Star]);
-        assert_eq!(word(&found, 3), LATP_STAR_CPU);
-    }
-
-    /// The two power-up entries point at the routine, and no other vector
-    /// moves.
-    #[test]
-    fn only_the_gated_entries_are_repointed() {
+    fn all_three_entries_reach_the_gate() {
         let Some(mut rom) = vanilla() else {
             eprintln!("SKIP: requires the ROM");
             return;
         };
         let before: Vec<u16> = (0..12).map(|n| word(&rom, n)).collect();
-        apply_poc(&mut rom, &[Key::Star]);
+        apply(&mut rom, false);
         for (n, &was) in before.iter().enumerate() {
             let expected = match n {
-                1 | 2 => GATE_CPU,
+                1..=3 => GATE_CPU,
                 _ => was,
             };
             assert_eq!(word(&rom, n), expected, "entry {n}");
         }
+    }
+
+    /// The grant site calls the recorder and keeps its own tail.
+    #[test]
+    fn the_toad_house_grant_is_hooked() {
+        let Some(mut rom) = vanilla() else {
+            eprintln!("SKIP: requires the ROM");
+            return;
+        };
+        apply(&mut rom, false);
+        assert_eq!(
+            rom.read_range(TOAD_GRANT, 3),
+            &[0x20, RECORD_CPU as u8, (RECORD_CPU >> 8) as u8],
+            "the LDA should have become a JSR"
+        );
+        assert_eq!(rom.read_range(TOAD_GRANT + 3, 3), &[0xAA, 0xE8, 0x60], "TAX / INX / RTS");
+        assert_eq!(rom.read_range(FS_FOUND_RECORD, 41), &FOUND_RECORD[..]);
+    }
+
+    /// The recorder's two tables agree with the gate's rows, for every key.
+    /// A drift here would record a leaf into the mushroom's row and unlock
+    /// the wrong thing.
+    #[test]
+    fn recorder_rows_match_the_gate_rows() {
+        const ROW: usize = 21;
+        const PROD: usize = 31;
+        for (id, key) in [(1usize, Key::Mushroom), (2, Key::Flower), (3, Key::Leaf), (9, Key::Star)]
+        {
+            assert_eq!(FOUND_RECORD[ROW + id] as usize, key.row(), "row for {key:?}");
+            assert_eq!(FOUND_RECORD[PROD + id], key.product(), "product for {key:?}");
+        }
+        // Everything else is "not a key", and must be, or an unrelated item
+        // would silently open a gate.
+        for id in [0usize, 4, 5, 6, 7, 8] {
+            assert_eq!(FOUND_RECORD[ROW + id], 0xFF, "item {id} must not be a key");
+        }
+    }
+
+    /// The easier arm drops the suit test, so its row is always the block
+    /// type and the mushroom row is never read.
+    #[test]
+    fn the_easier_arm_has_no_suit_test() {
+        assert!(!GATE_EASY.contains(&0xED), "Player_Suit must not be read");
+        assert!(GATE.contains(&0xED), "the default arm must read it");
+        assert!(GATE_EASY.len() < GATE.len());
     }
 }
 
@@ -307,10 +443,31 @@ mod asm_checks {
     /// absolutely, so the routine cannot be relocated without recomputing it.
     #[test]
     fn gate_is_well_formed() {
-        asm::check(&gate_bytes(&[Key::Mushroom, Key::Flower, Key::Leaf]))
+        asm::check(&GATE)
             .allocation(FS_ITEM_GATE)
             .origin(GATE_CPU)
-            .data_from(PRODUCTS_OFFSET)
+            .data_from(FLASH_OFFSET)
+            .assert_ok();
+    }
+
+    /// The easier arm shares the allocation and the origin.
+    #[test]
+    fn easier_gate_is_well_formed() {
+        asm::check(&GATE_EASY)
+            .allocation(FS_ITEM_GATE)
+            .origin(GATE_CPU)
+            .data_from(EASY_FLASH_OFFSET)
+            .assert_ok();
+    }
+
+    /// The recorder is reached by a  that displaces a whole instruction,
+    /// and its two tables are data, not code.
+    #[test]
+    fn found_record_is_well_formed() {
+        asm::check(&FOUND_RECORD)
+            .origin(RECORD_CPU)
+            .data_from(21)
+            .hook(&TOAD_GRANT_VANILLA, 0, &[0x20, RECORD_CPU as u8, (RECORD_CPU >> 8) as u8])
             .assert_ok();
     }
 }

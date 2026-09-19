@@ -353,14 +353,14 @@ pub struct TestRomSpec {
     pub remove_locks: bool,
     /// Replace water-gap tiles with bridges.
     pub remove_gaps: bool,
-    /// Install the item-keys dispenser gate — the POC.
+    /// Install the item-keys dispenser gate. The payload is the *easier* arm:
+    /// `Some(false)` keeps the mushroom as a key, `Some(true)` is the Modern
+    /// Power-ups arm where it is not.
     ///
-    /// `Some(found)` installs it; only those items are dispensed and every
-    /// other power-up block pays a coin. `Some(vec![])` is the most
-    /// restricted state the mode can produce. The found set is baked in at
-    /// build time rather than read from SRAM, which is the one thing that
-    /// makes this a POC — see `randomize::item_keys`.
-    pub item_keys: Option<Vec<crate::randomize::item_keys::Key>>,
+    /// The found set lives in SRAM and starts empty, so a fresh game opens
+    /// with every power-up block paying a coin; opening a Toad House chest
+    /// records what it handed over and that item's blocks start working.
+    pub item_keys: Option<bool>,
     /// Item IDs to start with, up to 3 (the trampoline's slot count).
     pub starting_items: Vec<u8>,
     /// Starting lives. Only written when `starting_items` is non-empty, since
@@ -1143,15 +1143,11 @@ pub fn build(vanilla: &[u8], spec: &TestRomSpec) -> Result<TestRom, String> {
     //     suit is still handed over intact: carrying a power-up *in* is the
     //     sequence break the design deliberately allows, and the whole point
     //     of testing this with and without one.
-    if let Some(found) = &spec.item_keys {
-        crate::randomize::item_keys::apply_poc(&mut rom, found);
+    if let Some(easier) = spec.item_keys {
+        crate::randomize::item_keys::apply(&mut rom, easier);
         report.push(format!(
-            "item keys POC: found = {} (every other ? block pays a coin)",
-            if found.is_empty() {
-                "nothing".to_string()
-            } else {
-                found.iter().map(|k| format!("{k:?}")).collect::<Vec<_>>().join(", ")
-            }
+            "item keys: dispenser gated on the found table{}",
+            if easier { " (easier arm: the mushroom is not a gate)" } else { "" }
         ));
     }
 
