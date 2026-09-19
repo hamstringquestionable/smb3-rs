@@ -3563,3 +3563,187 @@ fn key_placement_census() {
 their homes were read from the ROM instead"
     );
 }
+
+/// **How much does a gated level seal off?**
+///
+/// The carrier MiMaze actually wants. A level tile is already a wall until it
+/// is beaten — `MO_NormalMoveEnter` will not let the player walk off a tile at
+/// or above its page threshold until it is completed, and a level tile is
+/// above its threshold by definition — so "you cannot beat this without the
+/// leaf" needs no new tile, no new map object and no map-side patch. The
+/// walker agrees: `expand` rejects a destination cell that is background, and
+/// `base_grids` blanks a blocked cell to background, so a blanked level cell
+/// is exactly a level the player cannot pass.
+///
+/// [`metrics::required_levels`] already counts the strictest case — levels
+/// whose gating makes the game unwinnable. This asks the fuller question, the
+/// one `wall_site_census` asks of corridors: how much content does gating each
+/// level put out of reach, and is there anywhere in front of it for the key?
+///
+/// Forts are reported separately, and **their progress-gate column is
+/// tautological — do not read it as a finding.** `Spheres::solvable` requires
+/// every fortress to be beatable, so blanking a fort cell makes the maze
+/// unsolvable by definition, whatever it does or does not strand. The fort
+/// row's cut sizes are real; its 100% is an artifact of the instrument.
+/// Measuring a gated fort properly means asking whether the lock it opens
+/// becomes unopenable, which needs the fort excluded from that requirement.
+/// 7-F1 is the vanilla instance (tanooki), and taking it as the single fort
+/// gate sidesteps the general problem the design note leaves open.
+///
+/// ```sh
+/// CENSUS_SEEDS=100 cargo test --release --lib level_gate_census \
+///     -- --ignored --nocapture
+/// ```
+#[test]
+#[ignore]
+fn level_gate_census() {
+    use crate::randomize::overworld_build::FortRef;
+
+    let Some(raw) = load_rom() else { return };
+    let seeds = census_seeds(100);
+    let knobs = Knobs::default();
+    let k = super::DEFAULT_WANDS_REQUIRED;
+
+    struct Tally {
+        seen: usize,
+        cuts: usize,
+        progress: usize,
+        viable: usize,
+        band: [usize; 4],
+        keys: Vec<usize>,
+    }
+    impl Tally {
+        fn new() -> Self {
+            Tally { seen: 0, cuts: 0, progress: 0, viable: 0, band: [0; 4], keys: Vec::new() }
+        }
+    }
+    let (mut lv, mut ft) = (Tally::new(), Tally::new());
+    let mut unsolvable = 0usize;
+    let mut per_seed_lv: Vec<usize> = Vec::new();
+
+    for seed in 0..seeds {
+        let (rom, state, _) = generated(&raw, seed, &knobs, k);
+        let full = state.spheres();
+        if !full.solvable {
+            unsolvable += 1;
+            continue;
+        }
+        let all_reached: std::collections::HashSet<MazePos> =
+            full.spheres.iter().flat_map(|s| s.reached.iter().copied()).collect();
+        let total = all_reached.len().max(1);
+        let links = state.links();
+        let all_forts: Vec<FortRef> = state.forts().iter().map(|&(f, _)| f).collect();
+
+        let mut sources: Vec<MazePos> = Vec::new();
+        for w in state.worlds.iter().filter(|w| state.in_maze[w.world_idx]) {
+            for s in w.slots.iter().filter(|s| s.kind == SlotKind::ToadHouse) {
+                sources.push((w.world_idx, s.pos));
+            }
+            if let Some(t) = w.target {
+                sources.push((w.world_idx, t));
+            }
+        }
+        if state.reserved.is_empty() {
+            for wi in 0..8 {
+                if state.in_maze[wi] {
+                    for pos in crate::randomize::rom_data::read_hb_sprite_positions(&rom, wi) {
+                        sources.push((wi, pos));
+                    }
+                }
+            }
+        } else {
+            sources.extend(state.reserved.iter().copied());
+        }
+
+        let mut seed_lv = 0usize;
+        for w in state.worlds.iter().filter(|w| state.in_maze[w.world_idx]) {
+            for slot in &w.slots {
+                let t = match slot.kind {
+                    SlotKind::Level => &mut lv,
+                    SlotKind::Fortress => &mut ft,
+                    _ => continue,
+                };
+                let cell: MazePos = (w.world_idx, slot.pos);
+                let blocked: std::collections::HashSet<MazePos> = std::iter::once(cell).collect();
+                let sp = state.spheres_with_blocked(&blocked);
+                let still: std::collections::HashSet<MazePos> =
+                    sp.spheres.iter().flat_map(|s| s.reached.iter().copied()).collect();
+                // The gated cell itself stops being reachable content; what
+                // matters is what it takes with it.
+                let cut = all_reached.difference(&still).count().saturating_sub(1);
+                t.seen += 1;
+                if cut == 0 && sp.solvable {
+                    continue;
+                }
+                t.cuts += 1;
+                if matches!(slot.kind, SlotKind::Level) {
+                    seed_lv += 1;
+                }
+                let f = cut as f64 / total as f64;
+                let i = if f < 0.10 {
+                    0
+                } else if f < 0.50 {
+                    1
+                } else if f < 0.90 {
+                    2
+                } else {
+                    3
+                };
+                t.band[i] += 1;
+                if !sp.solvable {
+                    t.progress += 1;
+                }
+                let unbeaten: std::collections::HashSet<FortRef> =
+                    sp.unbeaten.iter().copied().collect();
+                let open: std::collections::HashSet<FortRef> =
+                    all_forts.iter().copied().filter(|f| !unbeaten.contains(f)).collect();
+                let bases = state.base_grids(&blocked);
+                let shut = state.shut_locks(&open);
+                let reach = walk_maze(&state.view(&bases, &shut), &links, state.start);
+                let near = sources.iter().filter(|&&s| reach.contains(s)).count();
+                t.keys.push(near);
+                if near > 0 {
+                    t.viable += 1;
+                }
+            }
+        }
+        per_seed_lv.push(seed_lv);
+    }
+
+    let n = (seeds as usize - unsolvable).max(1);
+    let show = |name: &str, t: &Tally| {
+        let pct = |a: usize, b: usize| 100.0 * a as f64 / b.max(1) as f64;
+        println!(
+            "  {name}: {} examined, {} seal something ({:.0}%)",
+            t.seen,
+            t.cuts,
+            pct(t.cuts, t.seen)
+        );
+        println!(
+            "     per seed {:.1} gateable   progress gates {} ({:.0}% of gateable)",
+            t.cuts as f64 / n as f64,
+            t.progress,
+            pct(t.progress, t.cuts)
+        );
+        println!(
+            "     cut size  <10%:{} 10-50%:{} 50-90%:{} >=90%:{}",
+            t.band[0], t.band[1], t.band[2], t.band[3]
+        );
+        println!(
+            "     key in front {} of {} ({:.1}%),  mean sources {:.1}",
+            t.viable,
+            t.cuts,
+            pct(t.viable, t.cuts),
+            t.keys.iter().sum::<usize>() as f64 / t.keys.len().max(1) as f64
+        );
+    };
+    println!("\n=== gated levels and forts, {seeds} seeds, K={k} ===");
+    println!("  UNWINNABLE, excluded  {unsolvable}  (must be 0)");
+    show("LEVELS", &lv);
+    show("FORTS ", &ft);
+    println!(
+        "  gateable levels per seed: min {}  max {}",
+        per_seed_lv.iter().min().copied().unwrap_or(0),
+        per_seed_lv.iter().max().copied().unwrap_or(0)
+    );
+}
