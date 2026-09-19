@@ -351,12 +351,9 @@ mechanic.
    vanilla behaviour otherwise unchanged, so the acquisition moment still reads
    as a normal reward.
 2. **The dispenser gate.** The split hook in `LATP_Flower` and `LATP_Leaf`, then
-   Big [?] and chests. Allocation is the open mechanical item: `LATP_JumpTable`
-   lives in PRG008, which has no row in the free-space table, so the routines
-   likely live elsewhere and are reached by repointing the jump-table words —
-   the project's own cheapest move. **Verify the target bank is mapped when the
-   bump handler runs** before counting on it (PRG006 has 1392 contiguous bytes
-   at `$C000` in-level and is the first candidate).
+   Big [?] and chests. Reached by **repointing the `LATP_JumpTable` words** for
+   entries 1 and 2 — the project's cheapest move, and the only one available
+   here, because PRG008 cannot absorb even a `JSR` (see below).
 3. **Walls.** The `wand_gate.rs` pattern with a found-mask predicate.
 4. **The requirement table + walker fix**, so gated levels become real nodes.
 5. **Canoe / anchor.**
@@ -365,6 +362,52 @@ mechanic.
 
 Standard mode must come out byte-identical (`rom_identity`) and maze
 census-equivalent (`test_route_census`, read per-world, not on the global mean).
+
+## Allocation — verified 2026-09-19
+
+`smb3-rs <rom> --free-space` plus label ranges from the disassembly. During a
+block bump the four slots hold:
+
+| Slot | Bank | Free | Largest gap |
+|---|---|---|---|
+| `$8000` | PRG030 (fixed) | 42 | **42** @ `0x3DFE6` |
+| `$A000` | **PRG008** — all the LATP code (`$A0C8`–`$BFF9`) | **0** | — |
+| `$C000` | **PRG000** (`$C3E7`–`$DEBB`) | **0** | — |
+| `$E000` | PRG031 (fixed) | 81 | **30** @ `0x3E972` |
+
+PRG008 and PRG000 are co-resident — proven by PRG008 reading `PowerUp_Ability`
+at `$C3E0` in PRG000 — and **both are completely full**. So:
+
+- The handlers **cannot be patched in place.** There is not one spare byte in
+  PRG008 for a `JSR`. Repointing the jump-table words is not merely the cheapest
+  option, it is the only one: the word is overwritten, costing nothing.
+- The gate routine has exactly **two possible homes**: PRG030's 42-byte gap or
+  PRG031's 30-byte gap.
+
+> **Correction.** An earlier draft named PRG006 (1392 bytes at `$C000`) as the
+> first candidate. That is wrong — PRG006 is a *data* bank swapped in to read
+> enemy streams; during gameplay `$C000` is PRG000. Do not budget from the
+> `$C000` row of the CLAUDE.md table without checking which bank is actually
+> resident at the moment your code runs.
+
+**Budget.** A shared routine with two entry stubs, a mask table indexed by the
+`Bouncer_PUp` index the handler already computes, and `JMP LATP_Coin` on the
+locked path, sketches to **roughly 37 bytes** — under PRG030's 42 with ~5 spare,
+over PRG031's 30. That is the whole budget for `LATP_Flower` and `LATP_Leaf`
+together, before Big [?] and chests are considered at all.
+
+PRG030's gap is the bank's **only** usable run, and CLAUDE.md flags it as the
+last resort for always-mapped code. Spending it here is a real cost to weigh,
+not a formality. Two things to try before committing to it:
+
+1. **Tighten the routine** to 30 bytes so PRG031's gap serves instead, leaving
+   PRG030's 42 intact. The size techniques CLAUDE.md records — deriving an index
+   from one already held, reaching a shared exit with a conditional branch,
+   picking the instruction that preserves the live register — are aimed at
+   exactly this shape.
+2. **Check whether Big [?] and chests dispense through a different bank**, where
+   space is not scarce. If they do, only the two LATP handlers compete for the
+   always-mapped gaps.
 
 ## Open decisions
 
@@ -422,7 +465,9 @@ Read from the local Southbird disassembly and this repo on 2026-09-19:
 (`prg001.asm:1015`), `PowerUp_Ability` (`prg000.asm:558`), the `Player_QueueSuit`
 consumer (`prg008.asm:795-830`), `qol/canoe_summon.rs`, `wand_gate.rs`,
 `powerups.rs`, `rom_data/tables.rs`, `smb3_rom_reference.md:5620-5690`, and
-issue #266. The `$68`/`$69` "never placed" claim is from a reference search of
+issue #266. Bank residency and free space verified with `--free-space` and
+disassembly label ranges (see "Allocation"). The `$68`/`$69` "never placed"
+claim is from a reference search of
 `src/randomize/`.
 
 Inherited from the parked artifact and **not re-verified here**: the free
