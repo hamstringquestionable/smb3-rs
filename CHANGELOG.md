@@ -11,6 +11,13 @@ deploys.
 
 ### Changed
 
+- **A Hammer Bro's reward is decided once.** The chest, Toad House, Hammer Bro
+  and Princess-letter item rolls now happen before the overworld is built
+  rather than after it, so the reward attached to a redistributed Hammer Bro
+  is the one the game hands you instead of being rolled a second time over the
+  top. Item *values* differ from previous versions for the same seed; the maps
+  do not.
+
 - **Nothing breaks the walk to Bowser's castle.** Toad Houses and spade panels
   no longer place on World 8's last screen — the bridge approach is the climax,
   not a place to stop for a free item.
