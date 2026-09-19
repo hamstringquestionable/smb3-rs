@@ -182,11 +182,17 @@ fn repoint(rom: &mut Rom, entry: usize, vanilla: u16, to: u16) {
 /// Install the dispenser gate. Only the items in `found` are dispensed; every
 /// other power-up block pays a coin.
 pub fn apply_poc(rom: &mut Rom, found: &[Key]) {
-    // Mutually exclusive with `qol::apply_modern_powerups`, which rewrites the
-    // two `LDY #$05` operands inside these very handlers (0x11802, 0x11810) so
-    // a small player is powered up directly. That removes the mushroom rung
-    // this gate exists to make a key, and whichever pass ran second would
-    // silently win. Checked here rather than left to ordering.
+    // Refuses to run after `qol::apply_modern_powerups`, which rewrites the two
+    // `LDY #$05` operands inside these very handlers (0x11802, 0x11810) so a
+    // small player is powered up directly. That deletes the mushroom rung this
+    // gate turns into a key, and whichever pass ran second would silently win.
+    //
+    // **The combination is wanted, not forbidden** — it is the mode's easier
+    // arm, where the mushroom stops being a gate (see the allocation section
+    // of `docs/item_keys_design.md`). It needs a 21-byte variant of this
+    // routine with the `Player_Suit` test dropped, because under that patch
+    // both paths return the same product. Until that exists, refusing is the
+    // honest answer; silently producing a gate the player cannot open is not.
     assert_eq!(
         rom.read_byte(0x11802),
         0x05,

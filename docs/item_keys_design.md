@@ -557,22 +557,59 @@ is no mapping question at all, and **the always-mapped gaps do not have to be
 spent.** This is the project's own recorded lesson in miniature: repointing a
 jump-table vector reclaims the code it pointed at.
 
-**Budget.** A shared routine — two entry stubs merged with the `$2C` skip trick,
-the flash clear, the `Player_Suit` branch the vanilla handlers already had, a
-mask table indexed by the `Bouncer_PUp` index, and `JMP LATP_Coin` on the locked
-path — sketches to **about 32 bytes**, roughly 4 over the 28 reclaimed. That is
-an optimization problem, not a relocation problem. Two ways out, in order:
+**Budget — settled by building it, 2026-09-19.** The sketch here guessed about
+32 bytes and offered two ways to find the missing four. Neither was needed: the
+routine is **27**, and `randomize::item_keys` is it. Three things paid for the
+difference, and the first two were not in the sketch at all:
 
-1. Tighten the routine to 28. The size techniques CLAUDE.md records are aimed at
-   exactly this shape, and the vanilla pair wastes a duplicated 5-byte flash
-   clear that the merged version only needs once.
-2. Put the 4-byte mask table in PRG031's 30-byte gap and keep the code in the
-   reclaimed 28.
+1. **`Y` already holds the block type on entry.** The dispatcher does
+   `LDA Temp_Var1 / ASL A / TAY` and never touches `Y` again before
+   `JMP [Temp_Var1]`, so the row index is `TYA / LSR A` — no entry stubs, and
+   the `$2C` skip trick is not needed.
+2. **One table, not two.** A row holds the `Bouncer_PUp` index to return, and
+   **zero means locked**. So "is it unlocked" and "what does it give" are a
+   single `LDA`, and the found-mask never appears in the code — which is also
+   what lets the found set be a build-time table in the POC and an SRAM read in
+   the feature, with no other change.
+3. `X` is never touched, for correctness rather than size: it carries the
+   tile-check index into these handlers (`LATP_Brick` reads it with
+   `CPX #$04`, `LATP_GetCoinAboveBlock` backs it up around a call), so the row
+   index lives in `Y`. Indexing with `X` would have been the same byte count
+   and a live-register bug.
 
 Entry 0 (`LATP_None`, `LDY #1 / RTS`) sits just above and is 3 more bytes if it
 is ever worth repointing too — but it is live, reached from `LATP_QBlocks`.
 
-**Settled 2026-09-19: nothing else competes for these 28 bytes.** The Big [?]
+**Correction, 2026-09-19: two of these 28 bytes are already spoken for.** The
+free-space audit caught it on the first build. `qol::apply_modern_powerups`
+(MaCobra52's Easy Power-up System, `Options::modern_powerups`, default off)
+writes `0x11802` and `0x11810` — the `LDY #$05` operands *inside* these two
+handlers — changing the product a **small** player gets from a mushroom to the
+suit itself. So 26 of the 28 are free; two belong to that option whenever it is
+on.
+
+That is not merely an allocation clash. Modern Power-ups **deletes the mushroom
+rung** — the thing "The gate: split on the branch that already exists" turns
+into the strongest key in the vocabulary. The two features are making opposite
+claims about the same two bytes.
+
+**Resolved as a difficulty dial rather than an error** (decided 2026-09-19).
+Modern Power-ups on is the *easier* mode: small Mario is powered up directly,
+so the mushroom is no longer a gate and the permanently-small opening does not
+happen. Off — the default — keeps the mushroom as a key. The routine has a
+variant for it and both fit the same allocation:
+
+| arm | routine | mushroom |
+|---|---|---|
+| default | 27 bytes, splits on `Player_Suit` | a key |
+| Modern Power-ups | 21 bytes, no suit test — the row is the block type | not a gate |
+
+The easier variant is simply the default one with `LDY Player_Suit / BNE big /
+LDA #$00` removed, because under that patch both paths return the same product
+anyway. **Not built yet** — `apply_poc` currently asserts vanilla's byte and
+refuses the combination, which is the honest state until the variant exists.
+
+**Nothing else competes for the run.** The Big [?]
 path lives in PRG005 and the chest is not a dispenser at all — see "The second
 dispenser is the Big [?] block" above. PRG005 has one 58-byte gap at `0x0BFD6`
 (CPU `$BFC6`, the bank's tail), so the Big [?] gate pays its own rent in its own
