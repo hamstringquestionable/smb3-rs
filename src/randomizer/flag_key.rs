@@ -42,6 +42,18 @@ pub(super) const FLAG_KEY_PREFIX: &str = "SMB3R-";
 /// flags produces byte-identical output to before this feature existed.
 pub(super) const MAYBE_SALT: u64 = 0x4D41_5942_455F_5631; // "MAYBE_V1"
 
+/// Salt for the substream that rolls chest, Toad House, Hammer Bro and letter
+/// items.
+///
+/// Those rolls used to draw from the main stream late in the run. They were
+/// moved ahead of `overworld_pickup`, which reads the Hammer Bro reward table
+/// out of the ROM to build the pool the builder reattaches — so the rewards
+/// the builder distributes are now the randomized ones, decided once instead
+/// of rolled, stamped and rolled again. A substream is what makes that move
+/// cost nothing: the main stream never sees these draws, so the overworld is
+/// byte-identical either way.
+pub(super) const ITEM_SALT: u64 = 0x4954_454D_535F_5631; // "ITEMS_V1"
+
 /// Bytes of payload the format can address, past the two-byte envelope.
 ///
 /// 99 bits are spent today, leaving 141 in reserve — years of headroom at the
