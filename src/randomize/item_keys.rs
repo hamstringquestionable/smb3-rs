@@ -117,7 +117,10 @@ impl Key {
             Key::Flower => Some(2),
             Key::Leaf => Some(3),
             Key::Star => Some(4),
-            Key::Anchor => None,
+            // Not a `Bouncer_PUp` index — nothing dispenses an anchor. Just a
+            // non-zero flag in its row, which the canoe stub reads and the
+            // gate never indexes.
+            Key::Anchor => Some(1),
         }
     }
 
@@ -130,7 +133,7 @@ impl Key {
             Key::Flower => Some(1),
             Key::Leaf => Some(2),
             Key::Star => Some(3),
-            Key::Anchor => None,
+            Key::Anchor => Some(4),
         }
     }
 }
@@ -297,24 +300,38 @@ pub fn apply(rom: &mut Rom, easier: bool) {
 /// Clobbers `A` and `X`; **preserves `Y`**, which every caller needs — two of
 /// them are holding an inventory offset or a world number across the call.
 #[rustfmt::skip]
-const RECORD: [u8; 25] = [
-    0xA2, 0x03,                                    //  0: LDX #$03      ; the starman's row
-    0xC9, 0x09,                                    //  2: CMP #$09
-    0xF0, 0x08,                                    //  4: BEQ have
-    0x38,                                          //  6: SEC
-    0xE9, 0x01,                                    //  7: SBC #$01      ; row = id - 1
-    0xC9, 0x03,                                    //  9: CMP #$03
-    0xB0, 0x07,                                    // 11: BCS done      ; id 0 -> $FF, ids 4+ -> out
-    0xAA,                                          // 13: TAX
-    0xBD, PROD_CPU as u8, (PROD_CPU >> 8) as u8,   // 14: have: LDA PROD,X
-    0x9D, PRODUCTS as u8, (PRODUCTS >> 8) as u8,   // 17: STA FOUND_PRODUCTS,X
-    0x60,                                          // 20: done: RTS
-    0x05, 0x02, 0x03, 0x04,                        // 21: PROD by row
+const RECORD: [u8; 29] = [
+    0xC9, 0x0A,                                    //  0: CMP #$0A      ; the anchor
+    0xD0, 0x04,                                    //  2: BNE notanchor
+    0xA2, 0x04,                                    //  4: LDX #$04      ; its own row
+    0xD0, 0x0E,                                    //  6: BNE have      ; always: X is nonzero
+    0xA2, 0x03,                                    //  8: notanchor: LDX #$03   ; the starman's
+    0xC9, 0x09,                                    // 10: CMP #$09
+    0xF0, 0x08,                                    // 12: BEQ have
+    0x38,                                          // 14: SEC
+    0xE9, 0x01,                                    // 15: SBC #$01      ; row = id - 1
+    0xC9, 0x03,                                    // 17: CMP #$03
+    0xB0, 0x07,                                    // 19: BCS done      ; id 0 -> $FF, ids 4+ -> out
+    0xAA,                                          // 21: TAX
+    0xBD, PROD_CPU as u8, (PROD_CPU >> 8) as u8,   // 22: have: LDA PROD,X
+    0x9D, PRODUCTS as u8, (PRODUCTS >> 8) as u8,   // 25: STA FOUND_PRODUCTS,X
+    0x60,                                          // 28: done: RTS
 ];
+
+/// The value written per row. Rows 0-3 are `Bouncer_PUp` indices the gate
+/// reads back; **row 4 is the anchor and is only ever a flag** — the gate
+/// indexes rows 0-3 only, and `FOUND_PRODUCTS + 4` is the byte the canoe
+/// stub reads, so one `STA` serves both kinds.
+///
+/// In its own gap because the routine and this table together are 34 bytes
+/// and the run at [`FS_RECORD`] holds 30.
+#[rustfmt::skip]
+const RECORD_PROD: [u8; 5] = [0x05, 0x02, 0x03, 0x04, 0x01];
 
 const FS_RECORD: usize = 0x3E972;
 const RECORD_CPU: u16 = 0xE962;
-const PROD_CPU: u16 = RECORD_CPU + 21;
+const FS_RECORD_PROD: usize = 0x3FF3A;
+const PROD_CPU: u16 = 0xFF2A;
 
 /// `Player_GetItem`'s tail — `PLA / STA Inventory_Items,Y / RTS`. Hooked at
 /// the `STA` rather than the entry because `A` is the item there and nothing
@@ -360,31 +377,27 @@ const TOAD_HOOK_CPU: u16 = 0xD80A;
 /// Where "the player has held an anchor" lives.
 const ANCHOR: u16 = crate::randomize::maze_state::FOUND_ANCHOR;
 
-/// The Toad House hook, which also records the **anchor** — because that is
-/// the only place one can come from.
+/// The Toad House hook.
 ///
-/// Not a fifth row in [`RECORD`], and not because of taste: `ItemOff[9]` is
-/// `17`, which indexes *past* the 15-byte `ToadHouse_Item2Inventory` into
-/// `ToadHouse_ItemOff` itself, whose bytes 2-4 happen to be `0A 0A 0A`. So
-/// that Toad House type hands out an anchor on all three of its random
-/// outcomes, and no other table in the ROM contains `$0A` — not the Hammer
-/// Bro rewards, not the Princess letters, not the in-level chests, and not
-/// the pools `items::randomize` deals from. One source, so one place to
-/// record it, and `RECORD` stays at 25 bytes inside PRG031's 30-byte gap.
+/// It used to record the anchor itself, on the grounds that a Toad House was
+/// the only place one could come from — `ItemOff[9]` is 17, which indexes
+/// past the 15-byte `ToadHouse_Item2Inventory` into `ToadHouse_ItemOff`,
+/// whose bytes 2-4 are `0A 0A 0A`. True of vanilla's tables, and then
+/// `item_layer` began writing anchors into Hammer Bro rewards, which arrive
+/// through `Player_GetItem` instead. A playtest found the hole: the anchor
+/// was collected and nothing was recorded.
 ///
-/// `A` survives: `STA` does not touch it, so the caller's `TAX / INX / RTS`
-/// still sees the item id. Storing `$0A` itself is the flag — any non-zero
-/// value means found.
+/// So the anchor is [`RECORD`]'s row 4 now, and every grant site gets it for
+/// free. This hook is back to what it always should have been — the
+/// displaced load, the call, and `A` restored for the caller's
+/// `TAX / INX / RTS`.
 #[rustfmt::skip]
-const TOAD_HOOK: [u8; 16] = [
-    0xBD, 0x3B, 0xD1,                                      //  0: LDA Item2Inventory,X (displaced)
-    0x48,                                                  //  3: PHA
-    0x20, RECORD_CPU as u8, (RECORD_CPU >> 8) as u8,       //  4: JSR RECORD
-    0x68,                                                  //  7: PLA        ; A = the item id again
-    0xC9, 0x0A,                                            //  8: CMP #$0A   ; the anchor
-    0xD0, 0x03,                                            // 10: BNE out
-    0x8D, ANCHOR as u8, (ANCHOR >> 8) as u8,               // 12: STA FOUND_ANCHOR
-    0x60,                                                  // 15: out: RTS
+const TOAD_HOOK: [u8; 9] = [
+    0xBD, 0x3B, 0xD1,                                      // 0: LDA Item2Inventory,X (displaced)
+    0x48,                                                  // 3: PHA
+    0x20, RECORD_CPU as u8, (RECORD_CPU >> 8) as u8,       // 4: JSR RECORD
+    0x68,                                                  // 7: PLA        ; A = the item id again
+    0x60,                                                  // 8: RTS
 ];
 
 // --- What a level demands ---------------------------------------------
@@ -588,6 +601,7 @@ fn splice(rom: &mut Rom, site: usize, vanilla: &[u8], patch: &[u8]) {
 fn install_found_recorder(rom: &mut Rom) {
     rom.push_tag("item_keys/found");
     rom.write_range(FS_RECORD, &RECORD);
+    rom.write_range(FS_RECORD_PROD, &RECORD_PROD);
 
     rom.write_range(FS_GETITEM_TAIL, &GETITEM_TAIL_HOOK);
     splice(
@@ -843,10 +857,9 @@ mod tests {
     /// key and only the keys.
     #[test]
     fn recorder_products_match_the_gate_rows() {
-        const PROD: usize = 21;
-        for key in [Key::Mushroom, Key::Flower, Key::Leaf, Key::Star] {
+        for key in [Key::Mushroom, Key::Flower, Key::Leaf, Key::Star, Key::Anchor] {
             let (row, product) = (key.row().unwrap(), key.product().unwrap());
-            assert_eq!(RECORD[PROD + row], product, "product for {key:?}");
+            assert_eq!(RECORD_PROD[row], product, "product for {key:?}");
         }
     }
 
@@ -882,9 +895,10 @@ mod execution {
     const SENTINEL: u16 = 0x0F00;
 
     /// Run `RECORD` with `A = item`, and return the four product bytes.
-    fn record(item: u8) -> [u8; 4] {
+    fn record(item: u8) -> [u8; 5] {
         let mut mem = Memory::new();
         mem.set_bytes(RECORD_CPU, &RECORD);
+        mem.set_bytes(PROD_CPU, &RECORD_PROD);
         let mut cpu = CPU::new(mem, Ricoh2a03);
         let ret = SENTINEL.wrapping_sub(1);
         cpu.memory.set_byte(0x01FF, (ret >> 8) as u8);
@@ -899,19 +913,19 @@ mod execution {
             cpu.single_step();
         }
         assert_eq!(cpu.registers.program_counter, SENTINEL, "RECORD ran away on item {item:#04x}");
-        [0, 1, 2, 3].map(|r| cpu.memory.get_byte(PRODUCTS + r))
+        [0, 1, 2, 3, 4].map(|r| cpu.memory.get_byte(PRODUCTS + r))
     }
 
     /// Every key is recorded into its own row, with its own product.
     #[test]
     fn every_key_records_itself() {
-        for key in [Key::Mushroom, Key::Flower, Key::Leaf, Key::Star] {
+        for key in [Key::Mushroom, Key::Flower, Key::Leaf, Key::Star, Key::Anchor] {
             let id = match key {
                 Key::Mushroom => 1,
                 Key::Flower => 2,
                 Key::Leaf => 3,
                 Key::Star => 9,
-                Key::Anchor => continue,
+                Key::Anchor => 0x0A,
             };
             let (row, product) = (key.row().unwrap(), key.product().unwrap());
             let table = record(id);
@@ -935,10 +949,10 @@ mod execution {
     #[test]
     fn no_other_item_touches_the_table() {
         for id in 0..=0x20u8 {
-            if matches!(id, 1 | 2 | 3 | 9) {
+            if matches!(id, 1 | 2 | 3 | 9 | 0x0A) {
                 continue;
             }
-            assert_eq!(record(id), [0; 4], "item {id:#04x} should record nothing");
+            assert_eq!(record(id), [0; 5], "item {id:#04x} should record nothing");
         }
     }
 }
@@ -977,7 +991,7 @@ mod asm_checks {
     /// instruction boundaries, and `LDA PROD,X` resolves into its own tail.
     #[test]
     fn recorder_is_well_formed() {
-        asm::check(&RECORD).origin(RECORD_CPU).data_from(21).assert_ok();
+        asm::check(&RECORD).origin(RECORD_CPU).assert_ok();
     }
 
     /// The summon gate decodes, ends in a , and its branch lands on an

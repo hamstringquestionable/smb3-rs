@@ -94,7 +94,7 @@ you can, then reserve a sensible margin around them and note both numbers
 
 **Ask "does a run of N bytes exist", never "how much is free".** Free space is
 per-bank *and* per-gap: a routine needs one contiguous run in a bank that is
-mapped when it runs, so a bank total is worthless on its own — PRG031's 41 free
+mapped when it runs, so a bank total is worthless on its own — PRG031's 33 free
 bytes are scraps that will not hold a 40-byte routine. Ask the question directly:
 
 ```sh
@@ -115,7 +115,7 @@ is the one to read:
 
 | Bank | Mapped at | Free left | Largest single gap |
 |------|-----------|-----------|--------------------|
-| PRG031 | `$E000–$FFFF`, always | 41 | **22** |
+| PRG031 | `$E000–$FFFF`, always | 33 | **16** |
 | PRG030 | `$8000–$9FFF`, always | 42 | 42 |
 | PRG001 | swapped, in-level (object AI) | 60 | 38 |
 | PRG003 | swapped, in-level (object AI) | 5 | 5 |
@@ -135,7 +135,7 @@ The always-mapped banks are effectively full, and got fuller: `item_keys`' found
 recorder took PRG031's 30-byte gap (2026-09-19) because a routine three grant
 sites in three banks all have to reach has nowhere else to live. A patch that
 must run regardless of the current bank now has one 42-byte gap in PRG030 and
-nothing over 22 bytes in PRG031, so past that a trampoline into a swapped bank
+nothing over 16 bytes in PRG031, so past that a trampoline into a swapped bank
 is the only option — and that costs bytes too.
 
 **Check where your hook actually runs before paying that rent.** A hook on the

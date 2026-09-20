@@ -142,7 +142,8 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
     // The found recorder is in PRG031 because that bank is always mapped, so
     // all three grant sites reach it whatever else is banked — which is what
     // always-mapped space is for, and why one copy costs less than three.
-    fs(0x3E972, 30, &["item_keys"], "shared found recorder (30 reserved, 25 used)"),
+    fs(0x3E972, 30, &["item_keys"], "shared found recorder (30 reserved, 29 used)"),
+    fs(0x3FF3A, 8, &["item_keys"], "found recorder's value table (8 reserved, 5 used)"),
     fs(0x3E2C6, 10, &["item_keys"], "Player_GetItem tail hook (10 reserved, 7 used)"),
     fs(0x3FFF0, 26, &["card_speed_clear"], "XOR trampoline"),
     // PRG025 (file 0x32010, CPU $C000–$DFFF while the title screen runs)
