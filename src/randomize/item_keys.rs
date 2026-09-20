@@ -420,13 +420,21 @@ pub(crate) struct LevelRequirement {
 /// that list exists to prevent — the protection list and the gate list are
 /// the same list, which is what makes these authored rather than guessed.
 ///
-/// **7-F1 is deliberately absent** (World 7, entry 5, mushroom + tanooki).
-/// Its tanooki comes from a Big [?] block, an object in PRG005 that this
-/// module does not gate, so the ROM would hand one over regardless of what
-/// has been found. Marking it would make the model stricter than the game —
-/// safe, but the gate would collapse to the mushroom gate 8-F already
-/// provides. It joins this table with the Big [?] work, which also needs keys
-/// for the frog and hammer suits and a found-set layout with room for them.
+/// **Every row here must be listed, even a half-enforced one.** The dispenser
+/// gate is global: with item keys on, *every* power-up block in the game is
+/// gated, so these levels are unbeatable without their item **wherever they
+/// land** — not only where the layer chooses to mark them. A requirement left
+/// out of this table is a gate the model cannot see, which is how a seed
+/// strands a player.
+///
+/// That is why 7-F1 is here with **only the mushroom**. Its real requirement
+/// is mushroom + tanooki, but the tanooki comes from a Big [?] — an object in
+/// PRG005 this module does not gate — so the ROM hands one over regardless of
+/// what has been found. The mushroom half *is* enforced, and modelling
+/// exactly the enforced half is what keeps the model honest: claim the
+/// tanooki too and the model is stricter than the game (harmless), omit the
+/// row and the model is looser (not harmless). The tanooki joins it with the
+/// Big [?] work.
 pub(crate) const LEVEL_REQUIREMENTS: &[LevelRequirement] = &[
     // 6-5, the ice level: flight, from its own single Q-leaf (`0x22D74`).
     LevelRequirement {
@@ -439,6 +447,10 @@ pub(crate) const LEVEL_REQUIREMENTS: &[LevelRequirement] = &[
     // conjunction, because `LATP_Star` has no `Player_Suit` split — a starman
     // goes to a small player.
     LevelRequirement { world_idx: 6, entry_idx: 25, items: &[Key::Star], is_fortress: false },
+    // 7-F1: big enough to break the bricks that reach its Big [?]. The Big [?]
+    // itself is ungated, so the tanooki is not part of what the ROM enforces
+    // today — see the note above.
+    LevelRequirement { world_idx: 6, entry_idx: 5, items: &[Key::Mushroom], is_fortress: true },
     // 8-F: big enough to break a block in sub-area 2 (`0x2B900`). The catalog
     // calls it `8F1`, which is also in `FRIENDLIER_BLOCKED_FORTS` — so with
     // **Friendlier Levels on this row cannot be satisfied**, the deck never
@@ -714,7 +726,7 @@ mod tests {
             return;
         };
         let catalog = crate::randomize::node_catalog::NodeCatalog::build(&rom, false);
-        let expected = ["6-5", "7-7", "8F1"];
+        let expected = ["6-5", "7-7", "7F1", "8F1"];
         assert_eq!(LEVEL_REQUIREMENTS.len(), expected.len(), "a row was added without a name");
 
         for (req, want) in LEVEL_REQUIREMENTS.iter().zip(expected) {
