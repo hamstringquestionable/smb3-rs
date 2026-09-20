@@ -3,12 +3,16 @@
 use super::*;
 
 /// A concrete assignment of a pool entry to a grid position.
+///
+/// `pub(crate)` alongside [`WorldAssignments`]: the maze's reality census
+/// reads the deal the writer made and compares it against the model the item
+/// layer solved.
 #[derive(Clone, Debug)]
-pub(super) struct Assignment {
+pub(crate) struct Assignment {
     /// Index into `pickup.pool`.
-    pub(super) pool_idx: usize,
+    pub(crate) pool_idx: usize,
     /// Target grid position.
-    pub(super) pos: (usize, usize),
+    pub(crate) pos: (usize, usize),
 }
 
 /// Pipe pair assignment: two pool entries, a dest_idx, and two positions.
@@ -31,11 +35,11 @@ pub(super) struct HammerBroAssignment {
 }
 
 /// All assignments for one world.
-pub(super) struct WorldAssignments {
+pub(crate) struct WorldAssignments {
     /// Fortress assignments, ordered by section (for FX ordinal computation).
-    pub(super) fortress: Vec<Assignment>,
+    pub(crate) fortress: Vec<Assignment>,
     /// Level assignments.
-    pub(super) level: Vec<Assignment>,
+    pub(crate) level: Vec<Assignment>,
     /// Pipe pair assignments.
     pub(super) pipes: Vec<PipeAssignment>,
     /// Airship assignment (W1-W7 only).
@@ -56,16 +60,20 @@ pub(super) struct WorldAssignments {
     /// Slots the item layer marked with a `requires` the deck could not
     /// satisfy, as `(position, requirement index)`.
     ///
-    /// Not an error. The slot takes an ordinary level, which is beatable
-    /// without the item, so the gate opens for free — decorative rather than
-    /// dangerous. It is reported because the alternative is assuming it never
-    /// happens: `friendlier_levels`, `deja_vu` and the top-up all reshape the
-    /// deck after the mark was made, and how often that costs a gate is a
-    /// measurement nobody has taken.
-    // Reason: written by `assign_pool` and read by the placement pass's
-    // census, which is the next commit. Reporting it is the point — an
-    // unsatisfiable mark costs a gate silently, and the alternative to
-    // recording it is assuming it never happens.
+    /// **Not harmless, and the earlier note here saying so was wrong.** The
+    /// gate on that cell does open for free, which is the decorative half —
+    /// but the dispenser gate in the ROM keys off the *level*, not off the
+    /// cell, so the named level is still unbeatable without its item wherever
+    /// the deck put it instead. An unmet mark therefore moves a wall to a cell
+    /// the model never saw and put no key in front of.
+    ///
+    /// Both halves of the deal now avoid it rather than tolerate it: level
+    /// marks are dealt globally before any world draws, and fortress marks
+    /// keep clear of the slot 1-F is pre-assigned to. This stays because
+    /// `friendlier_levels`, `deja_vu` and the top-up still reshape the deck
+    /// after the mark was made, and `maze::tests::item_layer_reality_census`
+    /// is what watches the number.
+    // Reason: written on the shipping path, read by that census.
     #[allow(dead_code)]
-    pub(super) unmet_requirements: Vec<((usize, usize), usize)>,
+    pub(crate) unmet_requirements: Vec<((usize, usize), usize)>,
 }

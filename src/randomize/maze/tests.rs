@@ -106,6 +106,18 @@ fn census_build_swaps(raw: &Rom, seed: u64) -> ((Rom, BuildResult), [bool; 8]) {
 /// place a key on and deals nothing. A separate builder rather than a change
 /// to the shared one, which would move every other maze census.
 fn census_build_hb(raw: &Rom, seed: u64) -> (Rom, BuildResult) {
+    let (rom, _, _, result) = census_build_hb_parts(raw, seed);
+    (rom, result)
+}
+
+/// The same build, with the catalog and pickup kept.
+///
+/// `OverworldData` borrows both, and `overworld_writer::assign_pool` wants one
+/// — so a census that runs the writer needs the pieces, not just the result.
+fn census_build_hb_parts(
+    raw: &Rom,
+    seed: u64,
+) -> (Rom, NodeCatalog, crate::randomize::overworld_pickup::PickupResult, BuildResult) {
     let (hammer_rocks, eights_wild) = match seed % 4 {
         2 => (true, false),
         3 => (false, true),
@@ -136,7 +148,7 @@ fn census_build_hb(raw: &Rom, seed: u64) -> (Rom, BuildResult) {
             ..Default::default()
         },
     );
-    (rom, result)
+    (rom, catalog, pickup, result)
 }
 
 /// One generated maze, and the ROM its eight worlds were built from — which
@@ -4043,6 +4055,7 @@ fn item_layer_census() {
 
     let (mut unsolvable, mut none_placed) = (0usize, 0usize);
     let mut not_installed = 0usize;
+    let (mut no_anchor, mut vetoed_rows, mut unplaced_rows) = (0usize, 0usize, 0usize);
     let mut placed_per_seed: Vec<usize> = Vec::new();
     let mut per_row = vec![0usize; LEVEL_REQUIREMENTS.len()];
     let mut cuts: Vec<usize> = Vec::new();
@@ -4057,11 +4070,22 @@ fn item_layer_census() {
             unsolvable += 1;
             continue;
         }
+        // As the pipeline does it: the maze's decisions are folded back into
+        // the build *before* the layer reads it. Without this the layer sees
+        // the builder's stale `secret_exit_safe` flags and keeps clear of the
+        // wrong fortress slots.
+        super::stamp_into(&mut build, &state);
         let mut rng = ChaCha8Rng::seed_from_u64(seed ^ 0xA17E);
         let report = item_layer::place(&mut state, &mut build, &mut rng);
 
         if !report.installed {
             not_installed += 1;
+            if report.unplaced > 0 {
+                vetoed_rows += 1;
+                unplaced_rows += report.unplaced;
+            } else {
+                no_anchor += 1;
+            }
             continue;
         }
         candidates.push(report.candidates);
@@ -4086,7 +4110,9 @@ fn item_layer_census() {
     let mean = |v: &[usize]| v.iter().sum::<usize>() as f64 / v.len().max(1) as f64;
     println!("\n=== the item layer, {seeds} seeds, K={k} ===");
     println!("  UNWINNABLE before the pass  {unsolvable}  (must be 0)");
-    println!("  NOT installed (gated canoe unsolvable) {not_installed}");
+    println!("  NOT installed  {not_installed}");
+    println!("     no carrier could hold the anchor      {no_anchor}");
+    println!("     a row found no home (veto)            {vetoed_rows}, {unplaced_rows} rows");
     println!("  candidate cuts per seed     mean {:.1}", mean(&candidates));
     println!(
         "  gates placed per seed       mean {:.2}  min {}  max {}",
@@ -4104,5 +4130,173 @@ fn item_layer_census() {
             req.entry_idx,
             req.items.len()
         );
+    }
+}
+
+/// **Does the ROM the writer produces still gate what the model solved?**
+///
+/// The layer proves a maze winnable against *its* gate set, marks the slots
+/// it chose, and hands the build on. `overworld_writer::assign_pool` owns the
+/// level-to-cell mapping from there and may deal something else — and the
+/// dispenser gate in the ROM keys off the **level**, not off the cell the
+/// model marked. So the gate set the player actually meets is "every cell
+/// that got a requirement level", which is a different object from "every
+/// cell the model marked", and the difference is exactly where a strand hides.
+///
+/// Two directions, and only one of them is harmless:
+///
+/// * a mark the deck could not fill leaves a cell the model gated and the ROM
+///   does not — the gate opens for free, which costs a gate and nothing else;
+/// * a requirement level dealt onto an **unmarked** cell is a wall the model
+///   never saw, with no key placed in front of it. That is the strand.
+///
+/// So this rebuilds the gate set from the writer's own output and re-runs the
+/// fixpoint on it. `unsolvable` is the assertion; everything else is reported,
+/// because the numbers are what say whether the deal is drifting.
+///
+/// ```sh
+/// CENSUS_SEEDS=200 cargo test --release --lib item_layer_reality_census \
+///     -- --ignored --nocapture
+/// ```
+#[test]
+#[ignore]
+fn item_layer_reality_census() {
+    use crate::randomize::item_keys::LEVEL_REQUIREMENTS;
+    use crate::randomize::item_layer;
+    use crate::randomize::overworld_writer::{WriteFlags, assign_pool};
+
+    let Some(raw) = load_rom() else { return };
+    let seeds = census_seeds(60);
+    let knobs = Knobs::default();
+    let k = super::DEFAULT_WANDS_REQUIRED;
+
+    // The deck-surgery flags are the ones that reshape the deck *after* the
+    // marks were made, so they are the arms worth running: Deja Vu redeals it
+    // into copies, Friendlier Levels takes cards out of it, and the top-up
+    // refills whatever either left short.
+    let arms: [(&str, WriteFlags); 3] = [
+        ("plain", WriteFlags { shuffle_hammer_bros: true, ..Default::default() }),
+        (
+            "deja vu double + forts",
+            WriteFlags {
+                shuffle_hammer_bros: true,
+                deja_vu: crate::DejaVuMode::Double,
+                deja_vu_forts: true,
+                ..Default::default()
+            },
+        ),
+        (
+            "friendlier + deja vu wild",
+            WriteFlags {
+                shuffle_hammer_bros: true,
+                friendlier_levels: true,
+                deja_vu: crate::DejaVuMode::Wild,
+                deja_vu_forts: true,
+                ..Default::default()
+            },
+        ),
+    ];
+
+    for (arm, flags) in arms {
+        let (mut installed, mut marks, mut unmet) = (0usize, 0usize, 0usize);
+        let (mut stray, mut seeds_with_stray) = (0usize, 0usize);
+        let mut stray_row = vec![0usize; LEVEL_REQUIREMENTS.len()];
+        let mut stray_but_row_marked = 0usize;
+        let (mut unsolvable_after, mut unopened_after) = (0usize, 0usize);
+        let mut bad_seeds: Vec<u64> = Vec::new();
+
+        for seed in 0..seeds {
+            let (rom, catalog, pickup, mut build) = census_build_hb_parts(&raw, seed);
+            let mut gen_rng = ChaCha8Rng::seed_from_u64(seed ^ 0x5EED_1234);
+            let (mut state, _) =
+                super::generate(&build, &IDENTITY_SPINE, k, &knobs, SEALABLE_NEEDED, &mut gen_rng);
+            if !state.spheres().solvable {
+                continue;
+            }
+            super::stamp_into(&mut build, &state);
+            let mut rng = ChaCha8Rng::seed_from_u64(seed ^ 0xA17E);
+            if !item_layer::place(&mut state, &mut build, &mut rng).installed {
+                continue;
+            }
+            installed += 1;
+            marks += build
+                .worlds
+                .iter()
+                .flat_map(|b| b.slots.iter())
+                .filter(|s| s.requires.is_some())
+                .count();
+
+            let data = OverworldData { pickup: &pickup, catalog: &catalog };
+            let mut wrng = ChaCha8Rng::seed_from_u64(seed ^ 0x_C0DE_1234);
+            let assignments = assign_pool(&rom, &build, &data, &mut wrng, flags);
+            unmet += assignments.iter().map(|wa| wa.unmet_requirements.len()).sum::<usize>();
+
+            // Rebuild the gate set from the deal, not from the marks.
+            let mut reality: Vec<ItemGate> = Vec::new();
+            let mut stray_here = 0usize;
+            for (wi, wa) in assignments.iter().enumerate() {
+                for a in wa.level.iter().chain(wa.fortress.iter()) {
+                    let ce = &catalog.entries[pickup.pool[a.pool_idx].catalog_idx];
+                    let Some(row) = LEVEL_REQUIREMENTS
+                        .iter()
+                        .position(|r| r.world_idx == ce.world_idx && r.entry_idx == ce.entry_idx)
+                    else {
+                        continue;
+                    };
+                    let marked = build.worlds[wi]
+                        .slots
+                        .iter()
+                        .any(|sl| sl.pos == a.pos && sl.requires == Some(row));
+                    if !marked {
+                        stray_here += 1;
+                        stray_row[row] += 1;
+                        let row_marked = build
+                            .worlds
+                            .iter()
+                            .flat_map(|b| b.slots.iter())
+                            .any(|sl| sl.requires == Some(row));
+                        if row_marked {
+                            stray_but_row_marked += 1;
+                        }
+                    }
+                    reality.push(ItemGate {
+                        pos: (wi, a.pos),
+                        items: LEVEL_REQUIREMENTS[row].items.to_vec(),
+                    });
+                }
+            }
+            stray += stray_here;
+            if stray_here > 0 {
+                seeds_with_stray += 1;
+            }
+
+            state.gates = reality;
+            let sp = state.spheres();
+            if !sp.solvable {
+                unsolvable_after += 1;
+                if bad_seeds.len() < 10 {
+                    bad_seeds.push(seed);
+                }
+            }
+            if !sp.unopened.is_empty() {
+                unopened_after += 1;
+            }
+        }
+
+        println!("\n=== model vs. the writer's deal — {arm}, {seeds} seeds, K={k} ===");
+        println!("  seeds the layer installed on   {installed}");
+        println!("  marks placed                   {marks}");
+        println!("  marks the deck could not fill  {unmet}");
+        println!("  requirement levels on UNMARKED cells {stray} (on {seeds_with_stray} seeds)");
+        println!("     of which the row WAS marked elsewhere: {stray_but_row_marked}");
+        println!("     by row: {stray_row:?}");
+        println!("  gates nothing opens            {unopened_after} seeds");
+        println!("  UNWINNABLE as dealt            {unsolvable_after} seeds  {bad_seeds:?}");
+
+        assert_eq!(
+            unsolvable_after, 0,
+            "[{arm}] the deal made {unsolvable_after} seeds unwinnable; first few: {bad_seeds:?}"
+        );
+        assert_eq!(stray, 0, "[{arm}] {stray} requirement levels landed on cells nothing keyed");
     }
 }

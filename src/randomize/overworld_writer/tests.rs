@@ -1776,10 +1776,39 @@ mod derivation {
     }
 }
 
-/// **A marked slot receives the level it names.** The item layer marks a slot
-/// with a `requires` index before the writer runs; `assign_pool` has to deal
-/// that exact level onto that exact cell, or the gate it stands for opens for
-/// free.
+/// Mark one `SlotKind::Level` slot with `req_idx`, choosing the last world
+/// that has one. Returns its `(world, pos)`.
+///
+/// Late on purpose: the level deck is drained in world order, so a mark in an
+/// early world is satisfied from a full deck and tests nothing.
+fn mark_last_world_level_slot(
+    build: &mut overworld_build::BuildResult,
+    req_idx: usize,
+) -> Option<(usize, (usize, usize))> {
+    for built in build.worlds.iter_mut().rev() {
+        let wi = built.world_idx;
+        if let Some(slot) = built.slots.iter_mut().find(|s| s.kind == SlotKind::Level) {
+            slot.requires = Some(req_idx);
+            return Some((wi, slot.pos));
+        }
+    }
+    None
+}
+
+/// **A marked slot receives the level it names — in the LAST world.**
+///
+/// The item layer marks a slot with a `requires` index before the writer runs;
+/// `assign_pool` has to deal that exact level onto that exact cell, or the
+/// gate it stands for opens for free.
+///
+/// The world matters, and this test used to get it wrong. The level deck is
+/// one global deque drained in world order, so a mark in W1 is satisfied from
+/// a full deck and can never fail — it is the one case that proves nothing.
+/// A mark in the last world asks after every earlier world has taken its fill,
+/// which is where the deal actually broke: 172 of 400 level marks lost that
+/// way in a 200-seed census, every one of them to an earlier world. Marking
+/// the last world is the regression test for the global pre-deal that fixed
+/// it.
 #[test]
 fn a_required_level_lands_on_its_marked_slot() {
     use crate::randomize::item_keys::LEVEL_REQUIREMENTS;
@@ -1795,21 +1824,12 @@ fn a_required_level_lands_on_its_marked_slot() {
         standard_build_flags(),
     );
 
-    // Mark the first Level slot the build produced with 6-5's requirement.
+    // Mark a Level slot in the LAST world that has one — see the doc comment.
     let req_idx = LEVEL_REQUIREMENTS.iter().position(|r| !r.is_fortress).expect("a level row");
     let req = &LEVEL_REQUIREMENTS[req_idx];
-    let mut marked = None;
-    'outer: for built in build.worlds.iter_mut() {
-        let wi = built.world_idx;
-        for slot in built.slots.iter_mut() {
-            if slot.kind == SlotKind::Level {
-                slot.requires = Some(req_idx);
-                marked = Some((wi, slot.pos));
-                break 'outer;
-            }
-        }
-    }
+    let marked = mark_last_world_level_slot(&mut build, req_idx);
     let (world, pos) = marked.expect("the build should have a level slot");
+    assert!(world >= 6, "the mark must sit late in the deal to be worth testing (got W{world})");
 
     let mut rng2 = ChaCha8Rng::seed_from_u64(99);
     let data = OverworldData { pickup: &pickup, catalog: &catalog };
@@ -1888,19 +1908,23 @@ fn deja_vu_never_duplicates_a_marked_level() {
     let row = LEVEL_REQUIREMENTS.iter().position(|r| !r.is_fortress).expect("a level row");
     let req = &LEVEL_REQUIREMENTS[row];
 
-    // Mark a slot, and the same level may now appear at most once.
-    'outer: for built in build.worlds.iter_mut() {
-        for slot in built.slots.iter_mut() {
-            if slot.kind == SlotKind::Level {
-                slot.requires = Some(row);
-                break 'outer;
-            }
-        }
-    }
+    // Mark a slot, and the same level must now appear exactly once: the mark
+    // is honoured (so not zero) and never duplicated (so not two).
+    //
+    // `== 1`, not `<= 1`. A vacuous pass is the failure mode this test is
+    // prone to — an unhonoured mark trivially satisfies "at most once" while
+    // being precisely the bug next door.
+    let (world, _) = mark_last_world_level_slot(&mut build, row).expect("a level slot");
     let after = deal(&build, 5);
+    assert_eq!(
+        count_of(&after, req),
+        1,
+        "a marked level must be dealt exactly once — zero means the mark was \
+         dropped, two means the copy is an unmodelled gate"
+    );
     assert!(
-        count_of(&after, req) <= 1,
-        "a marked level was dealt twice — the second copy is an unmodelled gate"
+        after[world].unmet_requirements.is_empty(),
+        "the deck held the level, so nothing should be reported unmet"
     );
     // And the unmarked deal is left alone: this is the gate on the whole
     // mechanism, so it is asserted rather than assumed.

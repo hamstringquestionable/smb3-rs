@@ -26,7 +26,10 @@ mod pointers;
 mod sprites;
 mod types;
 
-use assign::{assign_pool, interleave_hb_by_obj_ptr};
+use assign::interleave_hb_by_obj_ptr;
+// `pub(crate)` on the decision pass: `maze::tests::item_layer_reality_census`
+// compares the deal it makes against the model the item layer solved.
+pub(crate) use assign::assign_pool;
 use grid::write_tile_grid;
 use pointers::{write_pipe_dests, write_pointer_entries};
 use sprites::{

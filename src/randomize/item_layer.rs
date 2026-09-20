@@ -38,13 +38,6 @@
 //! be a dealt gate rather than the one the map already has is a design
 //! question the censuses have not answered.
 
-// Reason: nothing in `randomize_inner` calls this yet, and deliberately —
-// the mode stays out of the randomizer until it cannot strand a run (see
-// `item_keys`' header). The module is exercised by `item_layer_census`, which
-// is what proves it does anything at all. The allow goes when the wiring
-// commit lands.
-#![allow(dead_code)]
-
 use rand::Rng;
 use rand::seq::SliceRandom;
 
@@ -81,6 +74,10 @@ pub(crate) struct Placement {
     pub candidates: usize,
 }
 
+// Reason: the shipping path reads only `Placement::installed` — the veto.
+// Every field here is detail for `item_layer_census`, which is what measures
+// whether the pass is dealing gates worth having.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct PlacedGate {
     pub pos: MazePos,
@@ -96,8 +93,48 @@ struct Candidate {
     cut: usize,
 }
 
-/// Every slot worth gating, largest cut first.
-fn candidates(state: &GlobalState) -> Vec<Candidate> {
+/// The fortress slots this pass leaves alone for 1-F, as `(world, section)`.
+///
+/// 1-F's secret exit skips the Boom-Boom whose defeat opens a lock, so it may
+/// only sit on a fortress whose lock can stay shut without stranding the
+/// world's target — `secret_exit_safe`. The writer pre-assigns it there
+/// **first**, before any requirement mark, so a mark on the slot it draws
+/// simply loses: all 26 fortress marks in a 200-seed census, before either
+/// side knew about the other.
+///
+/// Both sides now do. The writer draws 1-F from the *unmarked* safe slots,
+/// and this reserves [`SECRET_EXIT_SLOTS_NEEDED`] of them so that list is
+/// never empty — the same contract `maze::fill::keep_n_sealable` and
+/// `overworld_build::ensure_secret_exit_safe` already hold up from their
+/// ends.
+///
+/// Reserving the *whole* safe set instead was measured and is far too dear: a
+/// fortress row then finds no home on a third of seeds, and a row with no home
+/// vetoes the mode outright (200/200 seeds install with N reserved, 135/200
+/// with all of them).
+///
+/// Deterministic — sorted, then the first N. The writer's own draw is uniform
+/// over what is left, so there is no bias to spread here.
+fn reserved_secret_exit_slots(build: &BuildResult) -> std::collections::HashSet<(usize, usize)> {
+    let mut safe: Vec<(usize, usize)> = build
+        .worlds
+        .iter()
+        .flat_map(|w| w.locks.iter())
+        .filter(|l| l.secret_exit_safe)
+        .map(|l| (l.fort.world, l.fort.section))
+        .collect();
+    safe.sort_unstable();
+    safe.dedup();
+    safe.truncate(crate::randomize::overworld_build::SECRET_EXIT_SLOTS_NEEDED);
+    safe.into_iter().collect()
+}
+
+/// Every slot worth gating. Fortress slots held back for 1-F are left out —
+/// see [`reserved_secret_exit_slots`].
+fn candidates(
+    state: &GlobalState,
+    reserved_forts: &std::collections::HashSet<(usize, usize)>,
+) -> Vec<Candidate> {
     let full = state.spheres();
     let reached: std::collections::HashSet<MazePos> =
         full.spheres.iter().flat_map(|s| s.reached.iter().copied()).collect();
@@ -110,6 +147,9 @@ fn candidates(state: &GlobalState) -> Vec<Candidate> {
                 SlotKind::Fortress => true,
                 _ => continue,
             };
+            if is_fortress && reserved_forts.contains(&(w.world_idx, slot.section)) {
+                continue;
+            }
             let pos: MazePos = (w.world_idx, slot.pos);
             let blocked: std::collections::HashSet<MazePos> = std::iter::once(pos).collect();
             let sp = state.spheres_with_blocked(&blocked);
@@ -118,12 +158,9 @@ fn candidates(state: &GlobalState) -> Vec<Candidate> {
             // The gated cell stops being reachable content itself; what
             // matters is what it takes with it.
             let cut = reached.difference(&still).count().saturating_sub(1);
-            if cut > 0 {
-                out.push(Candidate { pos, is_fortress, cut });
-            }
+            out.push(Candidate { pos, is_fortress, cut });
         }
     }
-    out.sort_by_key(|c| std::cmp::Reverse(c.cut));
     out
 }
 
@@ -170,12 +207,27 @@ pub(crate) fn place<R: Rng>(
         return report;
     }
 
-    let mut cands = candidates(state);
-    report.candidates = cands.len();
+    let mut cands = candidates(state, &reserved_secret_exit_slots(build));
+    report.candidates = cands.iter().filter(|c| c.cut > 0).count();
     if cands.is_empty() {
         return report;
     }
     cands.shuffle(rng);
+    // Cells that seal content first, cells that seal nothing after — a stable
+    // sort, so each tier keeps the shuffle's order.
+    //
+    // **Every requirement level is a gate wherever the deal puts it.** The
+    // dispenser patch keys off the level, not off the cell this pass marked,
+    // so a row this pass declines to place does not become "one gate fewer" —
+    // the writer deals that level onto some ordinary cell and it is a wall the
+    // model never saw and put no key in front of. Measured at 86 such walls in
+    // 200 seeds, both fortress rows, nine of them unwinnable.
+    //
+    // So a cut of zero is not a reason to skip a cell. It makes a duller gate
+    // — a level you cannot beat yet, taking nothing else with it — but a dull
+    // modelled gate beats an unmodelled one, and the fallback is what lets
+    // every row find a home.
+    cands.sort_by_key(|c| c.cut == 0);
 
     let mut free_carriers = carriers(build, state);
     free_carriers.shuffle(rng);
@@ -230,10 +282,16 @@ pub(crate) fn place<R: Rng>(
         let req = &LEVEL_REQUIREMENTS[row];
         let mut taken_cand = None;
 
-        for (ci, cand) in cands.iter().enumerate().take(TRIES_PER_REQUIREMENT) {
-            if cand.is_fortress != req.is_fortress {
-                continue;
-            }
+        // Filter to the right kind *before* the cap, not inside it. A fortress
+        // row has a handful of eligible cells among dozens of level cells, so
+        // capping the raw list first spent nearly every try on candidates it
+        // was always going to skip.
+        let eligible = cands
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| c.is_fortress == req.is_fortress)
+            .take(TRIES_PER_REQUIREMENT);
+        for (ci, cand) in eligible {
             // Tentative: the gate, plus one carrier per key it demands.
             let gates_before = state.gates.len();
             let sources_before = state.sources.len();
@@ -282,6 +340,17 @@ pub(crate) fn place<R: Rng>(
             }
             None => report.unplaced += 1,
         }
+    }
+
+    // **A row with no home is a veto, not a shortfall.** See the note on the
+    // fallback tier: the level it names is still dealt, and the ROM still
+    // gates it, so shipping the mode here would put a wall on a cell nothing
+    // keyed. Hand the seed back as a plain maze instead.
+    if report.unplaced > 0 {
+        state.anchor_gated = false;
+        state.gates.clear();
+        state.sources.clear();
+        report.installed = false;
     }
     report
 }

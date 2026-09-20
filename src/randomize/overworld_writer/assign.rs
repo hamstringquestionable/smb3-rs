@@ -91,7 +91,10 @@ fn pool_entry_for_requirement(
     })
 }
 
-pub(super) fn assign_pool<R: Rng>(
+// `pub(crate)` rather than `pub(super)`: `maze::tests::item_layer_reality_census`
+// calls it to compare the deal the writer makes against the model the item
+// layer solved. Nothing outside the writer calls it in production.
+pub(crate) fn assign_pool<R: Rng>(
     rom: &Rom,
     build: &BuildResult,
     data: &OverworldData,
@@ -191,28 +194,67 @@ pub(super) fn assign_pool<R: Rng>(
     // the draw below is uniform over this list — would move 1-F for no reason.
     // A stable sort keeps the per-world order the locks gave.
     safe_slots.sort_by_key(|&(world, _)| world);
+    // **Draw from the safe slots the item layer has not marked.** 1-F goes
+    // first, so a mark on the slot it takes is simply overruled — and the
+    // layer reserves `SECRET_EXIT_SLOTS_NEEDED` safe slots for exactly this
+    // draw, so this list is non-empty whenever `safe_slots` is. The fallback
+    // to the full list is there because that reservation is a model-side
+    // courtesy, not something the writer can prove.
+    //
+    // Outside MiMaze nothing is marked and this is `safe_slots` itself, down
+    // to the duplicate entries a fortress with two safe locks contributes —
+    // the draw is one `choose` either way, so the RNG sequence does not move.
+    let marked_forts: HashSet<(usize, usize)> = build
+        .worlds
+        .iter()
+        .enumerate()
+        .flat_map(|(wi, b)| {
+            b.slots
+                .iter()
+                .filter(|s| s.kind == SlotKind::Fortress && s.requires.is_some())
+                .map(move |s| (wi, s.section))
+        })
+        .collect();
+    let unmarked_safe: Vec<(usize, usize)> =
+        safe_slots.iter().copied().filter(|s| !marked_forts.contains(s)).collect();
+    let draw_from = if unmarked_safe.is_empty() { &safe_slots } else { &unmarked_safe };
     let mut preassigned_forts: HashMap<(usize, usize), usize> = HashMap::new();
-    if let Some(&slot) = safe_slots.choose(rng) {
+    if let Some(&slot) = draw_from.choose(rng) {
         preassigned_forts.insert(slot, fort_1f_pi);
     } else {
         // No safe slot available — return 1-F to the regular pool.
         fort_pool.push(fort_1f_pi);
     }
 
+    // Requirement marks that could not be honoured, per world. Both halves
+    // report into it — the fortress pre-assignment here and the level pre-deal
+    // further down — because an unmet mark is a gate the model believed in and
+    // the ROM will still enforce, so it is worth a line in the write log
+    // wherever it happens.
+    let mut unmet_by_world: Vec<Vec<((usize, usize), usize)>> = vec![Vec::new(); 8];
+
     // A fortress requirement (8-F today) rides the same pre-assignment map
     // 1-F's safe placement uses: the deal below skips any (world, section)
     // already spoken for. Taken *after* 1-F, so a seed that wants both keeps
     // 1-F's safety property — that one is a correctness rule, this one is a
-    // gate, and a gate is the thing to give up first.
+    // gate, and a gate is the thing to give up first. The item layer keeps
+    // clear of secret-exit-safe slots for exactly this reason, so the
+    // collision branch below should not fire; it reports rather than asserts
+    // because 1-F's slot is drawn at random and the layer's avoidance is a
+    // model-side courtesy, not something the writer can rely on.
     for (wi, built) in build.worlds.iter().enumerate() {
         for slot in built.slots.iter().filter(|s| s.kind == SlotKind::Fortress) {
             let Some(req_idx) = slot.requires else { continue };
             if preassigned_forts.contains_key(&(wi, slot.section)) {
+                unmet_by_world[wi].push((slot.pos, req_idx));
                 continue;
             }
             let v: Vec<usize> = fort_pool.clone();
-            if let Some(at) = pool_entry_for_requirement(&v, data, req_idx) {
-                preassigned_forts.insert((wi, slot.section), fort_pool.remove(at));
+            match pool_entry_for_requirement(&v, data, req_idx) {
+                Some(at) => {
+                    preassigned_forts.insert((wi, slot.section), fort_pool.remove(at));
+                }
+                None => unmet_by_world[wi].push((slot.pos, req_idx)),
             }
         }
     }
@@ -436,7 +478,41 @@ pub(super) fn assign_pool<R: Rng>(
     let mut fort_iter = fort_pool.into_iter();
     let mut level_pool: VecDeque<usize> = level_pool.into();
 
+    // --- Deal every level requirement before any world draws a card -------
+    //
+    // A mark names one *specific* level, and the deck below is a single global
+    // deque the world loop drains in world order. Ordering marked slots first
+    // within their own world — which is what this used to do — does not help:
+    // by the time W6's marked slot asks, W1..W5 have each popped their fill
+    // off the front and the named card may be gone. Measured at 172 of 400
+    // level marks lost in 200 seeds, every one of them to an *earlier* world.
+    //
+    // So the ordering has to be global, and this is the only point where the
+    // deck is complete and no slot has drawn yet: after the deck surgery, before
+    // the loop. Marks are a handful per seed, so scanning the whole deque per
+    // mark costs nothing.
+    //
+    // With no marks — every seed outside MiMaze — this loop finds nothing,
+    // touches the deck in no way, and draws no RNG.
+    let mut preassigned_levels: HashMap<(usize, (usize, usize)), usize> = HashMap::new();
+    for (wi, built) in build.worlds.iter().enumerate() {
+        for slot in built.slots.iter().filter(|s| s.kind == SlotKind::Level) {
+            let Some(req_idx) = slot.requires else { continue };
+            let v: Vec<usize> = level_pool.iter().copied().collect();
+            match pool_entry_for_requirement(&v, data, req_idx) {
+                Some(at) => {
+                    let pi = level_pool.remove(at).expect("index came from this deque");
+                    preassigned_levels.insert((wi, slot.pos), pi);
+                }
+                None => unmet_by_world[wi].push((slot.pos, req_idx)),
+            }
+        }
+    }
+
     let mut assignments: Vec<WorldAssignments> = Vec::with_capacity(8);
+    // Handed out one per world below rather than indexed: `wi` already indexes
+    // three other things in that loop, and an iterator keeps this one honest.
+    let mut unmet_by_world = unmet_by_world.into_iter();
 
     for wi in 0..8 {
         let built = &build.worlds[wi];
@@ -472,40 +548,28 @@ pub(super) fn assign_pool<R: Rng>(
         // than a pipe leading to the hand-trap behind it.
         let mut level = Vec::new();
         let mut demoted_troll_pipes: HashSet<(usize, usize)> = HashSet::new();
-        let mut unmet_requirements: Vec<((usize, usize), usize)> = Vec::new();
+        let unmet_requirements = unmet_by_world.next().expect("one entry per world");
         let level_slots: Vec<&_> =
             built.slots.iter().filter(|s| s.kind == SlotKind::Level).collect();
         let mut ordered: Vec<&_> =
-            level_slots.iter().copied().filter(|s| s.requires.is_some()).collect();
-        ordered.extend(
-            level_slots.iter().copied().filter(|s| s.requires.is_none() && s.is_troll_pipe),
-        );
-        ordered.extend(
-            level_slots.iter().copied().filter(|s| s.requires.is_none() && !s.is_troll_pipe),
-        );
+            level_slots.iter().copied().filter(|s| s.is_troll_pipe).collect();
+        ordered.extend(level_slots.iter().copied().filter(|s| !s.is_troll_pipe));
 
         for slot in ordered {
-            // A `requires` mark names one specific level, so it is satisfied
-            // by search rather than by the deque's front. Marked slots were
-            // ordered first for the same reason troll pipes are: the deck is
-            // fullest then, so the constraint has the best chance of being
-            // met.
-            if let Some(req_idx) = slot.requires {
-                match pool_entry_for_requirement(level_pool.as_slices().0, data, req_idx).or_else(
-                    || {
-                        let v: Vec<usize> = level_pool.iter().copied().collect();
-                        pool_entry_for_requirement(&v, data, req_idx)
-                    },
-                ) {
-                    Some(at) => {
-                        let pi = level_pool.remove(at).expect("index came from this deque");
-                        level.push(Assignment { pool_idx: pi, pos: slot.pos });
-                        continue;
-                    }
-                    None => {
-                        unmet_requirements.push((slot.pos, req_idx));
-                    }
+            // A `requires` mark was settled by the global pre-deal above; all
+            // that is left here is to collect the card it reserved. A mark the
+            // pre-deal could not fill has already been reported, and the slot
+            // falls through to an ordinary draw.
+            if let Some(pi) = preassigned_levels.remove(&(wi, slot.pos)) {
+                // A gated level behind a pipe tile is the one combination the
+                // troll-pipe rule exists to prevent — the tile hides it, and
+                // the pipe does not clear when beaten. The mark wins and the
+                // disguise is dropped, which is what demotion means.
+                if slot.is_troll_pipe {
+                    demoted_troll_pipes.insert(slot.pos);
                 }
+                level.push(Assignment { pool_idx: pi, pos: slot.pos });
+                continue;
             }
             let (pi, demoted) =
                 take_level_slot(&mut level_pool, slot.is_troll_pipe, holds_unique_item);
