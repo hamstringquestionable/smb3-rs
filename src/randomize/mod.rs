@@ -16,6 +16,7 @@ pub mod fire_flower;
 pub mod hand_rooms;
 pub mod hands_levels;
 pub mod item_keys;
+pub mod item_layer;
 pub mod items;
 pub mod king_quotes;
 pub mod koopalings;

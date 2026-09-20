@@ -98,6 +98,47 @@ fn census_build_swaps(raw: &Rom, seed: u64) -> ((Rom, BuildResult), [bool; 8]) {
     ((rom, result), swaps)
 }
 
+/// The same build, but with Hammer Bros redistributed.
+///
+/// `census_build` leaves `shuffle_hammer_bros` off while a real run defaults
+/// it **on**, so `BuiltWorld::hb_sprites` is empty there — and the item layer
+/// can only aim a Hammer Bro, so under the shared harness it has no source to
+/// place a key on and deals nothing. A separate builder rather than a change
+/// to the shared one, which would move every other maze census.
+fn census_build_hb(raw: &Rom, seed: u64) -> (Rom, BuildResult) {
+    let (hammer_rocks, eights_wild) = match seed % 4 {
+        2 => (true, false),
+        3 => (false, true),
+        _ => (false, false),
+    };
+    let rom = qol_variant(raw, hammer_rocks, eights_wild);
+    let mut rng = ChaCha8Rng::seed_from_u64(seed);
+    let mut catalog = NodeCatalog::build(&rom, false);
+    let mut swap_rng = ChaCha8Rng::seed_from_u64(seed);
+    start_airship_swap::pick_swaps(&mut catalog, &mut swap_rng);
+    let pickup = pick_up(
+        &rom,
+        &catalog,
+        PickupFlags {
+            shuffle_spade_games: true,
+            shuffle_toad_houses: true,
+            shuffle_hammer_bros: true,
+        },
+    );
+    let result = build(
+        &rom,
+        &OverworldData { pickup: &pickup, catalog: &catalog },
+        &mut rng,
+        BuildFlags {
+            shuffle_toad_houses: true,
+            shuffle_hammer_bros: true,
+            eights_are_wild: eights_wild,
+            ..Default::default()
+        },
+    );
+    (rom, result)
+}
+
 /// One generated maze, and the ROM its eight worlds were built from — which
 /// the tests that read a stamped map back need beside the state.
 ///
@@ -3975,5 +4016,87 @@ fn ungated_states_keep_the_old_canoe() {
     for seed in 0..8 {
         let (_, state, _) = generated(&raw, seed, &knobs, super::DEFAULT_WANDS_REQUIRED);
         assert!(!state.anchor_gated, "seed {seed}: gating must be opt-in");
+    }
+}
+
+/// **Does the placement pass actually place anything?**
+///
+/// The first measurement of the layer end to end: deal gates onto real mazes
+/// and count what survives the fixpoint. A row that never finds a home is a
+/// requirement the geometry cannot carry; a seed that places none is a seed
+/// the mode does nothing to.
+///
+/// ```sh
+/// CENSUS_SEEDS=100 cargo test --release --lib item_layer_census \
+///     -- --ignored --nocapture
+/// ```
+#[test]
+#[ignore]
+fn item_layer_census() {
+    use crate::randomize::item_keys::LEVEL_REQUIREMENTS;
+    use crate::randomize::item_layer;
+
+    let Some(raw) = load_rom() else { return };
+    let seeds = census_seeds(60);
+    let knobs = Knobs::default();
+    let k = super::DEFAULT_WANDS_REQUIRED;
+
+    let (mut unsolvable, mut none_placed) = (0usize, 0usize);
+    let mut placed_per_seed: Vec<usize> = Vec::new();
+    let mut per_row = vec![0usize; LEVEL_REQUIREMENTS.len()];
+    let mut cuts: Vec<usize> = Vec::new();
+    let mut candidates: Vec<usize> = Vec::new();
+
+    for seed in 0..seeds {
+        let (_, mut build) = census_build_hb(&raw, seed);
+        let mut gen_rng = ChaCha8Rng::seed_from_u64(seed ^ 0x5EED_1234);
+        let (mut state, _) =
+            super::generate(&build, &IDENTITY_SPINE, k, &knobs, SEALABLE_NEEDED, &mut gen_rng);
+        if !state.spheres().solvable {
+            unsolvable += 1;
+            continue;
+        }
+        let mut rng = ChaCha8Rng::seed_from_u64(seed ^ 0xA17E);
+        let report = item_layer::place(&mut state, &mut build, &mut rng);
+
+        candidates.push(report.candidates);
+        placed_per_seed.push(report.placed.len());
+        if report.placed.is_empty() {
+            none_placed += 1;
+        }
+        for g in &report.placed {
+            per_row[g.requirement] += 1;
+            cuts.push(g.cut);
+        }
+
+        // Whatever it dealt, the seed must still be winnable and every gate
+        // must open — the pass accepts on exactly that, so this is the
+        // guard against it accepting for the wrong reason.
+        let sp = state.spheres();
+        assert!(sp.solvable, "seed {seed}: the pass left an unwinnable maze");
+        assert!(sp.unopened.is_empty(), "seed {seed}: the pass left a gate nothing opens");
+    }
+
+    let n = placed_per_seed.len().max(1);
+    let mean = |v: &[usize]| v.iter().sum::<usize>() as f64 / v.len().max(1) as f64;
+    println!("\n=== the item layer, {seeds} seeds, K={k} ===");
+    println!("  UNWINNABLE before the pass  {unsolvable}  (must be 0)");
+    println!("  candidate cuts per seed     mean {:.1}", mean(&candidates));
+    println!(
+        "  gates placed per seed       mean {:.2}  min {}  max {}",
+        mean(&placed_per_seed),
+        placed_per_seed.iter().min().copied().unwrap_or(0),
+        placed_per_seed.iter().max().copied().unwrap_or(0)
+    );
+    println!("  seeds with no gate at all   {none_placed} of {n}");
+    println!("  content sealed per gate     mean {:.1}", mean(&cuts));
+    for (row, count) in per_row.iter().enumerate() {
+        let req = &LEVEL_REQUIREMENTS[row];
+        println!(
+            "     row {row} (world {} entry {}, {} keys): placed {count}/{n}",
+            req.world_idx,
+            req.entry_idx,
+            req.items.len()
+        );
     }
 }
