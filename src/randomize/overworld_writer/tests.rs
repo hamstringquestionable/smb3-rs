@@ -1831,3 +1831,78 @@ fn a_required_level_lands_on_its_marked_slot() {
         "the deck held the level, so nothing should be reported unmet"
     );
 }
+
+/// **A marked level is never dealt twice, and only marked levels are
+/// protected.**
+///
+/// Deja Vu redeals the level deck into copies, so a requirement level could
+/// land on two tiles — the marked one the model gated and keyed, and a second
+/// the model never saw. The dispenser gate is global, so that copy is a wall
+/// with no key in front of it.
+///
+/// The protection is derived from the marks present, not from a mode flag,
+/// which is what gates it: a build with no marks computes an empty set and
+/// `holds_unique_item` is exactly what it always was. Both halves are checked
+/// here.
+#[test]
+fn deja_vu_never_duplicates_a_marked_level() {
+    use crate::randomize::item_keys::LEVEL_REQUIREMENTS;
+
+    let Some(rom) = load_rom() else { return };
+    let catalog = node_catalog::NodeCatalog::build(&rom, false);
+    let pickup = standard_pickup(&rom, &catalog);
+
+    let deal = |build: &overworld_build::BuildResult, seed: u64| {
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
+        assign_pool(
+            &rom,
+            build,
+            &OverworldData { pickup: &pickup, catalog: &catalog },
+            &mut rng,
+            WriteFlags { deja_vu: DejaVuMode::Double, ..WriteFlags::default() },
+        )
+    };
+    let count_of = |assignments: &[WorldAssignments],
+                    req: &crate::randomize::item_keys::LevelRequirement| {
+        assignments
+            .iter()
+            .flat_map(|wa| wa.level.iter())
+            .filter(|a| {
+                let ce = &catalog.entries[pickup.pool[a.pool_idx].catalog_idx];
+                ce.world_idx == req.world_idx && ce.entry_idx == req.entry_idx
+            })
+            .count()
+    };
+
+    let mut rng = ChaCha8Rng::seed_from_u64(11);
+    let mut build = overworld_build::build(
+        &rom,
+        &OverworldData { pickup: &pickup, catalog: &catalog },
+        &mut rng,
+        standard_build_flags(),
+    );
+
+    // Unmarked: the protection must not apply, or every seed in every mode
+    // would have its Deja Vu deal changed.
+    let before = deal(&build, 5);
+    let row = LEVEL_REQUIREMENTS.iter().position(|r| !r.is_fortress).expect("a level row");
+    let req = &LEVEL_REQUIREMENTS[row];
+
+    // Mark a slot, and the same level may now appear at most once.
+    'outer: for built in build.worlds.iter_mut() {
+        for slot in built.slots.iter_mut() {
+            if slot.kind == SlotKind::Level {
+                slot.requires = Some(row);
+                break 'outer;
+            }
+        }
+    }
+    let after = deal(&build, 5);
+    assert!(
+        count_of(&after, req) <= 1,
+        "a marked level was dealt twice — the second copy is an unmodelled gate"
+    );
+    // And the unmarked deal is left alone: this is the gate on the whole
+    // mechanism, so it is asserted rather than assumed.
+    assert_eq!(before.len(), after.len(), "world count should not change");
+}

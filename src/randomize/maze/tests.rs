@@ -4042,6 +4042,7 @@ fn item_layer_census() {
     let k = super::DEFAULT_WANDS_REQUIRED;
 
     let (mut unsolvable, mut none_placed) = (0usize, 0usize);
+    let mut not_installed = 0usize;
     let mut placed_per_seed: Vec<usize> = Vec::new();
     let mut per_row = vec![0usize; LEVEL_REQUIREMENTS.len()];
     let mut cuts: Vec<usize> = Vec::new();
@@ -4059,6 +4060,10 @@ fn item_layer_census() {
         let mut rng = ChaCha8Rng::seed_from_u64(seed ^ 0xA17E);
         let report = item_layer::place(&mut state, &mut build, &mut rng);
 
+        if !report.installed {
+            not_installed += 1;
+            continue;
+        }
         candidates.push(report.candidates);
         placed_per_seed.push(report.placed.len());
         if report.placed.is_empty() {
@@ -4081,6 +4086,7 @@ fn item_layer_census() {
     let mean = |v: &[usize]| v.iter().sum::<usize>() as f64 / v.len().max(1) as f64;
     println!("\n=== the item layer, {seeds} seeds, K={k} ===");
     println!("  UNWINNABLE before the pass  {unsolvable}  (must be 0)");
+    println!("  NOT installed (gated canoe unsolvable) {not_installed}");
     println!("  candidate cuts per seed     mean {:.1}", mean(&candidates));
     println!(
         "  gates placed per seed       mean {:.2}  min {}  max {}",

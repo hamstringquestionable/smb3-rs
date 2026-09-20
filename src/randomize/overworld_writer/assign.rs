@@ -246,10 +246,32 @@ pub(super) fn assign_pool<R: Rng>(
     //  - Never disguised as a troll pipe. Those don't clear when beaten, so
     //    the hand rooms could be farmed for items, and a chest level hidden
     //    behind a pipe tile is missed by players who skip them.
+    //
+    // A level the item layer marked is held out for the same reason, and it
+    // is the same reason: **a second copy is a second gate**. The dispenser
+    // gate is global, so a requirement level is unbeatable without its item
+    // wherever it lands — deal it twice and the copy on the unmarked cell is
+    // a wall the model never saw and put no key in front of. Seeded once and
+    // never duplicated is exactly the rule the chest levels already have.
+    //
+    // Derived from the marks present rather than from a flag, so a build with
+    // no marks — every seed today — computes an empty set and nothing
+    // changes.
+    let required: HashSet<(usize, usize)> = build
+        .worlds
+        .iter()
+        .flat_map(|b| b.slots.iter())
+        .filter_map(|s| s.requires)
+        .map(|i| {
+            let r = &crate::randomize::item_keys::LEVEL_REQUIREMENTS[i];
+            (r.world_idx, r.entry_idx)
+        })
+        .collect();
     let holds_unique_item = |pi: usize| -> bool {
         let ce = &catalog.entries[pickup.pool[pi].catalog_idx];
         rom_data::is_hand_level(ce.world_idx, ce.entry_idx)
             || rom_data::is_chest_level(ce.world_idx, ce.entry_idx)
+            || required.contains(&(ce.world_idx, ce.entry_idx))
     };
 
     // --- Deck surgery -------------------------------------------------

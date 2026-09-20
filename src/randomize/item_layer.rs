@@ -58,9 +58,21 @@ use super::overworld_build::{BuildResult, SlotKind};
 /// a seed, so this is "most of them" rather than a real cap.
 const TRIES_PER_REQUIREMENT: usize = 24;
 
+/// How many Hammer Bros to offer the anchor before declaring the seed
+/// unable to carry a gated canoe. Each try is one fixpoint.
+const ANCHOR_TRIES: usize = 12;
+
 /// What a deal achieved, for the write log and the census.
 #[derive(Default, Debug, Clone)]
 pub(crate) struct Placement {
+    /// **Whether the mode may be installed on this seed at all.**
+    ///
+    /// False means the pass could not make the maze winnable under its own
+    /// rules and wrote nothing — the caller must then skip `item_keys` too,
+    /// because the ROM patches gate the dispenser and the canoe whatever the
+    /// model decided. Gating without a model that agrees is how a seed
+    /// strands a player.
+    pub installed: bool,
     /// Requirements that found a home.
     pub placed: Vec<PlacedGate>,
     /// Requirement rows no candidate could carry.
@@ -167,6 +179,49 @@ pub(crate) fn place<R: Rng>(
 
     let mut free_carriers = carriers(build, state);
     free_carriers.shuffle(rng);
+    let mut rejected: Vec<(usize, MazePos, usize)> = Vec::new();
+
+    // --- The canoe, before anything else --------------------------------
+    //
+    // `item_keys::apply` gates the summon and parks the boats out of reach,
+    // and it does that whatever the model says — so the model has to agree or
+    // it will route a player across water the game will not let them cross.
+    // That means `anchor_gated` is not optional here, and an anchor has to be
+    // findable before the water is needed.
+    //
+    // The ROM already supplies one (a Toad House type reached by an
+    // out-of-bounds read), but this pass cannot aim a Toad House, so it puts
+    // one on a Hammer Bro as well — an extra source only ever makes the model
+    // stricter than the game, which is the safe direction.
+    //
+    // Which Hammer Bro carries it matters: the anchor has to be reachable
+    // *before* the water it unlocks, so a carrier on the far side of a
+    // crossing is no use. Rather than reason about that, try carriers until
+    // the fixpoint accepts one — the same generate-and-test the gates use.
+    state.anchor_gated = true;
+    let mut anchored = None;
+    for _ in 0..ANCHOR_TRIES {
+        let Some(c) = free_carriers.pop() else { break };
+        state.sources.push(ItemSource { pos: c.1, item: Key::Anchor });
+        if state.spheres().solvable {
+            anchored = Some(c);
+            break;
+        }
+        state.sources.pop();
+        rejected.push(c);
+    }
+    free_carriers.append(&mut rejected);
+    match anchored {
+        Some(c) => build.worlds[c.0].hb_sprites[c.2].reward = item_id(Key::Anchor),
+        None => {
+            // No carrier makes this seed survive a gated canoe. Write nothing
+            // and tell the caller not to install the ROM side either.
+            state.anchor_gated = false;
+            state.sources.clear();
+            return report;
+        }
+    }
+    report.installed = true;
 
     let mut rows: Vec<usize> = (0..LEVEL_REQUIREMENTS.len()).collect();
     rows.shuffle(rng);
