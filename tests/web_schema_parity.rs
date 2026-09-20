@@ -330,7 +330,13 @@ fn parser_still_matches_the_file() {
 fn schema_covers_every_options_field() {
     let schema: BTreeSet<String> = schema().into_keys().collect();
     let constants = constant_fields();
-    let expected: BTreeSet<String> = options_fields().difference(&constants).cloned().collect();
+    // `item_keys` has no control of its own on purpose: it is the third rung
+    // of the World Maze pill (`off` / `on` / `mimaze`), which `getOptions`
+    // splits back into two fields. A control for it would be a second way to
+    // say the same thing, and the two could disagree.
+    let folded: BTreeSet<String> = ["item_keys".to_string()].into_iter().collect();
+    let expected: BTreeSet<String> =
+        options_fields().difference(&constants).filter(|f| !folded.contains(*f)).cloned().collect();
 
     let missing_in_js: Vec<&String> = expected.difference(&schema).collect();
     let missing_in_rust: Vec<&String> = schema.difference(&expected).collect();
@@ -425,16 +431,21 @@ fn preset_modes_match_what_they_build() {
             })
             .unwrap_or_else(|| panic!("preset `{pid}` has no `mode:` — which section is it in?"));
 
-        // `world_maze: true` inside the overrides, comments already stripped.
+        // The mode switch is a three-way pill: "on" and "mimaze" both put the
+        // form in maze mode, "off" does not. It was a bool until MiMaze
+        // became its third rung.
         let turns_maze_on = body
             .find("world_maze:")
-            .map(|at| body[at..].trim_start_matches("world_maze:").trim_start().starts_with("true"))
+            .map(|at| {
+                let v = body[at..].trim_start_matches("world_maze:").trim_start();
+                v.starts_with("\"on\"") || v.starts_with("\"mimaze\"")
+            })
             .unwrap_or(false);
 
         match mode.as_str() {
-            "maze" if !turns_maze_on => {
-                bad.push(format!("{pid}: in the maze section but never sets world_maze: true"))
-            }
+            "maze" if !turns_maze_on => bad.push(format!(
+                "{pid}: in the maze section but never sets world_maze to a maze value"
+            )),
             "standard" if turns_maze_on => {
                 bad.push(format!("{pid}: in the standard section but sets world_maze: true"))
             }

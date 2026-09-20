@@ -351,6 +351,10 @@ struct Cli {
     #[arg(long)]
     shuffle_big_q_rooms: bool,
 
+    /// MiMaze: a power-up block only gives an item you have already found from a Toad House, a Hammer Bro or a Princess letter, and the levels that need their own power-up become gates. Requires --world-maze
+    #[arg(long)]
+    item_keys: bool,
+
     /// Every 1-Up Mushroom becomes a Poison Mushroom that hurts you (MaCobra52's "All 1UPs are Poison Mushrooms" patch)
     #[arg(long)]
     poison_mushrooms: bool,
@@ -636,6 +640,7 @@ fn build_options(cli: &Cli) -> Options {
             faster_frog: cli.faster_frog,
             lakitu_stays_down: cli.lakitu_stays_down,
             shuffle_big_q_rooms: cli.shuffle_big_q_rooms,
+            item_keys: cli.item_keys,
             poison_mushrooms: cli.poison_mushrooms,
             modern_powerups: cli.modern_powerups,
             fire_flower: cli.fire_flower,

@@ -1110,6 +1110,7 @@ fn fnv1a(data: &[u8]) -> u64 {
 /// tests to be updated alongside the struct.
 fn all_off_options() -> Options {
     Options {
+        item_keys: false,
         fire_flower: FireFlowerMode::Off,
         // Not "off": with the maze off this option is inert, and the key
         // normalizes it to the default the way it does maze_wands. Claiming
@@ -1192,6 +1193,7 @@ fn all_off_options() -> Options {
 /// Palettes disabled because they use OS entropy (cosmetic, decoupled from seed).
 fn all_on_options() -> Options {
     Options {
+        item_keys: true,
         fire_flower: FireFlowerMode::On,
         hints: crate::HintMode::default(),
         limit_hazards: HazardLimit::All,

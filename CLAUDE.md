@@ -94,7 +94,7 @@ you can, then reserve a sensible margin around them and note both numbers
 
 **Ask "does a run of N bytes exist", never "how much is free".** Free space is
 per-bank *and* per-gap: a routine needs one contiguous run in a bank that is
-mapped when it runs, so a bank total is worthless on its own — PRG031's 81 free
+mapped when it runs, so a bank total is worthless on its own — PRG031's 41 free
 bytes are scraps that will not hold a 40-byte routine. Ask the question directly:
 
 ```sh
@@ -115,7 +115,7 @@ is the one to read:
 
 | Bank | Mapped at | Free left | Largest single gap |
 |------|-----------|-----------|--------------------|
-| PRG031 | `$E000–$FFFF`, always | 81 | **30** |
+| PRG031 | `$E000–$FFFF`, always | 41 | **22** |
 | PRG030 | `$8000–$9FFF`, always | 42 | 42 |
 | PRG001 | swapped, in-level (object AI) | 60 | 38 |
 | PRG003 | swapped, in-level (object AI) | 5 | 5 |
@@ -123,7 +123,7 @@ is the one to read:
 | PRG005 | swapped, in-level (object AI) | 58 | 58 |
 | PRG006 | `$C000–$DFFF`, in-level (enemy data) | 1392 | 1392 |
 | PRG007 | swapped, in-level (object AI) | 27 | 27 |
-| PRG010 | `$C000–$DFFF`, map | 192 | 64 |
+| PRG010 | `$C000–$DFFF`, map | 176 | 64 |
 | PRG011 | `$A000–$BFFF`, map | 46 | 14 |
 | PRG025 | `$C000–$DFFF`, title screen | 2731 | 2719 |
 | PRG012 | `$A000–$BFFF`, map reload | 620 | 240 |
@@ -131,10 +131,12 @@ is the one to read:
 
 PRG000 and PRG002 have no `$FF` filler left at all.
 
-The always-mapped banks are effectively full. A patch that must run regardless of
-the current bank has one 42-byte gap in PRG030 and nothing over 30 bytes in
-PRG031, so past that a trampoline into a swapped bank is the only option — and
-that costs bytes too.
+The always-mapped banks are effectively full, and got fuller: `item_keys`' found
+recorder took PRG031's 30-byte gap (2026-09-19) because a routine three grant
+sites in three banks all have to reach has nowhere else to live. A patch that
+must run regardless of the current bank now has one 42-byte gap in PRG030 and
+nothing over 22 bytes in PRG031, so past that a trampoline into a swapped bank
+is the only option — and that costs bytes too.
 
 **Check where your hook actually runs before paying that rent.** A hook on the
 world map does not need an always-mapped bank at all: `$84A0` maps PRG010 into

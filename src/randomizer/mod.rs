@@ -448,7 +448,7 @@ fn randomize_inner(
         // K cannot exceed the airships the spine offers: a shorter spine means
         // fewer than seven wands exist in the game at all.
         let wands = options.maze_wands.min(spine.len().saturating_sub(1) as u8);
-        let (state, _report) = randomize::maze::generate(
+        let (mut state, _report) = randomize::maze::generate(
             &build,
             &spine,
             wands,
@@ -461,7 +461,21 @@ fn randomize_inner(
             &mut rng,
         );
         randomize::maze::stamp_into(&mut build, &state);
-        (state, wands)
+        // MiMaze: choose which levels are gated and who carries the keys.
+        // Runs on the finished maze and before the writer, which is the
+        // whole point — it needs the map the player will walk, and it hands
+        // the writer `requires` marks the deal has to honour.
+        //
+        // `installed` is a veto, not a report: false means no arrangement of
+        // this seed survives its own gates, so the ROM patches below must be
+        // skipped too. Gating the dispenser and the canoe with a model that
+        // disagrees is exactly how a seed strands a player.
+        let item_layer = options.item_keys.then(|| {
+            rom.set_tag("item_layer");
+            randomize::item_layer::place(&mut state, &mut build, &mut rng)
+        });
+        let item_keys_on = item_layer.as_ref().is_some_and(|p| p.installed);
+        (state, wands, item_keys_on)
     });
     // --- OVERWORLD CAPTURE POINT ---
     // Hand a clone of the finalized BuildResult (post hands/troll mutations,
@@ -497,9 +511,9 @@ fn randomize_inner(
     // asks the packed store where a given cell's completion bit lives rather
     // than re-deriving that arithmetic, and `world_persist` is what installs
     // the store.
-    if let Some((state, wands)) = maze {
+    if let Some((state, wands, _)) = maze.as_ref().map(|(s, w, i)| (s, *w, *i)) {
         rom.set_tag("world_maze");
-        randomize::maze::writer::install_pad_metatile(rom, &state);
+        randomize::maze::writer::install_pad_metatile(rom, state);
         rom.set_tag("wand_gate");
         randomize::wand_gate::apply(rom, wands);
         // After wand_gate: it installs the marker that fills WANDS_TABLE, and
@@ -509,7 +523,7 @@ fn randomize_inner(
         rom.set_tag("world_persist");
         randomize::world_persist::apply(
             rom,
-            &randomize::maze::writer::telepad_specs(&state),
+            &randomize::maze::writer::telepad_specs(state),
             written.grids(rom),
             // The HELP bubble is only ours to retire once the airship cutscene
             // is gone — with `--keep-autoscroll` slot 0 still gates the dock
@@ -859,6 +873,25 @@ fn randomize_inner(
     if options.modern_powerups {
         rom.set_tag("qol/modern_powerups");
         randomize::qol::apply_modern_powerups(rom);
+    }
+
+    // MiMaze's ROM side: the dispenser gate, the found recorder, and the
+    // canoe. Installed only when `item_layer` actually dealt gates on this
+    // seed — the model and the patches have to agree, and the model is the
+    // one that can say no.
+    //
+    // **After `modern_powerups`, and that ordering is load-bearing.** That
+    // patch rewrites two bytes *inside* the run this routine occupies (the
+    // `LDY #$05` operands at 0x11802 and 0x11810, which hand a small player a
+    // mushroom). Running first would leave it to overwrite the middle of the
+    // gate. Running second, the gate replaces the whole run — and expresses
+    // the same intent, because `modern_powerups` selects its easier arm:
+    // small Mario is powered up directly, so the mushroom is not a rung to
+    // gate and the `Player_Suit` test is dropped. That patch's other three
+    // writes are outside the run and still stand.
+    if maze.as_ref().is_some_and(|&(_, _, installed)| installed) {
+        rom.set_tag("item_keys");
+        randomize::item_keys::apply(rom, options.modern_powerups);
     }
 
     // Random Fire Flower — in-level Fire Flower grants a position-derived suit

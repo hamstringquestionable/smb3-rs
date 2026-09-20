@@ -9,6 +9,15 @@ deploys.
 
 ## [Unreleased]
 
+### Added
+
+- **MiMaze.** A third setting on World Maze: a block only gives you an item you
+  have already found from a Toad House, a Hammer Bro or a letter from the
+  Princess, and the four levels that need their own power-up become locked
+  doors until you find what opens them. The canoe needs the anchor. Finding
+  something is permanent and turns on every block of that kind in the game, so
+  a run starts small and opens up as you search.
+
 ### Changed
 
 - **A Hammer Bro's reward is decided once.** The chest, Toad House, Hammer Bro

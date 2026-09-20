@@ -624,6 +624,16 @@ pub struct Options {
     /// a flight suit, because the level cannot be beaten without one.
     #[serde(default)]
     pub shuffle_big_q_rooms: bool,
+    /// **MiMaze.** A power-up block only dispenses an item the player has
+    /// already found from a Toad House, a Hammer Bro or a Princess letter,
+    /// and the four levels that need their own power-up become gates the
+    /// item layer places deliberately.
+    ///
+    /// World Maze only: the found table lives in the maze's SRAM run and is
+    /// zeroed by its new-game signal, and the gate placement runs on a
+    /// finished maze.
+    #[serde(default)]
+    pub item_keys: bool,
     /// Every 1-Up Mushroom is replaced with a Poison Mushroom that damages
     /// the player instead of granting a life. (MaCobra52's "All 1UPs are
     /// Poison Mushrooms" patch.) Off by default; a challenge option.
@@ -832,6 +842,7 @@ impl Default for Options {
             faster_frog: false,
             lakitu_stays_down: false,
             shuffle_big_q_rooms: false,
+            item_keys: false,
             poison_mushrooms: false,
             modern_powerups: false,
             fire_flower: FireFlowerMode::Off,

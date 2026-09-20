@@ -139,6 +139,11 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
         "4 tables (X/XHi/ScrL/ScrH × 8) + Map_Init seed helper",
     ),
     fs(0x3E965, 13, &["title_screen"], "intro skip + menu music routine"),
+    // The found recorder is in PRG031 because that bank is always mapped, so
+    // all three grant sites reach it whatever else is banked — which is what
+    // always-mapped space is for, and why one copy costs less than three.
+    fs(0x3E972, 30, &["item_keys"], "shared found recorder (30 reserved, 25 used)"),
+    fs(0x3E2C6, 10, &["item_keys"], "Player_GetItem tail hook (10 reserved, 7 used)"),
     fs(0x3FFF0, 26, &["card_speed_clear"], "XOR trampoline"),
     // PRG025 (file 0x32010, CPU $C000–$DFFF while the title screen runs)
     fs(
@@ -177,15 +182,13 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
         &["big_q_blocks"],
         "big_q_block: two-pass lookup + slot seeding + 7 13-entry tables (224 reserved, 207 used)",
     ),
-    // `item_keys` claims four runs and has **no rows here yet**, deliberately:
-    // 0x3E972 (30, the shared found recorder), 0x3E2C6 (10, the
-    // `Player_GetItem` tail hook), 0x3B81A (16, the Toad House recorder) and
-    // 0x37D57 (16, the letter recorder). Every registered allocation must be
-    // written by a real randomizer run or `free_space_audit_matches_registry`
-    // fails, because an audit over nothing proves nothing — and the feature is
-    // reachable only from `testrom` until the MiMaze layer that makes it safe
-    // exists. The rows land with that. All four runs are checked filler:
-    // `prg029.asm` and the PRG031/PRG027 gaps are `$FF` tails.
+    // PRG029 (file 0x3A010, CPU $C000–$DFFF) — the bank tail, which
+    // `prg029.asm` ends by declaring "Rest of ROM bank was empty".
+    fs(0x3B81A, 16, &["item_keys"], "record a Toad House grant (16 reserved, 16 used)"),
+    // PRG027 (file 0x36010, CPU $A000–$BFFF)
+    fs(0x37D57, 16, &["item_keys"], "record a Princess letter grant (16 reserved, 11 used)"),
+    // PRG010 (file 0x14010, CPU $C000–$DFFF during map)
+    fs(0x15DD0, 16, &["item_keys"], "gate the canoe summon on the anchor (16 reserved, 13 used)"),
     // PRG008 (file 0x10010, CPU $A000–$BFFF while a block is bumped)
     //
     // Three handlers, not two: `LATP_Star` ($B808, 8 bytes) joins the pair once

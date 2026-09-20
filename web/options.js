@@ -80,6 +80,17 @@ const OFF_SOME_ALL = [
 	{ value: "all", label: "All" },
 ];
 
+// Off / On / MiMaze for the mode switch. The third pill is the maze *plus*
+// item keys, which is why it is one control and not two: MiMaze without the
+// maze is not a thing — the found table lives in the maze's SRAM and the gate
+// placement runs on a finished maze. `getOptions` splits the value back into
+// the two fields the generator and the flag key carry.
+const MAZE_MODES = [
+	{ value: "off", label: "Off" },
+	{ value: "on", label: "On" },
+	{ value: "mimaze", label: "MiMaze" },
+];
+
 const OFF_SOME_FULL = [
 	{ value: "off", label: "Off" },
 	{ value: "some", label: "Some" },
@@ -335,9 +346,9 @@ export const SCHEMA = [
 	// --- World Maze ---
 	// The mode switch first; everything under it is inert without it, which is
 	// what the group note says.
-	{ id: "world_maze", type: "bool", default: false,
+	{ id: "world_maze", type: "tri", options: MAZE_MODES, default: "off",
 		label: "World Maze",
-		tip: "The eight maps become one big maze. Warp pads link them, a fortress can open a lock in another world, and your progress in a world is still there when you come back. Turns World Order on, and uses all eight worlds.",
+		tip: "Off is eight separate worlds. On makes them one big maze: warp pads link them, a fortress can open a lock in another world, and your progress in a world is still there when you come back. MiMaze adds item keys \u2014 a block only gives you an item you have already found from a Toad House, a Hammer Bro or a letter, and the levels that need their own power-up become locked doors until you find what opens them. Either maze turns World Order on and uses all eight worlds.",
 		group: "maze", inFlagKey: true },
 	{ id: "maze_wands", type: "tri", numeric: true,
 		options: [0,1,2,3,4,5,6,7].map(n => ({ value: n, label: String(n) })),
@@ -866,7 +877,7 @@ export const PRESETS = [
 			troll_pipes: "off",
 			water: "wild",
 			wild_injections: ["sun","lakitu","bass"],
-			world_maze: true,
+			world_maze: "on",
 			world_order: true,
 		} },
 	{ id: "maze_beginner", label: "Beginner Friendly", mode: "maze",
@@ -895,7 +906,7 @@ export const PRESETS = [
 			starting_items: [7,2,3],
 			starting_lives: 20,
 			troll_pipes: "off",
-			world_maze: true,
+			world_maze: "on",
 			world_order: true,
 		} },
 	{ id: "maze_challenging", label: "Challenging", mode: "maze",
@@ -933,7 +944,7 @@ export const PRESETS = [
 			troll_pipes: "maybe",
 			water: "wild",
 			wild_injections: ["sun","lakitu","bass"],
-			world_maze: true,
+			world_maze: "on",
 			world_order: true,
 		} },
 	{ id: "maze_max_chaos", label: "Max Chaos", mode: "maze",
@@ -975,7 +986,7 @@ export const PRESETS = [
 			troll_pipes: "maybe",
 			water: "wild",
 			wild_injections: ["sun","lakitu","bass"],
-			world_maze: true,
+			world_maze: "on",
 			world_order: true,
 		} },
 ];
@@ -1045,7 +1056,7 @@ const MODE_SWITCH = "world_maze";
 
 function currentMode() {
 	const entry = SCHEMA.find(s => s.id === MODE_SWITCH);
-	return entry && readValue(entry) ? "maze" : "standard";
+	return entry && readValue(entry) !== "off" ? "maze" : "standard";
 }
 
 // True when the option describes nothing in the mode the form is currently in.
@@ -1701,6 +1712,11 @@ export function getOptions() {
 		// without this a stale World Count would still set a maze's spine.
 		out[entry.id] = isInert(entry, mode) ? entry.default : readValue(entry);
 	}
+	// The mode switch is one pill and two fields. The generator and the flag
+	// key carry them separately because the CLI and a pasted key never run
+	// this file.
+	out.item_keys = out.world_maze === "mimaze";
+	out.world_maze = out.world_maze !== "off";
 	return out;
 }
 
@@ -1768,9 +1784,15 @@ export function getOptionsJson() {
 // shared key doesn't clobber the user's local cosmetic / ROM choices.
 export function applyOptions(opts) {
 	clearForcedMemo();
+	// The inverse of `getOptions`' split: a decoded key carries two bools, the
+	// form one three-way pill.
+	const merged = {
+		...opts,
+		world_maze: !opts.world_maze ? "off" : opts.item_keys ? "mimaze" : "on",
+	};
 	for (const entry of SCHEMA) {
 		if (!entry.inFlagKey) continue;
-		writeValue(entry, opts[entry.id]);
+		writeValue(entry, merged[entry.id]);
 	}
 }
 

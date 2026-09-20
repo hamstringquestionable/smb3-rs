@@ -459,9 +459,21 @@ mod payload {
         /// rather than to silence.
         pub(super) hints: HintMode,
         pub(super) maze_wands: B3,
+        /// MiMaze: item keys on top of the world maze. A power-up block only
+        /// dispenses what the player has found, and the levels that need
+        /// their own power-up become gates.
+        ///
+        /// Written **verbatim**, not zeroed with the maze off — the opposite
+        /// of `maze_wands` and `hints` above, and for the reason
+        /// `deja_vu_forts` records: those were normalized to keep an existing
+        /// key string from moving, while this one is new and false by
+        /// default, so it costs nothing either way. Verbatim keeps the bool
+        /// exhaustiveness guard honest. `randomize_inner`, not the key,
+        /// ignores it without the maze.
+        pub(super) item_keys: bool,
 
         // --- Reserve ---
-        // 132 bits. Adding an option is: declare it immediately above this
+        // 131 bits. Adding an option is: declare it immediately above this
         // block, then take the same number of bits off `B19`. An older key
         // simply has those bits zero, which is "off" for a bool and the default
         // for every enum here, so it stays a correct key for the settings it
@@ -476,7 +488,7 @@ mod payload {
         #[skip]
         __: B128,
         #[skip]
-        __: B4,
+        __: B3,
     }
 }
 
@@ -517,7 +529,7 @@ impl Options {
             hammer_vulnerable_koopalings, random_koopalings, early_sun,
             japanese_damage, infinite_mushroom_houses, fast_mushroom_house,
             faster_tail_speed, faster_frog, lakitu_stays_down, no_game_over_penalty,
-            shuffle_big_q_rooms,
+            shuffle_big_q_rooms, item_keys,
             poison_mushrooms, modern_powerups, anchor_visuals,
             hammer_breaks_locks, hammer_breaks_bridges, more_hammer_rocks,
             eights_are_wild, troll_pipes, antechamber_shuffle,
@@ -565,6 +577,7 @@ impl Options {
             .with_faster_frog(*faster_frog)
             .with_lakitu_stays_down(*lakitu_stays_down)
             .with_shuffle_big_q_rooms(*shuffle_big_q_rooms)
+            .with_item_keys(*item_keys)
             .with_no_game_over_penalty(*no_game_over_penalty)
             .with_poison_mushrooms(*poison_mushrooms)
             .with_modern_powerups(*modern_powerups)
@@ -672,6 +685,7 @@ impl Options {
             faster_frog: f.faster_frog(),
             lakitu_stays_down: f.lakitu_stays_down(),
             shuffle_big_q_rooms: f.shuffle_big_q_rooms(),
+            item_keys: f.item_keys(),
             no_game_over_penalty: f.no_game_over_penalty(),
             poison_mushrooms: f.poison_mushrooms(),
             modern_powerups: f.modern_powerups(),
