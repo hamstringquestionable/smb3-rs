@@ -143,81 +143,82 @@ impl Key {
 /// the block type the dispatcher already has in `Y`.
 const PRODUCTS: u16 = crate::randomize::maze_state::FOUND_PRODUCTS;
 
-/// `PUp_StarManFlash`. Vanilla's flower and leaf handlers clear it; the star
-/// handler sets it. One row per product row, so the merged routine keeps both
-/// behaviours for a three-byte table and no branch.
-const FLASH_OFFSET: usize = 29;
-const FLASH_CPU: u16 = GATE_CPU + FLASH_OFFSET as u16;
-
 /// The gate, covering all three power-up entries.
 ///
 /// ```text
-///   TYA / LSR A        Y is type*2 on entry, so A is the row: 1 flower,
-///                      2 leaf, 3 star
-///   CMP #$03 / BEQ     a star ignores Player_Suit, as vanilla does
-///   LDY Player_Suit
-///   BNE have
-///   LDA #$00           small -> row 0, the mushroom
-/// have:
-///   TAY
-///   LDA FLASH,Y / STA PUp_StarManFlash
-///   LDA PRODUCTS,Y     SRAM; zero means locked
+///   TYA / LSR A          Y is type*2 on entry, so A is the row: 1 flower,
+///                        2 leaf, 3 star
+///   LDY Player_Suit      and Y == 0 *is* the mushroom row
+///   BNE have             big: the row is the block type
+///   CMP #$03 / BNE small a star ignores the suit, as vanilla does
+/// have:  TAY
+/// small: LDA #$00 / CPY #$03 / ROR A / STA PUp_StarManFlash
+///   LDA FOUND_PRODUCTS,Y SRAM; zero means locked
 ///   BEQ locked
-///   TAY / RTS          Y = the Bouncer_PUp index
-/// locked:
-///   JMP LATP_Coin
+///   TAY / RTS            Y = the Bouncer_PUp index
+/// locked: JMP LATP_Coin
 /// ```
 ///
-/// 33 bytes of the 36 reclaimed by repointing all three jump-table words.
+/// 29 bytes of the 36 reclaimed by repointing all three jump-table words.
+/// Two tricks pay for the small-player case and the starman flash:
+///
+/// **The suit load doubles as the mushroom row.** `Player_Suit` is zero
+/// exactly when the answer is row 0, so loading it into `Y` rather than `A`
+/// means the small path needs no `LDA #$00` at all — it just declines to
+/// overwrite `Y`. The `BNE small` skips precisely the one-byte `TAY`.
+///
+/// **The flash value is derived, not tabled.** `CPY #$03` sets carry iff the
+/// row is the star's, and `ROR` rotates carry into bit 7 — so `$80` for a
+/// star and `$00` for everything else costs three bytes instead of a
+/// four-byte table. `PUp_StarManFlash` is only ever tested for bit 7 or for
+/// zero (`prg001` tests it eight ways, all `BPL`/`BEQ`/`BNE`/`AND #$03`), so
+/// those two values are its whole contract.
+///
+/// Losing the table also loses the routine's only absolute self-reference,
+/// which is why this no longer needs `.origin()` and could be relocated.
 #[rustfmt::skip]
-const GATE: [u8; 33] = [
+const GATE: [u8; 29] = [
     0x98,                                              //  0: TYA
     0x4A,                                              //  1: LSR A
-    0xC9, 0x03,                                        //  2: CMP #$03      ; star?
-    0xF0, 0x06,                                        //  4: BEQ have
-    0xA4, 0xED,                                        //  6: LDY Player_Suit
-    0xD0, 0x02,                                        //  8: BNE have
-    0xA9, 0x00,                                        // 10: LDA #$00      ; small -> row 0
-    0xA8,                                              // 12: have: TAY
-    0xB9, FLASH_CPU as u8, (FLASH_CPU >> 8) as u8,     // 13: LDA FLASH,Y
+    0xA4, 0xED,                                        //  2: LDY Player_Suit
+    0xD0, 0x04,                                        //  4: BNE have
+    0xC9, 0x03,                                        //  6: CMP #$03      ; star?
+    0xD0, 0x01,                                        //  8: BNE small
+    0xA8,                                              // 10: have: TAY
+    0xA9, 0x00,                                        // 11: small: LDA #$00
+    0xC0, 0x03,                                        // 13: CPY #$03      ; carry iff star
+    0x6A,                                              // 15: ROR A         ; -> $80 or $00
     0x8D, 0x86, 0x05,                                  // 16: STA PUp_StarManFlash
-    0xB9, PRODUCTS as u8, (PRODUCTS >> 8) as u8,       // 19: LDA PRODUCTS,Y
+    0xB9, PRODUCTS as u8, (PRODUCTS >> 8) as u8,       // 19: LDA FOUND_PRODUCTS,Y
     0xF0, 0x02,                                        // 22: BEQ locked
     0xA8,                                              // 24: TAY
     0x60,                                              // 25: RTS
     0x4C, LATP_COIN_CPU as u8, (LATP_COIN_CPU >> 8) as u8, // 26: locked: JMP LATP_Coin
-    0x00, 0x00, 0x00, 0x80,                            // 29: FLASH: -, -, -, starman
 ];
 
-/// The **easier arm**: the same gate with the `Player_Suit` test removed.
-///
-/// `qol::apply_modern_powerups` rewrites the two `LDY #$05` operands inside
-/// the vanilla handlers so a *small* player is handed the suit directly. Under
-/// it both of a handler's paths return the same product, so the suit test is
-/// dead weight — and, more to the point, the mushroom stops being a rung to
-/// gate at all. Dropping the test is what expresses that: the row is always
-/// the block type, row 0 is never read, and the player never has to find a
-/// mushroom to start using what they find.
-///
-/// 23 bytes, in the same allocation. See the allocation section of
-/// `docs/item_keys_design.md`.
-#[rustfmt::skip]
-const GATE_EASY: [u8; 23] = [
-    0x98,                                              //  0: TYA
-    0x4A,                                              //  1: LSR A         ; row = block type
-    0xA8,                                              //  2: TAY
-    0xB9, EASY_FLASH_CPU as u8, (EASY_FLASH_CPU >> 8) as u8, //  3: LDA FLASH,Y
-    0x8D, 0x86, 0x05,                                  //  6: STA PUp_StarManFlash
-    0xB9, PRODUCTS as u8, (PRODUCTS >> 8) as u8,       //  9: LDA PRODUCTS,Y
-    0xF0, 0x02,                                        // 12: BEQ locked
-    0xA8,                                              // 14: TAY
-    0x60,                                              // 15: RTS
-    0x4C, LATP_COIN_CPU as u8, (LATP_COIN_CPU >> 8) as u8, // 16: locked: JMP LATP_Coin
-    0x00, 0x00, 0x00, 0x80,                            // 19: FLASH
-];
+/// Offset of the `LDY Player_Suit` operand pair, which is the whole of the
+/// difference between the two arms — see [`gate_bytes`].
+const SUIT_TEST_AT: usize = 2;
 
-const EASY_FLASH_OFFSET: usize = 19;
-const EASY_FLASH_CPU: u16 = GATE_CPU + EASY_FLASH_OFFSET as u16;
+/// The gate for one arm or the other.
+///
+/// The **easier arm** — `qol::apply_modern_powerups`, which hands a *small*
+/// player the suit directly — is the same routine with `LDY Player_Suit`
+/// replaced by `LDY #$01`. `Y` is then always non-zero, `BNE have` always
+/// fires, the row is always the block type, and row 0 is never read. Which
+/// is exactly right: under that patch the mushroom is not a rung to gate, so
+/// there is nothing for the small path to do.
+///
+/// Two bytes, rather than a second 23-byte routine kept in step with this
+/// one by hand.
+fn gate_bytes(easier: bool) -> [u8; 29] {
+    let mut out = GATE;
+    if easier {
+        out[SUIT_TEST_AT] = 0xA0; // LDY #imm
+        out[SUIT_TEST_AT + 1] = 0x01;
+    }
+    out
+}
 
 /// File offset of jump-table entry `n`'s word.
 const fn entry_offset(n: usize) -> usize {
@@ -254,11 +255,7 @@ pub fn apply(rom: &mut Rom, easier: bool) {
         );
     }
     rom.push_tag("item_keys/gate");
-    if easier {
-        rom.write_range(FS_ITEM_GATE, &GATE_EASY);
-    } else {
-        rom.write_range(FS_ITEM_GATE, &GATE);
-    }
+    rom.write_range(FS_ITEM_GATE, &gate_bytes(easier));
     repoint(rom, 1, LATP_FLOWER_CPU, GATE_CPU);
     repoint(rom, 2, LATP_LEAF_CPU, GATE_CPU);
     repoint(rom, 3, LATP_STAR_CPU, GATE_CPU);
@@ -292,30 +289,34 @@ pub fn apply(rom: &mut Rom, easier: bool) {
 /// The shared recorder: `A` is a Global Item ID on entry, and the found table
 /// row for it (if any) is set to the product that row dispenses.
 ///
-/// The mapping is regular enough to compute rather than look up: ids 1, 2, 3
-/// are rows 0, 1, 2, and id 9 (the starman) is row 3. Id 0 wraps to `$FF`
-/// under the subtract and falls out of the same bound check that rejects 4
-/// and up, so "not a key" costs no test of its own.
+/// Both id ranges are linear — `1,2,3 -> id-1` and `9,$0A -> id-6` — so the
+/// whole mapping is two subtracts and two bound checks, with no table of ids
+/// at all.
+///
+/// Two things make it this short. `SBC #$00` is a two-byte *conditional*
+/// decrement: reached with carry clear (the `BCC` was taken) it subtracts
+/// one, reached with carry set it leaves `A` alone. And an out-of-range high
+/// id survives its own check only to fall **into** the low path with carry
+/// set, where that `SBC` is a no-op and the low bound rejects it — so one
+/// check does double duty and "not a key" costs no test of its own. Id 0
+/// wraps to `$FF` and is rejected the same way.
 ///
 /// Clobbers `A` and `X`; **preserves `Y`**, which every caller needs — two of
 /// them are holding an inventory offset or a world number across the call.
 #[rustfmt::skip]
-const RECORD: [u8; 29] = [
-    0xC9, 0x0A,                                    //  0: CMP #$0A      ; the anchor
-    0xD0, 0x04,                                    //  2: BNE notanchor
-    0xA2, 0x04,                                    //  4: LDX #$04      ; its own row
-    0xD0, 0x0E,                                    //  6: BNE have      ; always: X is nonzero
-    0xA2, 0x03,                                    //  8: notanchor: LDX #$03   ; the starman's
-    0xC9, 0x09,                                    // 10: CMP #$09
-    0xF0, 0x08,                                    // 12: BEQ have
-    0x38,                                          // 14: SEC
-    0xE9, 0x01,                                    // 15: SBC #$01      ; row = id - 1
-    0xC9, 0x03,                                    // 17: CMP #$03
-    0xB0, 0x07,                                    // 19: BCS done      ; id 0 -> $FF, ids 4+ -> out
-    0xAA,                                          // 21: TAX
-    0xBD, PROD_CPU as u8, (PROD_CPU >> 8) as u8,   // 22: have: LDA PROD,X
-    0x9D, PRODUCTS as u8, (PRODUCTS >> 8) as u8,   // 25: STA FOUND_PRODUCTS,X
-    0x60,                                          // 28: done: RTS
+const RECORD: [u8; 24] = [
+    0xC9, 0x09,                                    //  0: CMP #$09
+    0x90, 0x06,                                    //  2: BCC low        ; ids 1-3 ... carry CLEAR
+    0xE9, 0x06,                                    //  4: SBC #$06       ; carry set: 9->3, $0A->4
+    0xC9, 0x05,                                    //  6: CMP #$05
+    0x90, 0x06,                                    //  8: BCC have
+    0xE9, 0x00,                                    // 10: low: SBC #$00  ; C=0 decrements, C=1 does not
+    0xC9, 0x03,                                    // 12: CMP #$03
+    0xB0, 0x07,                                    // 14: BCS done
+    0xAA,                                          // 16: have: TAX
+    0xBD, PROD_CPU as u8, (PROD_CPU >> 8) as u8,   // 17: LDA PROD,X
+    0x9D, PRODUCTS as u8, (PRODUCTS >> 8) as u8,   // 20: STA FOUND_PRODUCTS,X
+    0x60,                                          // 23: done: RTS
 ];
 
 /// The value written per row. Rows 0-3 are `Bouncer_PUp` indices the gate
@@ -330,8 +331,9 @@ const RECORD_PROD: [u8; 5] = [0x05, 0x02, 0x03, 0x04, 0x01];
 
 const FS_RECORD: usize = 0x3E972;
 const RECORD_CPU: u16 = 0xE962;
-const FS_RECORD_PROD: usize = 0x3FF3A;
-const PROD_CPU: u16 = 0xFF2A;
+/// Sits in the same gap, immediately after the routine — 24 + 5 fits the
+/// 30 bytes, which is why this needs no allocation of its own.
+const PROD_CPU: u16 = RECORD_CPU + 24;
 
 /// `Player_GetItem`'s tail — `PLA / STA Inventory_Items,Y / RTS`. Hooked at
 /// the `STA` rather than the entry because `A` is the item there and nothing
@@ -342,10 +344,9 @@ const FS_GETITEM_TAIL: usize = 0x3E2C6;
 const GETITEM_TAIL_CPU: u16 = 0xE2B6;
 
 #[rustfmt::skip]
-const GETITEM_TAIL_HOOK: [u8; 7] = [
+const GETITEM_TAIL_HOOK: [u8; 6] = [
     0x99, 0x80, 0x7D,                                      // 0: STA Inventory_Items,Y (displaced)
-    0x20, RECORD_CPU as u8, (RECORD_CPU >> 8) as u8,       // 3: JSR RECORD
-    0x60,                                                  // 6: RTS
+    0x4C, RECORD_CPU as u8, (RECORD_CPU >> 8) as u8,       // 3: JMP RECORD  ; its RTS is ours
 ];
 
 /// `Letter_GiveIncludedItem`: `LDA LetterItem_ByWorld,Y / STA CineKing_Var`,
@@ -560,14 +561,17 @@ const SUMMON_GATE_CPU: u16 = 0xDDC0;
 /// every exit from that routine restores `A = World_Map_Tile` and `Y = $1A`
 /// so the displaced special-enter-tile scan continues as in vanilla, and so
 /// does this.
+/// The summon's own passthrough exit: `LDA World_Map_Tile / LDY #$1A / RTS`
+/// at `FS_CANOE_SUMMON + 18`, which every one of its exits falls to. Jumping
+/// there beats copying those five bytes into the stub.
+const SUMMON_PASSTHROUGH_CPU: u16 = SUMMON_CPU + 18;
+
 #[rustfmt::skip]
-const SUMMON_GATE: [u8; 13] = [
-    0xAD, ANCHOR as u8, (ANCHOR >> 8) as u8,           //  0: LDA FOUND_ANCHOR
-    0xD0, 0x05,                                        //  3: BNE summon
-    0xA5, 0xE5,                                        //  5: LDA World_Map_Tile
-    0xA0, 0x1A,                                        //  7: LDY #$1A
-    0x60,                                              //  9: RTS
-    0x4C, SUMMON_CPU as u8, (SUMMON_CPU >> 8) as u8,   // 10: summon: JMP the real routine
+const SUMMON_GATE: [u8; 11] = [
+    0xAD, ANCHOR as u8, (ANCHOR >> 8) as u8,           // 0: LDA FOUND_ANCHOR
+    0xD0, 0x03,                                        // 3: BNE summon
+    0x4C, SUMMON_PASSTHROUGH_CPU as u8, (SUMMON_PASSTHROUGH_CPU >> 8) as u8, // 5: JMP csexit
+    0x4C, SUMMON_CPU as u8, (SUMMON_CPU >> 8) as u8,   // 8: summon: JMP the real routine
 ];
 
 fn gate_the_summon(rom: &mut Rom) {
@@ -601,7 +605,7 @@ fn splice(rom: &mut Rom, site: usize, vanilla: &[u8], patch: &[u8]) {
 fn install_found_recorder(rom: &mut Rom) {
     rom.push_tag("item_keys/found");
     rom.write_range(FS_RECORD, &RECORD);
-    rom.write_range(FS_RECORD_PROD, &RECORD_PROD);
+    rom.write_range(FS_RECORD + RECORD.len(), &RECORD_PROD);
 
     rom.write_range(FS_GETITEM_TAIL, &GETITEM_TAIL_HOOK);
     splice(
@@ -713,15 +717,19 @@ mod tests {
     /// mapping is how a leaf gets recorded into the mushroom's row.
     #[test]
     fn one_recorder_serves_every_hook() {
-        let call = [0x20, RECORD_CPU as u8, (RECORD_CPU >> 8) as u8];
+        // `JSR` or `JMP` — the get-item hook tail-calls, since the recorder's
+        // own `RTS` can return to its caller. What matters is that all three
+        // reach the same address.
+        let lo = RECORD_CPU as u8;
+        let hi = (RECORD_CPU >> 8) as u8;
         for (name, hook) in [
             ("toad", &TOAD_HOOK[..]),
             ("get_item", &GETITEM_TAIL_HOOK[..]),
             ("letter", &LETTER_HOOK[..]),
         ] {
             assert!(
-                hook.windows(3).any(|w| w == call),
-                "{name} hook does not call the shared recorder"
+                hook.windows(3).any(|w| (w[0] == 0x20 || w[0] == 0x4C) && w[1] == lo && w[2] == hi),
+                "{name} hook does not reach the shared recorder"
             );
         }
     }
@@ -867,9 +875,13 @@ mod tests {
     /// type and the mushroom row is never read.
     #[test]
     fn the_easier_arm_has_no_suit_test() {
-        assert!(!GATE_EASY.contains(&0xED), "Player_Suit must not be read");
-        assert!(GATE.contains(&0xED), "the default arm must read it");
-        assert!(GATE_EASY.len() < GATE.len());
+        let (normal, easy) = (gate_bytes(false), gate_bytes(true));
+        assert_eq!(&normal[SUIT_TEST_AT..SUIT_TEST_AT + 2], &[0xA4, 0xED], "LDY Player_Suit");
+        assert_eq!(&easy[SUIT_TEST_AT..SUIT_TEST_AT + 2], &[0xA0, 0x01], "LDY #$01");
+        // and nothing else moves
+        for i in (0..normal.len()).filter(|i| !(SUIT_TEST_AT..SUIT_TEST_AT + 2).contains(i)) {
+            assert_eq!(normal[i], easy[i], "byte {i} differs");
+        }
     }
 }
 
@@ -970,21 +982,14 @@ mod asm_checks {
     /// absolutely, so the routine cannot be relocated without recomputing it.
     #[test]
     fn gate_is_well_formed() {
-        asm::check(&GATE)
-            .allocation(FS_ITEM_GATE)
-            .origin(GATE_CPU)
-            .data_from(FLASH_OFFSET)
-            .assert_ok();
+        asm::check(&gate_bytes(false)).allocation(FS_ITEM_GATE).assert_ok();
     }
 
-    /// The easier arm shares the allocation and the origin.
+    /// The easier arm is the same routine with two bytes changed, so it has
+    /// to decode too.
     #[test]
     fn easier_gate_is_well_formed() {
-        asm::check(&GATE_EASY)
-            .allocation(FS_ITEM_GATE)
-            .origin(GATE_CPU)
-            .data_from(EASY_FLASH_OFFSET)
-            .assert_ok();
+        asm::check(&gate_bytes(true)).allocation(FS_ITEM_GATE).assert_ok();
     }
 
     /// The shared recorder: decodes, ends in `RTS`, both branches land on

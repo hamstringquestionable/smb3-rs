@@ -142,9 +142,8 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
     // The found recorder is in PRG031 because that bank is always mapped, so
     // all three grant sites reach it whatever else is banked — which is what
     // always-mapped space is for, and why one copy costs less than three.
-    fs(0x3E972, 30, &["item_keys"], "shared found recorder (30 reserved, 29 used)"),
-    fs(0x3FF3A, 8, &["item_keys"], "found recorder's value table (8 reserved, 5 used)"),
-    fs(0x3E2C6, 10, &["item_keys"], "Player_GetItem tail hook (10 reserved, 7 used)"),
+    fs(0x3E972, 30, &["item_keys"], "shared found recorder + value table (30 reserved, 29 used)"),
+    fs(0x3E2C6, 10, &["item_keys"], "Player_GetItem tail hook (10 reserved, 6 used)"),
     fs(0x3FFF0, 26, &["card_speed_clear"], "XOR trampoline"),
     // PRG025 (file 0x32010, CPU $C000–$DFFF while the title screen runs)
     fs(
@@ -185,11 +184,11 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
     ),
     // PRG029 (file 0x3A010, CPU $C000–$DFFF) — the bank tail, which
     // `prg029.asm` ends by declaring "Rest of ROM bank was empty".
-    fs(0x3B81A, 16, &["item_keys"], "record a Toad House grant (16 reserved, 16 used)"),
+    fs(0x3B81A, 16, &["item_keys"], "record a Toad House grant (16 reserved, 9 used)"),
     // PRG027 (file 0x36010, CPU $A000–$BFFF)
     fs(0x37D57, 16, &["item_keys"], "record a Princess letter grant (16 reserved, 11 used)"),
     // PRG010 (file 0x14010, CPU $C000–$DFFF during map)
-    fs(0x15DD0, 16, &["item_keys"], "gate the canoe summon on the anchor (16 reserved, 13 used)"),
+    fs(0x15DD0, 16, &["item_keys"], "gate the canoe summon on the anchor (16 reserved, 11 used)"),
     // PRG008 (file 0x10010, CPU $A000–$BFFF while a block is bumped)
     //
     // Three handlers, not two: `LATP_Star` ($B808, 8 bytes) joins the pair once
@@ -213,7 +212,7 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
         0x117FC,
         36,
         &["item_keys", "qol/modern_powerups"],
-        "LATP_Flower + LATP_Leaf + LATP_Star, retired by repointing (36 reserved, 33 used)",
+        "LATP_Flower + LATP_Leaf + LATP_Star, retired by repointing (36 reserved, 29 used)",
     ),
     // PRG027 (file 0x36010, CPU $A000–$BFFF)
     fs(0x379D9, 894, &["king_quotes"], "7 quotes + hook (7×120 + 54)"),
@@ -713,16 +712,17 @@ pub(crate) const FS_LOCK_ENTRIES: usize = 0x15554; // 112 reserved, 4 per lock
 pub(crate) const FS_FORTRESS_FX: usize = 0x147CD; // 537 reserved, 484 used
 
 // NOT $FF filler — PRG008 has none at all. These are the bodies of
-// `LATP_Flower` ($B7EC, 14 bytes) and `LATP_Leaf` ($B7FA, 14), each referenced
-// from exactly one place: its own word in `LATP_JumpTable`. Repointing those
-// two words frees both outright, and they are adjacent, so the 28 bytes are
-// one contiguous run in the dispatcher's own bank — no mapping question, and
-// none of the nearly-full always-mapped banks spent.
+// `LATP_Flower` ($B7EC, 14), `LATP_Leaf` ($B7FA, 14) and `LATP_Star` ($B808,
+// 8), each referenced from exactly one place: its own word in
+// `LATP_JumpTable`. Repointing those three words frees all three outright,
+// and they are adjacent, so the 36 bytes are one contiguous run in the
+// dispatcher's own bank — no mapping question, and none of the nearly-full
+// always-mapped banks spent.
 //
-// Origin-locked: the routine addresses its own products table absolutely, so
-// it cannot be relocated without recomputing that word. `asm::check(...)
-// .origin(GATE_CPU)` is what catches it.
-pub(crate) const FS_ITEM_GATE: usize = 0x117FC; // 28 reserved, 27 used
+// The gate is 29 of those 36, and needs no origin: deriving the starman
+// flash from the carry rather than a table left it with no absolute
+// reference to itself.
+pub(crate) const FS_ITEM_GATE: usize = 0x117FC; // 36 reserved, 29 used
 
 // World-maze POC. Sits in the tail of the same $FF run as
 // FS_LOCK_ENTRIES, which reserves 112 from 0x15554 and leaves the run
