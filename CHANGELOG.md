@@ -9,6 +9,20 @@ deploys.
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-09-20
+
+**World Maze polish.** The wand gate now tells you where you stand against it —
+the world map carries an `N/K` wand count — and the approach to Bowser's castle
+is treated as the climax it is: no Toad Houses or spade panels on that last
+screen, and a telepad onto the bridge has to be fed from behind a fortress
+somewhere else. Alongside them, the gate is built out of Dark Land's own
+masonry, the oracle king has more than one thing to say, and telepads no longer
+land on a tile a map sprite is already standing on.
+
+Old flag keys still decode — the key version is unchanged at 29, and this
+release adds no options. Seeds are not comparable with 2.1.0's, as across any
+version: the same seed and flags build a different ROM.
+
 ### Changed
 
 - **Nothing breaks the walk to Bowser's castle.** Toad Houses and spade panels
