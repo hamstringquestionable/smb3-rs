@@ -41,7 +41,7 @@ use super::overworld_build::{
     BuildResult, FortRef, LockHint, SlotKind, WorldState, from_built, stamp_slots,
 };
 use super::rom_data::{self, Grid, Pos};
-use walk::{MazePos, MazeWorld, walk_maze};
+use walk::{MazePos, MazeWorld, walk_maze_gated};
 
 pub(crate) mod fill;
 pub(crate) mod graph;
@@ -244,6 +244,15 @@ pub(crate) struct GlobalState {
     pub gates: Vec<ItemGate>,
     /// Cells that hand an item over. Empty alongside `gates`.
     pub sources: Vec<ItemSource>,
+    /// Is the canoe behind [`Key::Anchor`]?
+    ///
+    /// **False by default, and that is load-bearing.** With it false the walk
+    /// enables a boat the moment a dock is reachable, exactly as it always
+    /// has, so no existing seed moves. True is the `item_keys` arm, where the
+    /// summon is gated and the boat is parked out of reach — the model then
+    /// has to agree with the ROM or it will route a player across water the
+    /// game will not let them cross.
+    pub anchor_gated: bool,
 }
 
 impl GlobalState {
@@ -301,6 +310,7 @@ impl GlobalState {
             wands_required,
             gates: Vec::new(),
             sources: Vec::new(),
+            anchor_gated: false,
         }
     }
 
@@ -514,7 +524,8 @@ impl GlobalState {
                 bases = self.base_grids(&shut_cells);
             }
             let shut = self.shut_locks_sealed(&open, sealed);
-            let reach = walk_maze(&self.view(&bases, &shut), &links, self.start);
+            let canoe = !self.anchor_gated || found.contains(&Key::Anchor);
+            let reach = walk_maze_gated(&self.view(&bases, &shut), &links, self.start, canoe);
 
             let reached: Vec<MazePos> = content
                 .iter()

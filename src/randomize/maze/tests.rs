@@ -3924,3 +3924,56 @@ fn a_conjunction_needs_all_of_its_keys() {
     }
     panic!("no seed produced a usable cut — the test proved nothing");
 }
+
+/// **The anchor gates the boat, and only when asked.** With `anchor_gated`
+/// false the walk enables a canoe the moment a dock is reachable, exactly as
+/// it always has — that default is what keeps every existing seed still.
+/// With it true the water is a wall until an anchor is found, which is what
+/// the ROM does once `item_keys` parks the boat and gates the summon.
+#[test]
+fn the_anchor_gates_the_canoe() {
+    let Some(raw) = load_rom() else { return };
+    let knobs = Knobs::default();
+    let mut checked = 0;
+    for seed in 0..16 {
+        let (_, mut state, _) = generated(&raw, seed, &knobs, super::DEFAULT_WANDS_REQUIRED);
+        let open = state.spheres();
+        if !open.solvable {
+            continue;
+        }
+        let reached =
+            |sp: &super::Spheres| -> usize { sp.spheres.iter().map(|s| s.reached.len()).sum() };
+        let before = reached(&open);
+
+        // Gated, with no anchor anywhere: the water is a wall.
+        state.anchor_gated = true;
+        let dry = state.spheres();
+        if reached(&dry) == before {
+            continue; // this seed's canoe reaches nothing — no signal here
+        }
+
+        // The same seed with an anchor at the start tile: the boat is back.
+        state.sources = vec![ItemSource { pos: state.start, item: Key::Anchor }];
+        let wet = state.spheres();
+        assert_eq!(
+            reached(&wet),
+            before,
+            "seed {seed}: an anchor in hand should restore exactly what the boat reaches"
+        );
+        checked += 1;
+    }
+    assert!(checked > 0, "no seed had a canoe that reached anything — the test proved nothing");
+}
+
+/// The default is the old walk. Belt and braces for the field above: gating
+/// is opt-in, and a state that never sets it must be bit-for-bit the fixpoint
+/// that shipped.
+#[test]
+fn ungated_states_keep_the_old_canoe() {
+    let Some(raw) = load_rom() else { return };
+    let knobs = Knobs::default();
+    for seed in 0..8 {
+        let (_, state, _) = generated(&raw, seed, &knobs, super::DEFAULT_WANDS_REQUIRED);
+        assert!(!state.anchor_gated, "seed {seed}: gating must be opt-in");
+    }
+}

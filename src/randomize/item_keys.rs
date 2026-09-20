@@ -533,6 +533,7 @@ fn install_found_recorder(rom: &mut Rom) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rand::SeedableRng;
 
     const ROM_PATH: &str = "roms/Super Mario Bros. 3 (USA) (Rev 1).nes";
 
@@ -624,6 +625,41 @@ mod tests {
                 "{name} hook does not call the shared recorder"
             );
         }
+    }
+
+    /// **The anchor supply is an out-of-bounds read, and it is load-bearing.**
+    ///
+    /// `ToadHouse_Item2Inventory` is 15 bytes, but `ToadHouse_ItemOff[9]` is
+    /// 17 — so that Toad House type indexes past the table into `ItemOff`
+    /// itself, whose bytes 2-4 are `0A 0A 0A`. That is the only place in the
+    /// ROM an anchor can come from: no reward table holds $0A, and neither
+    /// pool `items::randomize` deals from contains one.
+    ///
+    /// Accidental, but the canoe key now depends on it, and the 2.0.1 bug
+    /// (writing 21 bytes into the 15-byte table) already clobbered exactly
+    /// these bytes once. So pin them — before and after randomization, since
+    /// `items::randomize` rewrites the declared 15 and must not reach past.
+    #[test]
+    fn the_anchor_supply_survives() {
+        let Some(mut rom) = vanilla() else {
+            eprintln!("SKIP: requires the ROM");
+            return;
+        };
+        const I2I: usize = 0x3B14B;
+        let anchors = |r: &Rom| r.read_range(I2I + 17, 3).to_vec();
+        assert_eq!(
+            anchors(&rom),
+            vec![0x0A; 3],
+            "vanilla should reach three anchors past the table"
+        );
+
+        let mut rng = rand_chacha::ChaCha8Rng::from_seed([7u8; 32]);
+        crate::randomize::items::randomize(&mut rom, &mut rng, true, false);
+        assert_eq!(
+            anchors(&rom),
+            vec![0x0A; 3],
+            "randomizing the item tables must not reach past the declared 15 bytes"
+        );
     }
 
     /// The canoe moves one tile further out, in W3 and under 8s-are-Wild in

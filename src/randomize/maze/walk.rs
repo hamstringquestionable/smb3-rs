@@ -277,6 +277,26 @@ pub(crate) fn walk_maze(
     links: &[(MazePos, MazePos)],
     start: MazePos,
 ) -> MazeReach {
+    walk_maze_gated(worlds, links, start, true)
+}
+
+/// The same walk, with the boat behind a key.
+///
+/// `canoe_available` false means no dock ever switches a boat on, however
+/// reachable it is — the model of `item_keys`' anchor gate, where the summon
+/// is dead and the boat is parked out of arm's reach. True is vanilla and is
+/// what [`walk_maze`] passes, so every caller that does not know about the
+/// anchor keeps the behaviour it had.
+///
+/// A separate entry point rather than a parameter on `walk_maze` for exactly
+/// that reason: the default has to be the old one at every one of the ten
+/// call sites, and a wrapper says so better than ten `true`s would.
+pub(crate) fn walk_maze_gated(
+    worlds: &[MazeWorld],
+    links: &[(MazePos, MazePos)],
+    start: MazePos,
+    canoe_available: bool,
+) -> MazeReach {
     let lookup = link_lookup(links);
     let pipes: Vec<TeleportLookup> = worlds.iter().map(|w| teleport_lookup(w.pipe_pairs)).collect();
     let cols: Vec<usize> = worlds.iter().map(|w| w.grid.cols).collect();
@@ -290,7 +310,7 @@ pub(crate) fn walk_maze(
         let per_world = reach_pass(worlds, &pipes, &canoe_on, &lookup, start, &cols);
         let mut changed = false;
         for (wi, world) in worlds.iter().enumerate() {
-            if canoe_on[wi] {
+            if canoe_on[wi] || !canoe_available {
                 continue;
             }
             let docks = rom_data::active_canoe_edges(wi, world.grid.eights_are_wild);
