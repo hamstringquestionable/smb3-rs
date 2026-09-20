@@ -127,7 +127,7 @@ is the one to read:
 | PRG011 | `$A000–$BFFF`, map | 46 | 14 |
 | PRG025 | `$C000–$DFFF`, title screen | 2731 | 2719 |
 | PRG012 | `$A000–$BFFF`, map reload | 620 | 240 |
-| PRG026 | `$A000–$BFFF`, map/inventory | 2389 | 2323 |
+| PRG026 | `$A000–$BFFF`, map/inventory | 2309 | 2291 |
 
 PRG000 and PRG002 have no `$FF` filler left at all.
 
@@ -364,6 +364,8 @@ src/
     flag_key.rs        #   Options <-> the shareable flag key
   testrom.rs           # Playtest ROM builder (native-only) — see below
   bin/testrom.rs       # `testrom` CLI: thin clap wrapper over testrom.rs
+  bin/flagstats.rs     # `flagstats`: decode the flag keys GoatCounter recorded into
+                       #   a per-option census (needs GOATCOUNTER_TOKEN)
   wasm.rs              # wasm-bindgen glue (only compiled for wasm32)
   randomize/
     mod.rs             # THE LIVING MODULE INDEX — 46 modules, several documented

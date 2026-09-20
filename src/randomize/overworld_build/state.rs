@@ -435,6 +435,7 @@ impl WorldState {
             section_count: self.fort_count(),
             pipe_pairs: self.pipe_pairs.clone(),
             hb_sprites: Vec::new(),
+            fixed: self.fixed.clone(),
             c1_floor: self.c1_floor,
         }
     }

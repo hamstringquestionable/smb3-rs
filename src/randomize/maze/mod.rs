@@ -195,13 +195,18 @@ pub(crate) struct GlobalState {
     /// it and its fortresses are not counted against solvability. If a telepad
     /// happens to land there, that content is a bonus.
     pub in_maze: [bool; 8],
-    /// Cells no pad may stand on: the wandering Hammer Bro sprites' home
-    /// tiles. `TILE_TELEPAD` is in `Map_Object_Forbid_LandingTiles`, so a
-    /// marching bro cannot land on a pad — but its home cell comes from the
-    /// sprite table rather than from a march, so a pad stamped there would
-    /// start the game with a sprite parked on it. `BuiltWorld::hb_sprites` is
-    /// the only place these are known — `from_built` does not carry them onto
-    /// the `WorldState`.
+    /// Cells no pad may stand on: the home tiles of the wandering Hammer Bros
+    /// the build *redistributed*. `TILE_TELEPAD` is in
+    /// `Map_Object_Forbid_LandingTiles`, so a marching bro cannot land on a
+    /// pad — but its home cell comes from the sprite table rather than from a
+    /// march, so a pad stamped there would start the game with a sprite parked
+    /// on it.
+    ///
+    /// This covers only the shuffled case: `BuiltWorld::hb_sprites` is empty
+    /// when `shuffle_hammer_bros` is off. Every sprite that keeps its VANILLA
+    /// home — the unshuffled bros, the W7 plants, the canoe, the W8 army —
+    /// is in `WorldState::fixed` instead, which `pad_sites` screens against
+    /// in both of its pools (#274).
     pub reserved: HashSet<MazePos>,
     /// K of 7 — the difficulty dial, and [`Self::spheres`] gates on it: the
     /// goal does not count as reached until K wands are collectable, which is

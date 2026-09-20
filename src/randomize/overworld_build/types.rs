@@ -160,6 +160,16 @@ pub(crate) struct BuiltWorld {
     /// Redistributed wandering Hammer Bro sprites for this world. Empty when
     /// `shuffle_hammer_bros` is off (the writer keeps the vanilla sprites).
     pub hb_sprites: Vec<HbSprite>,
+    /// Cells no phase was allowed to place on: the pinned Airship/Bowser (and
+    /// Toad House, when unshuffled) tiles, plus every map-object sprite that
+    /// keeps its vanilla home — the canoe, the W8 army, the W7 piranha plants,
+    /// and the wandering Hammer Bros when `shuffle_hammer_bros` is off.
+    ///
+    /// Carried out of the build because the world maze places ON a finished
+    /// world, and a telepad stamped on a sprite's home cell would start the
+    /// game with a sprite parked on it (#274). Deriving it again needs the ROM
+    /// and the catalog, neither of which the maze holds.
+    pub fixed: HashSet<Pos>,
     /// The C1 floor this world was built to (see `deal_c1_floors`). Carried
     /// out of the build so the census can score each world against its OWN
     /// floor — a global comparison would read a dealt 11 as a failure and a

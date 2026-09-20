@@ -115,7 +115,30 @@ pub(crate) fn write_overworld<R: Rng>(
         super::start_airship_swap::write_engine_scaffolding(rom, data.catalog);
     }
 
-    WrittenOverworld { grids }
+    WrittenOverworld { grids, one_f_world: world_holding_1f(&assignments, data) }
+}
+
+/// Which world the 1-F fortress *level* landed in, or `None` when it sat the
+/// seed out.
+///
+/// 1-F is the one fortress the deal already singles out ([`assign_pool`]
+/// pre-assigns it to a secret-exit-safe slot), but where it ended up was never
+/// reported. The oracle king needs it: the chest in its sub-area is the one
+/// item worth talking a player into or out of a detour for, and a hint that
+/// names the wrong world is worse than no hint at all.
+///
+/// **The first world wins if the level was dealt twice.** Deja Vu (forts)
+/// redeals the fort deck to the slots on the map, so one level can appear in
+/// two worlds; naming either is still true and still finds the player a chest.
+fn world_holding_1f(assignments: &[WorldAssignments], data: &OverworldData) -> Option<usize> {
+    assignments.iter().position(|wa| {
+        wa.fortress.iter().any(|a| {
+            let ce = &data.catalog.entries[data.pickup.pool[a.pool_idx].catalog_idx];
+            ce.level_entry.as_ref().is_some_and(|le| {
+                u16::from_le_bytes([le.obj_lo, le.obj_hi]) == rom_data::FORTRESS_1F_OBJ_PTR
+            })
+        })
+    })
 }
 
 /// **Every `(fortress, lock)` pair the build placed, one per lock.**
@@ -208,6 +231,9 @@ pub(crate) struct WrittenOverworld {
     /// `grids_match_the_rom` is the guard on the other half of the trade: two
     /// copies of the map now exist, and they must not drift.
     grids: Vec<Grid>,
+    /// The world holding the 1-F fortress level, or `None` when the deal left
+    /// it out — see [`world_holding_1f`].
+    one_f_world: Option<usize>,
 }
 
 impl WrittenOverworld {
@@ -230,6 +256,13 @@ impl WrittenOverworld {
             grids_agree_with_rom(&self.grids, rom).unwrap_err()
         );
         &self.grids
+    }
+
+    /// The world the 1-F fortress level was dealt to, or `None` when it was
+    /// left out of the deal entirely. Needs no `rom`: unlike the grids this is
+    /// a fact about the assignment, not a second copy of something written.
+    pub(crate) fn one_f_world(&self) -> Option<usize> {
+        self.one_f_world
     }
 }
 

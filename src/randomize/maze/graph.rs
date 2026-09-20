@@ -42,7 +42,7 @@
 use rand::Rng;
 use rand::seq::{IndexedRandom, SliceRandom};
 
-use super::super::rom_data::Pos;
+use super::super::rom_data::{self, Pos};
 use super::roles::{PadRole, WorldTerrain, classify};
 use super::{GlobalState, MazeEdge};
 
@@ -127,6 +127,46 @@ struct Site {
 /// is a picture, not a path. The map moves two cells at a time, so 8 is four
 /// map moves — far enough to be off-screen-ish and to feel like travel.
 pub(crate) const SAME_WORLD_MIN_SPAN: usize = 8;
+
+/// The valley: World 8's screen 3, the bridge approach to Bowser's castle.
+///
+/// Read off the grid rather than off the spine — the maze renumbers worlds for
+/// display, but the castle is on `W8_IDX`'s map whatever it is called.
+fn in_valley(world: usize, pos: Pos) -> bool {
+    world == rom_data::W8_IDX && pos.1 / 16 == 3
+}
+
+/// May these two sites be paired, given that a pad in the valley is a door
+/// onto the endgame?
+///
+/// **The shortcut is kept, and priced.** A pad that lands on Bowser's bridge is
+/// the best thing the mode can hand a player who went looking for it, and the
+/// worst thing it can hand one who tripped over it on the way past. The
+/// difference is entirely in the *other* end, so that is what this constrains:
+/// the far side must be a site the world's own locks gate ([`PadRole::Shortcut`]
+/// — reachable only once some fortress falls) and it must be in a different
+/// world. Finding the valley then costs a crossing and a fortress.
+///
+/// Symmetric because a pair is two-way: either half may be the valley one, and
+/// a pad whose ends are *both* in the valley is refused outright (neither can
+/// gate the other).
+///
+/// **Why gatedness and not depth.** The honest question is "how late in the run
+/// is the far end", and that is [`super::Spheres`] — which does not exist yet.
+/// Pads are planned before `fill` assigns keys (see `generate`), so the only
+/// reachability facts available here are the ones `roles::classify` derives
+/// from lock *positions*: the walk with every lock shut against the walk with
+/// them open. That split is stable under the fill's swapping, which is what
+/// makes it safe to lean on. Depth would have to be a clause in the deal-accept
+/// predicate instead, paid for in redeals — worth reaching for only if the
+/// census shows these partners clustering early.
+fn valley_earned(a: &Site, b: &Site) -> bool {
+    let ok = |valley: &Site, other: &Site| {
+        !in_valley(valley.world, valley.pos)
+            || (other.granted == PadRole::Shortcut && other.world != valley.world)
+    };
+    ok(a, b) && ok(b, a)
+}
 
 /// Manhattan span between two cells of the same world's grid.
 fn span(a: Pos, b: Pos) -> usize {
@@ -279,7 +319,12 @@ fn pair_up<R: Rng>(sites: Vec<Site>, knobs: &Knobs, rng: &mut R) -> Vec<PlacedPa
 /// Index into `pool` of a site `a` may be paired with, preferring the rolled
 /// kind and settling for the other.
 fn choose_partner<R: Rng>(pool: &[Site], a: &Site, cross: bool, rng: &mut R) -> Option<usize> {
-    let legal = |b: &Site| b.world != a.world || span(a.pos, b.pos) >= SAME_WORLD_MIN_SPAN;
+    // Both `pick`s below take this, the fallback included — deliberately. The
+    // fallback exists to relax the rolled cross/local *preference*, never
+    // legality, and an unearned valley pad is illegal rather than unpreferred.
+    let legal = |b: &Site| {
+        (b.world != a.world || span(a.pos, b.pos) >= SAME_WORLD_MIN_SPAN) && valley_earned(a, b)
+    };
     let pick = |f: &dyn Fn(&Site) -> bool, rng: &mut R| -> Option<usize> {
         let candidates: Vec<usize> =
             pool.iter().enumerate().filter(|(_, b)| f(b)).map(|(i, _)| i).collect();

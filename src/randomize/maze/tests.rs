@@ -26,7 +26,7 @@ use crate::randomize::overworld_build::{
     BuildFlags, BuildResult, OverworldData, SlotKind, build, stamp_slots,
 };
 use crate::randomize::overworld_pickup::{PickupFlags, pick_up};
-use crate::randomize::rom_data::Grid;
+use crate::randomize::rom_data::{self, Grid};
 use crate::randomize::{qol, start_airship_swap};
 use crate::rom::Rom;
 
@@ -68,6 +68,19 @@ fn census_build(raw: &Rom, seed: u64) -> (Rom, BuildResult) {
 /// The same, also reporting which worlds start↔airship swap took — so a test
 /// can see how much of that arm a seed actually exercised instead of assuming.
 fn census_build_swaps(raw: &Rom, seed: u64) -> ((Rom, BuildResult), [bool; 8]) {
+    census_build_arm(raw, seed, false)
+}
+
+/// The same again with the hammer-bro shuffle chosen rather than defaulted.
+/// The two arms park map sprites in different places — vanilla homes when it
+/// is off, redistributed ones when it is on — and #274 showed on both, by
+/// different routes. A test that wants to cover the sprite rules has to build
+/// each arm; every other census stays on the `false` default.
+fn census_build_arm(
+    raw: &Rom,
+    seed: u64,
+    shuffle_hammer_bros: bool,
+) -> ((Rom, BuildResult), [bool; 8]) {
     let (hammer_rocks, eights_wild) = match seed % 4 {
         2 => (true, false),
         3 => (false, true),
@@ -90,6 +103,7 @@ fn census_build_swaps(raw: &Rom, seed: u64) -> ((Rom, BuildResult), [bool; 8]) {
         BuildFlags {
             shuffle_toad_houses: true,
             eights_are_wild: eights_wild,
+            shuffle_hammer_bros,
             ..Default::default()
         },
     );
@@ -588,6 +602,68 @@ fn every_pad_is_half_of_a_pair() {
 // ---------------------------------------------------------------------------
 // The pad tile
 // ---------------------------------------------------------------------------
+
+/// No pad may stand where a map sprite is parked (#274).
+///
+/// The oracle is deliberately NOT `WorldState::fixed` — that set is the thing
+/// under test. It is rebuilt here from the ROM's own map-object tables plus
+/// the build's redistribution decision, so a regression that empties `fixed`
+/// on the way out of the builder fails this test rather than agreeing with it.
+///
+/// Both hammer-bro arms run, because the two halves of the bug arrived by
+/// different routes and one arm alone leaves the other open:
+///
+/// - **Shuffle off** — `HammerBroFill` pins a `HammerBro` SLOT onto every
+///   vanilla sprite cell (a sprite's tile needs a pointer entry), so those
+///   cells reach `pad_sites` through pool 1, which screened only `barred` and
+///   `reserved`. 84 of 111 measured collisions.
+/// - **Either arm** — the W7 piranha plants and the canoe keep their vanilla
+///   homes and reach pool 2, which did screen `fixed` — but `from_built` had
+///   dropped it, so the screen was dead. The remaining 27, and all 24 of the
+///   collisions still present with the shuffle on.
+///
+/// Checking `from` alone covers both endpoints: every pad half is one claimed
+/// site, and each site ships as the `from` of one half and the `to` of the
+/// other.
+#[test]
+fn no_pad_stands_on_a_map_sprite() {
+    let Some(raw) = load_rom() else { return };
+    for shuffle_bros in [false, true] {
+        for seed in 0..census_seeds(12) {
+            let ((rom, result), _) = census_build_arm(&raw, seed, shuffle_bros);
+            let mut rng = ChaCha8Rng::seed_from_u64(seed ^ 0x5EED_1234);
+            let (state, _) = super::generate(
+                &result,
+                &IDENTITY_SPINE,
+                super::DEFAULT_WANDS_REQUIRED,
+                &Knobs::default(),
+                SEALABLE_NEEDED,
+                &mut rng,
+            );
+            for wi in 0..8 {
+                let mut parked: std::collections::HashSet<(usize, usize)> = if shuffle_bros {
+                    rom_data::read_non_hb_sprite_positions(&rom, wi).into_iter().collect()
+                } else {
+                    rom_data::read_map_sprite_positions(&rom, wi).into_iter().collect()
+                };
+                parked.extend(result.worlds[wi].hb_sprites.iter().map(|s| s.grid_pos));
+                for edge in &state.edges {
+                    let MazeEdge::Pad { from, .. } = edge else { continue };
+                    if from.0 != wi {
+                        continue;
+                    }
+                    assert!(
+                        !parked.contains(&from.1),
+                        "seed {seed} (bros shuffled: {shuffle_bros}) W{}: pad at {:?} \
+                         stands on a parked map sprite",
+                        wi + 1,
+                        from.1,
+                    );
+                }
+            }
+        }
+    }
+}
 
 /// Engine byte tables [`TILE_TELEPAD`] must be **absent** from, as
 /// `(name, file offset, length)`.
@@ -2964,4 +3040,125 @@ fn relocation_decouples_lock_and_fort_counts() {
         "no world came out with a lock count that differs from its fortress count — \
          the pass did nothing a player could see"
     );
+}
+
+// ---------------------------------------------------------------------------
+// The valley
+// ---------------------------------------------------------------------------
+
+/// W8's screen 3 — the bridge approach to Bowser's castle.
+fn in_valley((world, pos): super::MazePos) -> bool {
+    world == crate::randomize::rom_data::W8_IDX && pos.1 / 16 == 3
+}
+
+/// **A pad into the valley has to be earned.** `graph::valley_earned` allows a
+/// pad on Bowser's bridge only when its partner is a gated site
+/// ([`PadRole::Shortcut`] — behind a fortress) in a different world, so finding
+/// the shortcut costs a crossing and a fort rather than being tripped over.
+///
+/// Two assertions, and the second is the one that matters. "Every valley pad is
+/// earned" passes vacuously if the rule bans valley pads outright — which is
+/// the *other* failure, and the one the design deliberately declined. So the
+/// sample must also contain valley pads at all. Same shape, same reason, as
+/// `a_fortress_tile_says_where_its_lock_is`.
+#[test]
+fn a_valley_pad_is_earned() {
+    let Some(raw) = load_rom() else { return };
+    let knobs = Knobs::default();
+    let mut seen = 0usize;
+
+    for seed in 0..census_seeds(60) {
+        let (_, _, report) = generated(&raw, seed, &knobs, 3);
+        for pad in &report.pads {
+            let MazeEdge::Pad { from, to } = pad.edge else { unreachable!() };
+            if !in_valley(to) {
+                continue;
+            }
+            seen += 1;
+            assert!(
+                pad.granted == super::roles::PadRole::Shortcut,
+                "seed {seed}: the valley pad at {to:?} is fed from {from:?}, \
+                 which is not gated ({:?})",
+                pad.granted,
+            );
+            assert!(
+                from.0 != to.0,
+                "seed {seed}: the valley pad at {to:?} is fed from {from:?} \
+                 in its own world — the hunt has to cross",
+            );
+        }
+    }
+
+    assert!(
+        seen > 0,
+        "no valley pad in the whole sample: the rule is banning them outright \
+         rather than pricing them, which is the shape this design declined",
+    );
+}
+
+/// How the valley rule actually landed: how often a pad reaches Bowser's
+/// bridge, what it cost the run, and **how deep the hunt is** — the open
+/// question `graph::valley_earned` names. Gatedness is a terrain property, not
+/// a depth one, so if the partners cluster in the early worlds the rule is
+/// buying less than it looks.
+///
+/// Spine position is the world index here because the census walks
+/// `IDENTITY_SPINE`.
+///
+/// ```sh
+/// CENSUS_SEEDS=300 cargo test --release --lib valley_pad_census \
+///     -- --ignored --nocapture
+/// ```
+#[test]
+#[ignore]
+fn valley_pad_census() {
+    let Some(raw) = load_rom() else { return };
+    let seeds = census_seeds(100);
+    let knobs = Knobs::default();
+
+    eprintln!("\n=== the valley (W8 screen 3), {seeds} seeds ===");
+    eprintln!(
+        "  {:>3} {:>8} {:>8} {:>9} {:>9}  partner world",
+        "K", "valley%", "redeal%", "content", "content|v"
+    );
+    for k in [0u8, 3, 7] {
+        let mut with_valley = 0usize;
+        let mut redeal = 0usize;
+        let mut all: Vec<usize> = Vec::new();
+        let mut valley_content: Vec<usize> = Vec::new();
+        let mut partner_world = [0usize; 8];
+
+        for seed in 0..seeds {
+            let (_, _, report) = generated(&raw, seed, &knobs, k);
+            let mut hit = false;
+            for pad in &report.pads {
+                let MazeEdge::Pad { from, to } = pad.edge else { unreachable!() };
+                if in_valley(to) {
+                    hit = true;
+                    partner_world[from.0] += 1;
+                }
+            }
+            with_valley += hit as usize;
+            redeal += (report.deals > 1) as usize;
+            all.push(report.content);
+            if hit {
+                valley_content.push(report.content);
+            }
+        }
+
+        let pct = |n: usize| 100.0 * n as f64 / seeds as f64;
+        let mean = |v: &[usize]| {
+            if v.is_empty() { f64::NAN } else { v.iter().sum::<usize>() as f64 / v.len() as f64 }
+        };
+        let hist: Vec<String> =
+            partner_world.iter().enumerate().map(|(w, n)| format!("W{}:{n}", w + 1)).collect();
+        eprintln!(
+            "  {k:>3} {:>7.1}% {:>7.1}% {:>9.1} {:>9.1}  {}",
+            pct(with_valley),
+            pct(redeal),
+            mean(&all),
+            mean(&valley_content),
+            hist.join(" "),
+        );
+    }
 }

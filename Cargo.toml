@@ -1,6 +1,6 @@
 [package]
 name = "smb3-rs"
-version = "2.1.0"
+version = "2.2.0"
 edition = "2024"
 description = "Super Mario Bros. 3 randomizer — outputs an IPS patch or a patched ROM"
 repository = "https://github.com/hamstringquestionable/smb3-rs"
@@ -19,6 +19,11 @@ path = "src/main.rs"
 [[bin]]
 name = "testrom"
 path = "src/bin/testrom.rs"
+
+# GoatCounter flag-key census. Native-only tooling; not part of the web build.
+[[bin]]
+name = "flagstats"
+path = "src/bin/flagstats.rs"
 
 [dependencies]
 modular-bitfield = "0.13"

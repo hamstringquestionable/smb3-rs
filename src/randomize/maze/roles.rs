@@ -171,6 +171,13 @@ pub(crate) fn classify(
 /// **Blanks the fill never claimed** are the cells the world's own walk does
 /// not reach — measured empty, and kept as the evidence that they are.
 ///
+/// Both pools screen `fixed`, and the first one has to: `HammerBroFill` pins a
+/// slot onto every vanilla sprite cell when the hammer-bro shuffle is off
+/// (a sprite's tile needs a pointer entry), bypassing `legal_blanks` on
+/// purpose. Those pins are the one way a `fixed` cell reaches pool 1, and
+/// without the screen they were 84 of the 111 pad-on-sprite collisions
+/// measured in #274.
+///
 /// The row-7/8 rule is applied here even though the pad tile no longer needs
 /// it — see the comment on `barred` below.
 pub(crate) fn pad_sites(w: &WorldState, stamped: &Grid, reserved: &HashSet<Pos>) -> Vec<Pos> {
@@ -193,7 +200,7 @@ pub(crate) fn pad_sites(w: &WorldState, stamped: &Grid, reserved: &HashSet<Pos>)
         .iter()
         .filter(|s| s.kind == SlotKind::HammerBro)
         .map(|s| s.pos)
-        .filter(|p| !barred.contains(p) && !reserved.contains(p))
+        .filter(|p| !barred.contains(p) && !reserved.contains(p) && !w.fixed.contains(p))
         .collect();
     for r in 0..stamped.rows() {
         for c in 0..stamped.cols {

@@ -9,6 +9,57 @@ deploys.
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-09-20
+
+**World Maze polish.** The wand gate now tells you where you stand against it —
+the world map carries an `N/K` wand count — and the approach to Bowser's castle
+is treated as the climax it is: no Toad Houses or spade panels on that last
+screen, and a telepad onto the bridge has to be fed from behind a fortress
+somewhere else. Alongside them, the gate is built out of Dark Land's own
+masonry, the oracle king has more than one thing to say, and telepads no longer
+land on a tile a map sprite is already standing on.
+
+Old flag keys still decode — the key version is unchanged at 29, and this
+release adds no options. Seeds are not comparable with 2.1.0's, as across any
+version: the same seed and flags build a different ROM.
+
+### Changed
+
+- **Nothing breaks the walk to Bowser's castle.** Toad Houses and spade panels
+  no longer place on World 8's last screen — the bridge approach is the climax,
+  not a place to stop for a free item.
+
+- **A telepad onto Bowser's bridge has to be earned.** In the world maze, a pad
+  that lands on World 8's last screen is now fed from behind a fortress in
+  another world, so the shortcut to the castle is something you go looking for
+  rather than something you trip over.
+
+- **The wand gate is built out of Dark Land's own wall.** The barrier on
+  Bowser's bridge now wears World 8's skull block instead of a plain lattice, so
+  it reads as masonry the castle put there rather than a tile from somewhere
+  else.
+
+### Added
+
+- **The world map says how many wands you hold.** In the world maze, the status
+  bar shows `N/K` where the level timer sits — how many of the seven wands you
+  have against how many Bowser's bridge wants. Always on when the gate is, since
+  a wall you cannot measure your progress against is just a wall.
+
+- **The oracle king has a repertoire.** The king who read the Koopaling stomp
+  counts now picks at random from whichever of them he can speak to this seed.
+  He can predict which world the airship will take you to next (world shuffle
+  and the world maze only — in vanilla order it is not a prediction), and he
+  will tell you whether the chest in 1-F is worth the detour and which world
+  that fortress ended up in, for the items he has an opinion about.
+
+### Fixed
+
+- **Telepads no longer land on an occupied map tile.** In the world maze a pad
+  could be stamped onto the cell a wandering Hammer Bro or a piranha plant
+  already stands on. Most likely with Shuffle Hammer Bros off, where it reached
+  one pad in eight.
+
 ## [2.1.0] - 2026-09-13
 
 **Rev 0 ROMs are accepted.** The other USA dump no longer has to be hunted down
