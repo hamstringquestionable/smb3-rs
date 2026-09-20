@@ -53,6 +53,7 @@ impl Phase for Levels {
                 break;
             };
             state.slots.push(SlotAssignment {
+                requires: None,
                 pos,
                 kind: SlotKind::Level,
                 section: 0,

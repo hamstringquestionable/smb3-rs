@@ -71,6 +71,26 @@ fn take_level_slot(
     (pool.pop_front().expect("level pool exhausted"), is_troll_pipe)
 }
 
+/// The pool entry holding the level a `requires` mark names, if it is still
+/// in the deck.
+///
+/// Exact identity, not a class — a requirement names one level. `friendlier_levels`,
+/// `deja_vu` and the top-up all reshape the deck after the mark was made, so
+/// this can come back `None`; the caller demotes rather than panicking,
+/// because an unsatisfiable mark yields a gate that opens for free, which is
+/// harmless and worth reporting rather than fatal.
+fn pool_entry_for_requirement(
+    pool: &[usize],
+    data: &OverworldData,
+    req_idx: usize,
+) -> Option<usize> {
+    let req = &crate::randomize::item_keys::LEVEL_REQUIREMENTS[req_idx];
+    pool.iter().position(|&pi| {
+        let ce = &data.catalog.entries[data.pickup.pool[pi].catalog_idx];
+        ce.world_idx == req.world_idx && ce.entry_idx == req.entry_idx
+    })
+}
+
 pub(super) fn assign_pool<R: Rng>(
     rom: &Rom,
     build: &BuildResult,
@@ -177,6 +197,24 @@ pub(super) fn assign_pool<R: Rng>(
     } else {
         // No safe slot available — return 1-F to the regular pool.
         fort_pool.push(fort_1f_pi);
+    }
+
+    // A fortress requirement (8-F today) rides the same pre-assignment map
+    // 1-F's safe placement uses: the deal below skips any (world, section)
+    // already spoken for. Taken *after* 1-F, so a seed that wants both keeps
+    // 1-F's safety property — that one is a correctness rule, this one is a
+    // gate, and a gate is the thing to give up first.
+    for (wi, built) in build.worlds.iter().enumerate() {
+        for slot in built.slots.iter().filter(|s| s.kind == SlotKind::Fortress) {
+            let Some(req_idx) = slot.requires else { continue };
+            if preassigned_forts.contains_key(&(wi, slot.section)) {
+                continue;
+            }
+            let v: Vec<usize> = fort_pool.clone();
+            if let Some(at) = pool_entry_for_requirement(&v, data, req_idx) {
+                preassigned_forts.insert((wi, slot.section), fort_pool.remove(at));
+            }
+        }
     }
 
     // The number of fortress slots the deal below actually draws for: one per
@@ -412,13 +450,41 @@ pub(super) fn assign_pool<R: Rng>(
         // than a pipe leading to the hand-trap behind it.
         let mut level = Vec::new();
         let mut demoted_troll_pipes: HashSet<(usize, usize)> = HashSet::new();
+        let mut unmet_requirements: Vec<((usize, usize), usize)> = Vec::new();
         let level_slots: Vec<&_> =
             built.slots.iter().filter(|s| s.kind == SlotKind::Level).collect();
         let mut ordered: Vec<&_> =
-            level_slots.iter().copied().filter(|s| s.is_troll_pipe).collect();
-        ordered.extend(level_slots.iter().copied().filter(|s| !s.is_troll_pipe));
+            level_slots.iter().copied().filter(|s| s.requires.is_some()).collect();
+        ordered.extend(
+            level_slots.iter().copied().filter(|s| s.requires.is_none() && s.is_troll_pipe),
+        );
+        ordered.extend(
+            level_slots.iter().copied().filter(|s| s.requires.is_none() && !s.is_troll_pipe),
+        );
 
         for slot in ordered {
+            // A `requires` mark names one specific level, so it is satisfied
+            // by search rather than by the deque's front. Marked slots were
+            // ordered first for the same reason troll pipes are: the deck is
+            // fullest then, so the constraint has the best chance of being
+            // met.
+            if let Some(req_idx) = slot.requires {
+                match pool_entry_for_requirement(level_pool.as_slices().0, data, req_idx).or_else(
+                    || {
+                        let v: Vec<usize> = level_pool.iter().copied().collect();
+                        pool_entry_for_requirement(&v, data, req_idx)
+                    },
+                ) {
+                    Some(at) => {
+                        let pi = level_pool.remove(at).expect("index came from this deque");
+                        level.push(Assignment { pool_idx: pi, pos: slot.pos });
+                        continue;
+                    }
+                    None => {
+                        unmet_requirements.push((slot.pos, req_idx));
+                    }
+                }
+            }
             let (pi, demoted) =
                 take_level_slot(&mut level_pool, slot.is_troll_pipe, holds_unique_item);
             if demoted {
@@ -586,6 +652,7 @@ pub(super) fn assign_pool<R: Rng>(
         }
 
         assignments.push(WorldAssignments {
+            unmet_requirements,
             fortress,
             level,
             pipes,

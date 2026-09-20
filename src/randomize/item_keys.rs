@@ -387,6 +387,79 @@ const TOAD_HOOK: [u8; 16] = [
     0x60,                                                  // 15: out: RTS
 ];
 
+// --- What a level demands ---------------------------------------------
+
+/// A level that cannot be beaten without an item, and which items.
+///
+/// Keyed by vanilla `(world_idx, entry_idx)` the way
+/// [`rom_data::CHEST_LEVELS`](crate::randomize::rom_data) is, because that is
+/// the identity `overworld_writer::assign_pool` already reasons about when it
+/// deals a level onto a slot.
+// Reason: `items` and `is_fortress` are the placement pass's half of this
+// table — it reads them to decide what a gate demands and which pool the
+// level comes from. The writer only needs the identity, so until that pass
+// lands the fields are written and checked but not read outside tests.
+#[allow(dead_code)]
+pub(crate) struct LevelRequirement {
+    pub world_idx: usize,
+    pub entry_idx: usize,
+    /// Every item needed, **all of them**. A suit is always a conjunction
+    /// with the mushroom: the gate routine sends a *small* player to the
+    /// mushroom row whichever block they bump, so without one the suit behind
+    /// it is unreachable even when its own key has been found.
+    pub items: &'static [Key],
+    /// A fortress rather than a level. It is dealt from a different pool, and
+    /// it holds a lock key — gating one is a larger claim than gating a level.
+    pub is_fortress: bool,
+}
+
+/// Every level known to require an item to finish.
+///
+/// **Four exist; three are here.** These are the levels `powerups.rs` already
+/// protects from the power-up roll, because breaking them was the failure
+/// that list exists to prevent — the protection list and the gate list are
+/// the same list, which is what makes these authored rather than guessed.
+///
+/// **7-F1 is deliberately absent** (World 7, entry 5, mushroom + tanooki).
+/// Its tanooki comes from a Big [?] block, an object in PRG005 that this
+/// module does not gate, so the ROM would hand one over regardless of what
+/// has been found. Marking it would make the model stricter than the game —
+/// safe, but the gate would collapse to the mushroom gate 8-F already
+/// provides. It joins this table with the Big [?] work, which also needs keys
+/// for the frog and hammer suits and a found-set layout with room for them.
+pub(crate) const LEVEL_REQUIREMENTS: &[LevelRequirement] = &[
+    // 6-5, the ice level: flight, from its own single Q-leaf (`0x22D74`).
+    LevelRequirement {
+        world_idx: 5,
+        entry_idx: 39,
+        items: &[Key::Mushroom, Key::Leaf],
+        is_fortress: false,
+    },
+    // 7-7, the muncher fields: four Q-stars. The one row that is not a
+    // conjunction, because `LATP_Star` has no `Player_Suit` split — a starman
+    // goes to a small player.
+    LevelRequirement { world_idx: 6, entry_idx: 25, items: &[Key::Star], is_fortress: false },
+    // 8-F: big enough to break a block in sub-area 2 (`0x2B900`). The catalog
+    // calls it `8F1`, which is also in `FRIENDLIER_BLOCKED_FORTS` — so with
+    // **Friendlier Levels on this row cannot be satisfied**, the deck never
+    // holds it, and the writer reports the mark unmet. That is the intended
+    // failure (a gate that opens for free rather than a broken seed), but it
+    // means the only fortress requirement in the table disappears under a
+    // popular option.
+    LevelRequirement { world_idx: 7, entry_idx: 26, items: &[Key::Mushroom], is_fortress: true },
+];
+
+/// The requirement for a vanilla `(world_idx, entry_idx)`, if it has one.
+// Reason: the placement pass's lookup, and the model's — a gate resolves its
+// items through here. Unused until that pass lands; tests cover it meanwhile.
+#[allow(dead_code)]
+pub(crate) fn requirement_of(
+    world_idx: usize,
+    entry_idx: usize,
+) -> Option<&'static LevelRequirement> {
+    LEVEL_REQUIREMENTS.iter().find(|r| r.world_idx == world_idx && r.entry_idx == entry_idx)
+}
+
 // --- The canoe ------------------------------------------------------
 
 /// `MAPOBJ_CANOE`, the map-object id the summon routine scans for.
@@ -624,6 +697,59 @@ mod tests {
                 hook.windows(3).any(|w| w == call),
                 "{name} hook does not call the shared recorder"
             );
+        }
+    }
+
+    /// **The registry names real levels, of the kind it claims.**
+    ///
+    /// Entry indices are positions in a 340-entry pointer table; nothing stops
+    /// one drifting, and a drifted row would gate a different level entirely —
+    /// silently, because the writer would happily deal whatever is there. So
+    /// check each row against the catalog: the entry exists, it is a Level or
+    /// a Fortress as the row says, and its name is the one the comment claims.
+    #[test]
+    fn every_requirement_names_the_level_it_says() {
+        let Some(rom) = vanilla() else {
+            eprintln!("SKIP: requires the ROM");
+            return;
+        };
+        let catalog = crate::randomize::node_catalog::NodeCatalog::build(&rom, false);
+        let expected = ["6-5", "7-7", "8F1"];
+        assert_eq!(LEVEL_REQUIREMENTS.len(), expected.len(), "a row was added without a name");
+
+        for (req, want) in LEVEL_REQUIREMENTS.iter().zip(expected) {
+            let entry = catalog
+                .entries
+                .iter()
+                .find(|e| e.world_idx == req.world_idx && e.entry_idx == req.entry_idx)
+                .unwrap_or_else(|| {
+                    panic!("no catalog entry at world {} entry {}", req.world_idx, req.entry_idx)
+                });
+            assert_eq!(entry.name, want, "row points at the wrong level");
+            let is_fort = matches!(entry.kind, crate::randomize::node_catalog::NodeKind::Fortress);
+            assert_eq!(is_fort, req.is_fortress, "{want}: wrong kind, so the wrong pool");
+            assert!(!req.items.is_empty(), "{want}: a requirement with no items gates nothing");
+            assert_eq!(
+                requirement_of(req.world_idx, req.entry_idx).map(|r| r.items),
+                Some(req.items),
+                "{want}: lookup disagrees with the table"
+            );
+        }
+    }
+
+    /// A suit requirement always includes the mushroom — the rule a playtest
+    /// found, and the reason a gate carries a set. Only the star is exempt,
+    /// because `LATP_Star` has no `Player_Suit` split.
+    #[test]
+    fn suit_requirements_include_the_mushroom() {
+        for req in LEVEL_REQUIREMENTS {
+            let suits = req.items.iter().any(|k| matches!(k, Key::Flower | Key::Leaf));
+            if suits {
+                assert!(
+                    req.items.contains(&Key::Mushroom),
+                    "a suit requirement without the mushroom is unreachable while small"
+                );
+            }
         }
     }
 

@@ -53,6 +53,21 @@ pub struct SlotAssignment {
     /// tile drops the player into the underlying level (uniform Map_Op = $10
     /// dispatch — no pipe-transit state).
     pub is_troll_pipe: bool,
+    /// **This slot must receive a level that requires an item.** An index
+    /// into [`item_keys::LEVEL_REQUIREMENTS`](crate::randomize::item_keys),
+    /// set by the item layer before the writer runs; `None` on every slot in
+    /// every mode that does not use it.
+    ///
+    /// The index rather than the items, so the model and the writer read one
+    /// table: the writer resolves it to a `(world_idx, entry_idx)` to deal,
+    /// the layer resolves it to the keys the gate demands.
+    ///
+    /// The writer may fail to honour it — `friendlier_levels`, `deja_vu` and
+    /// the top-up all reshape the deck downstream of here — in which case the
+    /// slot gets an ordinary level and the gate silently opens for free.
+    /// Safe, but decorative, so the writer reports it rather than swallowing
+    /// it.
+    pub requires: Option<usize>,
     /// Where the lock this fortress opens is, for the map-hint tiles. Only
     /// meaningful on `SlotKind::Fortress` slots, and only set by the world
     /// maze — outside it every fortress opens a lock in its own world, so

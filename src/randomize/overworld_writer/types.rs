@@ -53,4 +53,19 @@ pub(super) struct WorldAssignments {
     /// demoted to regular level tiles at tile-stamping time so the player
     /// sees a normal level icon rather than a pipe leading to a hand-trap.
     pub(super) demoted_troll_pipes: HashSet<(usize, usize)>,
+    /// Slots the item layer marked with a `requires` the deck could not
+    /// satisfy, as `(position, requirement index)`.
+    ///
+    /// Not an error. The slot takes an ordinary level, which is beatable
+    /// without the item, so the gate opens for free — decorative rather than
+    /// dangerous. It is reported because the alternative is assuming it never
+    /// happens: `friendlier_levels`, `deja_vu` and the top-up all reshape the
+    /// deck after the mark was made, and how often that costs a gate is a
+    /// measurement nobody has taken.
+    // Reason: written by `assign_pool` and read by the placement pass's
+    // census, which is the next commit. Reporting it is the point — an
+    // unsatisfiable mark costs a gate silently, and the alternative to
+    // recording it is assuming it never happens.
+    #[allow(dead_code)]
+    pub(super) unmet_requirements: Vec<((usize, usize), usize)>,
 }

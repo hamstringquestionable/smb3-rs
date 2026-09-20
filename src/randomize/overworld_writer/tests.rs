@@ -1775,3 +1775,59 @@ mod derivation {
         );
     }
 }
+
+/// **A marked slot receives the level it names.** The item layer marks a slot
+/// with a `requires` index before the writer runs; `assign_pool` has to deal
+/// that exact level onto that exact cell, or the gate it stands for opens for
+/// free.
+#[test]
+fn a_required_level_lands_on_its_marked_slot() {
+    use crate::randomize::item_keys::LEVEL_REQUIREMENTS;
+
+    let Some(rom) = load_rom() else { return };
+    let catalog = node_catalog::NodeCatalog::build(&rom, false);
+    let pickup = standard_pickup(&rom, &catalog);
+    let mut rng = ChaCha8Rng::seed_from_u64(42);
+    let mut build = overworld_build::build(
+        &rom,
+        &OverworldData { pickup: &pickup, catalog: &catalog },
+        &mut rng,
+        standard_build_flags(),
+    );
+
+    // Mark the first Level slot the build produced with 6-5's requirement.
+    let req_idx = LEVEL_REQUIREMENTS.iter().position(|r| !r.is_fortress).expect("a level row");
+    let req = &LEVEL_REQUIREMENTS[req_idx];
+    let mut marked = None;
+    'outer: for built in build.worlds.iter_mut() {
+        let wi = built.world_idx;
+        for slot in built.slots.iter_mut() {
+            if slot.kind == SlotKind::Level {
+                slot.requires = Some(req_idx);
+                marked = Some((wi, slot.pos));
+                break 'outer;
+            }
+        }
+    }
+    let (world, pos) = marked.expect("the build should have a level slot");
+
+    let mut rng2 = ChaCha8Rng::seed_from_u64(99);
+    let data = OverworldData { pickup: &pickup, catalog: &catalog };
+    let assignments = assign_pool(&rom, &build, &data, &mut rng2, WriteFlags::default());
+
+    let dealt = assignments[world]
+        .level
+        .iter()
+        .find(|a| a.pos == pos)
+        .expect("the marked slot should have been dealt a level");
+    let entry = &catalog.entries[pickup.pool[dealt.pool_idx].catalog_idx];
+    assert_eq!(
+        (entry.world_idx, entry.entry_idx),
+        (req.world_idx, req.entry_idx),
+        "the marked slot got some other level, so the gate would open for free"
+    );
+    assert!(
+        assignments[world].unmet_requirements.is_empty(),
+        "the deck held the level, so nothing should be reported unmet"
+    );
+}

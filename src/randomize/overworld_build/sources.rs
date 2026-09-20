@@ -251,6 +251,7 @@ fn vanilla_slots(rom: &Rom, catalog: &NodeCatalog, world_idx: usize) -> Vec<Slot
             }
         };
         slots.push(SlotAssignment {
+            requires: None,
             pos: entry.grid_pos,
             kind,
             section,

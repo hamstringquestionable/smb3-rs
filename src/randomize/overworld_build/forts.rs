@@ -65,6 +65,7 @@ impl Phase for Forts {
                 break;
             };
             state.slots.push(SlotAssignment {
+                requires: None,
                 pos,
                 kind: SlotKind::Fortress,
                 section: placed, // fort id — pairing only, no order semantics

@@ -39,6 +39,7 @@ impl Phase for HammerBroFill {
             state.hb_sprite_pins.iter().copied().filter(|p| !taken.contains(p)).collect();
         for pos in &pins {
             state.slots.push(SlotAssignment {
+                requires: None,
                 pos: *pos,
                 kind: SlotKind::HammerBro,
                 section: 0,
@@ -68,6 +69,7 @@ impl Phase for HammerBroFill {
                 continue;
             }
             state.slots.push(SlotAssignment {
+                requires: None,
                 pos,
                 kind: SlotKind::HammerBro,
                 section: 0,

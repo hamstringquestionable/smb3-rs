@@ -182,6 +182,7 @@ impl WorldState {
         for pos in [a, b] {
             self.grid.set(pos.0, pos.1, TILE_PIPE);
             self.slots.push(SlotAssignment {
+                requires: None,
                 pos,
                 kind: SlotKind::Pipe,
                 section: 0,
