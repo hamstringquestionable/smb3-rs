@@ -100,29 +100,37 @@ pub enum Key {
     Flower,
     Leaf,
     Star,
+    /// The canoe key. **Not a block key** — no `?` block dispenses an anchor,
+    /// so it has no row in the products table and no `Bouncer_PUp` index. It
+    /// lives in its own SRAM byte and is read by the summon gate, not by the
+    /// dispenser. See [`FOUND_ANCHOR`](crate::randomize::maze_state::FOUND_ANCHOR).
+    Anchor,
 }
 
 impl Key {
-    /// The `Bouncer_PUp` index this key's block dispenses once found.
+    /// The `Bouncer_PUp` index this key's block dispenses once found, or
+    /// `None` for a key no block dispenses.
     #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) const fn product(self) -> u8 {
+    pub(crate) const fn product(self) -> Option<u8> {
         match self {
-            Key::Mushroom => 5,
-            Key::Flower => 2,
-            Key::Leaf => 3,
-            Key::Star => 4,
+            Key::Mushroom => Some(5),
+            Key::Flower => Some(2),
+            Key::Leaf => Some(3),
+            Key::Star => Some(4),
+            Key::Anchor => None,
         }
     }
 
     /// The routine's row for this key. Rows 1-3 are the block type the
     /// dispatcher already has in `Y`; row 0 is where a small player is sent.
     #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) const fn row(self) -> usize {
+    pub(crate) const fn row(self) -> Option<usize> {
         match self {
-            Key::Mushroom => 0,
-            Key::Flower => 1,
-            Key::Leaf => 2,
-            Key::Star => 3,
+            Key::Mushroom => Some(0),
+            Key::Flower => Some(1),
+            Key::Leaf => Some(2),
+            Key::Star => Some(3),
+            Key::Anchor => None,
         }
     }
 }
@@ -663,7 +671,8 @@ mod tests {
     fn recorder_products_match_the_gate_rows() {
         const PROD: usize = 21;
         for key in [Key::Mushroom, Key::Flower, Key::Leaf, Key::Star] {
-            assert_eq!(RECORD[PROD + key.row()], key.product(), "product for {key:?}");
+            let (row, product) = (key.row().unwrap(), key.product().unwrap());
+            assert_eq!(RECORD[PROD + row], product, "product for {key:?}");
         }
     }
 
@@ -674,6 +683,89 @@ mod tests {
         assert!(!GATE_EASY.contains(&0xED), "Player_Suit must not be read");
         assert!(GATE.contains(&0xED), "the default arm must read it");
         assert!(GATE_EASY.len() < GATE.len());
+    }
+}
+
+/// Running the recorder, rather than reading its tables.
+///
+/// `RECORD` is a self-contained calculation — no engine state, no calls out —
+/// which CLAUDE.md says is the shape to execute rather than merely decode. So
+/// this hands it every Global Item ID in turn on an emulated 2A03 and reads
+/// the found table back, which is the only way to be sure the arithmetic
+/// (`SBC #$01`, the `CMP #$03` bound, the `$09` special case) maps what it is
+/// meant to and *nothing else*.
+///
+/// It is also the guard for the failure that has now bitten twice: a key no
+/// source records. The star was gated with nothing able to grant it, and the
+/// anchor nearly went the same way.
+#[cfg(test)]
+mod execution {
+    use super::*;
+    use mos6502::cpu::CPU;
+    use mos6502::instruction::Ricoh2a03;
+    use mos6502::memory::{Bus, Memory};
+
+    const SENTINEL: u16 = 0x0F00;
+
+    /// Run `RECORD` with `A = item`, and return the four product bytes.
+    fn record(item: u8) -> [u8; 4] {
+        let mut mem = Memory::new();
+        mem.set_bytes(RECORD_CPU, &RECORD);
+        let mut cpu = CPU::new(mem, Ricoh2a03);
+        let ret = SENTINEL.wrapping_sub(1);
+        cpu.memory.set_byte(0x01FF, (ret >> 8) as u8);
+        cpu.memory.set_byte(0x01FE, ret as u8);
+        cpu.registers.stack_pointer = mos6502::registers::StackPointer(0xFD);
+        cpu.registers.accumulator = item;
+        cpu.registers.program_counter = RECORD_CPU;
+        for _ in 0..1_000 {
+            if cpu.registers.program_counter == SENTINEL {
+                break;
+            }
+            cpu.single_step();
+        }
+        assert_eq!(cpu.registers.program_counter, SENTINEL, "RECORD ran away on item {item:#04x}");
+        [0, 1, 2, 3].map(|r| cpu.memory.get_byte(PRODUCTS + r))
+    }
+
+    /// Every key is recorded into its own row, with its own product.
+    #[test]
+    fn every_key_records_itself() {
+        for key in [Key::Mushroom, Key::Flower, Key::Leaf, Key::Star] {
+            let id = match key {
+                Key::Mushroom => 1,
+                Key::Flower => 2,
+                Key::Leaf => 3,
+                Key::Star => 9,
+                Key::Anchor => continue,
+            };
+            let (row, product) = (key.row().unwrap(), key.product().unwrap());
+            let table = record(id);
+            assert_eq!(
+                table[row], product,
+                "{key:?} (item {id:#04x}) should land in row {row} as {product:#04x}"
+            );
+            // and disturbs no other row
+            for (r, &v) in table.iter().enumerate() {
+                if r != row {
+                    assert_eq!(v, 0, "{key:?} also wrote row {r}");
+                }
+            }
+        }
+    }
+
+    /// **Nothing else writes anything.** The bound check has to reject item 0
+    /// (which wraps to `$FF` under the subtract) and everything from 4 up
+    /// except the star — a stray index here would write past the four-byte
+    /// table into the rest of the maze's SRAM run.
+    #[test]
+    fn no_other_item_touches_the_table() {
+        for id in 0..=0x20u8 {
+            if matches!(id, 1 | 2 | 3 | 9) {
+                continue;
+            }
+            assert_eq!(record(id), [0; 4], "item {id:#04x} should record nothing");
+        }
     }
 }
 
