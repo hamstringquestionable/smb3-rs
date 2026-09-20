@@ -26,7 +26,7 @@ use crate::randomize::overworld_build::{
     BuildFlags, BuildResult, OverworldData, SlotKind, build, stamp_slots,
 };
 use crate::randomize::overworld_pickup::{PickupFlags, pick_up};
-use crate::randomize::rom_data::Grid;
+use crate::randomize::rom_data::{self, Grid};
 use crate::randomize::{qol, start_airship_swap};
 use crate::rom::Rom;
 
@@ -68,6 +68,19 @@ fn census_build(raw: &Rom, seed: u64) -> (Rom, BuildResult) {
 /// The same, also reporting which worlds start↔airship swap took — so a test
 /// can see how much of that arm a seed actually exercised instead of assuming.
 fn census_build_swaps(raw: &Rom, seed: u64) -> ((Rom, BuildResult), [bool; 8]) {
+    census_build_arm(raw, seed, false)
+}
+
+/// The same again with the hammer-bro shuffle chosen rather than defaulted.
+/// The two arms park map sprites in different places — vanilla homes when it
+/// is off, redistributed ones when it is on — and #274 showed on both, by
+/// different routes. A test that wants to cover the sprite rules has to build
+/// each arm; every other census stays on the `false` default.
+fn census_build_arm(
+    raw: &Rom,
+    seed: u64,
+    shuffle_hammer_bros: bool,
+) -> ((Rom, BuildResult), [bool; 8]) {
     let (hammer_rocks, eights_wild) = match seed % 4 {
         2 => (true, false),
         3 => (false, true),
@@ -90,6 +103,7 @@ fn census_build_swaps(raw: &Rom, seed: u64) -> ((Rom, BuildResult), [bool; 8]) {
         BuildFlags {
             shuffle_toad_houses: true,
             eights_are_wild: eights_wild,
+            shuffle_hammer_bros,
             ..Default::default()
         },
     );
@@ -588,6 +602,68 @@ fn every_pad_is_half_of_a_pair() {
 // ---------------------------------------------------------------------------
 // The pad tile
 // ---------------------------------------------------------------------------
+
+/// No pad may stand where a map sprite is parked (#274).
+///
+/// The oracle is deliberately NOT `WorldState::fixed` — that set is the thing
+/// under test. It is rebuilt here from the ROM's own map-object tables plus
+/// the build's redistribution decision, so a regression that empties `fixed`
+/// on the way out of the builder fails this test rather than agreeing with it.
+///
+/// Both hammer-bro arms run, because the two halves of the bug arrived by
+/// different routes and one arm alone leaves the other open:
+///
+/// - **Shuffle off** — `HammerBroFill` pins a `HammerBro` SLOT onto every
+///   vanilla sprite cell (a sprite's tile needs a pointer entry), so those
+///   cells reach `pad_sites` through pool 1, which screened only `barred` and
+///   `reserved`. 84 of 111 measured collisions.
+/// - **Either arm** — the W7 piranha plants and the canoe keep their vanilla
+///   homes and reach pool 2, which did screen `fixed` — but `from_built` had
+///   dropped it, so the screen was dead. The remaining 27, and all 24 of the
+///   collisions still present with the shuffle on.
+///
+/// Checking `from` alone covers both endpoints: every pad half is one claimed
+/// site, and each site ships as the `from` of one half and the `to` of the
+/// other.
+#[test]
+fn no_pad_stands_on_a_map_sprite() {
+    let Some(raw) = load_rom() else { return };
+    for shuffle_bros in [false, true] {
+        for seed in 0..census_seeds(12) {
+            let ((rom, result), _) = census_build_arm(&raw, seed, shuffle_bros);
+            let mut rng = ChaCha8Rng::seed_from_u64(seed ^ 0x5EED_1234);
+            let (state, _) = super::generate(
+                &result,
+                &IDENTITY_SPINE,
+                super::DEFAULT_WANDS_REQUIRED,
+                &Knobs::default(),
+                SEALABLE_NEEDED,
+                &mut rng,
+            );
+            for wi in 0..8 {
+                let mut parked: std::collections::HashSet<(usize, usize)> = if shuffle_bros {
+                    rom_data::read_non_hb_sprite_positions(&rom, wi).into_iter().collect()
+                } else {
+                    rom_data::read_map_sprite_positions(&rom, wi).into_iter().collect()
+                };
+                parked.extend(result.worlds[wi].hb_sprites.iter().map(|s| s.grid_pos));
+                for edge in &state.edges {
+                    let MazeEdge::Pad { from, .. } = edge else { continue };
+                    if from.0 != wi {
+                        continue;
+                    }
+                    assert!(
+                        !parked.contains(&from.1),
+                        "seed {seed} (bros shuffled: {shuffle_bros}) W{}: pad at {:?} \
+                         stands on a parked map sprite",
+                        wi + 1,
+                        from.1,
+                    );
+                }
+            }
+        }
+    }
+}
 
 /// Engine byte tables [`TILE_TELEPAD`] must be **absent** from, as
 /// `(name, file offset, length)`.

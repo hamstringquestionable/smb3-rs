@@ -39,6 +39,13 @@ deploys.
   will tell you whether the chest in 1-F is worth the detour and which world
   that fortress ended up in, for the items he has an opinion about.
 
+### Fixed
+
+- **Telepads no longer land on an occupied map tile.** In the world maze a pad
+  could be stamped onto the cell a wandering Hammer Bro or a piranha plant
+  already stands on. Most likely with Shuffle Hammer Bros off, where it reached
+  one pad in eight.
+
 ## [2.1.0] - 2026-09-13
 
 **Rev 0 ROMs are accepted.** The other USA dump no longer has to be hunted down

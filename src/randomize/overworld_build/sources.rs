@@ -46,11 +46,14 @@ pub(crate) fn allot_budgets(
 }
 
 /// Wrap a finished `BuiltWorld` back into a `WorldState`. Start/target are
-/// re-derived from the grid the same way the builder derived them. `fixed`
-/// is empty: a finished world has nothing left to place.
+/// re-derived from the grid the same way the builder derived them.
 ///
 /// Production since the world maze: the maze is eight of these over
-/// `BuildResult::worlds`, which is the whole of how it gets its input.
+/// `BuildResult::worlds`, which is the whole of how it gets its input — so
+/// **anything the maze reads has to survive this adapter**. `fixed` did not,
+/// and the pad-site filter that reads it was dead for as long as the maze has
+/// shipped (#274). The remaining defaults below are the build-phase-only
+/// fields: no phase runs on a finished world, so nothing reads them.
 pub(crate) fn from_built(built: &BuiltWorld) -> WorldState {
     WorldState {
         world_idx: built.world_idx,
@@ -60,12 +63,12 @@ pub(crate) fn from_built(built: &BuiltWorld) -> WorldState {
         pipe_pairs: built.pipe_pairs.clone(),
         start: rom_data::find_start(&built.grid),
         target: find_target(&built.grid, built.world_idx),
-        fixed: HashSet::new(),
+        fixed: built.fixed.clone(),
         hammer_gated: HashSet::new(),
         pipe_budget: VANILLA_PIPE_PAIRS[built.world_idx],
         level_budget: built.slots.iter().filter(|s| s.kind == SlotKind::Level).count(),
         fort_budget: built.slots.iter().filter(|s| s.kind == SlotKind::Fortress).count(),
-        c1_floor: C1_FLOOR,
+        c1_floor: built.c1_floor,
         ptr_slots: 0,
         bridges_out: 0,
         bridge_spans: Vec::new(),
