@@ -9,6 +9,15 @@ deploys.
 
 ## [Unreleased]
 
+## [2.2.1] - 2026-09-22
+
+**A Frog Suit from a Fire Flower no longer strands you.** Random Fire Flower
+can hand out the Frog Suit, and two spots in the game cannot be cleared in it.
+Both now can. With Random Fire Flower off, nothing in gameplay changes.
+
+Old flag keys still decode — the key version is unchanged at 29, and this
+release adds no options.
+
 ### Fixed
 
 - Random Fire Flower no longer strands a player it handed a Frog Suit to. In
