@@ -11,9 +11,12 @@ deploys.
 
 ### Fixed
 
-- Random Fire Flower no longer strands a player it handed a Frog Suit to: the
-  spike run before Boom-Boom in 8F and a brick run in 7-5 each sit one tile
-  higher, so both are passable in the frog.
+- Random Fire Flower no longer strands a player it handed a Frog Suit to. In
+  8F the first spike of the run before Boom-Boom sits one tile higher, giving
+  the frog a way into the tunnel; the rest stay at vanilla height (edit by
+  MaCobra52). In 7-5 a brick run sits one tile higher. With the fix, the
+  Boom-Boom room's backdrop is fortress brick instead of black, and one
+  breakable brick early in 8F is gone.
 
 ## [2.2.0] - 2026-09-20
 
