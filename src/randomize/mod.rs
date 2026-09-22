@@ -13,6 +13,10 @@ pub mod credits;
 pub mod enemies;
 pub mod enemy_protections;
 pub mod fire_flower;
+/// The two level-geometry spots where an unwanted Frog Suit strands the
+/// player. Applied only with Random Fire Flower on, since that is the only way
+/// to arrive there in a frog. See [`fire_flower`].
+pub mod frog_softlocks;
 pub mod hand_rooms;
 pub mod hands_levels;
 pub mod items;

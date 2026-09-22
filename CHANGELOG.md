@@ -9,6 +9,12 @@ deploys.
 
 ## [Unreleased]
 
+### Fixed
+
+- Random Fire Flower no longer strands a player it handed a Frog Suit to: the
+  spike run before Boom-Boom in 8F and a brick run in 7-5 each sit one tile
+  higher, so both are passable in the frog.
+
 ## [2.2.0] - 2026-09-20
 
 **World Maze polish.** The wand gate now tells you where you stand against it —
