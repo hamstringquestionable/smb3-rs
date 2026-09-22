@@ -847,6 +847,11 @@ fn randomize_inner(
     if options.fire_flower != FireFlowerMode::Off {
         rom.set_tag("fire_flower");
         randomize::fire_flower::apply(rom, options.fire_flower);
+        // ...and with it, the two level spots a Frog Suit cannot get out of.
+        // Only reachable in a frog *because* of the line above, so the fix
+        // rides the same flag. No ordering requirement — see the module doc.
+        rom.set_tag("frog_softlocks");
+        randomize::frog_softlocks::apply(rom);
     }
 
     // Poison Mushroom — each 1-Up block hands out either a real 1-Up or a
