@@ -3,31 +3,34 @@
 //!
 //! [`super::fire_flower`] can hand out a Frog Suit from any in-level Fire
 //! Flower, so a player who grabbed what looked like a power-up can arrive at an
-//! obstacle wearing the one suit that cannot clear it. The Frog Suit's ground
-//! movement is the problem: it cannot build a run, so a clearance the vanilla
-//! level tuned for Big Mario stops being passable at all.
+//! obstacle wearing the one suit that cannot clear it. The Frog Suit cannot
+//! crouch, so a gap the vanilla level expects Big Mario to duck under stops
+//! being passable at all.
 //!
-//! Two vanilla spots do this, and both are fixed the same way: **decrement the
-//! row nibble of one generator command** so the obstacle sits one tile higher.
-//! The edits come from the community "SMB3 - Frog Patch" hack
-//! (`patches/SMB3 - Frog Patch.ips`), which forces the Frog Suit game-wide and
-//! carries seventeen records; only these two are about being stranded, so only
-//! these two are taken.
+//! | level | fix | source |
+//! |---|---|---|
+//! | 8F, screen 13 | only the *first* spike of the run before Boom-Boom goes up a row | MaCobra52 |
+//! | 7-5, screen 2 | a brick run up one row, onto the identical run already there | "SMB3 - Frog Patch" |
 //!
-//! | level | what moves |
-//! |---|---|
-//! | 8F, screen 13 | the downward spike run before Boom-Boom, up one row |
-//! | 7-5, screen 2 | a brick run, up one row — onto the identical run already there |
+//! The 7-5 edit comes from `patches/SMB3 - Frog Patch.ips`, which forces the
+//! Frog Suit game-wide and carries seventeen records; only the two about being
+//! stranded were ever taken. Its 8F record raised the *whole* spike run, which
+//! is more than the frog needs, so 8F uses MaCobra52's four-site edit instead —
+//! see [`FIXES`].
 //!
 //! # Why this is a byte splice and not a generator rewrite
 //!
 //! A level's object stream is a run of 3- and 4-byte generator commands whose
 //! lengths depend on the tileset's variable-size dispatch table, so there is no
 //! cheap way to address "the spike run on screen 13" symbolically. The offsets
-//! are stable in vanilla, and [`EDITS`] carries the bytes each site must hold
-//! before it is written — a site that does not match is skipped rather than
-//! stamped over, so a hand-modified ROM (`--skip-rom-validation`) loses the fix
-//! instead of having its geometry corrupted.
+//! are stable in vanilla, and every [`Edit`] carries the bytes its site must
+//! hold before it is written.
+//!
+//! **A fix lands whole or not at all.** 8F's four sites only make sense
+//! together — the ceiling is shortened on the promise that another command puts
+//! row 7 back — so if any one of them does not match (a hand-modified ROM under
+//! `--skip-rom-validation`), none of them are written and the level stays
+//! vanilla rather than half-edited.
 //!
 //! # Ordering
 //!
@@ -41,36 +44,68 @@
 
 use crate::rom::Rom;
 
-/// One geometry fix: where, what must be there, and what replaces it.
+/// One byte splice: where, what must be there, and what replaces it.
 struct Edit {
     /// File offset of the first byte written.
     offset: usize,
-    /// What vanilla holds here. The write is skipped unless it matches.
+    /// What vanilla holds here.
     vanilla: &'static [u8],
     /// The replacement, same length.
     patched: &'static [u8],
+}
+
+/// A set of edits that is applied together or not at all.
+struct Fix {
     /// Write-log tag, so `--write-log` attributes each byte to its own fix
     /// rather than to one lump. Doubles as the label in test failures.
     what: &'static str,
+    edits: &'static [Edit],
 }
 
-/// The two sites, both verified against the vanilla ROM.
+/// Both fixes, every site verified against the vanilla ROM.
 ///
-/// **8F** (`0x2BAAA`) spans two adjacent commands, which is why its middle byte
-/// is present but unchanged:
+/// # 8F — only the first spike raised
+///
+/// Screen 13 is a brick ceiling over a 15-wide run of downward spikes, leaving a
+/// 1-tile tunnel over a right-moving conveyor. Big Mario ducks into it; the
+/// frog cannot. Raising just the leftmost spike gives the frog a 2-tile notch
+/// to get in, and leaves the rest of the tunnel as vanilla built it.
+///
+/// That needs three commands where vanilla has two (spikes in two different
+/// rows), and 8F's stream is packed wall to wall, so two unrelated commands are
+/// repurposed to pay for it. Every replacement is the same length as what it
+/// replaces, so the stream stays aligned:
 ///
 /// ```text
-/// 0x2BAA8:  10 D1 E7 0E   scr=13 col=1 row=0   LoadLevel_SolidBrick (TS2 disp 13)
-///                 ^^ size nibble 7 -> 6            the ceiling, one shorter
-/// 0x2BAAC:  18 D1 DE      scr=13 col=1 row=8   LoadLevel_SpikeDown  (TS2 disp 12)
-///           ^^ row 8 -> 7                          the spikes, one row higher
+/// 0x2B93A  32 3A 10    -> 17 D1 D0     BRICK scr 3 (10,2)  -> SpikeDown scr 13 col 1 row 7, 1 wide
+/// 0x2BA85  70 CD 3A 22 -> 17 D2 E0 0D  black backdrop      -> SolidBrick scr 13 row 7, cols 2-15
+/// 0x2BAAA  E7          -> E6           ceiling rows 0-7    -> rows 0-6
+/// 0x2BAAC  18 D1 DE    -> 18 D2 DD     spikes cols 1-15    -> cols 2-15, still row 8
+///
+///          col 0 1 2 3
+///   row 6      . B B B
+///   row 7      . v B B     <- first spike raised; row-7 brick restored beside it
+///   row 8      . . v v     <- the rest of the run at vanilla height
+///   row 9      . . . .
+///   row 10     = = = =
 /// ```
 ///
-/// Boom-Boom stands on screen 14; that spike run is the last obstacle before
-/// the boss room, and the ceiling has to rise with it or the gap does not open.
+/// The new spike sits early in the stream (screen 3's slot) and survives
+/// because nothing painted after it covers screen 13 row 7 col 1: the ceiling
+/// now stops at row 6, the restored row-7 brick starts at col 2, and the one
+/// command that did cover it — the black backdrop — is the one repurposed.
 ///
-/// **7-5** (`0x1E648`) is a single byte in the level's *interior* (layout
-/// `$A5CD`, the sub-area the front-door pipe drops into):
+/// **What it costs.** The single breakable brick at screen 3 (row 2, col 10),
+/// beside the 1-Up brick, is gone. And the backdrop over screen 12 col 13
+/// through screen 14 — the tunnel approach and the Boom-Boom room — reverts
+/// from black to the default fortress fill, whose top row is the dark diamond
+/// tile: `$E5` is above TS2's `$E2` solidity threshold, so that row is a solid
+/// ceiling where vanilla had open black. It matches the rest of the fortress.
+///
+/// # 7-5 — a brick up one row
+///
+/// A single byte in the level's *interior* (layout `$A5CD`, the sub-area the
+/// front-door pipe drops into):
 ///
 /// ```text
 /// 0x1E645:  37 25 10      scr=2 col=5 row=7    BRICK (TS1 disp 15)
@@ -80,28 +115,43 @@ struct Edit {
 ///
 /// Row 7 already holds an identical run at the same column, so raising the
 /// row-8 one merges the two: the net effect is that the lower brick is gone.
-const EDITS: [Edit; 2] = [
-    Edit {
-        offset: 0x2BAAA,
-        vanilla: &[0xE7, 0x0E, 0x18],
-        patched: &[0xE6, 0x0E, 0x17],
-        what: "8f_spikes",
+static FIXES: [Fix; 2] = [
+    Fix {
+        what: "8f_first_spike",
+        edits: &[
+            Edit { offset: 0x2B93A, vanilla: &[0x32, 0x3A, 0x10], patched: &[0x17, 0xD1, 0xD0] },
+            Edit {
+                offset: 0x2BA85,
+                vanilla: &[0x70, 0xCD, 0x3A, 0x22],
+                patched: &[0x17, 0xD2, 0xE0, 0x0D],
+            },
+            Edit { offset: 0x2BAAA, vanilla: &[0xE7], patched: &[0xE6] },
+            Edit { offset: 0x2BAAC, vanilla: &[0x18, 0xD1, 0xDE], patched: &[0x18, 0xD2, 0xDD] },
+        ],
     },
-    Edit { offset: 0x1E648, vanilla: &[0x38], patched: &[0x37], what: "7-5_brick" },
+    Fix {
+        what: "7-5_brick",
+        edits: &[Edit { offset: 0x1E648, vanilla: &[0x38], patched: &[0x37] }],
+    },
 ];
 
 /// Apply both fixes. Gated by the caller on Random Fire Flower being enabled,
 /// which is what turns "a Fire Flower" into "a suit the player did not pick".
 ///
-/// A site whose bytes are not vanilla is left alone, so this is a no-op on a
-/// ROM that already carries someone else's edit there.
+/// A fix with any site that is not vanilla is left alone entirely, so this is
+/// a no-op on a ROM that already carries someone else's edit there.
 pub fn apply(rom: &mut Rom) {
-    for edit in &EDITS {
-        if rom.read_range(edit.offset, edit.vanilla.len()) == edit.vanilla {
-            rom.push_tag(edit.what);
-            rom.write_range(edit.offset, edit.patched);
-            rom.pop_tag();
+    for fix in &FIXES {
+        let intact =
+            fix.edits.iter().all(|e| rom.read_range(e.offset, e.vanilla.len()) == e.vanilla);
+        if !intact {
+            continue;
         }
+        rom.push_tag(fix.what);
+        for edit in fix.edits {
+            rom.write_range(edit.offset, edit.patched);
+        }
+        rom.pop_tag();
     }
 }
 
@@ -114,18 +164,37 @@ mod tests {
         Rom::from_bytes(&bytes).ok()
     }
 
+    fn all_edits() -> impl Iterator<Item = (&'static str, &'static Edit)> {
+        FIXES.iter().flat_map(|f| f.edits.iter().map(move |e| (f.what, e)))
+    }
+
     /// Every edit is the same length in and out, or `write_range` would spill
     /// into the next generator command.
     #[test]
     fn edits_are_length_preserving() {
-        for edit in &EDITS {
+        for (what, edit) in all_edits() {
             assert_eq!(
                 edit.vanilla.len(),
                 edit.patched.len(),
-                "{}: replacement changes the command length",
-                edit.what
+                "{what} 0x{:05X}: replacement changes the command length",
+                edit.offset
             );
-            assert_ne!(edit.vanilla, edit.patched, "{}: nothing to write", edit.what);
+            assert_ne!(
+                edit.vanilla, edit.patched,
+                "{what} 0x{:05X}: nothing to write",
+                edit.offset
+            );
+        }
+    }
+
+    /// No two sites overlap, inside a fix or across fixes.
+    #[test]
+    fn sites_do_not_overlap() {
+        let mut spans: Vec<(usize, usize)> =
+            all_edits().map(|(_, e)| (e.offset, e.offset + e.vanilla.len())).collect();
+        spans.sort();
+        for w in spans.windows(2) {
+            assert!(w[0].1 <= w[1].0, "0x{:05X} overlaps 0x{:05X}", w[0].0, w[1].0);
         }
     }
 
@@ -136,47 +205,59 @@ mod tests {
     #[test]
     fn every_site_still_holds_its_vanilla_bytes() {
         let Some(rom) = load_vanilla() else { return };
-        for edit in &EDITS {
+        for (what, edit) in all_edits() {
             assert_eq!(
                 rom.read_range(edit.offset, edit.vanilla.len()),
                 edit.vanilla,
-                "0x{:05X} ({}) no longer holds the bytes this fix was measured against",
+                "0x{:05X} ({what}) no longer holds the bytes this fix was measured against",
                 edit.offset,
-                edit.what
             );
         }
     }
 
     #[test]
-    fn apply_writes_both_sites() {
+    fn apply_writes_every_site() {
         let Some(rom) = load_vanilla() else { return };
         let mut patched = rom.clone();
         apply(&mut patched);
-        for edit in &EDITS {
+        for (what, edit) in all_edits() {
             assert_eq!(
                 patched.read_range(edit.offset, edit.patched.len()),
                 edit.patched,
-                "0x{:05X} ({}) was not written",
+                "0x{:05X} ({what}) was not written",
                 edit.offset,
-                edit.what
             );
         }
     }
 
-    /// The row nibble is the whole point: each obstacle ends up exactly one
-    /// tile higher, and nothing else in `byte0` moves.
+    /// Decode 8F's patched commands and check they say what the doc says: one
+    /// spike at row 7 col 1, a ceiling that stops at row 6, row 7 bricked back
+    /// in from col 2, and the spike run at row 8 from col 2 — all on screen 13.
     #[test]
-    fn the_row_nibble_drops_by_one() {
-        // 8F's spike command is the third byte of its edit; 7-5's is the first.
-        for (edit, i) in [(&EDITS[0], 2), (&EDITS[1], 0)] {
-            let (before, after) = (edit.vanilla[i], edit.patched[i]);
-            assert_eq!(after & 0xF0, before & 0xF0, "{}: high nibble moved", edit.what);
-            assert_eq!(after & 0x0F, (before & 0x0F) - 1, "{}: not up one row", edit.what);
-        }
+    fn the_8f_commands_raise_only_the_first_spike() {
+        let e = FIXES[0].edits;
+        // byte0 low nibble = row; byte1 = screen << 4 | col; byte2 low nibble =
+        // width-1 for a spike run, height-1 for SolidBrick (whose extra byte is
+        // width-1). byte0 bits 7-5 = 0 selects dispatch group 0 throughout.
+        let pos = |b: &[u8]| (b[0] & 0x0F, b[1] >> 4, b[1] & 0x0F);
+
+        let spike = e[0].patched;
+        assert_eq!(pos(spike), (7, 13, 1), "raised spike position");
+        assert_eq!(spike[2], 0xD0, "SpikeDown (var type D), 1 wide");
+
+        let row7 = e[1].patched;
+        assert_eq!(pos(row7), (7, 13, 2), "row-7 brick position");
+        assert_eq!((row7[2], row7[3]), (0xE0, 0x0D), "SolidBrick 1 tall, cols 2-15");
+
+        assert_eq!(e[2].patched[0] & 0x0F, 6, "ceiling now rows 0-6");
+
+        let run = e[3].patched;
+        assert_eq!(pos(run), (8, 13, 2), "spike run stays at row 8, starts col 2");
+        assert_eq!(run[2], 0xDD, "SpikeDown, 14 wide: cols 2-15");
     }
 
     /// Applying twice is applying once — the second pass sees non-vanilla bytes
-    /// and declines, rather than decrementing the row a second time.
+    /// and declines.
     #[test]
     fn apply_is_idempotent() {
         let Some(rom) = load_vanilla() else { return };
@@ -187,15 +268,27 @@ mod tests {
         assert_eq!(once.data, twice.data, "a second apply moved more bytes");
     }
 
-    /// A site someone else already edited is left alone rather than stamped.
+    /// One foreign byte in 8F keeps **all** of 8F vanilla — a half-applied 8F
+    /// would shorten the ceiling without restoring row 7 — while 7-5, a
+    /// separate fix, still lands.
     #[test]
-    fn a_modified_site_is_skipped() {
+    fn a_fix_with_a_modified_site_is_skipped_whole() {
         let Some(rom) = load_vanilla() else { return };
         let mut patched = rom.clone();
-        patched.write_byte(EDITS[1].offset, 0x5A);
+        let spoiled = FIXES[0].edits[3].offset + 1;
+        patched.write_byte(spoiled, 0x5A);
         apply(&mut patched);
-        assert_eq!(patched.read_byte(EDITS[1].offset), 0x5A, "an edited site was overwritten");
-        // The other site is independent and still lands.
-        assert_eq!(patched.read_range(EDITS[0].offset, 3), EDITS[0].patched);
+
+        for edit in &FIXES[0].edits[..3] {
+            assert_eq!(
+                patched.read_range(edit.offset, edit.vanilla.len()),
+                edit.vanilla,
+                "0x{:05X} was written although its fix had a foreign byte",
+                edit.offset
+            );
+        }
+        assert_eq!(patched.read_byte(spoiled), 0x5A, "the foreign byte was overwritten");
+        let brick = &FIXES[1].edits[0];
+        assert_eq!(patched.read_range(brick.offset, 1), brick.patched, "7-5 did not land");
     }
 }
