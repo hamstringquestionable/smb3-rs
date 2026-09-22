@@ -9,6 +9,11 @@ deploys.
 
 ## [Unreleased]
 
+### Changed
+
+- The oracle king is now the king of your starting world, so his airship
+  prediction arrives while it's still useful.
+
 ## [2.2.1] - 2026-09-22
 
 **A Frog Suit from a Fire Flower no longer strands you.** Random Fire Flower
