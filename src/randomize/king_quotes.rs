@@ -977,22 +977,33 @@ fn cpu_addr(file_offset: usize) -> u16 {
 ///   Form < 4 (no suit) → index by World_Num for per-world quotes
 const QUOTE_SELECT_PATCH: usize = 0x362A3;
 
-/// The king who speaks for the oracle — always the same one, so he reads as a
-/// recurring character rather than a random king having a strange day.
+/// The king who speaks for the oracle: the king of the world the player
+/// **starts** in — `world_order`'s first entry.
 ///
-/// Pinning the *world* is what pins the *sprite*. `TAndK_DrawKingAndToad` picks
-/// the king's CHR page, pattern index and both attribute bytes with
+/// That is what makes him worth hearing. His "where the airship takes you
+/// next" is a prediction the player can act on from the first airship; heard
+/// on the fifth world it would predict the sixth, with one world left to spend
+/// it on. With world order off the first world *is* Grass Land, so the
+/// fallback is not arbitrary.
+///
+/// The sprite follows with no ROM-side work. `TAndK_DrawKingAndToad` picks the
+/// king's CHR page, pattern index and both attribute bytes with
 /// `LDX World_Num` (`prg027.asm:777`), the quote-select hook indexes with
 /// `LDY $0727`, and the stomp threshold table is read the same way — three
-/// lookups off one byte, resolved in the same frame. So whatever `world_order`
-/// or the world maze does to the progression, this quote always arrives in the
-/// mouth of this king, talking about this king's own world.
-const ORACLE_WORLD: usize = 0;
-
-// Only seven kings exist, and the write loop indexes them directly — a bad
-// value here would silently give the oracle's line to nobody. Checked at
-// compile time rather than in a test, because there is nothing to run.
-const _: () = assert!(ORACLE_WORLD < 7, "ORACLE_WORLD must name one of the seven kings");
+/// lookups off one byte, resolved in the same frame. So the line always
+/// arrives in the mouth of the king whose world it is, whichever king that is
+/// this seed.
+///
+/// Falls back to Grass Land when the progression starts in Dark Land
+/// (`world_count` 0), which has no king.
+fn oracle_world(facts: &OracleFacts) -> usize {
+    facts
+        .world_progression
+        .and_then(<[u8]>::first)
+        .map(|&w| usize::from(w))
+        .filter(|&w| w < 7)
+        .unwrap_or(0)
+}
 
 /// Vanilla's stomp threshold: every Koopaling takes three hits. This is the
 /// table to pass when `koopaling_hits` is off, and it is what makes the
@@ -1214,7 +1225,7 @@ fn topic_stomp_thresholds(facts: &OracleFacts) -> Lines {
         None => {
             // The generator only ever writes 1-5; clamp so a future widening of
             // that range cannot index off the end of the bucket array.
-            let count = usize::from(table[ORACLE_WORLD].clamp(1, 5));
+            let count = usize::from(table[oracle_world(facts)].clamp(1, 5));
             say(KOOPA_BUCKETS[count - 1])
         }
     }
@@ -1224,13 +1235,11 @@ fn topic_stomp_thresholds(facts: &OracleFacts) -> Lines {
 ///
 /// Silent without a shuffled progression: in vanilla order the answer is always
 /// the next world along, and a prediction nobody could have got wrong is not a
-/// prediction. Silent too when the oracle's own world is not on the
-/// progression at all (`world_count` cut it), though in that case his king is
-/// never rescued and nobody was going to hear it.
+/// prediction. The oracle is the progression's first world (see
+/// [`oracle_world`]), so the airship after his is `order[1]`; a progression
+/// with no second entry (`world_count` 0) has nothing to predict.
 fn topic_next_world(facts: &OracleFacts) -> Option<Lines> {
-    let order = facts.world_progression?;
-    let here = order.iter().position(|&w| usize::from(w) == ORACLE_WORLD)?;
-    let next = usize::from(*order.get(here + 1)?);
+    let next = usize::from(*facts.world_progression?.get(1)?);
     Some([
         "I have seen where".into(),
         "the airship takes".into(),
@@ -1347,12 +1356,12 @@ pub fn randomize(rom: &mut Rom, rng: &mut ChaCha8Rng, enabled: bool, facts: &Ora
     }
 
     // --- 2. Write 7 unique standard quotes into free space ---
+    let oracle_at = oracle_world(facts);
     let mut std_addrs = Vec::with_capacity(7);
     for (world, quote) in std_picks.iter().enumerate() {
         // The oracle's drawn quote is replaced rather than skipped, so the pick
         // above still consumes exactly seven and the stream stays put.
-        let encoded =
-            if world == ORACLE_WORLD { encode_quote(&oracle) } else { encode_quote(quote) };
+        let encoded = if world == oracle_at { encode_quote(&oracle) } else { encode_quote(quote) };
         let file_offset = KING_QUOTE_BASE + world * 120;
         rom.write_range(file_offset, &encoded);
         std_addrs.push(cpu_addr(file_offset));
@@ -1512,8 +1521,9 @@ mod tests {
     fn bucket_fallback_reports_its_own_world() {
         // Deliberately unremarkable: mean 3, no three-of-a-kind, not flat.
         let mut table = [1u8, 2, 3, 4, 5, 3, 3];
+        // No progression, so the oracle falls back to Grass Land's slot.
         for count in 1..=5u8 {
-            table[ORACLE_WORLD] = count;
+            table[0] = count;
             assert!(table_pattern(&table).is_none(), "test table must reach the fallback");
             assert_eq!(
                 topic_stomp_thresholds(&facts(table)),
@@ -1528,15 +1538,15 @@ mod tests {
     /// not the templates.
     #[test]
     fn every_composed_oracle_line_fits() {
+        // The line depends only on the successor, so the first world is moot.
         for next in 0..8u8 {
-            // A progression whose oracle world is followed by `next`.
-            let order = [ORACLE_WORLD as u8, next];
+            let order = [0, next];
             let f = OracleFacts {
                 koopaling_hits: VANILLA_KOOPALING_HITS,
                 world_progression: Some(&order),
                 one_f_chest: None,
             };
-            let lines = topic_next_world(&f).expect("the oracle world has a successor here");
+            let lines = topic_next_world(&f).expect("the first world has a successor here");
             validate_lines("next world", &lines);
         }
 
@@ -1560,9 +1570,10 @@ mod tests {
         // Vanilla world order: "next" is not a prediction.
         assert!(topic_next_world(&facts(VANILLA_KOOPALING_HITS)).is_none());
 
-        // A progression that never reaches the oracle's world (world_count cut
-        // it), and one where his world is the last entry.
-        for order in [vec![3u8, 5, 7], vec![3, 5, ORACLE_WORLD as u8]] {
+        // `world_count` 0: the player starts in Dark Land, which has no king,
+        // so the oracle falls back to Grass Land — which is not on the
+        // progression. And a first world with nothing after it.
+        for order in [vec![7u8], vec![3]] {
             let f = OracleFacts {
                 koopaling_hits: VANILLA_KOOPALING_HITS,
                 world_progression: Some(&order),
@@ -1595,9 +1606,15 @@ mod tests {
     ///
     /// A wrong answer here is silent everywhere else — the ROM boots, the king
     /// speaks, and the player walks to the wrong map.
+    ///
+    /// Which king is speaking is read back out of the ROM as well: the oracle
+    /// is the king of the starting world, so the slot is the world the game
+    /// boots into (`WORLD_INIT_OPERAND`), not anything this module computed.
+    /// Run with world order on too, since that is what moves him off Grass Land.
     #[test]
     fn the_king_names_the_world_1f_is_really_in() {
         use crate::randomize::rom_data;
+        use crate::randomize::world_order::WORLD_INIT_OPERAND;
         use crate::randomizer::Options;
 
         let Ok(bytes) = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes") else {
@@ -1609,37 +1626,52 @@ mod tests {
         let line = |s: &str| encode_quote(&[s, "", "", "", "", ""])[..20].to_vec();
         let opener = line("A fortress hides a");
 
-        let mut spoke = 0;
-        for seed in 0..24u64 {
-            let out = crate::generate_patched_rom(&bytes, seed, &Options::default(), None)
-                .expect("a default randomize succeeds");
-            let rom = Rom::from_bytes_lax(&out, true).expect("the output parses");
+        let shuffled = Options { world_order: true, ..Options::default() };
+        let (mut spoke, mut spoke_elsewhere) = (0, 0);
+        for options in [Options::default(), shuffled] {
+            for seed in 0..24u64 {
+                let out = crate::generate_patched_rom(&bytes, seed, &options, None)
+                    .expect("a randomize succeeds");
+                let rom = Rom::from_bytes_lax(&out, true).expect("the output parses");
 
-            let quote = rom.read_range(KING_QUOTE_BASE + ORACLE_WORLD * 120, 120).to_vec();
-            if quote[..20] != opener[..] {
-                continue; // he talked about something else this seed
-            }
-            spoke += 1;
+                let oracle_at = usize::from(rom.read_byte(WORLD_INIT_OPERAND));
+                let quote = rom.read_range(KING_QUOTE_BASE + oracle_at * 120, 120).to_vec();
+                if quote[..20] != opener[..] {
+                    continue; // he talked about something else this seed
+                }
+                spoke += 1;
+                if oracle_at != 0 {
+                    spoke_elsewhere += 1;
+                }
 
-            // Where 1-F actually ended up, read back out of the pointer tables.
-            let world = (0..8)
-                .find(|&wi| {
-                    let wt = &rom_data::WORLDS[wi];
-                    (0..wt.entry_count).any(|idx| {
-                        let e = rom_data::read_entry(&rom, wt, idx);
-                        u16::from_le_bytes([e.obj_lo, e.obj_hi]) == rom_data::FORTRESS_1F_OBJ_PTR
+                // Where 1-F actually ended up, read back out of the pointer tables.
+                let world = (0..8)
+                    .find(|&wi| {
+                        let wt = &rom_data::WORLDS[wi];
+                        (0..wt.entry_count).any(|idx| {
+                            let e = rom_data::read_entry(&rom, wt, idx);
+                            u16::from_le_bytes([e.obj_lo, e.obj_hi])
+                                == rom_data::FORTRESS_1F_OBJ_PTR
+                        })
                     })
-                })
-                .unwrap_or_else(|| panic!("seed {seed}: he named a fortress that is not placed"));
+                    .unwrap_or_else(|| {
+                        panic!("seed {seed}: he named a fortress that is not placed")
+                    });
 
-            assert_eq!(
-                quote[40..60],
-                line(&format!("in {}.", WORLD_NAMES[world]))[..],
-                "seed {seed}: the king sent the player to the wrong world (1-F is in {})",
-                WORLD_NAMES[world]
-            );
+                assert_eq!(
+                    quote[40..60],
+                    line(&format!("in {}.", WORLD_NAMES[world]))[..],
+                    "seed {seed}: the king sent the player to the wrong world (1-F is in {})",
+                    WORLD_NAMES[world]
+                );
+            }
         }
         assert!(spoke > 0, "no seed reached the 1-F remark, so this test proved nothing");
+        assert!(
+            spoke_elsewhere > 0,
+            "the oracle never spoke from a king other than Grass Land's, so world order's \
+             starting world was never exercised"
+        );
     }
 
     #[test]
