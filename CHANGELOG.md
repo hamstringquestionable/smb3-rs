@@ -9,6 +9,24 @@ deploys.
 
 ## [Unreleased]
 
+## [2.2.1] - 2026-09-22
+
+**A Frog Suit from a Fire Flower no longer strands you.** Random Fire Flower
+can hand out the Frog Suit, and two spots in the game cannot be cleared in it.
+Both now can. With Random Fire Flower off, nothing in gameplay changes.
+
+Old flag keys still decode — the key version is unchanged at 29, and this
+release adds no options.
+
+### Fixed
+
+- Random Fire Flower no longer strands a player it handed a Frog Suit to. In
+  8F the first spike of the run before Boom-Boom sits one tile higher, giving
+  the frog a way into the tunnel; the rest stay at vanilla height (edit by
+  MaCobra52). In 7-5 a brick run sits one tile higher. With the fix, the
+  Boom-Boom room's backdrop is fortress brick instead of black, and one
+  breakable brick early in 8F is gone.
+
 ## [2.2.0] - 2026-09-20
 
 **World Maze polish.** The wand gate now tells you where you stand against it —
