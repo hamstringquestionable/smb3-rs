@@ -132,6 +132,27 @@ fn map_table(rom: &mut Rom, offset: usize, len: usize, mut f: impl FnMut(u8) -> 
     rom.write_range(offset, &bytes);
 }
 
+/// One world's Princess letter reward, as the ROM currently holds it.
+/// `0x00` means that world grants nothing.
+// Reason: the key site list is the caller, and lands with the placement pass.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn princess_reward(rom: &Rom, world: usize) -> u8 {
+    assert!(world < PRINCESS_REWARDS_LEN, "world {world} has no Princess letter");
+    rom.read_byte(PRINCESS_REWARDS_OFFSET + world)
+}
+
+/// Overwrite one world's Princess letter reward (W1-W7), in Global Item IDs.
+///
+/// The one write path for that table outside [`randomize`], so the offset stays
+/// in this file. A key-placement pass uses it to put a key on the cell a world
+/// is completed at.
+// Reason: the key site list is the caller, and lands with the placement pass.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn set_princess_reward(rom: &mut Rom, world: usize, item: u8) {
+    assert!(world < PRINCESS_REWARDS_LEN, "world {world} has no Princess letter");
+    rom.write_byte(PRINCESS_REWARDS_OFFSET + world, item);
+}
+
 /// Randomize all chest and reward items: Hammer Bros drops, Princess letter
 /// rewards, Toad House chests, and in-level treasure chests.
 ///
