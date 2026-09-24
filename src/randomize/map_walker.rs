@@ -134,6 +134,39 @@ pub(super) fn walk_map_blocked(
     world_idx: usize,
     blocked: &HashSet<(usize, usize)>,
 ) -> WalkResult {
+    walk_map_inner(grid, pipe_pairs, start_pos, world_idx, blocked, true)
+}
+
+/// [`walk_map_blocked`] with the boat unavailable — what a player can reach
+/// before they hold an Anchor.
+///
+/// The canoe gate makes the boat a keyed edge rather than a free one, and the
+/// question "would this still be reachable without it" is the one every
+/// guarantee has to ask. Kept as its own entry point rather than a flag on
+/// [`walk_map`] so that the ordinary callers — placement, scoring, route
+/// metrics — cannot accidentally acquire a canoe policy they never asked for.
+// Reason: the guarantee-tier query the canoe gate keys on. Its only caller
+// today is `canoe_requirement_census`, which is what measures whether the gate
+// is worth building; production gains one when the gate is wired.
+#[allow(dead_code)]
+pub(super) fn walk_map_without_canoe(
+    grid: &Grid,
+    pipe_pairs: &[TeleportEdge],
+    start_pos: Option<(usize, usize)>,
+    world_idx: usize,
+    blocked: &HashSet<(usize, usize)>,
+) -> WalkResult {
+    walk_map_inner(grid, pipe_pairs, start_pos, world_idx, blocked, false)
+}
+
+fn walk_map_inner(
+    grid: &Grid,
+    pipe_pairs: &[TeleportEdge],
+    start_pos: Option<(usize, usize)>,
+    world_idx: usize,
+    blocked: &HashSet<(usize, usize)>,
+    canoes: bool,
+) -> WalkResult {
     let start = match start_pos.or_else(|| rom_data::find_start(grid)) {
         Some(s) => s,
         None => {
@@ -160,7 +193,7 @@ pub(super) fn walk_map_blocked(
     // we omit the edges entirely so the BFS reflects reality. This is the
     // structural fix for the SAS-W3 deadlock where the swap moves the start
     // into a region with no walking path to the dock.
-    let canoe_lookup = if canoes_reachable(grid, pipe_pairs, start, world_idx, blocked) {
+    let canoe_lookup = if canoes && canoes_reachable(grid, pipe_pairs, start, world_idx, blocked) {
         teleport_lookup(&rom_data::active_canoe_edges(world_idx, grid.eights_are_wild))
     } else {
         TeleportLookup::new()
