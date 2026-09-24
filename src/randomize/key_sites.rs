@@ -152,8 +152,10 @@ pub(crate) fn grant(rom: &mut Rom, build: &mut BuildResult, site: &KeySite, key:
     }
 }
 
+/// Shared by this module's tests and `key_placement`'s: both need a real
+/// maze, and building one is forty lines of pipeline.
 #[cfg(test)]
-mod tests {
+pub(crate) mod test_support {
     use rand::SeedableRng;
     use rand_chacha::ChaCha8Rng;
 
@@ -166,14 +168,14 @@ mod tests {
     use crate::randomize::overworld_pickup::{PickupFlags, pick_up};
     use crate::randomize::{items, start_airship_swap};
 
-    fn load_rom() -> Option<Rom> {
+    pub(crate) fn load_rom() -> Option<Rom> {
         let data = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes").ok()?;
         Rom::from_bytes(&data).ok()
     }
 
     /// One seed, built the way a shipping run builds: the item tables roll
     /// first, so a Hammer Bro's reward is knowable from the model.
-    fn one_maze(raw: &Rom, seed: u64) -> (Rom, BuildResult, maze::GlobalState) {
+    pub(crate) fn one_maze(raw: &Rom, seed: u64) -> (Rom, BuildResult, maze::GlobalState) {
         let mut rom = raw.clone();
         let mut item_rng = ChaCha8Rng::seed_from_u64(seed ^ 0x4954_454D_535F_5631);
         items::randomize(&mut rom, &mut item_rng, false, false);
@@ -212,6 +214,13 @@ mod tests {
         );
         (rom, result, state)
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::test_support::{load_rom, one_maze};
+    use super::*;
+    use crate::randomize::items;
 
     /// **Both kinds of site turn up, and each points where it says.**
     ///

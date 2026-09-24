@@ -26,6 +26,7 @@ pub mod hand_rooms;
 pub mod hands_levels;
 pub mod item_keys;
 pub mod items;
+pub mod key_placement;
 pub mod key_sites;
 pub mod king_quotes;
 pub mod koopalings;
