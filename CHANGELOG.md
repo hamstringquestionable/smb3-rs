@@ -9,6 +9,20 @@ deploys.
 
 ## [Unreleased]
 
+## [2.2.2] - 2026-09-24
+
+**The Anchor is worth picking up again.** It has been a per-seed surprise
+power-up since April — use one and it becomes whatever that seed decided —
+but nothing in the game ever handed one out, so hardly anyone ever saw it.
+Hammer Bros, Princess letters and treasure chests now deal them.
+
+The oracle king also moved to your starting world, so his airship prediction
+arrives while you can still act on it, and Bowser's Castle stopped putting a
+statue fireball where it could block the basement door.
+
+Old flag keys still decode — the key version is unchanged at 29, and this
+release adds no options.
+
 ### Changed
 
 - The oracle king is now the king of your starting world, so his airship
