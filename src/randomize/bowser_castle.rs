@@ -59,6 +59,14 @@ const MIN_X_GAP: u8 = 2;
 const SEG_X_MIN: u8 = 0x55;
 const SEG_X_MAX: u8 = 0xEF; // a few past last vanilla fireball at 0xE5
 
+/// To the players there are two distinct fireball gauntlets in the castle
+/// one in the basement and one upstairs however the actual map has them
+/// in parallel and we need to add a gap in the fireballs so the rng does
+/// NOT drop one in an unfair location on top of or too near the basement
+/// entryway. The door is located at 0x83; this is a range around it.
+const LOWER_DOOR_ANCHOR_LO: u8 = 0x80;
+const LOWER_DOOR_ANCHOR_HI: u8 = 0x86;
+
 /// Vanilla fixed entries (DryBones + Thwomp) — hard-coded so the composer
 /// produces the same 14-entry segment regardless of what bytes the input
 /// ROM has at this offset (matters for integration tests using stub ROMs).
@@ -81,8 +89,12 @@ pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R) {
     // 2. Fireballs: greedy constraint-driven placement. The pool of
     //    anchors grows as fireballs are placed so each new fireball
     //    respects MIN_X_GAP to every prior entry.
-    let mut anchors: Vec<u8> =
-        FIXED_ENTRIES.iter().map(|e| e.x).chain(lasers.iter().map(|e| e.x)).collect();
+    let mut anchors: Vec<u8> = FIXED_ENTRIES
+        .iter()
+        .map(|e| e.x)
+        .chain(lasers.iter().map(|e| e.x))
+        .chain(LOWER_DOOR_ANCHOR_LO..=LOWER_DOOR_ANCHOR_HI)
+        .collect();
     anchors.sort();
 
     let mut fireballs: Vec<SegmentEntry> = Vec::with_capacity(FIREBALL_COUNT);
@@ -229,6 +241,24 @@ mod tests {
                     e.y
                 );
                 assert!(e.x >= SEG_X_MIN && e.x <= SEG_X_MAX);
+            }
+        }
+    }
+
+    #[test]
+    fn no_fireball_at_lower_door() {
+        for seed in 0..200u64 {
+            let mut rom = make_test_rom();
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            randomize(&mut rom, &mut rng);
+
+            let out = segment_writer::read_segment(&rom, SEG_OFFSET, ENTRY_COUNT);
+            for e in out.iter().filter(|e| e.obj_id == FIREBALL) {
+                assert!(
+                    !(LOWER_DOOR_ANCHOR_LO..=LOWER_DOOR_ANCHOR_HI).contains(&e.x),
+                    "seed {seed}: fireball at x={:02X} is on the lower door",
+                    e.x
+                );
             }
         }
     }

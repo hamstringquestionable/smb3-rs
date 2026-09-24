@@ -14,6 +14,11 @@ deploys.
 - The oracle king is now the king of your starting world, so his airship
   prediction arrives while it's still useful.
 
+### Fixed
+
+- Bowser's Castle no longer spawns a statue fireball on or beside the
+  basement door, which could make the spawn unwinnable.
+
 ## [2.2.1] - 2026-09-22
 
 **A Frog Suit from a Fire Flower no longer strands you.** Random Fire Flower
