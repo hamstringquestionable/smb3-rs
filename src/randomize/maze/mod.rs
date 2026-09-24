@@ -431,10 +431,40 @@ impl GlobalState {
     /// The fixpoint with some cells walled off — the counterfactual
     /// [`metrics::required_levels`] asks 62 times per seed.
     pub(crate) fn spheres_with_blocked(&self, blocked: &HashSet<MazePos>) -> Spheres {
-        self.spheres_inner(blocked, None)
+        self.spheres_inner(blocked, None, true)
     }
 
-    fn spheres_inner(&self, blocked: &HashSet<MazePos>, sealed: Option<usize>) -> Spheres {
+    /// The fixpoint with **no boat**, and the cells it reached along the way.
+    ///
+    /// Two answers in one run, which is why the canoe gate needs no item
+    /// accumulator. If this is still `solvable`, the boat is optional on this
+    /// seed and gating it cannot strand anyone. If it is not, the boat is on
+    /// the required route, and the returned reach is exactly the set an Anchor
+    /// has to be inside — anything outside it is behind the very water the
+    /// Anchor opens.
+    // Reason: the census that measures whether the gate can be keyed. Gains a
+    // production caller when the gate is wired.
+    #[allow(dead_code)]
+    pub(crate) fn spheres_without_canoe(&self) -> (Spheres, walk::MazeReach) {
+        let out = self.spheres_inner(&HashSet::new(), None, false);
+        let bases = self.base_grids(&HashSet::new());
+        // The reach at the fixpoint's resting point: every lock its forts
+        // could open, opened. Recomputing it here rather than threading it out
+        // keeps `spheres_inner` one shape.
+        let open: HashSet<FortRef> =
+            self.forts().iter().map(|&(f, _)| f).filter(|f| !out.unbeaten.contains(f)).collect();
+        let shut = self.shut_locks_sealed(&open, None);
+        let reach =
+            walk::walk_maze_without_canoe(&self.view(&bases, &shut), &self.links(), self.start);
+        (out, reach)
+    }
+
+    fn spheres_inner(
+        &self,
+        blocked: &HashSet<MazePos>,
+        sealed: Option<usize>,
+        canoes: bool,
+    ) -> Spheres {
         let bases = self.base_grids(blocked);
         let links = self.links();
         let forts = self.forts();
@@ -449,7 +479,12 @@ impl GlobalState {
 
         loop {
             let shut = self.shut_locks_sealed(&open, sealed);
-            let reach = walk_maze(&self.view(&bases, &shut), &links, self.start);
+            let view = self.view(&bases, &shut);
+            let reach = if canoes {
+                walk_maze(&view, &links, self.start)
+            } else {
+                walk::walk_maze_without_canoe(&view, &links, self.start)
+            };
 
             let reached: Vec<MazePos> = content
                 .iter()
@@ -534,7 +569,7 @@ impl GlobalState {
     /// The wand gate is still honoured: `goal_sphere` is only set once `K`
     /// wands are collectable, so this asks "reachable *and* enterable".
     pub(crate) fn winnable_with_lock_sealed(&self, lock: usize) -> bool {
-        self.spheres_inner(&HashSet::new(), Some(lock)).goal_sphere.is_some()
+        self.spheres_inner(&HashSet::new(), Some(lock), true).goal_sphere.is_some()
     }
 
     /// `wands_are_collectable`: is a K-of-7 gate on the castle satisfiable —

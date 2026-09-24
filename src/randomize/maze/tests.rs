@@ -3162,3 +3162,136 @@ fn valley_pad_census() {
         );
     }
 }
+
+/// **How often is the boat required with no Anchor reachable in front of it?**
+///
+/// The rejection rate for the canoe gate, measured on the flow the gate would
+/// actually run: place four Anchors (letter, Hammer Bro, in-level chest, Toad
+/// House), ask the fixpoint one question, then either move the boats offshore
+/// or leave them where they are.
+///
+/// **One canoe-free fixpoint answers both halves.** If it still reports
+/// `solvable`, the boat is optional on this seed and gating it strands nobody
+/// whatever the Anchors do. If it does not, the boat is on the required route,
+/// and the reach it stopped at is exactly the set an Anchor has to lie inside
+/// — anything outside is behind the very water the Anchor opens, which is the
+/// circularity the gate must not walk into.
+///
+/// Sites are counted by *kind of slot*, not by a written byte: a slot of that
+/// kind inside the canoe-free reach is somewhere the item could go. So this is
+/// the ceiling — the rate at which a keyable seed exists at all — and a real
+/// placement pass can only do worse.
+///
+/// Runs with `shuffle_hammer_bros` **on**, because the default census arm has
+/// it off and the builder then populates no Hammer Bro slots at all: that
+/// source would read a flat zero and the reading would mean nothing.
+///
+/// ```sh
+/// CENSUS_SEEDS=200 cargo test --release --lib anchor_keyability_census \
+///     -- --ignored --nocapture
+/// ```
+#[test]
+#[ignore]
+fn anchor_keyability_census() {
+    use crate::randomize::overworld_build::SlotKind;
+
+    let Some(raw) = load_rom() else { return };
+    let seeds = census_seeds(100);
+    let knobs = Knobs::default();
+    let k = super::DEFAULT_WANDS_REQUIRED;
+
+    // [standard, 8s are Wild]
+    let mut generated_n = [0usize; 2];
+    let mut boat_optional = [0usize; 2];
+    let mut boat_required = [0usize; 2];
+    let mut keyable = [0usize; 2];
+    let mut rejected = [0usize; 2];
+    let mut by_kind = [[0usize; 4]; 2];
+
+    for seed in 0..seeds {
+        // The harness rolls the map arm off the seed; `8s are Wild` is arm 3.
+        let arm = usize::from(seed % 4 == 3);
+        let ((_rom, result), _swaps) = census_build_arm(&raw, seed, true);
+        let mut rng = ChaCha8Rng::seed_from_u64(seed ^ 0x5EED_1234);
+        let (state, _report) =
+            super::generate(&result, &IDENTITY_SPINE, k, &knobs, SEALABLE_NEEDED, &mut rng);
+        generated_n[arm] += 1;
+
+        if !state.spheres().solvable {
+            // Not this census's business — the generator guarantees it.
+            continue;
+        }
+
+        let (without, reach) = state.spheres_without_canoe();
+        if without.solvable {
+            boat_optional[arm] += 1;
+            continue;
+        }
+        boat_required[arm] += 1;
+
+        // The letter is granted by finishing a world, so its site is that
+        // world/s target rather than a slot — and only W1-W7 have one.
+        let letter = state
+            .worlds
+            .iter()
+            .filter(|w| state.in_maze[w.world_idx] && w.world_idx < 7)
+            .any(|w| w.target.is_some_and(|p| reach.contains((w.world_idx, p))));
+        let slot_kind = |kind: SlotKind| {
+            state
+                .worlds
+                .iter()
+                .filter(|w| state.in_maze[w.world_idx])
+                .flat_map(|w| w.slots.iter().map(move |s| (w.world_idx, s)))
+                .any(|(wi, s)| s.kind == kind && reach.contains((wi, s.pos)))
+        };
+        let found = [
+            letter,
+            slot_kind(SlotKind::HammerBro),
+            slot_kind(SlotKind::Level),
+            slot_kind(SlotKind::ToadHouse),
+        ];
+        let any = found.iter().any(|&f| f);
+        for (i, &f) in found.iter().enumerate() {
+            if f {
+                by_kind[arm][i] += 1;
+            }
+        }
+        if any {
+            keyable[arm] += 1;
+        } else {
+            rejected[arm] += 1;
+        }
+    }
+
+    let pct = |n: usize, d: usize| if d == 0 { 0.0 } else { 100.0 * n as f64 / d as f64 };
+    for (arm, name) in ["standard", "8s are Wild"].iter().enumerate() {
+        let gen_n = generated_n[arm];
+        let req = boat_required[arm];
+        eprintln!("\n=== can the canoe gate be keyed? — {name}, {gen_n} seeds ===");
+        eprintln!(
+            "  boat optional (gate is free)   {}  ({:.1}%)",
+            boat_optional[arm],
+            pct(boat_optional[arm], gen_n)
+        );
+        eprintln!("  boat REQUIRED                  {req}  ({:.1}%)", pct(req, gen_n));
+        eprintln!(
+            "     keyable                      {}  ({:.1}%)",
+            keyable[arm],
+            pct(keyable[arm], req)
+        );
+        eprintln!(
+            "     REJECTED (no gate)           {}  ({:.1}%)",
+            rejected[arm],
+            pct(rejected[arm], req)
+        );
+        for (i, kind) in
+            ["letter (airship)", "hammer bro", "level (chest)", "toad house"].iter().enumerate()
+        {
+            eprintln!(
+                "       source in front: {kind:<17} {}/{req}  ({:.1}%)",
+                by_kind[arm][i],
+                pct(by_kind[arm][i], req)
+            );
+        }
+    }
+}

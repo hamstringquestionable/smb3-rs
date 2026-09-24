@@ -272,6 +272,25 @@ fn reach_pass(
 /// construction, and the airship spine is one-way by design. That is the only
 /// structural difference from a pipe pair, which `walk_reachable` already
 /// models as a bidirectional teleport.
+/// [`walk_maze`] with every boat unusable — what the player can reach before
+/// they hold an Anchor.
+///
+/// No fixpoint: the canoe fixpoint in [`walk_maze`] exists to switch a boat on
+/// once its dock comes into reach, and here none ever switches on, so one pass
+/// is the answer.
+pub(crate) fn walk_maze_without_canoe(
+    worlds: &[MazeWorld],
+    links: &[(MazePos, MazePos)],
+    start: MazePos,
+) -> MazeReach {
+    let lookup = link_lookup(links);
+    let pipes: Vec<TeleportLookup> = worlds.iter().map(|w| teleport_lookup(w.pipe_pairs)).collect();
+    let cols: Vec<usize> = worlds.iter().map(|w| w.grid.cols).collect();
+    let canoe_on = vec![false; worlds.len()];
+    let per_world = reach_pass(worlds, &pipes, &canoe_on, &lookup, start, &cols);
+    MazeReach { per_world, cols, canoe_on }
+}
+
 pub(crate) fn walk_maze(
     worlds: &[MazeWorld],
     links: &[(MazePos, MazePos)],
