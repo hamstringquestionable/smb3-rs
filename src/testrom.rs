@@ -358,6 +358,11 @@ pub struct TestRomSpec {
     /// Starting lives. Only written when `starting_items` is non-empty, since
     /// the two share one trampoline.
     pub starting_lives: u8,
+    /// Gate the canoe on the Anchor: boats park out of reach, and only an
+    /// anchor used from the inventory while standing on a dock calls one over.
+    /// Pair with `--starting-items anchor` to test the unlock; without it the
+    /// wall is what gets tested.
+    pub canoe_gate: bool,
     /// Let the Hammer item break fortress lock tiles on the map.
     pub hammer_breaks_locks: bool,
     /// Let the Hammer item break water-gap (bridge) tiles on the map.
@@ -1069,6 +1074,15 @@ pub fn build(vanilla: &[u8], spec: &TestRomSpec) -> Result<TestRom, String> {
         None => report.push("open movement: off".to_string()),
     }
 
+    // 5c. The canoe gate. Applied here rather than through `Options` for the
+    //     same reason as the hammer below — and because it has no option yet:
+    //     the maze cannot place an anchor, so a randomized seed that gated the
+    //     canoe could strand a player behind water.
+    if spec.canoe_gate {
+        crate::randomize::canoe_gate::apply(&mut rom);
+        report.push("canoe gate: boats offshore, anchor summons".to_string());
+    }
+
     // 6. Hammer tile-breaking. Applied here rather than via `Options` so it
     //    works on a vanilla base too — testing what a hammer does to a lock
     //    shouldn't require randomizing the map first.
@@ -1231,6 +1245,7 @@ mod tests {
             remove_gaps: false,
             starting_items: Vec::new(),
             starting_lives: 5,
+            canoe_gate: false,
             hammer_breaks_locks: false,
             hammer_breaks_bridges: false,
             world_persist: false,

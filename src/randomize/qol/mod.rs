@@ -19,7 +19,7 @@ pub use beta::fix_beta_stages;
 pub use big_q::fix_big_q_block_rooms;
 pub use bro_timer::apply_bro_battle_timer;
 pub use canoe::fix_canoe_softlock;
-pub use canoe_summon::apply_canoe_summon;
+pub use canoe_summon::{apply_canoe_summon, remove_canoe_summon_hook, write_canoe_summon_routine};
 pub use cards::card_speed_clear;
 pub(crate) use hammer_breaks::hammer_breaks_tiles;
 pub use lakitu::apply_lakitu_stays_down;

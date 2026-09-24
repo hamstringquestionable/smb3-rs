@@ -756,6 +756,21 @@ pub(crate) const FS_WAND_READOUT: usize = 0x35530; // 48 reserved, 35 used (CPU 
 
 pub(crate) const FS_MYSTERY_ANCHOR: usize = 0x35572; // 13 reserved, 10 used
 
+// PRG026 - the anchor's inventory handler under the canoe gate (canoe_gate.rs):
+// test the dock tile, JSR the canoe summon, poof, and flip back to the map.
+// Sits in the bank's dead tail, after the last assembled byte (prg026.asm ends
+// at PRG026_B51F with "Rest of ROM bank was empty"), and after every other
+// allocation already sited there.
+//
+// **Not in FREE_SPACE_ALLOCATIONS yet**, and deliberately: the audit requires
+// every registered row to be written by a real randomizer run, and this one is
+// reached only from `testrom` until the maze can place an anchor. Registering
+// it before then trades a failing audit for a stranded seed. Add the row -- and
+// regenerate CLAUDE.md's per-bank table, which the doc test will demand -- in
+// the same commit that wires the gate to `world_maze`. Until then `--free-space`
+// still offers this gap to anything else that asks.
+pub(crate) const FS_ANCHOR_USE: usize = 0x3571D; // 40 reserved, 23 used (CPU $B70D)
+
 pub(crate) const FS_HAMMER_LOCKS: usize = 0x3557F; // 50 bytes
 
 /// The hammer check's three parallel tables — breakable tile, what it becomes,

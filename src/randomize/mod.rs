@@ -4,6 +4,11 @@ pub mod autoscroll;
 pub mod beta_tornado;
 pub mod big_q_rooms;
 pub mod bowser_castle;
+/// The canoe as a lock and the Anchor as its key: boats park out of reach and
+/// only an anchor used from the inventory, while standing on a dock, calls one
+/// alongside. World-maze only — in a fixed world order the key would have to
+/// sit in front of its own lock.
+pub mod canoe_gate;
 /// World-maze phase 1: the packed per-world completion-bit storage the
 /// two-world swap in [`world_persist`] has to become. Reached on both targets:
 /// `randomize_inner` applies it whenever `world_maze` is set, and the web app
