@@ -71,6 +71,18 @@ pub(crate) struct MazeWorld<'a> {
     pub grid: &'a Grid,
     pub pipe_pairs: &'a [TeleportEdge],
     pub blocked: &'a HashSet<Pos>,
+    /// This world's boat stays beached however reachable its docks are.
+    ///
+    /// How an item gate on the canoe reaches the walker. [`GlobalState::view`]
+    /// sets it from the installed gates and the keys held so far, so a walk
+    /// with no gates installed sets it false everywhere and the walker takes
+    /// its old shape exactly.
+    ///
+    /// It rides on the world rather than arriving as a parameter because
+    /// `MazeWorld` is built in two places and [`walk_maze`] is called from
+    /// eighteen — a parameter would have rippled through all of them to say
+    /// `false`.
+    pub canoe_locked: bool,
 }
 
 /// Reachability across every world at once.
@@ -272,25 +284,6 @@ fn reach_pass(
 /// construction, and the airship spine is one-way by design. That is the only
 /// structural difference from a pipe pair, which `walk_reachable` already
 /// models as a bidirectional teleport.
-/// [`walk_maze`] with every boat unusable — what the player can reach before
-/// they hold an Anchor.
-///
-/// No fixpoint: the canoe fixpoint in [`walk_maze`] exists to switch a boat on
-/// once its dock comes into reach, and here none ever switches on, so one pass
-/// is the answer.
-pub(crate) fn walk_maze_without_canoe(
-    worlds: &[MazeWorld],
-    links: &[(MazePos, MazePos)],
-    start: MazePos,
-) -> MazeReach {
-    let lookup = link_lookup(links);
-    let pipes: Vec<TeleportLookup> = worlds.iter().map(|w| teleport_lookup(w.pipe_pairs)).collect();
-    let cols: Vec<usize> = worlds.iter().map(|w| w.grid.cols).collect();
-    let canoe_on = vec![false; worlds.len()];
-    let per_world = reach_pass(worlds, &pipes, &canoe_on, &lookup, start, &cols);
-    MazeReach { per_world, cols, canoe_on }
-}
-
 pub(crate) fn walk_maze(
     worlds: &[MazeWorld],
     links: &[(MazePos, MazePos)],
@@ -309,7 +302,7 @@ pub(crate) fn walk_maze(
         let per_world = reach_pass(worlds, &pipes, &canoe_on, &lookup, start, &cols);
         let mut changed = false;
         for (wi, world) in worlds.iter().enumerate() {
-            if canoe_on[wi] {
+            if canoe_on[wi] || world.canoe_locked {
                 continue;
             }
             let docks = rom_data::active_canoe_edges(wi, world.grid.eights_are_wild);
