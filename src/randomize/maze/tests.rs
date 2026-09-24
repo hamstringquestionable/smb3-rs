@@ -3182,6 +3182,27 @@ fn valley_pad_census() {
 /// the ceiling — the rate at which a keyable seed exists at all — and a real
 /// placement pass can only do worse.
 ///
+/// **Only a source the player cannot miss counts.** Reaching a cell has to
+/// mean holding the item, or the model is looser than the game and the
+/// difference strands somebody:
+///
+/// - **Princess letter** — finishing the world hands it over. Counts.
+/// - **Hammer Bro** — beating it hands the reward over. Counts.
+/// - **Toad House** — counts *only* if the pass pins a fixed-reward house
+///   there (treasure types 3/4/5, five of the twenty-two). The other
+///   seventeen roll the item from a 3-wide window when the box is opened, so
+///   the player gets the right item one time in three and the house is one
+///   visit. See `rom_data::toad_house_reward_is_fixed`.
+/// - **In-level chest** — does **not** count. A level can be beaten without
+///   ever opening its chest, so reaching it proves nothing. Extra Anchors
+///   dealt into chests are a kindness the model must not lean on.
+///
+/// The headline is therefore split two ways: what the two *stamped* sources
+/// reach on their own (no pin plumbing needed), and what they reach once a
+/// pinned fixed house is allowed. The chest column is still reported, marked
+/// excluded, because it is how much an earlier reading of this census was
+/// inflated by counting it.
+///
 /// Runs with `shuffle_hammer_bros` **on**, because the default census arm has
 /// it off and the builder then populates no Hammer Bro slots at all: that
 /// source would read a flat zero and the reading would mean nothing.
@@ -3205,6 +3226,7 @@ fn anchor_keyability_census() {
     let mut boat_optional = [0usize; 2];
     let mut boat_required = [0usize; 2];
     let mut keyable = [0usize; 2];
+    let mut stamp_only = [0usize; 2];
     let mut rejected = [0usize; 2];
     let mut by_kind = [[0usize; 4]; 2];
 
@@ -3247,14 +3269,20 @@ fn anchor_keyability_census() {
         let found = [
             letter,
             slot_kind(SlotKind::HammerBro),
-            slot_kind(SlotKind::Level),
             slot_kind(SlotKind::ToadHouse),
+            slot_kind(SlotKind::Level),
         ];
-        let any = found.iter().any(|&f| f);
         for (i, &f) in found.iter().enumerate() {
             if f {
                 by_kind[arm][i] += 1;
             }
+        }
+        // The chest column (index 3) is reported but never counted: a level
+        // can be beaten without opening its chest.
+        let stamped = found[0] || found[1];
+        let any = stamped || found[2];
+        if stamped {
+            stamp_only[arm] += 1;
         }
         if any {
             keyable[arm] += 1;
@@ -3275,7 +3303,12 @@ fn anchor_keyability_census() {
         );
         eprintln!("  boat REQUIRED                  {req}  ({:.1}%)", pct(req, gen_n));
         eprintln!(
-            "     keyable                      {}  ({:.1}%)",
+            "     keyable, stamped only        {}  ({:.1}%)   <- no pin needed",
+            stamp_only[arm],
+            pct(stamp_only[arm], req)
+        );
+        eprintln!(
+            "     keyable, + pinned fixed TH   {}  ({:.1}%)",
             keyable[arm],
             pct(keyable[arm], req)
         );
@@ -3284,11 +3317,12 @@ fn anchor_keyability_census() {
             rejected[arm],
             pct(rejected[arm], req)
         );
-        for (i, kind) in
-            ["letter (airship)", "hammer bro", "level (chest)", "toad house"].iter().enumerate()
+        for (i, kind) in ["letter (airship)", "hammer bro", "toad house", "level (chest) EXCL"]
+            .iter()
+            .enumerate()
         {
             eprintln!(
-                "       source in front: {kind:<17} {}/{req}  ({:.1}%)",
+                "       source in front: {kind:<19} {}/{req}  ({:.1}%)",
                 by_kind[arm][i],
                 pct(by_kind[arm][i], req)
             );
