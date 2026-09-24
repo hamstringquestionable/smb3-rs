@@ -7,18 +7,31 @@ use crate::rom::Rom;
 const ANCHOR: u8 = 0x0A;
 
 /// Useful item pool for chest/reward randomization (Global Item IDs).
+///
+/// **The Anchor is in here on purpose.** Vanilla's anchor holds an airship in
+/// place, which is dead weight once the wand cutscene is skipped — the airship
+/// never leaves its castle tile — so [`write_mystery_anchor`] repoints its
+/// use handler and an anchor becomes a per-seed surprise power-up instead.
+///
+/// That behaviour shipped without a supply. No table in the ROM holds an
+/// anchor: vanilla puts none in the Hammer Bro, letter or chest tables, and
+/// this pool excluded `0x0A` as well, so the only one a player could ever find
+/// came from a Toad House treasure type that indexes out of bounds past
+/// `ToadHouse_Item2Inventory` into `0a 0a 0a`. Five generated ROMs held zero
+/// anchors between them across every table this pool feeds.
 const GOOD_ITEMS: &[u8] = &[
-    0x01, // Mushroom
-    0x02, // Fire Flower
-    0x03, // Leaf
-    0x04, // Frog Suit
-    0x05, // Tanooki Suit
-    0x06, // Hammer Suit
-    0x07, // Jugem's Cloud
-    0x08, // P-Wing
-    0x09, // Starman
-    0x0B, // Hammer
-    0x0D, // Music Box
+    0x01,   // Mushroom
+    0x02,   // Fire Flower
+    0x03,   // Leaf
+    0x04,   // Frog Suit
+    0x05,   // Tanooki Suit
+    0x06,   // Hammer Suit
+    0x07,   // Jugem's Cloud
+    0x08,   // P-Wing
+    0x09,   // Starman
+    ANCHOR, // the mystery power-up — see above
+    0x0B,   // Hammer
+    0x0D,   // Music Box
 ];
 
 /// Powerup-only pool for anchor replacement (excludes non-powerup items like
@@ -33,6 +46,13 @@ const POWERUP_ITEMS: &[u8] = &[
 ];
 
 /// Toad House pool — powerups and combat items only (no map consumables).
+///
+/// **No Anchor here, unlike [`GOOD_ITEMS`].** A Toad House is a guaranteed,
+/// signposted grant and the player walks in expecting a power-up; a surprise
+/// belongs in the rewards they stumble into, not the one shop they are told
+/// about. Toad Houses also already reach the anchor by their own out-of-bounds
+/// route, so adding one here would stack a second source on the only slot that
+/// already had one.
 const TOAD_HOUSE_ITEMS: &[u8] = &[
     0x01, // Mushroom
     0x02, // Fire Flower
@@ -47,8 +67,9 @@ const TOAD_HOUSE_ITEMS: &[u8] = &[
 pub(crate) const WARP_WHISTLE: u8 = 0x0C;
 
 /// Full item pool including warp whistle (used when remove_whistles is false).
+/// Carries the Anchor for the same reason [`GOOD_ITEMS`] does.
 const GOOD_ITEMS_WITH_WHISTLE: &[u8] =
-    &[0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0B, 0x0C, 0x0D];
+    &[0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, ANCHOR, 0x0B, 0x0C, 0x0D];
 
 // Hammer Bros map items: 8 worlds x 9 object slots = 72 bytes.
 // Non-zero entries are item rewards from defeating Hammer Bros.

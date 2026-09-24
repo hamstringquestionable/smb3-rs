@@ -34,6 +34,44 @@ hashes they describe are gone; the reasoning is not.
 
 ## Entries
 
+### 2026-09-24 — the Anchor joins the item pools (fix/anchors-never-dealt)
+
+**Intended, and it is a bug fix.** `write_mystery_anchor` runs unconditionally
+on every seed: it repoints the Anchor's `Inv_UseItem` vector so an anchor gives
+a per-seed random power-up instead of holding an airship in place, which is
+dead weight once the wand cutscene is skipped. That behaviour shipped without a
+supply. No table in the ROM held an anchor — vanilla puts none in the Hammer
+Bro, letter or chest tables, and `GOOD_ITEMS` / `GOOD_ITEMS_WITH_WHISTLE`
+excluded `0x0A` as well — so the only anchor a player could find came from the
+one Toad House treasure type that indexes out of bounds past
+`ToadHouse_Item2Inventory` into its neighbour's `0a 0a 0a`. Five generated ROMs
+held zero anchors between them across every table those pools feed.
+
+Adding `0x0A` to both pools gives the feature its supply: over eight seeds,
+9 Hammer Bro rewards, 6 letters and 3 chests. `TOAD_HOUSE_ITEMS` is deliberately
+left alone.
+
+**All 20 seeds moved, and the fingerprint covers the Hammer Bro reward bytes,
+which is the whole reason.** Attribution is a byte diff rather than an argument
+— same binary, seeds 1-3, `--patched-rom --no-palettes`, with and without the
+two-line pool change:
+
+| seed | changed | HammerBro | letters | chests | king quotes | unexplained |
+|---|---|---|---|---|---|---|
+| 1 | 101 | 6 | 4 | 3 | 88 | **0** |
+| 2 | 10 | 4 | 4 | 2 | 0 | **0** |
+| 3 | 100 | 4 | 3 | 3 | 90 | **0** |
+
+The king-quote text is downstream and expected: the oracle king reads
+`ONE_F_CHEST_ITEM` back to decide whether 1-F's secret-exit detour is worth
+recommending, so a seed whose 1-F chest became an anchor gets a different line.
+Seed 2's chests changed without moving the king, which is the shape that
+confirms it — its 1-F chest was not one of them.
+
+**No map byte moved.** Nothing in the terrain, tile destinations, pipe tables or
+lock keys is touched; the fingerprint moved because it hashes the reward bytes,
+not because the overworld changed.
+
 ### 2026-09-17 — Toad Houses and spades leave World 8's valley (PR #272)
 
 **Late, and that is the first thing to say.** This recapture was owed by PR

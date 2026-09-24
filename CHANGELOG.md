@@ -16,6 +16,10 @@ deploys.
 
 ### Fixed
 
+- Anchors are dealt again. The Anchor has been a per-seed mystery power-up for
+  some time, but nothing ever handed one out — no Hammer Bro, letter or chest
+  could contain one, so the surprise almost never happened. They now turn up in
+  all three. Toad Houses are unchanged.
 - Bowser's Castle no longer spawns a statue fireball on or beside the
   basement door, which could make the spawn unwinnable.
 
