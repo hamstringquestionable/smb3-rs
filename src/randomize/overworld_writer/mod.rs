@@ -34,7 +34,7 @@ use sprites::{
     write_w8_sprites,
 };
 
-use types::{Assignment, HammerBroAssignment, PipeAssignment, WorldAssignments};
+use types::{Assignment, HammerBroAssignment, PipeAssignment, UnmetPin, WorldAssignments};
 
 // Public API consumed by the randomizer.
 pub(crate) use metatiles::{patch_double_digit_metatiles, patch_metatile_6a_freeze};

@@ -53,6 +53,22 @@ pub struct SlotAssignment {
     /// tile drops the player into the underlying level (uniform Map_Op = $10
     /// dispatch — no pipe-transit state).
     pub is_troll_pipe: bool,
+    /// **Deal this exact pointer-table entry here.** The `(world_idx,
+    /// entry_idx)` of a vanilla entry, set by a model pass before the writer
+    /// runs; `None` on every slot in every mode that does not use it.
+    ///
+    /// The writer honours it in a global pre-deal that happens *before any
+    /// world draws* — global because a per-world pass would let world 1 spend
+    /// the entry world 6 was promised.
+    ///
+    /// **It can go unhonoured.** `friendlier_levels`, `deja_vu` and the top-up
+    /// all reshape the deck downstream of here, so the named entry may no
+    /// longer be in it. The slot then takes an ordinary draw and the writer
+    /// records the miss in `WorldAssignments::unmet_pins` rather than failing.
+    /// A pass whose *correctness* rests on the pin has to read that report:
+    /// "the entry was dealt somewhere else" is not the same as "nothing
+    /// happened", and the difference is what strands a player.
+    pub pin: Option<(usize, usize)>,
     /// Where the lock this fortress opens is, for the map-hint tiles. Only
     /// meaningful on `SlotKind::Fortress` slots, and only set by the world
     /// maze — outside it every fortress opens a lock in its own world, so
