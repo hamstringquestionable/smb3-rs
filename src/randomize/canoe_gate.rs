@@ -139,8 +139,14 @@ const MAPOBJ_CANOE: u8 = 0x10;
 /// and the one `8s are Wild` adds without depending on which ran first —
 /// **but it must run after both**, or a boat placed later keeps its vanilla
 /// berth and that world's water is free to cross.
-fn move_canoes_offshore(rom: &mut Rom) {
-    for world in 0..8 {
+///
+/// `gated` is per world, because the key-placement pass may give up on one
+/// world's gate and not another's. A world left `false` keeps its boat where
+/// vanilla put it and its water stays free — exactly the seed it would have
+/// been with no gate at all, which is what makes dropping one gate a local
+/// decision rather than a whole-mode veto.
+fn move_canoes_offshore(rom: &mut Rom, gated: &[bool; 8]) {
+    for world in (0..8).filter(|&w| gated[w]) {
         for slot in 0..9 {
             let id = rom.read_byte(map_obj_slot_offset(rom, MAP_OBJ_IDS_MASTER, world, slot));
             if id != MAPOBJ_CANOE {
@@ -164,14 +170,15 @@ fn move_canoes_offshore(rom: &mut Rom) {
 
 // --- Installation ----------------------------------------------------------
 
-/// Install the gate: the anchor becomes the boat key, and the boats move out
-/// of reach.
+/// Install the gate: the anchor becomes the boat key, and the boats named by
+/// `gated` move out of reach.
 ///
 /// Safe to run over a finished ROM as well as a vanilla one, which is what
 /// `testrom` does — it takes the A-press summon back out itself rather than
 /// leaving that to the caller, because a summon left installed opens the wall
 /// for free and nothing downstream would notice.
-pub fn apply(rom: &mut Rom) {
+pub fn apply(rom: &mut Rom, gated: &[bool; 8]) {
+    assert!(gated.iter().any(|&g| g), "apply with no world gated installs a wall with no door");
     rom.push_tag("canoe_gate");
 
     // The handler JSRs the summon, so the routine has to be there; the A-press
@@ -190,7 +197,7 @@ pub fn apply(rom: &mut Rom) {
     rom.write_range(vector, &ANCHOR_USE_CPU.to_le_bytes());
     rom.write_range(FS_ANCHOR_USE, &ANCHOR_USE);
 
-    move_canoes_offshore(rom);
+    move_canoes_offshore(rom, gated);
     rom.pop_tag();
 }
 
@@ -227,7 +234,7 @@ mod tests {
             "the test ROM should start with vanilla's anchor handler"
         );
 
-        apply(&mut rom);
+        apply(&mut rom, &[true; 8]);
 
         assert_eq!(rom.read_range(vector, 2), &ANCHOR_USE_CPU.to_le_bytes()[..]);
         assert_eq!(rom.read_range(FS_ANCHOR_USE, ANCHOR_USE.len()), &ANCHOR_USE[..]);
@@ -244,7 +251,7 @@ mod tests {
         let vector = USE_ITEM_TABLE + ANCHOR_ITEM_ID * 2;
         rom.write_range(vector, &MYSTERY_ANCHOR_HANDLER.to_le_bytes());
 
-        apply(&mut rom);
+        apply(&mut rom, &[true; 8]);
 
         assert_eq!(rom.read_range(vector, 2), &ANCHOR_USE_CPU.to_le_bytes()[..]);
     }
@@ -271,7 +278,7 @@ mod tests {
         }
         assert!(!before.is_empty(), "vanilla has at least W3's canoe");
 
-        apply(&mut rom);
+        apply(&mut rom, &[true; 8]);
 
         for (world, slot, xlo, xhi) in before {
             let after_lo =

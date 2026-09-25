@@ -431,6 +431,58 @@ mod tests {
         panic!("no seed in 0..60 left the boat optional — the census says ~82% should");
     }
 
+    /// **No gated seed is ever left stranded.**
+    ///
+    /// The whole feature in one assertion, run over many seeds. Gate every
+    /// canoe, run the pass, and require the maze to still be winnable with an
+    /// Anchor the player can actually get to.
+    ///
+    /// Without the pass this fails on 18.0% of boat-required standard seeds
+    /// and 30.9% of `8s are Wild` ones (`anchor_softlock_census`). Those are
+    /// softlocks — a player walks to water they can never cross.
+    ///
+    /// ```sh
+    /// CENSUS_SEEDS=400 cargo test --release --lib no_gated_seed_is_stranded
+    /// ```
+    #[test]
+    fn no_gated_seed_is_stranded() {
+        let Some(raw) = load_rom() else { return };
+        let seeds: u64 =
+            std::env::var("CENSUS_SEEDS").ok().and_then(|v| v.parse().ok()).unwrap_or(40);
+
+        let mut gated_seeds = 0usize;
+        let mut written = 0usize;
+        for seed in 0..seeds {
+            let (mut rom, mut build, mut state) = one_maze(&raw, seed);
+            if !state.spheres().solvable {
+                continue; // the generator's business, not this pass's
+            }
+            state.gate_every_canoe(Key::Anchor);
+            let sites = crate::randomize::key_sites::sites(&rom, &build, &state);
+            let mut rng = ChaCha8Rng::seed_from_u64(seed ^ 0xA9C4_0E5E);
+            let out = place(&mut rom, &mut build, &mut state, sites, &mut rng);
+            gated_seeds += 1;
+            written += out.placed.len();
+
+            assert!(
+                state.spheres().solvable,
+                "seed {seed} is stranded behind its own water: {out:?}"
+            );
+            // A surviving gate must have a key; a dropped one must be gone
+            // from the model, so the ROM side can leave that world alone.
+            for g in &state.gates {
+                for k in &g.needs {
+                    assert!(
+                        state.sources.iter().any(|s| s.key == *k),
+                        "seed {seed}: gate {g:?} has no source for {k:?}"
+                    );
+                }
+            }
+        }
+        assert!(gated_seeds > 0, "no seed produced a solvable maze");
+        eprintln!("{gated_seeds} gated seeds, {written} Anchors written");
+    }
+
     /// **An Anchor the seed already holds is credited, not duplicated.**
     #[test]
     fn an_inherited_anchor_is_not_written_again() {

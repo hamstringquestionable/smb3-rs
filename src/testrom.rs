@@ -1079,7 +1079,7 @@ pub fn build(vanilla: &[u8], spec: &TestRomSpec) -> Result<TestRom, String> {
     //     the maze cannot place an anchor, so a randomized seed that gated the
     //     canoe could strand a player behind water.
     if spec.canoe_gate {
-        crate::randomize::canoe_gate::apply(&mut rom);
+        crate::randomize::canoe_gate::apply(&mut rom, &[true; 8]);
         report.push("canoe gate: boats offshore, anchor summons".to_string());
     }
 

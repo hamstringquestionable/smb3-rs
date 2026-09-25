@@ -461,7 +461,26 @@ fn randomize_inner(
             &mut rng,
         );
         randomize::maze::stamp_into(&mut build, &state);
-        (state, wands)
+
+        // **The canoe gate's model half.** Beach every boat behind an Anchor,
+        // then make sure an Anchor exists somewhere the player can get to
+        // without one. Runs here, before the writer, because it decides a
+        // Hammer Bro's reward and the writer is what stamps that; and before
+        // the overworld capture point, so the snapshot shows the keys.
+        //
+        // `place` may give up on a world's gate, and `gated` is what the ROM
+        // side must then honour — beaching water the model did not key is
+        // precisely how a seed strands a player.
+        let mut state = state;
+        state.gate_every_canoe(randomize::item_keys::Key::Anchor);
+        let sites = randomize::key_sites::sites(rom, &build, &state);
+        randomize::key_placement::place(rom, &mut build, &mut state, sites, &mut rng);
+        let mut gated = [false; 8];
+        for g in &state.gates {
+            let randomize::maze::GateTarget::Canoe(w) = g.target;
+            gated[w] = true;
+        }
+        (state, wands, gated)
     });
     // --- OVERWORLD CAPTURE POINT ---
     // Hand a clone of the finalized BuildResult (post hands/troll mutations,
@@ -497,7 +516,12 @@ fn randomize_inner(
     // asks the packed store where a given cell's completion bit lives rather
     // than re-deriving that arithmetic, and `world_persist` is what installs
     // the store.
-    if let Some((state, wands)) = maze {
+    // Lifted out before the block below consumes `maze`: the canoe gate is
+    // installed much further down, with the rest of the item patches.
+    let canoe_gated: Option<[bool; 8]> =
+        maze.as_ref().map(|(_, _, gated)| *gated).filter(|g| g.iter().any(|&g| g));
+
+    if let Some((state, wands, _)) = maze {
         rom.set_tag("world_maze");
         randomize::maze::writer::install_pad_metatile(rom, &state);
         rom.set_tag("wand_gate");
@@ -694,12 +718,33 @@ fn randomize_inner(
     rom.set_tag("qol/map_warp");
     randomize::qol::apply_map_warp(rom);
 
-    // Canoe "call the boat" rescue: press A on any dock to summon the shared
-    // canoe to the adjacent water tile. Always applied — covers the canoe
-    // softlocks map_warp can't (1P, and both players stranded). Works in any
-    // world (keys on dock tile 0x4B + canoe object 0x10).
-    rom.set_tag("qol/canoe_summon");
-    randomize::qol::apply_canoe_summon(rom);
+    // The canoe, one way or the other. Both arms install the same summon
+    // routine in `FS_CANOE_SUMMON`; they differ in what triggers it.
+    //
+    // - **Maze**: the gate. Boats sit one tile offshore and only an Anchor
+    //   used on a dock calls one over, so the water is a lock. Maze only,
+    //   because in a fixed world order the player cannot go back to a world
+    //   they have left, so the key would have to sit in front of its own lock
+    //   — not a gate at all. `gated` is per world: key placement may have
+    //   given up on one world's gate, and beaching water the model did not key
+    //   is precisely how a seed strands a player.
+    // - **Otherwise**: the rescue. Press A on any dock to summon the shared
+    //   canoe. Covers the softlocks `map_warp` cannot (1P, and both players
+    //   stranded).
+    //
+    // After `8s are Wild`, which adds W8's boat: `move_canoes_offshore` scans
+    // for the map-object id, so a boat placed later would keep its vanilla
+    // berth and that world's water would stay free.
+    match canoe_gated {
+        Some(gated) => {
+            rom.set_tag("world_maze");
+            randomize::canoe_gate::apply(rom, &gated);
+        }
+        None => {
+            rom.set_tag("qol/canoe_summon");
+            randomize::qol::apply_canoe_summon(rom);
+        }
+    }
 
     // Stop an enemy that is jumping up at the player from turning a stomp into
     // damage. Always applied: it only widens outcomes vanilla already got

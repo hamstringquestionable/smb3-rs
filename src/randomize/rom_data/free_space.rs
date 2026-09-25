@@ -172,6 +172,12 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
     ),
     fs(0x355B1, 12, &["anchor_visuals"], "items-vs-cards index guard trampoline"),
     fs(
+        0x3571D,
+        40,
+        &["canoe_gate"],
+        "world-maze: use an Anchor on a dock to summon the boat (40 reserved, 23 used)",
+    ),
+    fs(
         0x355BD,
         224,
         &["big_q_blocks"],
@@ -288,7 +294,12 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
     ),
     fs(0x15DF0, 35, &["fix_canoe_softlock"], "canoe_fix: death respawn position save"),
     fs(0x15E13, 162, &["map_warp"], "2P Start+Select warp-to-partner routine"),
-    fs(0x15EB5, 151, &["canoe_summon"], "A-on-dock call-the-boat routine + offset tables"),
+    fs(
+        0x15EB5,
+        151,
+        &["canoe_summon", "canoe_gate"],
+        "A-on-dock call-the-boat routine + offset tables — the gate writes the same routine and          then removes the A-press hook, so both modes own it",
+    ),
     // PRG011 (file 0x16010, CPU $A000–$BFFF during map)
     fs(0x17C87, 36, &["start_airship_swap"], "game-over twirl finalize helper"),
     fs(
@@ -762,13 +773,12 @@ pub(crate) const FS_MYSTERY_ANCHOR: usize = 0x35572; // 13 reserved, 10 used
 // at PRG026_B51F with "Rest of ROM bank was empty"), and after every other
 // allocation already sited there.
 //
-// **Not in FREE_SPACE_ALLOCATIONS yet**, and deliberately: the audit requires
-// every registered row to be written by a real randomizer run, and this one is
-// reached only from `testrom` until the maze can place an anchor. Registering
-// it before then trades a failing audit for a stranded seed. Add the row -- and
-// regenerate CLAUDE.md's per-bank table, which the doc test will demand -- in
-// the same commit that wires the gate to `world_maze`. Until then `--free-space`
-// still offers this gap to anything else that asks.
+// Registered since the gate was wired to `world_maze`: a real run now places
+// an Anchor and installs this, so the audit -- which requires every row to be
+// written by a real run -- has a writer to find. It was deliberately left out
+// while `testrom` was the only caller, because a registered row with no writer
+// fails the audit, and registering it early would have traded that failure for
+// a stranded seed.
 pub(crate) const FS_ANCHOR_USE: usize = 0x3571D; // 40 reserved, 23 used (CPU $B70D)
 
 pub(crate) const FS_HAMMER_LOCKS: usize = 0x3557F; // 50 bytes

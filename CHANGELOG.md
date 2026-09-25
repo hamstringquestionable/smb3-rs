@@ -9,6 +9,18 @@ deploys.
 
 ## [Unreleased]
 
+### Changed
+
+- **World Maze: the boats are locked.** Canoes now sit one tile offshore, and
+  the only way to call one over is to use an Anchor while standing on a dock.
+  The water is a door and the Anchor is its key — so an Anchor is worth
+  hunting rather than shrugging at, and a stretch of water you can see across
+  is a reason to go looking. The Anchor is never used up, so once you have one
+  every boat in every world answers you. Every maze seed is guaranteed to put
+  an Anchor somewhere you can reach without a boat. Maze mode only: in a fixed
+  world order you cannot go back to a world you have left, so the key would
+  have to sit in front of its own lock.
+
 ### Fixed
 
 - 5-4's pipe no longer gets blocked by an immovable enemy. Under a wild enemy
