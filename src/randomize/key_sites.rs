@@ -178,7 +178,7 @@ pub(crate) mod test_support {
     pub(crate) fn one_maze(raw: &Rom, seed: u64) -> (Rom, BuildResult, maze::GlobalState) {
         let mut rom = raw.clone();
         let mut item_rng = ChaCha8Rng::seed_from_u64(seed ^ 0x4954_454D_535F_5631);
-        items::randomize(&mut rom, &mut item_rng, false, false);
+        items::randomize(&mut rom, &mut item_rng, false, false, true);
 
         let mut catalog = NodeCatalog::build(&rom, false);
         let mut swap_rng = ChaCha8Rng::seed_from_u64(seed);

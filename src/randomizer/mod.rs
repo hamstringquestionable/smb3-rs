@@ -362,7 +362,13 @@ fn randomize_inner(
     // would have to change if the mode ever shipped without one.
     if options.chest_items {
         rom.set_tag("items");
-        randomize::items::randomize(rom, &mut item_rng, whistles_removed, piranha_active);
+        randomize::items::randomize(
+            rom,
+            &mut item_rng,
+            whistles_removed,
+            piranha_active,
+            options.world_maze,
+        );
     } else if whistles_removed {
         rom.set_tag("items/whistles");
         randomize::items::remove_whistles_only(rom, &mut item_rng);

@@ -3393,7 +3393,7 @@ fn anchor_softlock_census() {
         // Shipping order: the item tables roll before the overworld reads them.
         let mut rom = qol_variant(&raw, false, wild);
         let mut item_rng = ChaCha8Rng::seed_from_u64(seed ^ 0x4954_454D_535F_5631);
-        crate::randomize::items::randomize(&mut rom, &mut item_rng, false, false);
+        crate::randomize::items::randomize(&mut rom, &mut item_rng, false, false, true);
 
         let mut catalog = NodeCatalog::build(&rom, false);
         let mut swap_rng = ChaCha8Rng::seed_from_u64(seed);
