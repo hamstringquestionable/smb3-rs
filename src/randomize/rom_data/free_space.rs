@@ -139,6 +139,18 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
         "4 tables (X/XHi/ScrL/ScrH × 8) + Map_Init seed helper",
     ),
     fs(0x3E965, 13, &["title_screen"], "intro skip + menu music routine"),
+    fs(
+        0x3E972,
+        30,
+        &["anchor_dedup"],
+        "world-maze: does the player already hold an Anchor (30 reserved, 27 used)",
+    ),
+    fs(
+        0x3FF3A,
+        22,
+        &["anchor_dedup"],
+        "world-maze: Player_GetItem hook body — Hammer Bro + chest (22 reserved, 18 used)",
+    ),
     fs(0x3FFF0, 26, &["card_speed_clear"], "XOR trampoline"),
     // PRG025 (file 0x32010, CPU $C000–$DFFF while the title screen runs)
     fs(
@@ -185,6 +197,19 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
     ),
     // PRG027 (file 0x36010, CPU $A000–$BFFF)
     fs(0x379D9, 894, &["king_quotes"], "7 quotes + hook (7×120 + 54)"),
+    fs(
+        0x37D57,
+        24,
+        &["anchor_dedup"],
+        "world-maze: Princess letter Anchor suppression (24 reserved, 15 used)",
+    ),
+    // PRG029 (file 0x3A010, CPU $C000-$DFFF)
+    fs(
+        0x3BFFC,
+        20,
+        &["anchor_dedup"],
+        "world-maze: Toad House Anchor suppression (20 reserved, 14 used)",
+    ),
     // PRG010 (file 0x14010, CPU $C000–$DFFF during map)
     fs(
         0x147CD,
@@ -780,6 +805,32 @@ pub(crate) const FS_MYSTERY_ANCHOR: usize = 0x35572; // 13 reserved, 10 used
 // fails the audit, and registering it early would have traded that failure for
 // a stranded seed.
 pub(crate) const FS_ANCHOR_USE: usize = 0x3571D; // 40 reserved, 23 used (CPU $B70D)
+
+/// The shared "do you already hold an Anchor" test, and the three hook bodies
+/// that call it.
+///
+/// **The test must be always mapped**, because the three grant paths run in
+/// three different bank configurations: `Player_GetItem` is reached from level
+/// banks, the Toad House tail from PRG029, the letter from PRG027. That is why
+/// it sits in PRG031 rather than somewhere roomier.
+///
+/// PRG031's 30-byte scrap rather than PRG030's 42-byte run, deliberately: that
+/// run is the only always-mapped gap left big enough for a feature needing a
+/// real allocation, and 27 bytes of scrap was never going to hold one. Both
+/// PRG031 gaps were checked unreferenced (2026-09-24) — `0x3E972` continues the
+/// filler `title_screen` already carves into and ends before the `55` data
+/// table at `0x3E990`; `0x3FF3A` sits between a routine's `RTS` at `0x3FF39`
+/// and the reset handler at `0x3FF50`.
+pub(crate) const FS_ANCHOR_HAS: usize = 0x3E972; // 30 reserved, 27 used (CPU $E962)
+pub(crate) const FS_ANCHOR_GET_GLUE: usize = 0x3FF3A; // 22 reserved, 18 used (CPU $FF2A)
+
+/// Toad House suppression, in PRG029's documented tail (`prg029.asm` ends
+/// "Rest of ROM bank was empty" after `PRG029_DFEB`).
+pub(crate) const FS_ANCHOR_HOUSE: usize = 0x3BFFC; // 20 reserved, 14 used (CPU $DFEC)
+
+/// Princess letter suppression, in PRG027's tail — the run begins exactly where
+/// `FS_KING_QUOTES` ends.
+pub(crate) const FS_ANCHOR_LETTER: usize = 0x37D57; // 24 reserved, 15 used (CPU $BD47)
 
 pub(crate) const FS_HAMMER_LOCKS: usize = 0x3557F; // 50 bytes
 

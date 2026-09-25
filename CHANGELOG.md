@@ -20,6 +20,11 @@ deploys.
   an Anchor somewhere you can reach without a boat. Maze mode only: in a fixed
   world order you cannot go back to a world you have left, so the key would
   have to sit in front of its own lock.
+- **World Maze: a second Anchor is no longer handed over.** One is permanent
+  and does everything, so a duplicate was dead weight in your bag. Beat the
+  Hammer Bro, open the box, watch the reveal — you simply do not collect
+  another. Outside the maze the Anchor is still a consumable surprise, so
+  duplicates are still worth having there.
 - **World Maze: Toad Houses can hand you an Anchor.** Roughly one house in
   nine, on top of the Hammer Bros, Princess letters and chests that already
   deal them — more places to find the key that opens the water. Outside the

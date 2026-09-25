@@ -115,7 +115,7 @@ is the one to read:
 
 | Bank | Mapped at | Free left | Largest single gap |
 |------|-----------|-----------|--------------------|
-| PRG031 | `$E000–$FFFF`, always | 81 | **30** |
+| PRG031 | `$E000–$FFFF`, always | 29 | **16** |
 | PRG030 | `$8000–$9FFF`, always | 42 | 42 |
 | PRG001 | swapped, in-level (object AI) | 60 | 38 |
 | PRG003 | swapped, in-level (object AI) | 5 | 5 |
@@ -128,13 +128,22 @@ is the one to read:
 | PRG025 | `$C000–$DFFF`, title screen | 2731 | 2719 |
 | PRG012 | `$A000–$BFFF`, map reload | 620 | 240 |
 | PRG026 | `$A000–$BFFF`, map/inventory | 2269 | 2251 |
+| PRG027 | `$A000–$BFFF`, letter cutscene | 673 | 673 |
+| PRG029 | `$C000–$DFFF`, Toad House | 2548 | 1528 |
 
 PRG000 and PRG002 have no `$FF` filler left at all.
 
-The always-mapped banks are effectively full. A patch that must run regardless of
-the current bank has one 42-byte gap in PRG030 and nothing over 30 bytes in
-PRG031, so past that a trampoline into a swapped bank is the only option — and
-that costs bytes too.
+The always-mapped banks are effectively full, and PRG031's scraps are now
+spent: `anchor_dedup` took its 30- and 22-byte gaps in 2026-09, on the
+principle that a run too small for a real allocation should go to the routine
+that fits it. A patch that must run regardless of the current bank now has
+**one 42-byte gap in PRG030 and nothing over 16 bytes in PRG031**, so past that
+a trampoline into a swapped bank is the only option — and that costs bytes too.
+Guard the PRG030 run accordingly.
+
+PRG029's 1528-byte run is mid-bank and has **not** been through the
+unreferenced check; its 20-byte tail (`prg029.asm` ends "Rest of ROM bank was
+empty" after `PRG029_DFEB`) has been, and is what `FS_ANCHOR_HOUSE` claims.
 
 **Check where your hook actually runs before paying that rent.** A hook on the
 world map does not need an always-mapped bank at all: `$84A0` maps PRG010 into

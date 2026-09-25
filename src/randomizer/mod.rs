@@ -745,6 +745,11 @@ fn randomize_inner(
         Some(gated) => {
             rom.set_tag("world_maze");
             randomize::canoe_gate::apply(rom, &gated);
+            // The Anchor is permanent here, so a second one is dead weight.
+            // Only alongside the gate: outside it the Anchor is
+            // `mystery_anchor`'s power-up and IS consumed, so duplicates are
+            // worth having.
+            randomize::anchor_dedup::apply(rom);
         }
         None => {
             rom.set_tag("qol/canoe_summon");

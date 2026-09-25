@@ -1,3 +1,4 @@
+pub mod anchor_dedup;
 pub mod anchor_visuals;
 pub mod antechambers;
 pub mod autoscroll;
