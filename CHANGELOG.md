@@ -9,6 +9,13 @@ deploys.
 
 ## [Unreleased]
 
+### Fixed
+
+- 5-4's pipe no longer gets blocked by an immovable enemy. Under a wild enemy
+  flagset the paratroopa beside it could become a Ptooie or Nipper, planted in
+  the pipe mouth on a one-tile cloud with nowhere to stand — the only way past
+  was to take a hit.
+
 ## [2.2.2] - 2026-09-24
 
 **The Anchor is worth picking up again.** It has been a per-seed surprise
