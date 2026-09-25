@@ -44,6 +44,8 @@
 //! uninstalled on the ROM side too. Gating without a model that agrees is how
 //! a seed strands a player.
 
+use std::collections::HashSet;
+
 use rand::Rng;
 use rand::seq::IndexedRandom;
 
@@ -61,6 +63,9 @@ pub(crate) struct Placement {
     /// Gates no reachable site could key. **The caller must not install
     /// these on the ROM.**
     pub dropped: Vec<Gate>,
+    /// Sites that already held a key the gates want, credited without a
+    /// write. Most seeds have one: ~79% hold an Anchor somewhere already.
+    pub credited: Vec<Placed>,
 }
 
 /// One key, and where it went.
@@ -77,6 +82,19 @@ pub(crate) struct Placed {
 const MAX_PASSES: usize = 64;
 
 /// Key every installed gate, dropping the ones that cannot be keyed.
+///
+/// Three parts, in order:
+///
+/// 1. **Credit what the seed already has.** A site holding a key the gates
+///    want *is* a source, and saying so costs nothing and writes nothing.
+///    Most seeds are keyed by luck already, so this is usually the whole job.
+/// 2. **The stall loop**, for gates luck did not cover.
+/// 3. **Availability.** Every surviving gate's keys must exist *somewhere*,
+///    even when the solver never stalled on that gate. A gate whose key is
+///    nowhere is a permanent wall, and `solvable` would not notice: it asks
+///    that the castle be reachable and every fortress beatable, not that
+///    every level be. A canoe gated with no Anchor anywhere would seal the
+///    levels behind the water and report a fine seed.
 ///
 /// `sites` is the pool to draw from; a spent site is removed, since a second
 /// write to it would overwrite the first key. Takes it as an argument rather
@@ -99,9 +117,33 @@ pub(crate) fn place<R: Rng>(
 ) -> Placement {
     let mut out = Placement::default();
 
+    // 1. Credit keys the seed already holds. A site is removed once credited:
+    //    writing another key over it would destroy the one already there.
+    let wanted: Vec<Key> = state
+        .gates
+        .iter()
+        .flat_map(|g| g.needs.iter().copied())
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+    let mut i = 0;
+    while i < sites.len() {
+        let held = sites[i].current_item(rom, build);
+        match wanted.iter().copied().find(|k| k.item_byte() == held) {
+            Some(key) => {
+                let site = sites.swap_remove(i);
+                state.sources.push(KeySource { pos: site.pos, key });
+                out.credited.push(Placed { key, site });
+            }
+            None => i += 1,
+        }
+    }
+
+    // 2. The stall loop.
     for _ in 0..MAX_PASSES {
         let (spheres, reach) = state.spheres_and_reach();
         if spheres.solvable {
+            ensure_available(rom, build, state, &mut sites, rng, &mut out);
             return out;
         }
 
@@ -111,6 +153,7 @@ pub(crate) fn place<R: Rng>(
         let Some(gi) = stuck else {
             // Unsolvable with every gate open. Not this pass's doing and not
             // its to fix — the generator guarantees a solvable maze.
+            ensure_available(rom, build, state, &mut sites, rng, &mut out);
             return out;
         };
         let key = *state.gates[gi]
@@ -136,6 +179,61 @@ pub(crate) fn place<R: Rng>(
 
     debug_assert!(false, "key placement did not settle in {MAX_PASSES} passes");
     out
+}
+
+/// Make sure every surviving gate's keys exist somewhere reachable.
+///
+/// The stall loop only keys gates that *stopped* the solver. A gate the run
+/// never had to pass still needs its key to exist, or it is a wall on whatever
+/// it guards — and for the canoe that is every level behind the water, which
+/// `Spheres::solvable` does not protect.
+///
+/// A gate whose key cannot be put anywhere reachable is dropped, exactly as in
+/// the stall loop: a gate nothing can open is worse than no gate.
+fn ensure_available<R: Rng>(
+    rom: &mut Rom,
+    build: &mut BuildResult,
+    state: &mut GlobalState,
+    sites: &mut Vec<KeySite>,
+    rng: &mut R,
+    out: &mut Placement,
+) {
+    let mut gi = 0;
+    while gi < state.gates.len() {
+        let missing: Vec<Key> = state.gates[gi]
+            .needs
+            .iter()
+            .copied()
+            .filter(|k| !state.sources.iter().any(|s| s.key == *k))
+            .collect();
+        if missing.is_empty() {
+            gi += 1;
+            continue;
+        }
+
+        let (_, reach) = state.spheres_and_reach();
+        let mut dropped = false;
+        for key in missing {
+            let reachable: Vec<usize> =
+                (0..sites.len()).filter(|&i| reach.contains(sites[i].pos)).collect();
+            match reachable.choose(rng) {
+                Some(&i) => {
+                    let site = sites.swap_remove(i);
+                    key_sites::grant(rom, build, &site, key);
+                    state.sources.push(KeySource { pos: site.pos, key });
+                    out.placed.push(Placed { key, site });
+                }
+                None => {
+                    out.dropped.push(state.gates.remove(gi));
+                    dropped = true;
+                    break;
+                }
+            }
+        }
+        if !dropped {
+            gi += 1;
+        }
+    }
 }
 
 #[cfg(test)]
@@ -164,7 +262,13 @@ mod tests {
         panic!("no seed in 0..60 required the boat — the census says ~18% should");
     }
 
-    /// **One Anchor, and the gated maze is winnable again.**
+    /// **The gated maze ends up winnable, with an Anchor the stall could
+    /// reach.**
+    ///
+    /// Whether that Anchor was written or was already there does not matter to
+    /// the player, so the assertion is on the outcome: a source inside the
+    /// reach the run came to rest at. Most seeds take the credited path —
+    /// ~79% already hold an Anchor somewhere.
     #[test]
     fn the_pass_reopens_a_stalled_maze() {
         let Some((mut rom, mut build, mut state)) = a_boat_required_seed() else { return };
@@ -175,29 +279,66 @@ mod tests {
         let out = place(&mut rom, &mut build, &mut state, sites, &mut rng);
 
         assert!(out.dropped.is_empty(), "nothing should be undoable here: {out:?}");
+        assert!(state.spheres().solvable, "the maze should be winnable again");
+        assert!(
+            state.sources.iter().any(|s| s.key == Key::Anchor && before.contains(s.pos)),
+            "no Anchor the stall could reach: {out:?}"
+        );
+    }
+
+    /// **With no Anchor to inherit, the pass writes one — inside the stall.**
+    ///
+    /// The seed is offered only sites that hold no Anchor, so the credit pass
+    /// finds nothing and the stall loop has to do the work. That is the ~18%
+    /// of boat-required seeds luck does not cover, which is the case this
+    /// whole feature exists for.
+    #[test]
+    fn with_nothing_to_inherit_the_pass_writes_a_key() {
+        let Some((mut rom, mut build, mut state)) = a_boat_required_seed() else { return };
+        let (_, before) = state.spheres_and_reach();
+
+        let anchor = Key::Anchor.item_byte();
+        let sites: Vec<KeySite> = crate::randomize::key_sites::sites(&rom, &build, &state)
+            .into_iter()
+            .filter(|s| s.current_item(&rom, &build) != anchor)
+            .collect();
+        let mut rng = ChaCha8Rng::seed_from_u64(7);
+        let out = place(&mut rom, &mut build, &mut state, sites, &mut rng);
+
+        assert!(out.credited.is_empty(), "no site held an Anchor to credit: {out:?}");
         assert_eq!(out.placed.len(), 1, "one Anchor opens every canoe: {out:?}");
-        assert!(before.contains(out.placed[0].site.pos), "placed outside the stall");
+        assert!(before.contains(out.placed[0].site.pos), "written outside the stall");
         assert!(state.spheres().solvable, "the maze should be winnable again");
     }
 
     /// **A site behind the gate is never drawn, even when it is the only one.**
     ///
     /// The guarantee this whole pass exists for, and it needs a decoy to be
-    /// tested at all: measured on real seeds, *every* site sits inside the
-    /// canoe-free reach (21 of 21 on the boat-required seed in `0..40`), so a
-    /// pass that ignored the reach entirely would still pick a legal site by
-    /// luck and every other test here would stay green. Confirmed by mutation
-    /// — dropping the reach filter passed the suite until this existed.
+    /// tested at all: measured on real seeds *every* site sits inside the
+    /// canoe-free reach (21 of 21 on the boat-required seed in `0..40`),
+    /// because the canoe seals a pocket rather than a world. So a pass that
+    /// ignored the reach entirely would still draw a legal site by luck and
+    /// every other test here would stay green. Confirmed by mutation:
+    /// deleting the reach filter passed the suite until this existed.
     ///
-    /// So: offer exactly one site, sitting on a cell the stall never reached.
-    /// The right answer is to place nothing and drop the gate. Placing there
-    /// would put the Anchor behind the very water it opens, and the model
-    /// would then report a winnable seed that no player can finish.
+    /// **One gate, deliberately.** With every canoe gated, dropping one frees
+    /// that boat and can legitimately bring a formerly stranded cell into
+    /// reach for the next gate — correct behaviour, but it muddies what this
+    /// is asserting. Gating a single canoe removes the cascade.
     #[test]
     fn a_site_behind_the_gate_is_never_drawn() {
         let Some((mut rom, mut build, mut state)) = a_boat_required_seed() else { return };
-        let (_, reach) = state.spheres_and_reach();
 
+        // One canoe whose gate alone stalls the run.
+        let lone = (0..state.worlds.len())
+            .find(|&w| {
+                state.gates = vec![Gate { target: GateTarget::Canoe(w), needs: vec![Key::Anchor] }];
+                !state.spheres().solvable
+            })
+            .expect("some single canoe is required on a boat-required seed");
+        state.gates = vec![Gate { target: GateTarget::Canoe(lone), needs: vec![Key::Anchor] }];
+
+        let (_, reach) = state.spheres_and_reach();
         let stranded = state
             .worlds
             .iter()
@@ -205,41 +346,21 @@ mod tests {
             .find(|p| !reach.contains(*p))
             .expect("a stalled maze has content it could not reach");
 
-        // A real site's sink, moved onto the unreachable cell, so `grant`
-        // would succeed if the pass were wrong enough to call it.
-        let real = crate::randomize::key_sites::sites(&rom, &build, &state)[0];
+        // A sink holding something other than an Anchor, so the decoy has to
+        // be *drawn* to be used rather than merely credited.
+        let anchor = Key::Anchor.item_byte();
+        let real = *crate::randomize::key_sites::sites(&rom, &build, &state)
+            .iter()
+            .find(|s| s.current_item(&rom, &build) != anchor)
+            .expect("some site holds no Anchor");
         let decoy = KeySite { pos: stranded, sink: real.sink };
 
         let mut rng = ChaCha8Rng::seed_from_u64(7);
         let out = place(&mut rom, &mut build, &mut state, vec![decoy], &mut rng);
 
         assert!(out.placed.is_empty(), "a key was placed behind its own gate: {out:?}");
-        assert!(!out.dropped.is_empty(), "with no usable site the gate must be dropped");
-    }
-
-    /// **The written key is the one the model credits.**
-    ///
-    /// The model says "there is an Anchor at this cell" and the ROM has to
-    /// agree, or the solver is describing a seed that does not exist. Checked
-    /// through the site's own reader rather than the value just written.
-    #[test]
-    fn the_rom_holds_what_the_model_claims() {
-        let Some((mut rom, mut build, mut state)) = a_boat_required_seed() else { return };
-        let sites = crate::randomize::key_sites::sites(&rom, &build, &state);
-        let mut rng = ChaCha8Rng::seed_from_u64(7);
-        let out = place(&mut rom, &mut build, &mut state, sites, &mut rng);
-
-        for p in &out.placed {
-            assert_eq!(
-                p.site.current_item(&rom, &build),
-                p.key.item_byte(),
-                "the ROM does not hold the key the model placed: {p:?}"
-            );
-            assert!(
-                state.sources.iter().any(|s| s.pos == p.site.pos && s.key == p.key),
-                "the model did not record its own placement: {p:?}"
-            );
-        }
+        assert_eq!(out.dropped.len(), 1, "with no usable site the gate must be dropped");
+        assert!(state.gates.is_empty(), "the dropped gate was left installed");
     }
 
     /// **With nowhere to put a key, the gate is dropped — not the mode.**
@@ -265,9 +386,19 @@ mod tests {
         assert!(state.spheres().solvable, "dropping the gate should restore the seed");
     }
 
-    /// **A seed the boat is optional on is left alone.**
+    /// **A seed the boat is optional on still gets an Anchor.**
+    ///
+    /// The rule the availability pass exists for. Nothing stalls here, so the
+    /// stall loop does nothing — but the canoes are still gated, and a gate
+    /// whose key exists nowhere is a permanent wall. `Spheres::solvable` would
+    /// not notice: it asks that the castle be reachable and every fortress
+    /// beatable, not that every level be, so the water could seal off ordinary
+    /// levels and the seed would still report fine.
+    ///
+    /// Offered only sites holding no Anchor, so there is nothing to inherit
+    /// and the pass has to write one.
     #[test]
-    fn an_unstalled_maze_gets_no_key() {
+    fn an_unstalled_maze_still_gets_an_anchor() {
         let Some(raw) = load_rom() else { return };
         for seed in 0..60u64 {
             let (mut rom, mut build, mut state) = one_maze(&raw, seed);
@@ -276,15 +407,54 @@ mod tests {
             }
             state.gate_every_canoe(Key::Anchor);
             if !state.spheres().solvable {
-                continue; // boat required — the other tests' business
+                continue; // boat required — the stall tests' business
             }
-            let sites = crate::randomize::key_sites::sites(&rom, &build, &state);
+
+            let anchor = Key::Anchor.item_byte();
+            let sites: Vec<KeySite> = crate::randomize::key_sites::sites(&rom, &build, &state)
+                .into_iter()
+                .filter(|s| s.current_item(&rom, &build) != anchor)
+                .collect();
             let mut rng = ChaCha8Rng::seed_from_u64(7);
             let out = place(&mut rom, &mut build, &mut state, sites, &mut rng);
-            assert!(out.placed.is_empty(), "nothing stalled, so nothing to key: {out:?}");
-            assert!(out.dropped.is_empty(), "nothing stalled, so nothing to drop: {out:?}");
+
+            assert!(out.dropped.is_empty(), "nothing needed dropping: {out:?}");
+            assert!(out.credited.is_empty(), "no site held an Anchor: {out:?}");
+            assert_eq!(out.placed.len(), 1, "an Anchor must exist even unstalled: {out:?}");
+            assert!(
+                state.sources.iter().any(|s| s.key == Key::Anchor),
+                "the model must know the Anchor it wrote: {out:?}"
+            );
+            assert!(state.spheres().solvable, "placing a key cannot break a seed");
             return;
         }
         panic!("no seed in 0..60 left the boat optional — the census says ~82% should");
+    }
+
+    /// **An Anchor the seed already holds is credited, not duplicated.**
+    #[test]
+    fn an_inherited_anchor_is_not_written_again() {
+        let Some(raw) = load_rom() else { return };
+        for seed in 0..60u64 {
+            let (mut rom, mut build, mut state) = one_maze(&raw, seed);
+            if !state.spheres().solvable {
+                continue;
+            }
+            state.gate_every_canoe(Key::Anchor);
+            let sites = crate::randomize::key_sites::sites(&rom, &build, &state);
+            let anchor = Key::Anchor.item_byte();
+            if !sites.iter().any(|s| s.current_item(&rom, &build) == anchor) {
+                continue; // this seed has nothing to inherit
+            }
+
+            let mut rng = ChaCha8Rng::seed_from_u64(7);
+            let out = place(&mut rom, &mut build, &mut state, sites, &mut rng);
+
+            assert!(!out.credited.is_empty(), "the Anchor already there was not credited");
+            assert!(out.placed.is_empty(), "wrote an Anchor over a seed that had one: {out:?}");
+            assert!(state.spheres().solvable);
+            return;
+        }
+        panic!("no seed in 0..60 held an Anchor at a site — the census says ~79% should");
     }
 }
