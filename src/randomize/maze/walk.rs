@@ -71,6 +71,18 @@ pub(crate) struct MazeWorld<'a> {
     pub grid: &'a Grid,
     pub pipe_pairs: &'a [TeleportEdge],
     pub blocked: &'a HashSet<Pos>,
+    /// This world's boat stays beached however reachable its docks are.
+    ///
+    /// How an item gate on the canoe reaches the walker. [`GlobalState::view`]
+    /// sets it from the installed gates and the keys held so far, so a walk
+    /// with no gates installed sets it false everywhere and the walker takes
+    /// its old shape exactly.
+    ///
+    /// It rides on the world rather than arriving as a parameter because
+    /// `MazeWorld` is built in two places and [`walk_maze`] is called from
+    /// eighteen — a parameter would have rippled through all of them to say
+    /// `false`.
+    pub canoe_locked: bool,
 }
 
 /// Reachability across every world at once.
@@ -290,7 +302,7 @@ pub(crate) fn walk_maze(
         let per_world = reach_pass(worlds, &pipes, &canoe_on, &lookup, start, &cols);
         let mut changed = false;
         for (wi, world) in worlds.iter().enumerate() {
-            if canoe_on[wi] {
+            if canoe_on[wi] || world.canoe_locked {
                 continue;
             }
             let docks = rom_data::active_canoe_edges(wi, world.grid.eights_are_wild);

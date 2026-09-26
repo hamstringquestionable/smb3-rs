@@ -34,6 +34,45 @@ hashes they describe are gone; the reasoning is not.
 
 ## Entries
 
+### 2026-09-24 — the item tables roll before the overworld (feature/anchor-canoe)
+
+**Intended, and a re-capture of a re-capture.** The reorder landed first on the
+parked item-keys branch and carried its own baseline; rebasing it onto a
+`beta/next` that had meanwhile gained the Anchor pool fix put both changes in
+one tree, so neither side's hashes described it. This entry replaces both.
+
+**What moved.** The four item tables — Hammer Bro rewards, Princess letter
+rewards, Toad House treasures, in-level chests — are rolled ahead of
+`overworld_pickup` now, from a dedicated `ITEM_SALT` substream. The substream
+is what keeps the main sequence untouched: the builder's draw count is
+invariant, because the Hammer Bro pool's *length* keys on the sprite id rather
+than the reward value.
+
+The reason the fingerprint moves at all is that it hashes `MAP_OBJ_REWARDS`,
+and those bytes now hold the builder's own distribution instead of a re-roll
+laid over the top — before the reorder, `items::randomize` ran 160 lines later
+and overwrote every reward the builder had just placed.
+
+**Attribution — byte diff, `beta/next` vs this branch, seeds 1-3,
+`--patched-rom --no-palettes`. Every changed byte is named:**
+
+| region | what it is |
+|---|---|
+| `0x16190+72` | Hammer Bro rewards |
+| `0x360DE+7` | Princess letter rewards |
+| `0x3B14B+15` | Toad House treasures |
+| 7 chest offsets | in-level chests |
+| `FS_KING_QUOTES` + the three suit-quote sites | king quotes |
+| `FS_KOOPA_HITS_TABLE` `0x03837+7` | Koopaling hit counts |
+| `FS_BOOMBOOM_HITS_TABLE` `0x07FCF+16` | Boom-Boom hit counts |
+| `FS_MYSTERY_ANCHOR+8` (1 byte) | the mystery anchor's chosen power-up |
+
+Zero bytes outside that set, on all three seeds. The last four rows are the
+passes that used to sit downstream of the old call site and so read a shifted
+main stream; they are the same four the original commit named.
+
+**No map byte moved** — no terrain, tile destination, pipe table or lock key.
+
 ### 2026-09-24 — the Anchor joins the item pools (fix/anchors-never-dealt)
 
 **Intended, and it is a bug fix.** `write_mystery_anchor` runs unconditionally
@@ -492,3 +531,27 @@ Three of the twenty seeds moved: 8, 16 and 18 — the ones with a sky lock on
 the finished map. `randomizer::tests::hints_change_nothing_without_the_maze`
 pins the rule now, and fails by 33 bytes on seed 8 if the gate is removed.
 
+
+Re-captured 2026-09-19 for the item-roll move. `items::randomize` (Hammer Bro
+rewards, Princess letter rewards, Toad House treasures, in-level chests) used
+to run late, *after* the writer had already stamped the rewards the builder
+distributed — so the reward table had two authorities and the builder always
+lost. It now runs ahead of `overworld_pickup`, which is what reads that table
+to build the pool the builder reattaches, and it draws from a dedicated
+substream (`ITEM_SALT`) so the main RNG sequence is untouched.
+
+All twenty seeds moved, and **`MAP_OBJ_REWARDS` is the only fingerprint region
+that did.** Attribution is by byte diff, seed 12345 in both a standard and a
+world-maze arm, `--no-palettes --patched-rom` before and after: of the 910
+(standard) / 819 (maze) changed bytes, exactly 17 / 16 land in
+`MAP_OBJ_REWARDS`, and **zero** land anywhere else in PRG010-012. Every other
+region this hashes — the eight tile grids, the eight world pointer tables, the
+map-object masters and their slot sub-tables, the four pipe-destination tables
+and `FS_LOCK_ENTRIES` — is byte-identical. No map moved; the rewards standing
+on those maps are different items.
+
+The remaining changed bytes are the other item tables (the seven chest offsets,
+`0x360DE` letters, `0x3B14B` Toad House) and the four passes that used to sit
+downstream of the old `items` call and therefore saw a shifted main stream:
+the mystery-anchor target, Koopaling and Boom-Boom hit counts, and the king
+quotes.

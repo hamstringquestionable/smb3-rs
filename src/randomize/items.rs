@@ -47,12 +47,18 @@ const POWERUP_ITEMS: &[u8] = &[
 
 /// Toad House pool — powerups and combat items only (no map consumables).
 ///
-/// **No Anchor here, unlike [`GOOD_ITEMS`].** A Toad House is a guaranteed,
-/// signposted grant and the player walks in expecting a power-up; a surprise
-/// belongs in the rewards they stumble into, not the one shop they are told
-/// about. Toad Houses also already reach the anchor by their own out-of-bounds
-/// route, so adding one here would stack a second source on the only slot that
-/// already had one.
+/// **No Anchor here, unlike [`GOOD_ITEMS`]** — outside World Maze. A Toad House
+/// is a guaranteed, signposted grant and the player walks in expecting a
+/// power-up; a surprise belongs in the rewards they stumble into, not the one
+/// shop they are told about.
+///
+/// In the maze that trade flips, because the Anchor stops being a surprise and
+/// becomes the boat key. More places to find one is the point, so
+/// [`TOAD_HOUSE_ITEMS_MAZE`] adds it. The solver and the key-placement pass
+/// still ignore Toad Houses entirely — see `key_sites` for why — so these are
+/// extra chances for the player, never something the model leans on. That
+/// asymmetry is safe in the direction it errs: the model believing in fewer
+/// Anchors than exist can only make it place one it did not need.
 const TOAD_HOUSE_ITEMS: &[u8] = &[
     0x01, // Mushroom
     0x02, // Fire Flower
@@ -63,6 +69,40 @@ const TOAD_HOUSE_ITEMS: &[u8] = &[
     0x08, // P-Wing
     0x09, // Starman
 ];
+
+/// [`TOAD_HOUSE_ITEMS`] plus the Anchor, for World Maze.
+///
+/// One extra entry in a nine-wide pool, so roughly one house in nine carries
+/// one — a chance, not a guarantee, which is what a house rolling its reward
+/// from a 3-wide window could offer anyway.
+const TOAD_HOUSE_ITEMS_MAZE: &[u8] = &[
+    0x01, // Mushroom
+    0x02, // Fire Flower
+    0x03, // Leaf
+    0x04, // Frog Suit
+    0x05, // Tanooki Suit
+    0x06, // Hammer Suit
+    0x08, // P-Wing
+    0x09, // Starman
+    ANCHOR,
+];
+
+/// A stand-in power-up for a Toad House that would otherwise hand over a
+/// second Anchor.
+///
+/// Drawn from the ordinary house pool, which carries no Anchor — a substitute
+/// that was itself an Anchor would be no substitute at all. One roll per seed,
+/// so every such house in a run gives the same thing.
+///
+/// **Why a real item rather than nothing**, when the other three duplicate
+/// paths hand over `$00`: a Toad House *draws* the item it is giving, from
+/// `ToadItem_PatternLeft-1,X` indexed by the item id. Vanilla never puts `$00`
+/// there (`0` means "box not opened yet"), so index 0 reads the byte before
+/// the table — the `RTS` of the routine above it — and renders it as a sprite.
+/// See `anchor_dedup`.
+pub(crate) fn toad_house_substitute<R: Rng>(rng: &mut R) -> u8 {
+    *TOAD_HOUSE_ITEMS.choose(rng).unwrap()
+}
 
 pub(crate) const WARP_WHISTLE: u8 = 0x0C;
 
@@ -132,6 +172,27 @@ fn map_table(rom: &mut Rom, offset: usize, len: usize, mut f: impl FnMut(u8) -> 
     rom.write_range(offset, &bytes);
 }
 
+/// One world's Princess letter reward, as the ROM currently holds it.
+/// `0x00` means that world grants nothing.
+// Reason: the key site list is the caller, and lands with the placement pass.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn princess_reward(rom: &Rom, world: usize) -> u8 {
+    assert!(world < PRINCESS_REWARDS_LEN, "world {world} has no Princess letter");
+    rom.read_byte(PRINCESS_REWARDS_OFFSET + world)
+}
+
+/// Overwrite one world's Princess letter reward (W1-W7), in Global Item IDs.
+///
+/// The one write path for that table outside [`randomize`], so the offset stays
+/// in this file. A key-placement pass uses it to put a key on the cell a world
+/// is completed at.
+// Reason: the key site list is the caller, and lands with the placement pass.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn set_princess_reward(rom: &mut Rom, world: usize, item: u8) {
+    assert!(world < PRINCESS_REWARDS_LEN, "world {world} has no Princess letter");
+    rom.write_byte(PRINCESS_REWARDS_OFFSET + world, item);
+}
+
 /// Randomize all chest and reward items: Hammer Bros drops, Princess letter
 /// rewards, Toad House chests, and in-level treasure chests.
 ///
@@ -142,8 +203,15 @@ fn map_table(rom: &mut Rom, offset: usize, len: usize, mut f: impl FnMut(u8) -> 
 /// `piranha_rooms::install_treasure_sets` also get their D6 item bytes
 /// rolled. Only pass true when the clones are installed (piranha shuffle
 /// active) — otherwise those free-space offsets hold no D6 entry.
-pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R, remove_whistles: bool, piranha_chests: bool) {
+pub fn randomize<R: Rng>(
+    rom: &mut Rom,
+    rng: &mut R,
+    remove_whistles: bool,
+    piranha_chests: bool,
+    world_maze: bool,
+) {
     let pool = if remove_whistles { GOOD_ITEMS } else { GOOD_ITEMS_WITH_WHISTLE };
+    let house_pool = if world_maze { TOAD_HOUSE_ITEMS_MAZE } else { TOAD_HOUSE_ITEMS };
 
     // Hammer Bros map items: randomize non-zero entries only (zero = no item).
     map_table(rom, HAMMER_BROS_ITEMS_OFFSET, HAMMER_BROS_ITEMS_LEN, |b| {
@@ -155,9 +223,10 @@ pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R, remove_whistles: bool, pira
         if b != 0 { *pool.choose(rng).unwrap() } else { b }
     });
 
-    // Toad House chests: use restricted pool (no cloud/hammer/music box/whistle).
+    // Toad House chests: use restricted pool (no cloud/hammer/music box/whistle),
+    // plus the Anchor in the maze.
     map_table(rom, TOAD_HOUSE_ITEMS_OFFSET, TOAD_HOUSE_ITEMS_LEN, |_| {
-        *TOAD_HOUSE_ITEMS.choose(rng).unwrap()
+        *house_pool.choose(rng).unwrap()
     });
 
     // In-level treasure chests: randomize each D6 Y-byte.
@@ -349,7 +418,7 @@ mod tests {
     fn test_items_randomized() {
         let mut rom = make_test_rom();
         let mut rng = ChaCha8Rng::seed_from_u64(42);
-        randomize(&mut rom, &mut rng, true, false);
+        randomize(&mut rom, &mut rng, true, false, false);
 
         // Toad House items should all be valid items
         for i in 0..TOAD_HOUSE_ITEMS_LEN {
@@ -368,7 +437,7 @@ mod tests {
     fn test_zero_slots_preserved() {
         let mut rom = make_test_rom();
         let mut rng = ChaCha8Rng::seed_from_u64(42);
-        randomize(&mut rom, &mut rng, true, false);
+        randomize(&mut rom, &mut rng, true, false, false);
 
         // W8 Hammer Bros items (all zero) should stay zero
         for i in 0..9 {
@@ -384,7 +453,7 @@ mod tests {
     fn test_whistles_removed() {
         let mut rom = make_test_rom();
         let mut rng = ChaCha8Rng::seed_from_u64(42);
-        randomize(&mut rom, &mut rng, true, false);
+        randomize(&mut rom, &mut rng, true, false, false);
 
         for &offset in WHISTLE_OFFSETS {
             let b = rom.read_byte(offset);
@@ -401,7 +470,7 @@ mod tests {
         for seed in 0..100 {
             let mut rom = make_test_rom();
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
-            randomize(&mut rom, &mut rng, false, false);
+            randomize(&mut rom, &mut rng, false, false, false);
 
             for i in 0..HAMMER_BROS_ITEMS_LEN {
                 if rom.read_byte(HAMMER_BROS_ITEMS_OFFSET + i) == WARP_WHISTLE {
@@ -447,8 +516,8 @@ mod tests {
         let mut rng1 = ChaCha8Rng::seed_from_u64(123);
         let mut rng2 = ChaCha8Rng::seed_from_u64(123);
 
-        randomize(&mut rom1, &mut rng1, true, false);
-        randomize(&mut rom2, &mut rng2, true, false);
+        randomize(&mut rom1, &mut rng1, true, false, false);
+        randomize(&mut rom2, &mut rng2, true, false, false);
 
         // Check all item regions are identical
         assert_eq!(
@@ -593,5 +662,42 @@ mod asm_checks {
                 .hook(&VANILLA_INV_READ, 0, &hook)
                 .assert_ok();
         }
+    }
+}
+
+#[cfg(test)]
+mod maze_house_tests {
+    use super::*;
+    use rand::SeedableRng;
+    use rand_chacha::ChaCha8Rng;
+
+    fn rom() -> Option<Rom> {
+        let data = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes").ok()?;
+        Rom::from_bytes(&data).ok()
+    }
+
+    /// **Toad Houses can hand out an Anchor in the maze, and only there.**
+    ///
+    /// The Anchor is the boat key in that mode, so more places to find one is
+    /// the point. Outside the maze it stays a surprise power-up and a house
+    /// stays the one shop the player is told about.
+    ///
+    /// The model does not know about this: `key_sites` offers no Toad House,
+    /// so the solver never counts one. That asymmetry only errs safely — a
+    /// model believing in fewer Anchors than exist can place one it did not
+    /// need, never skip one it did.
+    #[test]
+    fn only_the_maze_deals_anchors_from_toad_houses() {
+        let Some(base) = rom() else { return };
+        let anchor_seen = |maze: bool| {
+            (0..40u64).any(|seed| {
+                let mut r = base.clone();
+                let mut rng = ChaCha8Rng::seed_from_u64(seed);
+                randomize(&mut r, &mut rng, false, false, maze);
+                r.read_range(TOAD_HOUSE_ITEMS_OFFSET, TOAD_HOUSE_ITEMS_LEN).contains(&ANCHOR)
+            })
+        };
+        assert!(anchor_seen(true), "40 maze seeds and no Toad House Anchor");
+        assert!(!anchor_seen(false), "a non-maze seed dealt an Anchor to a Toad House");
     }
 }

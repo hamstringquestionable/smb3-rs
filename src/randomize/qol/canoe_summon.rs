@@ -142,15 +142,45 @@ const CANOE_SUMMON_ROUTINE: [u8; 151] = [
     0x00, 0xFF, 0x00, 0x00, // csxhioff ($DF38)
 ];
 
+/// The vanilla bytes at [`SCAN_SETUP_HOOK`], and what the hook puts there.
+const SCAN_SETUP_VANILLA: [u8; 4] = [0xA5, 0xE5, 0xA0, 0x1A];
+fn scan_setup_hooked() -> [u8; 4] {
+    let [lo, hi] = CANOE_SUMMON_CPU.to_le_bytes();
+    [0x20, lo, hi, 0xEA]
+}
+
+/// Write the summon routine without installing the A-press hook.
+///
+/// [`canoe_gate`](crate::randomize::canoe_gate) calls this routine straight
+/// from the anchor's inventory handler, and must **not** have the free A-press
+/// summon alongside it — that would call the boat over for nothing and open
+/// the gate's wall.
+pub fn write_canoe_summon_routine(rom: &mut Rom) {
+    rom.write_range(FS_CANOE_SUMMON, &CANOE_SUMMON_ROUTINE);
+}
+
+/// Put the A-press hook site back the way vanilla had it.
+///
+/// Idempotent, and asserts the site is in one of the two states this module
+/// puts it in — anything else means another patch has claimed `$CEC5` and
+/// silently undoing it would be worse than stopping.
+pub fn remove_canoe_summon_hook(rom: &mut Rom) {
+    let here = rom.read_range(SCAN_SETUP_HOOK, 4);
+    assert!(
+        here == SCAN_SETUP_VANILLA || here == scan_setup_hooked(),
+        "the canoe summon hook site holds {here:02X?}, which is neither vanilla nor this hook"
+    );
+    rom.write_range(SCAN_SETUP_HOOK, &SCAN_SETUP_VANILLA);
+}
+
 /// Install the "call the boat" summon: A on a dock warps the canoe alongside.
 pub fn apply_canoe_summon(rom: &mut Rom) {
-    rom.write_range(FS_CANOE_SUMMON, &CANOE_SUMMON_ROUTINE);
+    write_canoe_summon_routine(rom);
 
     // Replace `LDA World_Map_Tile / LDY #$1A` (4 bytes) with `JSR canoe_summon`
     // + NOP. The routine re-establishes A and Y before returning, so the vanilla
     // special-enter-tile scan that follows is unaffected.
-    let [lo, hi] = CANOE_SUMMON_CPU.to_le_bytes();
-    rom.write_range(SCAN_SETUP_HOOK, &[0x20, lo, hi, 0xEA]);
+    rom.write_range(SCAN_SETUP_HOOK, &scan_setup_hooked());
 }
 
 #[cfg(test)]

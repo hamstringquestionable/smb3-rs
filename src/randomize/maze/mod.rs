@@ -35,6 +35,7 @@ use rand::Rng;
 
 use std::collections::{HashMap, HashSet};
 
+use super::item_keys::Key;
 use super::map_walker::walk_reachable_blocked;
 use super::overworld_build::{
     BuildResult, FortRef, LockHint, SlotKind, WorldState, from_built, stamp_slots,
@@ -181,6 +182,47 @@ pub(crate) const CONTENT_FLOOR: usize = 14;
 /// the browser, measured).
 pub(crate) const MAX_DEALS: usize = 8;
 
+/// What a gate stands in front of.
+///
+/// The enum is the point: a gate is **data**, so the solver asks one question
+/// however many gates exist. Before this there was a bespoke method per gate
+/// (`spheres_without_canoe`) and a bool on the state (`anchor_gated`), which
+/// is the one-gate special case wearing two hats.
+///
+/// `Cell(MazePos)` — a level slot sealed until its power-up is found — is the
+/// next variant, and lands with MiMaze.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum GateTarget {
+    /// This world's boat, beached until the key is held. The whole world is
+    /// still walkable; only the water edges close.
+    Canoe(usize),
+}
+
+/// Something the player cannot pass until they hold **every** key in `needs`.
+///
+/// A set rather than one key because a demand can be compound — MiMaze's suit
+/// gates imply the mushroom, since a small player is sent to the mushroom row
+/// whichever block they bump. The canoe needs one.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub(crate) struct Gate {
+    pub target: GateTarget,
+    pub needs: Vec<Key>,
+}
+
+/// A cell that hands a key over when the player reaches it.
+///
+/// **Only sources the player cannot miss belong here.** Reaching the cell has
+/// to mean holding the item, or the model is looser than the game and the
+/// difference strands somebody. A Hammer Bro and a Princess letter qualify; an
+/// in-level chest does not (a level can be beaten without opening it) and
+/// neither does a rolled Toad House (it re-draws from a 3-wide window when the
+/// box is opened — see `rom_data::toad_house_reward_is_fixed`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) struct KeySource {
+    pub pos: MazePos,
+    pub key: Key,
+}
+
 /// Eight worlds and the edges between them. A thin wrapper: the per-world
 /// state is the existing [`WorldState`], untouched.
 pub(crate) struct GlobalState {
@@ -212,6 +254,14 @@ pub(crate) struct GlobalState {
     /// goal does not count as reached until K wands are collectable, which is
     /// exact because the gate cell is the only way into the castle.
     pub wands_required: u8,
+    /// Things sealed until their keys are found. **Empty unless a placement
+    /// pass installed some**, and with it empty [`Self::spheres`] takes its old
+    /// shape exactly — same walk, same rounds, same answers — so no existing
+    /// seed moves.
+    pub gates: Vec<Gate>,
+    /// Cells that hand a key over. Empty alongside `gates`: a gate with no
+    /// source is a wall, which is only ever what a *counterfactual* wants.
+    pub sources: Vec<KeySource>,
 }
 
 impl GlobalState {
@@ -258,7 +308,18 @@ impl GlobalState {
             in_maze[w] = true;
         }
 
-        GlobalState { worlds, edges, locks, start, goal, in_maze, reserved, wands_required }
+        GlobalState {
+            worlds,
+            edges,
+            locks,
+            start,
+            goal,
+            in_maze,
+            reserved,
+            wands_required,
+            gates: Vec::new(),
+            sources: Vec::new(),
+        }
     }
 
     /// Add telepads. Each pad tile owns one arrival row, so the count is
@@ -404,17 +465,38 @@ impl GlobalState {
 
     /// The eight worlds as the maze walkers take them: a grid, its pipes, and
     /// which of its path cells are shut.
+    /// `found` is what the player is holding. It decides which canoe gates are
+    /// still shut; with no gates installed it is consulted for nothing, so
+    /// passing an empty set there is exact rather than conservative.
     pub(crate) fn view<'a>(
         &'a self,
         grids: &'a [Grid],
         shut: &'a [HashSet<Pos>],
+        found: &HashSet<Key>,
     ) -> Vec<MazeWorld<'a>> {
         grids
             .iter()
             .zip(&self.worlds)
             .zip(shut)
-            .map(|((grid, w), blocked)| MazeWorld { grid, pipe_pairs: &w.pipe_pairs, blocked })
+            .enumerate()
+            .map(|(wi, ((grid, w), blocked))| MazeWorld {
+                grid,
+                pipe_pairs: &w.pipe_pairs,
+                blocked,
+                canoe_locked: self.canoe_locked(wi, found),
+            })
             .collect()
+    }
+
+    /// Is world `wi`'s boat still beached?
+    ///
+    /// True when some installed gate names this canoe and the player is short
+    /// of at least one of its keys.
+    fn canoe_locked(&self, wi: usize, found: &HashSet<Key>) -> bool {
+        self.gates
+            .iter()
+            .filter(|g| g.target == GateTarget::Canoe(wi))
+            .any(|g| !g.needs.iter().all(|k| found.contains(k)))
     }
 
     /// The global fixpoint, and the mode's solver.
@@ -424,6 +506,10 @@ impl GlobalState {
     /// sphere. Because reachability is monotone the loop terminates in at most
     /// one round per fortress, and no assumption is made about the order the
     /// player beats forts in.
+    ///
+    /// A key found in a round opens gates without a fort being beaten, so the
+    /// loop carries two accumulators now. Both only ever grow, so the old
+    /// termination argument is unchanged.
     pub(crate) fn spheres(&self) -> Spheres {
         self.spheres_with_blocked(&HashSet::new())
     }
@@ -431,10 +517,42 @@ impl GlobalState {
     /// The fixpoint with some cells walled off — the counterfactual
     /// [`metrics::required_levels`] asks 62 times per seed.
     pub(crate) fn spheres_with_blocked(&self, blocked: &HashSet<MazePos>) -> Spheres {
-        self.spheres_inner(blocked, None)
+        self.spheres_inner(blocked, None).0
     }
 
-    fn spheres_inner(&self, blocked: &HashSet<MazePos>, sealed: Option<usize>) -> Spheres {
+    /// The fixpoint **and the reach it came to rest at** — where the placement
+    /// pass puts a key.
+    ///
+    /// Not solvable means some gate is still shut, and this reach is exactly
+    /// the set its key must lie inside: everything outside is behind the very
+    /// gate the key opens, which is the circularity to avoid. Placing from
+    /// here rather than placing-then-checking is what makes a key unable to
+    /// land behind its own gate at all, at any number of gates.
+    // Reason: the censuses are the readers until the placement pass lands.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn spheres_and_reach(&self) -> (Spheres, walk::MazeReach) {
+        self.spheres_inner(&HashSet::new(), None)
+    }
+
+    /// Beach every boat until the Anchor is found.
+    ///
+    /// The counterfactual both Anchor censuses ask, expressed the way a
+    /// placement pass will: install gates, then ask the ordinary question.
+    /// There is no solver mode to switch on — that is the point of gates
+    /// being data.
+    // Reason: the censuses are the readers until the placement pass lands.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn gate_every_canoe(&mut self, needs: Key) {
+        self.gates = (0..self.worlds.len())
+            .map(|wi| Gate { target: GateTarget::Canoe(wi), needs: vec![needs] })
+            .collect();
+    }
+
+    fn spheres_inner(
+        &self,
+        blocked: &HashSet<MazePos>,
+        sealed: Option<usize>,
+    ) -> (Spheres, walk::MazeReach) {
         let bases = self.base_grids(blocked);
         let links = self.links();
         let forts = self.forts();
@@ -442,14 +560,16 @@ impl GlobalState {
         let wand_tiles = self.wand_tiles();
 
         let mut open: HashSet<FortRef> = HashSet::new();
+        let mut found: HashSet<Key> = HashSet::new();
         let mut seen: HashSet<MazePos> = HashSet::new();
         let mut spheres: Vec<Sphere> = Vec::new();
         let mut goal_sphere = None;
         let mut wands_at_goal = 0;
 
-        loop {
+        let reach = loop {
             let shut = self.shut_locks_sealed(&open, sealed);
-            let reach = walk_maze(&self.view(&bases, &shut), &links, self.start);
+            let view = self.view(&bases, &shut, &found);
+            let reach = walk_maze(&view, &links, self.start);
 
             let reached: Vec<MazePos> = content
                 .iter()
@@ -471,6 +591,15 @@ impl GlobalState {
                 .map(|(i, _)| i)
                 .collect();
             open.extend(beaten.iter().copied());
+
+            // Keys are never consumed, so one seen once is held forever.
+            let collected: Vec<Key> = self
+                .sources
+                .iter()
+                .filter(|s| !found.contains(&s.key) && reach.contains(s.pos))
+                .map(|s| s.key)
+                .collect();
+            found.extend(collected.iter().copied());
 
             let wands = wand_tiles.iter().filter(|&&p| reach.contains(p)).count();
             // The wand gate. A cloned wall tile sits on the unique chokepoint
@@ -499,22 +628,26 @@ impl GlobalState {
                 wands,
             });
 
-            // No new fort means no new key, and reachability is monotone —
-            // nothing can grow again.
-            if beaten.is_empty() {
-                break;
+            // Neither accumulator grew, and both are monotone, so nothing can
+            // grow again. Before gates this was "no new fort" alone; a round
+            // that finds a key opens gates without beating anything, and
+            // stopping there would report content sealed out that is not.
+            if beaten.is_empty() && collected.is_empty() {
+                break reach;
             }
-        }
+        };
 
         let unbeaten: Vec<FortRef> =
             forts.iter().map(|&(f, _)| f).filter(|f| !open.contains(f)).collect();
-        Spheres {
+        let out = Spheres {
             solvable: goal_sphere.is_some() && unbeaten.is_empty(),
             spheres,
             unbeaten,
             goal_sphere,
             wands_at_goal,
-        }
+            found,
+        };
+        (out, reach)
     }
 
     /// **Can the player still reach the castle if `lock` is never opened?**
@@ -534,7 +667,7 @@ impl GlobalState {
     /// The wand gate is still honoured: `goal_sphere` is only set once `K`
     /// wands are collectable, so this asks "reachable *and* enterable".
     pub(crate) fn winnable_with_lock_sealed(&self, lock: usize) -> bool {
-        self.spheres_inner(&HashSet::new(), Some(lock)).goal_sphere.is_some()
+        self.spheres_inner(&HashSet::new(), Some(lock)).0.goal_sphere.is_some()
     }
 
     /// `wands_are_collectable`: is a K-of-7 gate on the castle satisfiable —
@@ -687,6 +820,11 @@ pub(crate) struct Spheres {
     /// Wands collectable before the castle came into reach — what a K-of-7
     /// gate would have to be satisfied by.
     pub wands_at_goal: usize,
+    /// Every key the player can collect. A gate whose `needs` are not all in
+    /// here is one the run came to rest in front of.
+    // Reason: the placement pass is the reader, and lands next.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub found: HashSet<Key>,
 }
 
 impl Spheres {

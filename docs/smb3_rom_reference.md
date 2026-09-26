@@ -1819,6 +1819,31 @@ corrected here.
 Items 1–8 all route to the shared `Inv_UseItem_Powerup` handler. Items 9+ have dedicated
 handlers with incompatible animation/state machine layouts.
 
+**The shared tail, and what consumes an item.** Every handler that succeeds ends
+`JSR Inv_UseItem_ShiftOver` ($A61B) then `JMP Inventory_ForceFlip` ($A426).
+`ShiftOver` is the half that *deletes* the item — it copies each later slot back
+over the used one and zeroes the last. So **a handler that omits it leaves the
+item in the inventory**, which is the whole mechanism behind a permanent,
+re-usable item; there is no flag for it anywhere. `Inventory_ForceFlip` closes
+the panel and returns to the map.
+
+`Inv_UseItem_Denial` ($A687) is the failure tail: queue `SND_MAPDENY` ($80) into
+`Sound_QMap` ($04F6) and `RTS`, leaving the item alone. It is shared — the
+Hammer jumps to it when no rock is adjacent — so it is live code sitting inside
+the vanilla Anchor handler's byte range and must not be reclaimed along with it.
+`Sound_QLevel1` ($04F2) with `SND_LEVELPOOF` ($80) is the matching success cue.
+
+**PRG010 is still mapped at $C000 while the inventory panel is open.**
+`Inv_UseItem_Hammer` calls `MapTile_Get_By_Offset` there, so an item handler in
+PRG026 can `JSR` into map-side code at $C000-$DFFF directly. The $8000 window is
+PRG030 as always, so map tables like `Tile_Mem_Addr` are reachable too.
+
+**Anchor specifics.** `Inv_UseItem_Anchor` tests and sets `Map_Anchored`
+($7970), a per-map flag `Map_Init` clears (`prg030.asm:548`). With the wand
+cutscene skipped the airship never leaves its castle tile, so the vanilla effect
+is dead — which is what makes item $0A the free slot that both
+`items::write_mystery_anchor` and `canoe_gate` repurpose.
+
 Inside `Inv_UseItem_Powerup`, the instruction `LDX $7D80,Y` at CPU $A5C8 (file 0x345D8)
 re-reads the item ID into X. **`X` is the whole interface** — the handler acts on it
 directly, so a patch that substitutes an item need only leave a different value in `X`.

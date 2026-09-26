@@ -1775,3 +1775,192 @@ mod derivation {
         );
     }
 }
+
+// --- Slot pins -------------------------------------------------------------
+
+/// A level entry that is in the deck, taken from the *first* world that has
+/// one — so pinning it onto a late world forces the deal to reach across the
+/// whole drain order.
+fn a_pooled_level_identity(
+    catalog: &node_catalog::NodeCatalog,
+    pickup: &overworld_pickup::PickupResult,
+) -> (usize, usize) {
+    pickup
+        .pool
+        .iter()
+        .map(|pe| &catalog.entries[pe.catalog_idx])
+        .filter(|ce| matches!(ce.kind, node_catalog::NodeKind::Level))
+        .map(|ce| (ce.world_idx, ce.entry_idx))
+        .min()
+        .expect("the pool holds levels")
+}
+
+/// Pin `pin` to one `SlotKind::Level` slot in the last world that has one.
+/// Returns its `(world, pos)`.
+///
+/// Late on purpose: the level deck is one global deque drained in world order,
+/// so a pin in an early world is satisfied from a full deck and proves
+/// nothing.
+fn pin_last_world_level_slot(
+    build: &mut overworld_build::BuildResult,
+    pin: (usize, usize),
+) -> Option<(usize, (usize, usize))> {
+    for wi in (0..build.worlds.len()).rev() {
+        if let Some(slot) =
+            build.worlds[wi].slots.iter_mut().find(|s| s.kind == overworld_build::SlotKind::Level)
+        {
+            slot.pin = Some(pin);
+            return Some((wi, slot.pos));
+        }
+    }
+    None
+}
+
+/// **A pinned slot receives the entry it names — in the LAST world.**
+///
+/// The world matters. The level deck is one global deque drained in world
+/// order, so a pin in W1 is satisfied from a full deck and can never fail — it
+/// is the one case that proves nothing. A pin in the last world asks after
+/// every earlier world has taken its fill, which is exactly what the global
+/// pre-deal exists for, and exactly where a per-world implementation breaks.
+#[test]
+fn a_pinned_level_lands_on_its_slot() {
+    let Some(rom) = load_rom() else { return };
+    let catalog = node_catalog::NodeCatalog::build(&rom, false);
+    let pickup = standard_pickup(&rom, &catalog);
+    let mut rng = ChaCha8Rng::seed_from_u64(42);
+    let mut build = overworld_build::build(
+        &rom,
+        &OverworldData { pickup: &pickup, catalog: &catalog },
+        &mut rng,
+        standard_build_flags(),
+    );
+
+    let pin = a_pooled_level_identity(&catalog, &pickup);
+    let (world, pos) = pin_last_world_level_slot(&mut build, pin).expect("a level slot");
+    assert!(world >= 6, "the pin must sit late in the deal to be worth testing (got W{world})");
+
+    let mut rng2 = ChaCha8Rng::seed_from_u64(99);
+    let data = OverworldData { pickup: &pickup, catalog: &catalog };
+    let assignments = assign_pool(&rom, &build, &data, &mut rng2, WriteFlags::default());
+
+    let dealt = assignments[world]
+        .level
+        .iter()
+        .find(|a| a.pos == pos)
+        .expect("the pinned slot should have been dealt a level");
+    let entry = &catalog.entries[pickup.pool[dealt.pool_idx].catalog_idx];
+    assert_eq!(
+        (entry.world_idx, entry.entry_idx),
+        pin,
+        "the pinned slot got some other entry, so the pin bought nothing"
+    );
+    assert!(
+        assignments[world].unmet_pins.is_empty(),
+        "the deck held the entry, so nothing should be reported unmet"
+    );
+}
+
+/// **A pinned entry is never dealt twice, and only pinned entries are
+/// protected.**
+///
+/// Deja Vu redeals the level deck into copies, so a pinned entry could land on
+/// two tiles — the one the model chose and one it never saw. Whatever the pin
+/// meant on the chosen cell, the copy carries it somewhere unmodelled.
+///
+/// The protection is derived from the pins present rather than from a mode
+/// flag, which is what keeps it inert: a build with no pins computes an empty
+/// set and `holds_unique_item` is exactly what it always was. Both halves are
+/// checked.
+#[test]
+fn deja_vu_never_duplicates_a_pinned_level() {
+    let Some(rom) = load_rom() else { return };
+    let catalog = node_catalog::NodeCatalog::build(&rom, false);
+    let pickup = standard_pickup(&rom, &catalog);
+
+    let deal = |build: &overworld_build::BuildResult, seed: u64| {
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
+        assign_pool(
+            &rom,
+            build,
+            &OverworldData { pickup: &pickup, catalog: &catalog },
+            &mut rng,
+            WriteFlags { deja_vu: DejaVuMode::Double, ..WriteFlags::default() },
+        )
+    };
+    let count_of = |assignments: &[WorldAssignments], id: (usize, usize)| {
+        assignments
+            .iter()
+            .flat_map(|wa| wa.level.iter())
+            .filter(|a| {
+                let ce = &catalog.entries[pickup.pool[a.pool_idx].catalog_idx];
+                (ce.world_idx, ce.entry_idx) == id
+            })
+            .count()
+    };
+
+    let mut rng = ChaCha8Rng::seed_from_u64(11);
+    let mut build = overworld_build::build(
+        &rom,
+        &OverworldData { pickup: &pickup, catalog: &catalog },
+        &mut rng,
+        standard_build_flags(),
+    );
+
+    // Unpinned: the protection must not apply, or every seed in every mode
+    // would have its Deja Vu deal changed.
+    let before = deal(&build, 5);
+
+    let pin = a_pooled_level_identity(&catalog, &pickup);
+    let (world, _) = pin_last_world_level_slot(&mut build, pin).expect("a level slot");
+    let after = deal(&build, 5);
+    assert_eq!(
+        count_of(&after, pin),
+        1,
+        "a pinned entry must be dealt exactly once — zero means the pin was \
+         dropped, two means the copy went somewhere the model never chose"
+    );
+    assert!(
+        after[world].unmet_pins.is_empty(),
+        "the deck held the entry, so nothing should be reported unmet"
+    );
+    assert_eq!(before.len(), after.len(), "world count should not change");
+}
+
+/// **An unsatisfiable pin is reported, not swallowed.**
+///
+/// Naming an entry that is not in the deck is the shape the deck surgery
+/// produces on a real seed, and the slot has to fall back to an ordinary draw
+/// rather than panicking — but silently is the one thing it must not do, since
+/// the caller cannot otherwise tell a honoured pin from a lost one.
+#[test]
+fn an_unsatisfiable_pin_is_reported() {
+    let Some(rom) = load_rom() else { return };
+    let catalog = node_catalog::NodeCatalog::build(&rom, false);
+    let pickup = standard_pickup(&rom, &catalog);
+    let mut rng = ChaCha8Rng::seed_from_u64(7);
+    let mut build = overworld_build::build(
+        &rom,
+        &OverworldData { pickup: &pickup, catalog: &catalog },
+        &mut rng,
+        standard_build_flags(),
+    );
+
+    // No catalog entry has this identity, so no pool entry can satisfy it.
+    let bogus = (0usize, 9999usize);
+    let (world, pos) = pin_last_world_level_slot(&mut build, bogus).expect("a level slot");
+
+    let mut rng2 = ChaCha8Rng::seed_from_u64(99);
+    let data = OverworldData { pickup: &pickup, catalog: &catalog };
+    let assignments = assign_pool(&rom, &build, &data, &mut rng2, WriteFlags::default());
+
+    assert_eq!(
+        assignments[world].unmet_pins,
+        vec![(pos, bogus)],
+        "an unsatisfiable pin must be reported against its own world and slot"
+    );
+    assert!(
+        assignments[world].level.iter().any(|a| a.pos == pos),
+        "the slot should still have been dealt an ordinary level"
+    );
+}
