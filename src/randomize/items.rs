@@ -87,6 +87,23 @@ const TOAD_HOUSE_ITEMS_MAZE: &[u8] = &[
     ANCHOR,
 ];
 
+/// A stand-in power-up for a Toad House that would otherwise hand over a
+/// second Anchor.
+///
+/// Drawn from the ordinary house pool, which carries no Anchor — a substitute
+/// that was itself an Anchor would be no substitute at all. One roll per seed,
+/// so every such house in a run gives the same thing.
+///
+/// **Why a real item rather than nothing**, when the other three duplicate
+/// paths hand over `$00`: a Toad House *draws* the item it is giving, from
+/// `ToadItem_PatternLeft-1,X` indexed by the item id. Vanilla never puts `$00`
+/// there (`0` means "box not opened yet"), so index 0 reads the byte before
+/// the table — the `RTS` of the routine above it — and renders it as a sprite.
+/// See `anchor_dedup`.
+pub(crate) fn toad_house_substitute<R: Rng>(rng: &mut R) -> u8 {
+    *TOAD_HOUSE_ITEMS.choose(rng).unwrap()
+}
+
 pub(crate) const WARP_WHISTLE: u8 = 0x0C;
 
 /// Full item pool including warp whistle (used when remove_whistles is false).

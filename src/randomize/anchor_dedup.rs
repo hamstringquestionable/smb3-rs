@@ -7,7 +7,9 @@
 //! pool adding houses a long run can collect a fistful.
 //!
 //! This makes a duplicate grant hand over **nothing instead**, by substituting
-//! item `$00`.
+//! item `$00` — except at a Toad House, which hands over a random power-up
+//! rolled once per seed. A house *draws* the item it gives, and `$00` is not
+//! drawable; see [`house`].
 //!
 //! # `$00` is vanilla's own "no item"
 //!
@@ -135,20 +137,40 @@ const GET_GLUE: [u8; 18] = [
     0x4C, PLAYER_GET_ITEM_REJOIN as u8, (PLAYER_GET_ITEM_REJOIN >> 8) as u8, // 15: JMP
 ];
 
-/// The Toad House hook body: zero the chosen item, then do the `TAX / INX /
-/// RTS` the `JMP` displaced. `INX` is vanilla's "0 means no box opened"
-/// convention, so a zeroed item returns 1 exactly as an unopened box does.
+/// The Toad House hook body: swap the duplicate Anchor for `substitute`, then
+/// do the `TAX / INX / RTS` the `JMP` displaced.
+///
+/// **This is the one path that cannot use `$00`.** A Toad House *draws* the
+/// item it is handing over: `ObjNorm_ToadHouseItem` reads `Objects_Frame`
+/// three times — for the palette, for the inventory store, and for the sprite
+/// tiles via `ToadItem_PatternLeft-1,X`. One value drives all three, so
+/// "show an Anchor but store nothing" is not expressible from here; splitting
+/// them would mean hooking the store itself, in PRG002, which has no free
+/// bytes and would put the routine in PRG030's last always-mapped run.
+///
+/// And `$00` garbles. Vanilla never puts a zero here (`0` means "box not
+/// opened yet" — `PRG008` does `TXA / BEQ` on exactly that), so index 0 reads
+/// the byte *before* `ToadItem_PatternLeft`, which is the `RTS` of the routine
+/// above it, and draws `$60` as a sprite. Confirmed on hardware: the reveal
+/// came out as garbage while correctly granting nothing.
+///
+/// So a real power-up it is — rolled once per seed by
+/// [`items::toad_house_substitute`](super::items::toad_house_substitute), from
+/// a pool that holds no Anchor. The player opens the box, sees a real item and
+/// gets it; they just do not get a second Anchor.
 #[rustfmt::skip]
-const HOUSE: [u8; 14] = [
-    0xC9, ANCHOR,                                           //  0: CMP #$0A
-    0xD0, 0x07,                                             //  2: BNE out
-    0x20, ANCHOR_HAS_CPU as u8, (ANCHOR_HAS_CPU >> 8) as u8,//  4: JSR anchor_has
-    0x90, 0x02,                                             //  7: BCC out
-    0xA9, 0x00,                                             //  9: LDA #$00
-    0xAA,                                                   // 11: out: TAX
-    0xE8,                                                   // 12: INX
-    0x60,                                                   // 13: RTS
-];
+fn house(substitute: u8) -> [u8; 14] {
+    [
+        0xC9, ANCHOR,                                           //  0: CMP #$0A
+        0xD0, 0x07,                                             //  2: BNE out
+        0x20, ANCHOR_HAS_CPU as u8, (ANCHOR_HAS_CPU >> 8) as u8,//  4: JSR anchor_has
+        0x90, 0x02,                                             //  7: BCC out
+        0xA9, substitute,                                       //  9: LDA #substitute
+        0xAA,                                                   // 11: out: TAX
+        0xE8,                                                   // 12: INX
+        0x60,                                                   // 13: RTS
+    ]
+}
 
 /// The Princess letter hook body. Does the `LDA LetterItem_ByWorld,Y` the
 /// `JSR` displaced, then zeroes it on a duplicate — vanilla's next two
@@ -166,12 +188,16 @@ const LETTER: [u8; 15] = [
 ];
 
 /// Install all three hooks and the shared test.
-pub fn apply(rom: &mut Rom) {
+///
+/// `house_substitute` is what a Toad House hands over instead of a duplicate
+/// Anchor — see [`house`] for why that one cannot simply give nothing.
+pub fn apply(rom: &mut Rom, house_substitute: u8) {
+    debug_assert_ne!(house_substitute, ANCHOR, "substituting an Anchor for an Anchor");
     rom.push_tag("anchor_dedup");
 
     rom.write_range(FS_ANCHOR_HAS, &ANCHOR_HAS);
     rom.write_range(FS_ANCHOR_GET_GLUE, &GET_GLUE);
-    rom.write_range(FS_ANCHOR_HOUSE, &HOUSE);
+    rom.write_range(FS_ANCHOR_HOUSE, &house(house_substitute));
     rom.write_range(FS_ANCHOR_LETTER, &LETTER);
 
     // Hammer Bro + in-level chest: jump out of `Player_GetItem`'s head, which
@@ -226,9 +252,13 @@ mod asm_checks {
             .assert_ok();
     }
 
+    /// Leaf stands in for "any substitute" — the operand is data to the
+    /// decoder, so every non-Anchor value assembles identically.
+    pub(super) const TEST_SUBSTITUTE: u8 = 0x03;
+
     #[test]
     fn house_is_well_formed() {
-        asm::check(&HOUSE)
+        asm::check(&house(TEST_SUBSTITUTE))
             .allocation(FS_ANCHOR_HOUSE)
             .origin(HOUSE_CPU)
             .hook(&VANILLA_HOUSE_TAIL, 0, &jmp(HOUSE_CPU))
@@ -252,6 +282,22 @@ mod tests {
     fn load_rom() -> Option<Rom> {
         let data = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes").ok()?;
         Rom::from_bytes(&data).ok()
+    }
+
+    /// **The Toad House substitute is never itself an Anchor.**
+    ///
+    /// Swapping a duplicate Anchor for an Anchor would leave the duplicate in
+    /// place and make the whole hook a no-op. The pool it is drawn from holds
+    /// no Anchor — this is the guard for that staying true.
+    #[test]
+    fn the_substitute_is_never_an_anchor() {
+        use rand::SeedableRng;
+        for seed in 0..200u64 {
+            let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(seed);
+            let item = crate::randomize::items::toad_house_substitute(&mut rng);
+            assert_ne!(item, ANCHOR, "seed {seed} rolled an Anchor as the substitute");
+            assert_ne!(item, 0x00, "seed {seed} rolled the undrawable $00");
+        }
     }
 
     /// **The three hook sites hold what this patch thinks they hold.**
@@ -300,11 +346,12 @@ mod tests {
     fn apply_writes_only_its_own_bytes() {
         let Some(base) = load_rom() else { return };
         let mut rom = base.clone();
-        apply(&mut rom);
+        apply(&mut rom, asm_checks::TEST_SUBSTITUTE);
 
         assert_eq!(rom.read_range(FS_ANCHOR_HAS, ANCHOR_HAS.len()), &ANCHOR_HAS[..]);
         assert_eq!(rom.read_range(FS_ANCHOR_GET_GLUE, GET_GLUE.len()), &GET_GLUE[..]);
-        assert_eq!(rom.read_range(FS_ANCHOR_HOUSE, HOUSE.len()), &HOUSE[..]);
+        let house_bytes = house(asm_checks::TEST_SUBSTITUTE);
+        assert_eq!(rom.read_range(FS_ANCHOR_HOUSE, house_bytes.len()), &house_bytes[..]);
         assert_eq!(rom.read_range(FS_ANCHOR_LETTER, LETTER.len()), &LETTER[..]);
 
         assert_eq!(rom.read_range(PLAYER_GET_ITEM, 4), &jmp_padded(GET_GLUE_CPU)[..]);

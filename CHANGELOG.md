@@ -22,9 +22,11 @@ deploys.
   have to sit in front of its own lock.
 - **World Maze: a second Anchor is no longer handed over.** One is permanent
   and does everything, so a duplicate was dead weight in your bag. Beat the
-  Hammer Bro, open the box, watch the reveal — you simply do not collect
-  another. Outside the maze the Anchor is still a consumable surprise, so
-  duplicates are still worth having there.
+  Hammer Bro, open the chest, read the letter — you watch the reveal and
+  simply do not collect another. A Toad House is the exception: rather than
+  give you nothing it hands over a power-up instead, the same one all run.
+  Outside the maze the Anchor is still a consumable surprise, so duplicates
+  are still worth having there.
 - **World Maze: Toad Houses can hand you an Anchor.** Roughly one house in
   nine, on top of the Hammer Bros, Princess letters and chests that already
   deal them — more places to find the key that opens the water. Outside the

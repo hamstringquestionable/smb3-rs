@@ -749,7 +749,7 @@ fn randomize_inner(
             // Only alongside the gate: outside it the Anchor is
             // `mystery_anchor`'s power-up and IS consumed, so duplicates are
             // worth having.
-            randomize::anchor_dedup::apply(rom);
+            randomize::anchor_dedup::apply(rom, randomize::items::toad_house_substitute(&mut rng));
         }
         None => {
             rom.set_tag("qol/canoe_summon");
