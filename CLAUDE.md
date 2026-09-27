@@ -205,6 +205,17 @@ in this ROM: one word, and a whole subsystem's code *and* data become free at
 once. It is worth asking, before writing a trampoline, whether the vanilla
 routine you are working around is reached from exactly one vector.
 
+**PRG030 has one such run left, and it is not free space — it is the 2-player
+Vs Challenge.** `Do_2PVsChallenge` (`$934C..$9478`, file 0x3D35C..0x3D489) is
+**301 bytes** reached from exactly one `JMP` at `$8AE4`, with another 38 at
+`$88F4..$8919`; every internal label is referenced only from inside the block.
+That is 339 bytes in the bank that currently has 18, so before concluding that
+an always-mapped patch cannot fit, read
+`docs/smb3_rom_reference.md` → "The 2-Player Vs Challenge". **It has not been
+reclaimed**, and it is a product decision first: disabling it cleanly means
+patching the collision test in PRG010 (not just the flag read), and it removes
+a vanilla two-player feature from every mode, not only the maze.
+
 ### Size techniques that have actually paid off here
 
 - **Fold constant math into flags.** `ASL` leaves the shifted-out bit in carry;

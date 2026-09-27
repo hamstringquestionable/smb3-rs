@@ -4074,6 +4074,50 @@ Tanooki/Mushroom/Leaf.
 | 0x04 | 10 Coins |
 | 0x05 | 20 Coins |
 
+### The 2-Player Vs Challenge — 339 reclaimable bytes in PRG030
+
+**Not reclaimed. Surveyed 2026-09-27 and recorded because PRG030 is the ROM's
+scarcest bank** (always mapped at `$8000-$9FFF`, and down to one 18-byte `$FF`
+gap). This is by far the largest run available there, and the scan cannot see it
+because it was never `$FF` — the same situation as `FS_FORTRESS_FX` in PRG010.
+
+The Vs Challenge is the minigame two players get when one presses A while
+standing on the other's map tile. It is spread over four banks, but only the
+PRG030 part is worth anything:
+
+| Bank | What | Value |
+|---|---|---|
+| **PRG030** | `$88F4..$8919` (38 bytes, the setup between the flag test and `PRG030_891A`) and `Do_2PVsChallenge` at **`$934C..$9478`, file 0x3D35C..0x3D489 (301 bytes)** | **high** — the scarcest bank |
+| PRG009 | `Vs_2PVsPauseHandler`, `Vs_2PVsInit`, `Vs_2PVsRun` — the minigame itself | low (167 free already) |
+| PRG014 | `Vs_Battlefields` table + `PRG/levels/2PVs.asm` battlefield data | low |
+| PRG027 | `PalSet_2PVs` (palette set 18) | low (657 free already) |
+
+**It is cleanly detachable**, which is the part worth knowing:
+
+- `Do_2PVsChallenge` has **exactly one reference in the ROM** — `JMP
+  Do_2PVsChallenge` at `$8AE4` (file 0x3CAF4, bytes `4C 4C 93`), reached only
+  when `Level_Tileset == 18`.
+- Every internal label of the 301-byte block (`PRG030_939A`, `_93B1`, `_93E7`,
+  `_93F1`, `_93F4`, `_946C`) is referenced **only from inside it** — checked
+  across the whole disassembly. Its one outward branch is the closing
+  `JMP PRG030_8FB2`.
+- `Map_Enter2PFlag` (**zero page `$1D`**) is the trigger and has **exactly two
+  references ROM-wide**: set to `#$12` at the collision test in PRG010
+  (`prg010.asm` ~2748), read at `$88F0` (file 0x3C900, `A5 1D / F0 26`).
+
+**The caveat that makes this more than a two-byte change.** Neutralising the
+flag *read* at `$88F0` is two bytes (`A5 1D` → `A9 00`, so the `BEQ` is always
+taken), but it is not enough: the collision site sets the flag and then falls
+through to `Map_Operation = $10`, the "begin enter level" effect. Ignoring the
+flag alone would run a normal level entry with no level behind it. A correct
+disable belongs at the **collision test in PRG010**, so no Vs is ever requested
+— and what pressing A on top of the other player should then do is a design
+question, not a byte count.
+
+**And it deletes a vanilla two-player feature for every mode**, not only the
+world maze, so it is a product decision before it is a space decision. Noted
+here so the option is costed rather than rediscovered.
+
 ---
 
 ## Sprite Data
