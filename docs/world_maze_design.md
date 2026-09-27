@@ -974,6 +974,63 @@ Two couplings to remember:
   the packed-store design rests on. Two patches now edit the same short stretch
   of game-over code; check a seeded `--write-log` with both enabled.
 
+### Two players, two worlds — BUILT (2026-09-27)
+
+Vanilla cannot express "the players are in different worlds": `World_Num` is a
+single global byte, and worlds only ever advance. The maze breaks both halves of
+that, so a telepad used to drag the partner along — hand the turn over and they
+were standing in a world that had been replaced, at coordinates belonging to a
+map they never walked.
+
+`player_worlds.rs` adds the one thing vanilla is missing: `PLAYER_WORLD`, two
+SRAM bytes in `maze_state`'s run. **Everything else was already per-player** —
+`World_Map_Y/XHi/X`, `Map_Entered_*` and `Map_Prev_XOff/XHi` are all two-byte
+arrays indexed by `Player_Current`, and the map init restores both players' from
+the backups.
+
+**The whole feature is a choice between two entries the engine already has.**
+`PRG030_8775` ends a turn, picks the next living player at `PRG030_879B` and
+jumps to `PRG030_84D7` — the byte after the `Map_Completions` wipe inside
+`$84A0`. So vanilla already re-runs the back half of the map init on every
+hand-over, and that half redraws from `World_Num`. What it skips is the front
+half: `Map_Init`, which rebuilds the world's nine map-object slots from ROM, and
+the per-world flag clears. Skipping those is right when the world has not changed
+and wrong when it has — a hand-over into another world would keep the previous
+world's Hammer Bros standing on the new map. So the router sends a same-world
+hand-over to `$84D7` exactly as vanilla, and a world-changing one to `$84A0`, the
+full init. The two `completion_bits` hooks inside then pack the world being left
+and expand the one being entered with no new code, because their trigger is
+`World_Num != LIVE_WORLD` and nothing else.
+
+Three consequences worth writing down:
+
+- **It stays one shared maze, not two games.** Completions are packed per
+  *world* — both halves of `Map_Completions` — so a fortress one player clears
+  is cleared for the other when they arrive. So are the wand table, the visited
+  table and the map objects. Only *where you are* is per-player.
+- **The router has to live in PRG030**, and takes 20 of that bank's last 42
+  bytes. The map loop banks PRG026 into `$A000` on its way to the hand-over, and
+  `$84D7` opens by calling `SetPages_ByTileset` *because* it is entered with
+  arbitrary banks — the death path at `PRG030_9130` jumps straight there out of a
+  level. A jump into the map bank from that site would be a bet on the window.
+  Its sibling — the marker gate — is hooked from PRG010's own `Map_No_Pan` and
+  pays no such rent.
+- **`Map_No_Pan` draws the inactive player's marker**, which in separate worlds
+  is a partner stranded wherever their own map put them. The gate answers `$80`
+  to the alive test — reads as "deceased", so vanilla's own `BMI` skips the draw
+  — adding one new way to reach a branch that was already there.
+
+What keeps the table true is `completion_bits`, not this module:
+`WIPE_REPLACEMENT`'s world-changed arm is the single choke point for every world
+change the live player can make (telepad, whistle, airship, warp zone), and
+`NEW_GAME_INIT` seeds both entries with the starting world — which it must,
+because `world_order` can start a game anywhere and zeroed bytes would tell the
+second player they began in World 1.
+
+One-player mode never reaches any of it: `Player_Current` never leaves 0, so the
+router's compare is always equal and the marker gate sits behind vanilla's own
+`Total_Players` test.
+
 ## Cross-world locks
 
 > **SUPERSEDED by the fortress-FX rework (2026-09-06), one day after this was

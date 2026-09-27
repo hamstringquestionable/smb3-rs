@@ -1737,11 +1737,18 @@ fn a_maze_player_starts_with_a_permanent_whistle() {
         let mut rom = rom.clone();
         randomize(&mut rom, 12345, &opts);
 
-        let new_game = rom.read_range(FS_NEW_GAME_INIT, 40);
+        let new_game = rom.read_range(FS_NEW_GAME_INIT, 64);
         assert!(
             writes_slot(new_game, WHISTLE, 0),
             "[{label}] the new-game init puts no whistle in inventory slot 0 — \
              anywhere above an empty slot 0 and the panel will not open for use"
+        );
+        // And the same slot 0 of `Inventory_Items2` ($7DA3), which is Luigi's
+        // own array and not a mirror of Mario's: without this the second player
+        // in a two-player maze has a dead panel and no way to leave a world.
+        assert!(
+            new_game.windows(3).any(|w| w == [0x8D, 0xA3, 0x7D]),
+            "[{label}] the new-game init puts no whistle in Inventory_Items2 slot 0"
         );
 
         // The player's own choices stack on top of it, contiguously, and the

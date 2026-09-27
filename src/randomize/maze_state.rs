@@ -80,9 +80,21 @@ pub(crate) const MAP_OBJ_DEAD: u16 = WANDS_TABLE + WANDS_TABLE_LEN as u16;
 /// reloads, so a "still beaten" bit for one of those would mean nothing.
 pub(crate) const MAP_OBJ_DEAD_LEN: usize = 9;
 
+/// Which world each player is standing in — one byte for Mario, one for Luigi.
+///
+/// `World_Num` is a single global byte, so this is the only thing the maze adds
+/// to make the two players independent; everything positional already is. See
+/// [`super::player_worlds`] for what reads it and what keeps it true.
+///
+/// Indexed by `Player_Current` straight off the register vanilla already
+/// loaded, which is what makes both readers three bytes each. Two entries
+/// exactly — `Player_Current` is 0 or 1 — and `player_worlds` pins that.
+pub(crate) const PLAYER_WORLD: u16 = MAP_OBJ_DEAD + MAP_OBJ_DEAD_LEN as u16;
+pub(crate) const PLAYER_WORLD_LEN: usize = 2;
+
 /// First byte after everything allocated above — where the next allocation
 /// starts.
-pub(crate) const MAZE_STATE_NEXT: u16 = MAP_OBJ_DEAD + MAP_OBJ_DEAD_LEN as u16;
+pub(crate) const MAZE_STATE_NEXT: u16 = PLAYER_WORLD + PLAYER_WORLD_LEN as u16;
 
 /// Every byte the maze owns, as one contiguous run.
 ///
@@ -109,5 +121,9 @@ const _: () = {
     assert!(
         WANDS_TABLE + WANDS_TABLE_LEN as u16 <= MAP_OBJ_DEAD,
         "the wand table overlaps the map-object store"
+    );
+    assert!(
+        MAP_OBJ_DEAD + MAP_OBJ_DEAD_LEN as u16 <= PLAYER_WORLD,
+        "the map-object store overlaps the per-player world bytes"
     );
 };

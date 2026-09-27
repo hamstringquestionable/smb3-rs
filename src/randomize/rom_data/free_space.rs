@@ -123,6 +123,13 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
         &["stomp_fairness"],
         "stomp_rise: rise-aware stomp height (32 reserved, 26 used)",
     ),
+    fs(
+        0x3DFE6,
+        20,
+        &["player_worlds"],
+        "world-maze: turn hand-over router, per-player worlds (20 reserved, 17 used — the \
+         bottom of PRG030's last run, leaving the $9FF4 question at its top untouched)",
+    ),
     // PRG031 (always mapped $E000–$FFFF, file 0x3E010)
     fs(0x3E924, 25, &["title_screen"], "sprite copy routine"),
     fs(0x3E93D, 40, &["title_screen"], "sprite data table"),
@@ -154,10 +161,10 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
     fs(0x3FFF0, 26, &["card_speed_clear"], "XOR trampoline"),
     // PRG025 (file 0x32010, CPU $C000–$DFFF while the title screen runs)
     fs(
-        0x33FC8,
-        40,
+        0x33FB0,
+        64,
         &["completion_bits"],
-        "world-maze: the title screen's new-game signal (40 reserved, 38 used)",
+        "world-maze: the title screen's new-game signal (64 reserved, 50 used)",
     ),
     fs(0x33FF0, 32, &["title_screen"], "title menu B-to-mute toggle (32 reserved, 22 used)"),
     // PRG026 (file 0x34010, CPU $A000–$BFFF)
@@ -257,6 +264,13 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
         "world_persist POC: arrival-position restore after Map_Init (64 reserved, 56 used)",
     ),
     fs(
+        0x156AC,
+        24,
+        &["player_worlds"],
+        "world-maze: hide the other player's map marker when they are in another world \
+         (24 reserved, 15 used)",
+    ),
+    fs(
         0x156DC,
         128,
         &["completion_bits"],
@@ -297,7 +311,7 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
         0x15FC0,
         60,
         &["completion_bits"],
-        "world-maze: the Map_Completions wipe, replaced (60 reserved, 34 used)",
+        "world-maze: the Map_Completions wipe, replaced (60 reserved, 40 used)",
     ),
     fs(
         0x15FFC,
@@ -489,9 +503,9 @@ pub(crate) const FS_TITLE_MUTE: usize = 0x33FF0; // 32 reserved, 22 used
 // `STA Debug_Flag` at 0x30CC7 (PRG024 CPU $ACB7). Same bank and the same
 // reasoning as FS_TITLE_MUTE — PRG025 is at $C000 for the whole title screen —
 // and sited immediately *before* it, so the two sit at the tail of the run
-// together and a bundled title hack starting at 0x33529 still has 2719 bytes
+// together and a bundled title hack starting at 0x33529 still has 2695 bytes
 // of clear filler ahead of them.
-pub(crate) const FS_NEW_GAME_INIT: usize = 0x33FC8; // 40 reserved, 38 used
+pub(crate) const FS_NEW_GAME_INIT: usize = 0x33FB0; // 64 reserved, 50 used
 
 // The five world-maze constants below are **offset reservations**: the address
 // is decided here, in one place, so the features being built alongside each
@@ -731,6 +745,13 @@ pub(crate) const FS_PACK_WORLD: usize = 0x155C4; // 40 reserved, 33 used
 // `FS_MAZE_GAMEOVER` the next 32, leaving 0x1564C..0x1566C unclaimed.
 pub(crate) const FS_RESTORE_ARRIVAL: usize = 0x1566C; // 64 reserved, 56 used
 
+// The other-player marker gate (`player_worlds`), hooked from PRG010's own
+// `Map_No_Pan`, so the bank is its caller's and no window has to be argued
+// about. Sited in the unclaimed middle of the same $FF run FS_LOCK_ENTRIES
+// opens and FS_COMPLETION_BASES closes: the 48 bytes from 0x156AC to
+// FS_MASK_BUILD's 0x156DC, with our own allocations on both sides of it.
+pub(crate) const FS_MARKER_GATE: usize = 0x156AC; // 24 reserved, 15 used
+
 // The portal arrival stash and the table it reads, together because the stash
 // addresses the table absolutely and so is origin-locked to it.
 //
@@ -760,7 +781,7 @@ pub(crate) const FS_PACK_PLANE: usize = 0x15794; // 112 reserved, 99 used
 pub(crate) const FS_UNPACK_PLANE: usize = 0x15F4C; // 80 reserved, 72 used
 pub(crate) const FS_COMPLETION_BASES: usize = 0x15804; // 12 reserved, 9 used
 pub(crate) const FS_UNPACK_WORLD: usize = 0x15F9C; // 36 reserved, 33 used
-pub(crate) const FS_WIPE_REPLACEMENT: usize = 0x15FC0; // 60 reserved, 34 used
+pub(crate) const FS_WIPE_REPLACEMENT: usize = 0x15FC0; // 60 reserved, 40 used
 // Runs to 0x16010, the end of PRG010.
 pub(crate) const FS_SWAP_AT_RELOAD: usize = 0x15FFC; // 20 reserved, 18 used
 
@@ -881,6 +902,18 @@ pub(crate) const FS_ANCHOR_ITEM_GUARD: usize = 0x355B1; // 12 bytes (CPU $B5A1)
 // outside this reservation either way, but anyone taking the remaining 42 bytes
 // should confirm that before trusting the top of the gap.)
 pub(crate) const FS_STOMP_RISE: usize = 0x3DFC6; // 32 reserved, 26 used
+
+// The world maze's turn hand-over router (`player_worlds`). It has to be in an
+// always-mapped bank: the map loop banks PRG026 into $A000 on its way to the
+// hand-over, and `PRG030_84D7` is entered with arbitrary banks from the death
+// path — so a jump into the map bank from this site would be a bet on the
+// window. The routine touches only RAM and jumps back into PRG030, so it needs
+// no window at all.
+//
+// It takes the BOTTOM of the 42-byte run above deliberately: the `JSR $9FF4`
+// question FS_STOMP_RISE's note leaves open is at the run's top ($9FF4 is file
+// 0x3E004), and this reservation ends at 0x3DFFA, well below it.
+pub(crate) const FS_TURN_SWAP: usize = 0x3DFE6; // 20 reserved, 17 used
 
 /// CPU address of the rise-aware stomp-height routine ($9FB6).
 pub(crate) const STOMP_RISE_CPU: u16 = super::prg030_file_to_cpu(FS_STOMP_RISE);

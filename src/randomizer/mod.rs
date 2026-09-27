@@ -546,6 +546,10 @@ fn randomize_inner(
             // tile's chain into the airship. See `map_objects`.
             options.disable_autoscroll,
         );
+        // After world_persist: `completion_bits` (which it calls) owns the two
+        // `$84A0` hooks that keep the per-player world table true.
+        rom.set_tag("player_worlds");
+        randomize::player_worlds::apply(rom);
         rom.set_tag("world_travel");
         // The whistle cycles the worlds in the order the player numbers them,
         // which is `world_order`'s spine and not the internal index.

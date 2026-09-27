@@ -116,16 +116,16 @@ is the one to read:
 | Bank | Mapped at | Free left | Largest single gap |
 |------|-----------|-----------|--------------------|
 | PRG031 | `$E000–$FFFF`, always | 29 | **16** |
-| PRG030 | `$8000–$9FFF`, always | 42 | 42 |
+| PRG030 | `$8000–$9FFF`, always | 22 | 22 |
 | PRG001 | swapped, in-level (object AI) | 60 | 38 |
 | PRG003 | swapped, in-level (object AI) | 5 | 5 |
 | PRG004 | swapped, in-level (object AI, group 3) | 426 | 426 |
 | PRG005 | swapped, in-level (object AI) | 58 | 58 |
 | PRG006 | `$C000–$DFFF`, in-level (enemy data) | 1392 | 1392 |
 | PRG007 | swapped, in-level (object AI) | 27 | 27 |
-| PRG010 | `$C000–$DFFF`, map | 160 | 64 |
+| PRG010 | `$C000–$DFFF`, map | 136 | 64 |
 | PRG011 | `$A000–$BFFF`, map | 46 | 14 |
-| PRG025 | `$C000–$DFFF`, title screen | 2731 | 2719 |
+| PRG025 | `$C000–$DFFF`, title screen | 2707 | 2695 |
 | PRG012 | `$A000–$BFFF`, map reload | 620 | 240 |
 | PRG026 | `$A000–$BFFF`, map/inventory | 2269 | 2251 |
 | PRG027 | `$A000–$BFFF`, letter cutscene | 673 | 673 |
@@ -136,10 +136,14 @@ PRG000 and PRG002 have no `$FF` filler left at all.
 The always-mapped banks are effectively full, and PRG031's scraps are now
 spent: `anchor_dedup` took its 30- and 22-byte gaps in 2026-09, on the
 principle that a run too small for a real allocation should go to the routine
-that fits it. A patch that must run regardless of the current bank now has
-**one 42-byte gap in PRG030 and nothing over 16 bytes in PRG031**, so past that
-a trampoline into a swapped bank is the only option — and that costs bytes too.
-Guard the PRG030 run accordingly.
+that fits it. PRG030's run went the same way in 2026-09: `player_worlds`' hand-over router
+took 20 of its 42 bytes, because the turn hand-over is entered with the level's
+banks and could not be reasoned about from anywhere else. A patch that must run
+regardless of the current bank now has **one 22-byte gap in PRG030 and nothing
+over 16 bytes in PRG031**, so past that a trampoline into a swapped bank is the
+only option — and that costs bytes too. Guard what is left of the PRG030 run
+accordingly, and check first whether the hook really needs it: the router does,
+its sibling marker gate in PRG010 does not.
 
 PRG029's 1528-byte run is mid-bank and has **not** been through the
 unreferenced check; its 20-byte tail (`prg029.asm` ends "Rest of ROM bank was

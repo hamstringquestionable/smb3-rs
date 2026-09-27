@@ -59,6 +59,10 @@ pub mod palette_variants;
 pub mod palettes;
 pub mod pipe_helpers;
 pub mod piranha_rooms;
+/// Two players, two worlds: in the maze each player keeps the world they are
+/// standing in, and the turn hand-over carries the map with it. One-player mode
+/// never reaches the new path. Its SRAM byte pair is [`maze_state`]'s.
+pub mod player_worlds;
 pub mod podoboo_gauntlet;
 pub mod poison_mushroom;
 pub mod powerups;
