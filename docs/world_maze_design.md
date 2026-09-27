@@ -1655,10 +1655,12 @@ wand counts — which is also the hardest setting. Nothing asks today.
 - **Whether K should scale with `world_count`** rather than being flat. It is
   currently clamped to the airships the spine offers, which is the safe half of
   the answer, not the interesting one.
-- **The water gap as a real key** (repurposing the anchor into a boat snap).
-  Parked: canoe edges gate on dock walk-reachability in the walker and that is
-  load-bearing, so a portable boat changes walker semantics rather than adding
-  an item.
+- ~~**The water gap as a real key**~~ (repurposing the anchor into a boat snap)
+  — **built**, as the `item_gates` option: maze only, off by default. It did
+  change walker semantics rather than adding an item, exactly as feared, which is
+  why the gate is *data* the walker reads (`walk::MazeWorld::canoe_locked`) and
+  an empty gate list restores the old shape byte for byte. See `canoe_gate`,
+  `key_sites` and `key_placement`.
 - **Same-world locks through the foreign-lock table.** It would free FX slots at
   the cost of the crumble animation, but the 4-byte rows do not fit a store that
   would then need both the packed `(byte, mask)` and the live

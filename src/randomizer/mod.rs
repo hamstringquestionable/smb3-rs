@@ -105,6 +105,13 @@ fn randomize_inner(
     // at the `items` call site below, which is the other reader. Hoisted here
     // because starting items resolve before that point.
     let whistles_removed = options.remove_whistles || options.world_maze;
+    // Item gates, as asked for. The option is maze-only — in a fixed world order
+    // the player cannot return to a world they have left, so a key would have to
+    // sit in front of its own gate — and this is the one place that conjunction
+    // is spelled out, so no reader has to remember it. It is *whether gates were
+    // asked for*; which ones got installed is `state.gates`, and which of those
+    // the ROM side must honour is `canoe_gated`, both further down.
+    let item_gates = options.world_maze && options.item_gates;
     let resolved_items: Vec<u8> = options
         .starting_items
         .iter()
@@ -367,7 +374,13 @@ fn randomize_inner(
             &mut item_rng,
             whistles_removed,
             piranha_active,
-            options.world_maze,
+            // Is the Anchor a key this run? Every gate this build installs is
+            // keyed on it, so the option answers that on its own — and it has to
+            // be answered here, before the maze exists, because the item tables
+            // are rolled ahead of the overworld. With gates off the Anchor is
+            // `write_mystery_anchor`'s surprise power-up and a Toad House stays
+            // the one shop the player is told about.
+            item_gates,
         );
     } else if whistles_removed {
         rom.set_tag("items/whistles");
@@ -477,10 +490,28 @@ fn randomize_inner(
         // `place` may give up on a world's gate, and `gated` is what the ROM
         // side must then honour — beaching water the model did not key is
         // precisely how a seed strands a player.
+        //
+        // **Skipped entirely with `item_gates` off, and that is the whole
+        // opt-out.** No gates installed means `state.gates` is empty, which every
+        // reader downstream already treats as "no item gates exist": the walker
+        // takes its old shape (`walk::MazeWorld::canoe_locked`), the metrics are
+        // exact rather than conservative, and `gated` stays all-false — which is
+        // what sends the ROM side to the free-summon arm further down. There is
+        // no second switch to keep in step.
+        //
+        // Both halves are gate-agnostic: `install_item_gates` is the one place
+        // that says which gates exist, and the two passes below read `gates` as
+        // data. A new gate kind lands there and here it changes nothing.
         let mut state = state;
-        state.gate_every_canoe(randomize::item_keys::Key::Anchor);
-        let sites = randomize::key_sites::sites(rom, &build, &state);
-        randomize::key_placement::place(rom, &mut build, &mut state, sites, &mut rng);
+        if item_gates {
+            state.install_item_gates();
+            let sites = randomize::key_sites::sites(rom, &build, &state);
+            randomize::key_placement::place(rom, &mut build, &mut state, sites, &mut rng);
+        }
+        // Per-target, because the ROM side cannot be generic — each target is a
+        // different patch. The irrefutable `let` is the enforcement: add a
+        // `GateTarget` variant and this stops compiling until the new target's
+        // patch is wired in alongside the canoe's.
         let mut gated = [false; 8];
         for g in &state.gates {
             let randomize::maze::GateTarget::Canoe(w) = g.target;
@@ -731,13 +762,14 @@ fn randomize_inner(
     // The canoe, one way or the other. Both arms install the same summon
     // routine in `FS_CANOE_SUMMON`; they differ in what triggers it.
     //
-    // - **Maze**: the gate. Boats sit one tile offshore and only an Anchor
-    //   used on a dock calls one over, so the water is a lock. Maze only,
-    //   because in a fixed world order the player cannot go back to a world
-    //   they have left, so the key would have to sit in front of its own lock
-    //   — not a gate at all. `gated` is per world: key placement may have
-    //   given up on one world's gate, and beaching water the model did not key
-    //   is precisely how a seed strands a player.
+    // - **The gate** (the `item_gates` option, maze only and off by default):
+    //   boats sit one tile offshore and only an Anchor used on a dock calls one
+    //   over, so the water is a lock. Maze only because in a fixed world order
+    //   the player cannot go back to a world they have left, so the key would
+    //   have to sit in front of its own lock — not a gate at all. `gated` is
+    //   per world: key placement may have given up on one world's gate, and
+    //   beaching water the model did not key is precisely how a seed strands a
+    //   player.
     // - **Otherwise**: the rescue. Press A on any dock to summon the shared
     //   canoe. Covers the softlocks `map_warp` cannot (1P, and both players
     //   stranded).

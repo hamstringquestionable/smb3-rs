@@ -42,10 +42,11 @@
 //!
 //! `items::write_mystery_anchor` repoints the very same `Inv_UseItem` jump
 //! table entry to make an anchor a random power-up. The two cannot both hold
-//! it, so the caller picks: with the world maze on the anchor is the boat key,
-//! and without it the mystery power-up stands. [`apply`] therefore accepts
-//! either value at the vector, so it can be installed over a finished ROM as
-//! well as a vanilla one — which is what `testrom` does.
+//! it, so the caller picks: under the `item_gates` option — World Maze only,
+//! and off by default — the anchor is the boat key, and otherwise the mystery
+//! power-up stands. [`apply`] therefore accepts either value at the vector, so
+//! it can be installed over a finished ROM as well as a vanilla one — which is
+//! what `testrom` does.
 
 use crate::randomize::rom_data::{
     FS_ANCHOR_USE, MAP_OBJ_IDS_MASTER, MAP_OBJ_XHIS_MASTER, MAP_OBJ_XLOS_MASTER,
@@ -169,6 +170,20 @@ fn move_canoes_offshore(rom: &mut Rom, gated: &[bool; 8]) {
 }
 
 // --- Installation ----------------------------------------------------------
+
+/// Does the Anchor call a boat over, rather than hand over a power-up?
+///
+/// Reads the one word the two features argue over, so a caller asking "did the
+/// gate go in" does not re-derive the vector's offset. `testrom` asks before
+/// installing its own copy.
+///
+/// Native-only, like that caller: the web build never installs the gate over a
+/// finished ROM, and an unconditional accessor trips CI's wasm32 `-D warnings`
+/// pass as dead code.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn is_installed(rom: &Rom) -> bool {
+    rom.read_range(USE_ITEM_TABLE + ANCHOR_ITEM_ID * 2, 2) == ANCHOR_USE_CPU.to_le_bytes()
+}
 
 /// Install the gate: the anchor becomes the boat key, and the boats named by
 /// `gated` move out of reach.

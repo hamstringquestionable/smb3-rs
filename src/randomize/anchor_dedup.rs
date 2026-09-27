@@ -45,11 +45,12 @@
 //! run is the only always-mapped gap big enough for a future feature needing a
 //! real allocation, and 27 bytes of scrap was never going to hold one.
 //!
-//! # Maze only
+//! # Only where the Anchor is a key
 //!
-//! Outside the maze the Anchor is `mystery_anchor`'s per-seed surprise
-//! power-up and **is** consumed on use, so duplicates are worth having. This
-//! is installed only alongside the canoe gate, where the Anchor is permanent.
+//! Without the `item_gates` option the Anchor is `mystery_anchor`'s per-seed
+//! surprise power-up and **is** consumed on use, so duplicates are worth having.
+//! This is installed only alongside the canoe gate, where the Anchor is
+//! permanent.
 
 use super::rom_data::{FS_ANCHOR_GET_GLUE, FS_ANCHOR_HAS, FS_ANCHOR_HOUSE, FS_ANCHOR_LETTER};
 use crate::rom::Rom;
