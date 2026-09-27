@@ -27,9 +27,6 @@ pub enum Key {
 impl Key {
     /// This key's **Global Item ID** — the byte the reward tables hold and the
     /// inventory stores. `items.rs` writes exactly this value.
-    // Reason: the site list that stamps a key into a reward table is the
-    // caller, and it lands with the placement pass.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) const fn item_byte(self) -> u8 {
         match self {
             Key::Anchor => 0x0A,

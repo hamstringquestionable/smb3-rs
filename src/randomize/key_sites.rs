@@ -80,8 +80,6 @@ impl KeySite {
     ///
     /// Reported rather than acted on: which site to spend is the chooser's
     /// policy, not this list's.
-    // Reason: the chooser is the caller, and lands with the placement pass.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn current_item(&self, rom: &Rom, build: &BuildResult) -> u8 {
         match self.sink {
             Sink::HammerBro { world, idx } => build
