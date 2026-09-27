@@ -5892,3 +5892,135 @@ The clock icon at `$2B50` is static in both template copies, but PRG030's
 is likewise shared. Blanking the icon in any of them removes it from every
 level. A readout placed in these cells wears the clock whether it wants to or
 not.
+
+## The map→level entry transition, and the JP "box out" the US build removed
+
+Entering anything from the world map runs a closing-box wipe before the level
+loads. `Map_EnterLevelFX` (`$20`, zero page — shared with `Map_IntBoxErase`,
+`Map_ClearLevelFXCnt` and `Map_ScrollOddEven`) is its state:
+
+| value | meaning |
+|---|---|
+| 0 | not in a transition |
+| 1 | boxing **in** — live in the US release |
+| 2 | boxing **out** — Japanese version only, unreachable in the US build |
+
+The two halves are split between the main loop, which computes what the border
+should look like, and the NMI, which blits it:
+
+* **Driver** — `PRG030_87BD` onward. It is reached from `PRG030_873F` when
+  `Map_Operation >= $F` and `Map_Player_SkidBack` is zero, and it jumps
+  **straight** to the box-in with no `Palette_FadeOut` first (the fade belongs to
+  `PRG030_874F`, the skid-back / `Map_Operation = 4` path). Setting
+  `Map_Operation = $10` is therefore what commits to the transition; that store
+  lives at `PRG010_CEA7`.
+* **Renderer** — `Map_EnterLevel_Effect`, PRG026 `$ACCB`-ish, called from the
+  NMI's Update_Select "Normal" path at PRG031 `$F610`. The NMI banks PRG026 into
+  `$A000` itself before the call, so the renderer is reachable regardless of what
+  the main loop has mapped there.
+
+### Pacing and geometry
+
+`PRG030_87BD` initialises, at CPU `$882A` for the count:
+
+```
+Map_EntTran_Cnt   = $30   ; $0450 — 49 loop iterations, one WaitVSync each (~0.82s NTSC)
+Map_EntTran_TBCnt = $1F   ; top/bottom strip, 32 tiles wide
+Map_EntTran_LRCnt = $17   ; left/right strip, 24 tiles tall
+Map_EntTran_BVAddrH/L[0..3]   ; per-edge VRAM address: top, bottom, right, left
+```
+
+`Map_EntTran_BorderLoop` (`$044F`) cycles 0-3, so **each edge is drawn and
+advanced once every four frames** — about 12 steps per edge over the 49 frames.
+The loop tail is `DEC Map_EntTran_Cnt` at CPU `$88A5` (file 0x3C8B5, exactly
+three bytes), falling out at `PRG030_88AD`, "Completed the entrance transition".
+
+The advance is `Border_Do` (PRG026), and it is **diagonal, not orthogonal**:
+
+| edge | delta | note |
+|---|---|---|
+| top | `+33` | one row down, one column right |
+| bottom | `−31` | one row up, one column right |
+| right | `+31` | |
+| left | `+33`, and `LRCnt -= 2` | marches right *and* down while shrinking |
+
+So the left/right edges are not column strips and cannot be turned into a
+straight left-to-right wipe by reparameterising — the constants are shared by
+every level entry.
+
+**The init comments in `PRG030_87BD` have "left" and "right" swapped.** The
+source labels `BVAddrL+2` as left, but it initialises to `$1F` (column 31) and
+`Border_Do`'s jump table is `Top, Bottom, Right, Left`. Slot 2 is the right edge,
+slot 3 the left. The table is the authority.
+
+The last six frames stop animating and pump in a fixed fill instead: when
+`Map_EntTran_Cnt < 6` the renderer writes 32 black tiles at `$2B00 |
+PRG026_ACCB[Cnt]`, where `PRG026_ACCB = $40, $40, $20, $00, $00, $00` — only
+three distinct rows near the bottom, a patch-up rather than a full-screen
+backstop. Shortening `Map_EntTran_Cnt` therefore leaves the box visibly
+unclosed.
+
+### What the US build removed, and what survives
+
+`PRG030` skips the box-out init with a single unconditional `JMP PRG030_8CB8`,
+leaving roughly **260 bytes of dead driver** between it and that label, plus the
+dead helpers `BoxOut_SetThisBorderVRAM`, `BoxOut_PutPatternInStrip`,
+`BoxOut_CalcOffsets`, `BoxOut_CalcWhich8x8` and a 30-byte LUT
+(`BoxOut_ByVStart`, `BoxOut_InitVAddrH`, `BoxOut_InitVAddrL0..3`). Note
+`Map_Clear_EntTranMem` sits among those helpers and **is** still live, so the
+dead region is not one contiguous run. None of it is `$FF`, so `--free-space`
+counts none of it.
+
+**The renderer half was never removed.** PRG031 still dispatches
+`Map_EnterLevelFX = 2`:
+
+```
+0x3F63E:  20 F1 AD    JSR $ADF1   ; Level_Opening_Effect (PRG026), plus BorderOut_Do
+```
+
+That makes the `FX = 2` arm a ready-made hook for any second map-entry effect:
+one word at 0x3F63F repoints it, and the dead PRG026 code underneath is space in
+the bank the NMI already maps. `prg030.asm` even carries the maintenance note
+that a revived box-out "needs to sync with `BoxOut_ByVStart`".
+
+The box-out reads **level** tile memory to restore what it uncovers
+(`Level_Tileset` → `TileLayout_ByTileset` → `[Map_Tile_AddrL],Y`). That is not
+map-specific in principle — `TileLayout_ByTileset` entry 0 is literally
+`Tile_Layout_TS0 ; 0 - Map`, and PRG010's own map scroll-draw uses the identical
+chain — but the driver assumes a level's geometry: it omits the
+`INC Map_Tile_AddrH` that PRG010 applies ("Map is always on the *lower* tile
+memory"), ignores the map's four-screen base and scroll, reads `Level_7Vertical`
+and `Level_SizeOrig`, and indexes `BoxOut_InitVAddrH` off `Vert_Scroll` against
+`GamePlay_VStart`, whose row-0 entry is `$21` where the map's nametables are
+`$28`/`$2A`.
+
+### Where the warp zone diverges
+
+World 9 is the one entry that runs the box-in and then does *not* load a level.
+`PRG030_892A`, **after** the zero-page wipe at `PRG030_88C8` and after
+`Map_PrepareLevel`:
+
+```
+	LDA World_Num
+	CMP #$08
+	BNE PRG030_893F
+	LDA #MUS1_STOPMUSIC / STA Sound_QMusic1
+	LDA Map_Warp_PrevWorld / STA World_Num
+	JMP PRG030_84A0
+```
+
+`Map_PrepareLevel` is why that branch cannot be borrowed for an arbitrary tile.
+Its position search (`PRG012_B150` / `B17D`) is **unbounded**: on no match it does
+`INC Temp_Var2 / JMP` and advances a whole pointer page, retrying until some
+byte's high nibble happens to match. For a tile with no pointer-table entry it
+reads arbitrary ROM. Anything wanting "box in, then go to `$84A0`" should divert
+at `PRG030_88AD`, before both the wipe and that search — which is what
+`world_persist`'s `PAD_BOX_DONE` does.
+
+Also note `PRG030_87BD` stamps `Map_Entered_XHi,X` from `World_Map_XHi,X` on the
+way in (along with `Map_Entered_Y`/`X` and `Map_Prev_X*`), so that byte cannot
+carry anything across the transition.
+
+Relevant addresses gathered here: `Map_EnterLevelFX` `$20`, `PPU_CTL2_Copy`
+`$16`, `Map_EntTran_Cnt` `$0450`, `Map_EntTran_BorderLoop` `$044F`,
+`Map_Operation` `$0729`, `PPU_CTL2` `$2001`.
