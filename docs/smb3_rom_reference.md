@@ -1737,6 +1737,66 @@ construction. **`Inventory_Items` ($7D80..$7D9B) is below the start of that loop
 and is never touched**, which is what lets a permanent-item inventory survive a
 Continue with no new code.
 
+### Every 1-Up in the Game: the Seven `INC Player_Lives,X` Sites
+
+`Player_Lives` is `$0736` (Mario) / `$0737` (Luigi), and with one exception
+every award in the ROM is the same three bytes, `FE 36 07` —
+`INC Player_Lives,X` with `X = Player_Current`. Suppressing extra lives is
+therefore an offset list, not a code change. Verified against USA Rev1:
+
+| File | Bank / CPU | Southbird label | Reachable in 1P |
+|---|---|---|---|
+| **0x05D99** | PRG002 | `EndLevelCard_Give1UpsAndCycle` | yes — end-of-level card award, one INC per life |
+| **0x0EB0F** | PRG007 | score-popup path, `CPY #$0D` | yes — the green mushroom, stomp chains, every in-level 1-Up |
+| **0x2D2BE** | PRG022 $D2AE | before `Roulette_DrawXUpReward` | yes — Spade-panel roulette X-Up |
+| **0x2DD50** | PRG022 $DD40 | `CMP #CARD_1UP` match | yes — N-Spade card game |
+| **0x350A7** | PRG026 $B097 | coin rollover (see above) | yes — 100 coins |
+| 0x2CD75 | PRG022 $CD65 | `Bonus_GetDiePrize` | **no** — 2P dice bonus game only |
+| — | PRG009 $A011 | `Vs_CardAwardLives` | **no** — 2P Vs. battle only |
+
+The last one is also the one exception to the idiom: it `ADD`s from
+`Vs_LivesReward` (PRG009 **$A000**, file **0x12010**, eight bytes indexed by an
+OR of `Vs_CardWeight` values), so it can hand out 2, 3 or 5 at once. Zeroing
+that table is the way to neuter it; `qol::card_speed_clear` already zeroes
+index 7.
+
+`qol::apply_mariomon` NOPs the five 1P-reachable sites and leaves the two
+2P-only ones as upstream does.
+
+### The Game Over Menu Reads Its Cursor Twice, in Two Banks
+
+`Map_GameOver_CursorY` (**$7DCB**) is both the popup cursor's Y position *and*
+the selection: `$60` on the top entry (CONTINUE), `$68` on the bottom one
+(END), so **bit 3 is the answer** and the engine tests it with `AND #$08`
+rather than comparing. `GameOver_DoMenu` toggles it with `EOR #$08`.
+
+The decision is then spread across two banks, which is the part worth knowing
+before patching either half:
+
+1. **PRG010 $C738 (`GameOver_DoMenu`, file 0x14748)** turns the cursor into
+   `GameOver_State`: `LDX #$09` (END), `AND #$08`, `BNE` past `LDX #$02`
+   (CONTINUE). State 2 erases the box and twirls the player back onto the map.
+   State 9 falls out of `GameOver_Loop` entirely — "handled specially outside
+   of this routine".
+2. **PRG030 $92B6 (file 0x3D2C6)** is where state 9 lands, and it re-reads
+   `$7DCB` and branches on bit 3 a *second* time. Set → `$932A`, the
+   out-of-lives hand-off (reset, or pass the turn to the other player in 2P).
+   Clear → restore lives to 4 and the saved map position, then clear cards,
+   coins and map completions — the Game Over penalty
+   `qol::apply_no_game_over_penalty` defuses.
+
+So "continue" is reachable through two independent doors, and closing only the
+PRG010 one leaves the PRG030 restore path live. `qol::apply_mariomon` shuts
+both: it retunes the `LDX #$02` operand to `#$09` and NOPs the `AND #$08` at
+PRG030 $92C1 (file 0x3D2D1), after which `A` is `$60` or `$68`, both non-zero,
+so the hand-off is taken whichever entry was picked.
+
+**The popup text is written twice, too.** The map is horizontally mirrored, so
+`Video_DoGameOver00` (PRG010, file ~0x14110) emits each string into both
+nametables, and the second copy is split around the seam: CONTINUE is one run
+at VRAM `$29AF` and, separately, `"C"` at `$29BF` plus `"ONTINUE"` at `$29A0`.
+Any retitling has to hit both, at file **0x1412C** and **0x141AC**.
+
 ### Reclaimable Dead *Code* in PRG000 — Invisible to `--free-space`
 
 `smb3-rs --free-space` counts `$FF` filler runs, so it reports PRG000 as having

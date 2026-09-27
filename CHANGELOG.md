@@ -11,6 +11,14 @@ deploys.
 
 ### Added
 
+- **New option — Mariomon.** Off by default. A permadeath challenge: nothing in
+  the game hands out a 1-Up any more — not the green mushroom, not 100 coins,
+  not the end-of-level cards, not the Toad House minigames — so the lives you
+  start with are every life you get. When they run out the Game Over popup no
+  longer offers a way back onto the map, and its first entry says CONCEDE
+  instead of CONTINUE to say so. Bundles MaCobra52's "No Extra Lives" and "No
+  Continues" patches behind one flag.
+
 - **New option — Item Gates (World Maze).** Off by default. A way forward can be
   locked behind an item you have to find first, and every seed is guaranteed to
   put that item somewhere you can reach without it. Maze only: in a fixed world

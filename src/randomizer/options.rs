@@ -624,6 +624,11 @@ pub struct Options {
     /// or card state. (MaCobra52's "No Game Over Penalty" patch.)
     #[serde(default)]
     pub no_game_over_penalty: bool,
+    /// Permadeath challenge mode: nothing grants a 1-Up, and Game Over is
+    /// the end of the run rather than a menu offering a way back. (MaCobra52's
+    /// "No Extra Lives" + "No Continues" patches, bundled.)
+    #[serde(default)]
+    pub mariomon: bool,
     /// Speed up Frog-Suit swimming and running. ("SMB3 - Faster Frog
     /// (tail attack while swimming compatible)" — layers on top of the
     /// always-on tail-attack-while-swimming routine.)
@@ -852,6 +857,7 @@ impl Default for Options {
             fast_mushroom_house: false,
             faster_tail_speed: false,
             no_game_over_penalty: false,
+            mariomon: false,
             faster_frog: false,
             lakitu_stays_down: false,
             shuffle_big_q_rooms: false,

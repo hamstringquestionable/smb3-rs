@@ -879,6 +879,14 @@ fn randomize_inner(
         randomize::qol::apply_no_game_over_penalty(rom);
     }
 
+    // Mariomon (MaCobra52's "No Extra Lives" + "No Continues") — a permadeath
+    // challenge mode: no 1-Ups anywhere a single player can reach them, and the
+    // Game Over popup no longer offers a way back onto the map.
+    if options.mariomon {
+        rom.set_tag("qol/mariomon");
+        randomize::qol::apply_mariomon(rom);
+    }
+
     // Card speed clear: one-of-each clears cards with +1 life but no cutscene.
     if options.card_speed_clear {
         rom.set_tag("qol/card_speed_clear");

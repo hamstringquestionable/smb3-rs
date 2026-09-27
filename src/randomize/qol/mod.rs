@@ -29,7 +29,7 @@ pub use level_clock::apply_real_time_clock;
 pub use macobra::{
     apply_early_sun, apply_fast_mushroom_house, apply_faster_frog, apply_faster_tail_speed,
     apply_infinite_mushroom_houses, apply_japanese_damage, apply_limit_bro_movement,
-    apply_macobra_patches, apply_modern_powerups, apply_no_game_over_penalty,
+    apply_macobra_patches, apply_mariomon, apply_modern_powerups, apply_no_game_over_penalty,
     apply_remove_flashing,
 };
 pub use map_warp::apply_map_warp;

@@ -346,6 +346,10 @@ struct Cli {
     #[arg(long)]
     no_game_over_penalty: bool,
 
+    /// Permadeath challenge mode: no 1-Ups anywhere, and Game Over ends the run (MaCobra52's "No Extra Lives" + "No Continues")
+    #[arg(long)]
+    mariomon: bool,
+
     /// Speed up Frog-Suit swimming and running ("Faster Frog", tail-attack-while-swimming compatible)
     #[arg(long)]
     faster_frog: bool,
@@ -641,6 +645,7 @@ fn build_options(cli: &Cli) -> Options {
             fast_mushroom_house: cli.fast_mushroom_house,
             faster_tail_speed: cli.faster_tail_speed,
             no_game_over_penalty: cli.no_game_over_penalty,
+            mariomon: cli.mariomon,
             faster_frog: cli.faster_frog,
             lakitu_stays_down: cli.lakitu_stays_down,
             shuffle_big_q_rooms: cli.shuffle_big_q_rooms,
