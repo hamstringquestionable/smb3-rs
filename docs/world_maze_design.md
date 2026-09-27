@@ -1055,6 +1055,15 @@ Three more consequences worth writing down:
   `Map_Entered_*` addresses, so a pad taken by Luigi dropped him on the start
   tile and planted his coordinates in Mario's backup. Every store is indexed by
   `Player_Current` now; with one player that is the same address it hardcoded.
+- **The wand-return cutscene zeroed both players' cameras.** `PRG030_9062`,
+  which runs after an airship or castle clear and nothing else, loops over both
+  player slots clearing `Map_Prev_XOff/XHi` — the bytes `PRG030_8634` restores
+  `Horz_Scroll` from. Vanilla is right to: `Map_Init` then puts both players on
+  the new world's start tile, where a zeroed camera is the correct framing. With
+  independent worlds the partner's position survived and their camera did not, so
+  the turn came back to them correctly placed on a map scrolled to page 0. Gated
+  to the live player, in PRG027 — the cutscene has `PAGE_A000 = 27` throughout,
+  so this costs none of PRG030's or PRG031's last always-mapped bytes.
 - **The router has to live in PRG030**, and takes 24 of that bank's last 42
   bytes. The map loop banks PRG026 into `$A000` on its way to the hand-over, and
   `$84D7` opens by calling `SetPages_ByTileset` *because* it is entered with

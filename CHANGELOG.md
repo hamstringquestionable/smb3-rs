@@ -59,6 +59,10 @@ deploys.
 - **World Maze, two players: Luigi arrives where a telepad aimed him.** Pads
   only ever placed Mario, so the second player landed on the world's start tile
   instead — and overwrote Mario's saved position on the way.
+- **World Maze, two players: your partner's map is still framed on them after
+  you beat an airship.** The wand-return scene reset both players' cameras, so
+  the turn came back to a partner standing in the right place on a map scrolled
+  to the wrong screen.
 - **World Maze, two players: Luigi starts with a whistle too.** He had an
   empty item panel and no way to leave a world — the whistle only ever landed
   in Mario's bag.

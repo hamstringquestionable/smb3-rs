@@ -210,6 +210,13 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
         &["anchor_dedup"],
         "world-maze: Princess letter Anchor suppression (24 reserved, 15 used)",
     ),
+    fs(
+        0x37D6F,
+        16,
+        &["player_worlds"],
+        "world-maze: keep the partner's map camera across the wand-return cutscene \
+         (16 reserved, 12 used)",
+    ),
     // PRG029 (file 0x3A010, CPU $C000-$DFFF)
     fs(
         0x3BFFC,
@@ -785,6 +792,18 @@ pub(crate) const FS_MARKER_GATE: usize = 0x156AC; // 24 reserved, 15 used
 // SAS helper re-stamps whichever player's slot the loop is on, so a single pass
 // stamps one player and the skipped loop stamps none.
 pub(crate) const FS_LOOP_TAIL: usize = 0x156C4; // 24 reserved, 21 used
+
+// PRG027 (file 0x36010, CPU $A000-$BFFF)
+// Keep the partner's map camera across the king's-wand-return cutscene
+// (`player_worlds`), which zeroes both players' scroll backups.
+//
+// **PRG027 and not an always-mapped bank**, which is the whole saving: the
+// cutscene sets PAGE_A000 = 27 before its loop and nothing between there and
+// the hook rebanks — vanilla calls `CineKing_DoWandReturn` at $A000 every
+// iteration, and `Clear_RAM_thru_ZeroPage` writes only RAM below $0700 while
+// PAGE_A000 lives at $0720. So this costs nothing from PRG030's last 18 bytes
+// or PRG031's last 16.
+pub(crate) const FS_CAMERA_KEEP: usize = 0x37D6F; // 16 reserved, 12 used
 
 // The portal arrival stash and the table it reads, together because the stash
 // addresses the table absolutely and so is origin-locked to it.

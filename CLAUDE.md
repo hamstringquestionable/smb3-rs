@@ -128,7 +128,7 @@ is the one to read:
 | PRG025 | `$C000–$DFFF`, title screen | 2707 | 2695 |
 | PRG012 | `$A000–$BFFF`, map reload | 620 | 240 |
 | PRG026 | `$A000–$BFFF`, map/inventory | 2269 | 2251 |
-| PRG027 | `$A000–$BFFF`, letter cutscene | 673 | 673 |
+| PRG027 | `$A000–$BFFF`, letter cutscene | 657 | 657 |
 | PRG029 | `$C000–$DFFF`, Toad House | 2548 | 1528 |
 
 PRG000 and PRG002 have no `$FF` filler left at all.

@@ -73,6 +73,28 @@
 //! repositioned, the survivor is untouched. When the turn passes to them, the
 //! router sees their own world and the hand-over path keeps their position.
 //!
+//! # The pattern: vanilla's loops over `Total_Players`
+//!
+//! Enforcing that rule is not one edit, because vanilla asserts "both players
+//! share a world" in more than one place, and each one is a loop over
+//! `Total_Players` touching per-player map state. Three found so far, and a
+//! playtest found two of them:
+//!
+//! 1. **`Map_Init`'s player loop** — position. [`MAP_INIT_GATE`] and
+//!    [`LOOP_TAIL`].
+//! 2. **The king's-wand-return cutscene** (`PRG030_9062`, after an airship or
+//!    castle clear and nothing else) — *camera*. It zeroes both players'
+//!    `Map_Prev_XOff/XHi`, which `PRG030_8634` restores `Horz_Scroll` from, so
+//!    the partner came back correctly placed with the viewport on page 0.
+//!    [`CAMERA_KEEP`].
+//! 3. **`world_persist::RESTORE_ARRIVAL`** — not a loop but the same
+//!    assumption, writing Mario's absolute slots for whoever took a telepad.
+//!
+//! Two siblings were checked and left alone: `PRG030_92B6` (the game-over
+//! continue) writes only `Player_Current`'s camera and is already right, and
+//! the 2P Vs Challenge *swaps* the two players' backups, which is what that
+//! minigame means to do.
+//!
 //! # Two hooks on one loop, and why not one
 //!
 //! The loop counts `X` down from `Total_Players - 1`, so running it once for the
@@ -157,8 +179,8 @@ use crate::rom::Rom;
 
 use super::maze_state::{HANDOVER, PLAYER_WORLD};
 use super::rom_data::{
-    FS_LOOP_TAIL, FS_MAP_INIT_GATE, FS_MARKER_GATE, FS_TURN_SWAP, PLAYER_CURRENT, WORLD_NUM,
-    prg010_file_to_cpu, prg030_file_to_cpu,
+    FS_CAMERA_KEEP, FS_LOOP_TAIL, FS_MAP_INIT_GATE, FS_MARKER_GATE, FS_TURN_SWAP, PLAYER_CURRENT,
+    WORLD_NUM, prg_bank_file_to_cpu, prg010_file_to_cpu, prg030_file_to_cpu,
 };
 
 // --- Addresses ----------------------------------------------------------
@@ -210,6 +232,22 @@ const MARKER_LIVES_OFFSET: usize = 0x15150;
 /// `Total_Players` (`$072B`) — the loop bound [`MAP_INIT_GATE`] displaces and
 /// replays on the paths that want vanilla's count.
 const TOTAL_PLAYERS: u16 = 0x072B;
+
+/// The per-player map camera: `Map_Prev_XOff` (`$0722`, low) and
+/// `Map_Prev_XHi` (`$0724`, page). `PRG030_8634` restores `Horz_Scroll` and
+/// `Horz_Scroll_Hi` from these on every map entry, so they *are* the viewport.
+const MAP_PREV_XOFF: u16 = 0x0722;
+const MAP_PREV_XHI: u16 = 0x0724;
+
+/// Where [`CAMERA_KEEP`] runs. PRG027, which the cutscene has mapped at
+/// `$A000` for its whole duration — see [`FS_CAMERA_KEEP`]'s note. `$BD5F`.
+const CAMERA_KEEP_CPU: u16 = prg_bank_file_to_cpu(27, FS_CAMERA_KEEP);
+
+/// The two camera stores inside the king's-wand-return cutscene's player loop
+/// (`PRG030_9062`, CPU `$9068`), six bytes: `STA Map_Prev_XOff,X` and
+/// `STA Map_Prev_XHi,X`. The loop's `BPL` targets `$9062`, so nothing branches
+/// into the middle of the pair.
+const WAND_CUTSCENE_CAMERA_OFFSET: usize = 0x3D078;
 
 /// `LDX Total_Players` at the head of `Map_Init`'s player loop (PRG011, CPU
 /// `$A23A`), three bytes. The `LDY World_Num` before it and the `DEX` after it
@@ -388,6 +426,60 @@ const LOOP_TAIL: [u8; 21] = [
           (MAP_INIT_AFTER_LOOP_CPU >> 8) as u8,         // 18: JMP $A274
 ];
 
+// --- The wand-return cutscene's camera wipe -----------------------------
+
+/// Zero the map camera for the live player only, inside the king's-wand-return
+/// cutscene.
+///
+/// ```text
+/// $BD5F  EC 26 07   CPX Player_Current
+/// $BD62  D0 06      BNE skip
+/// $BD64  9D 22 07   STA Map_Prev_XOff,X   ; A is already $00
+/// $BD67  9D 24 07   STA Map_Prev_XHi,X
+/// $BD6A  60         skip: RTS
+/// ```
+///
+/// **The third vanilla routine that assumes both players share a world.**
+/// `PRG030_9062` runs after an airship or castle clear — and after nothing else
+/// — and it walks *both* player slots:
+///
+/// ```text
+///         JSR Clear_RAM_thru_ZeroPage   ; $0000-$06FF, live Horz_Scroll included
+///         LDX Total_Players
+///         DEX
+/// $9062:  STA Player_FallToKing,X
+///         STA Map_ReturnStatus
+///         STA Map_Prev_XOff,X           ; <- the pair this replaces
+///         STA Map_Prev_XHi,X
+///         DEX
+///         BPL $9062
+/// ```
+///
+/// Vanilla is right to: `Map_Init` then puts both players on the new world's
+/// start tile, where a zeroed camera is the correct framing. With independent
+/// worlds the partner's *position* survives and their *camera* did not, so they
+/// came back standing in the right place with the viewport on page 0 — the
+/// sprite drawn at the right offset against the wrong screen, and movement that
+/// felt correct because it was.
+///
+/// Only the two camera stores are gated. `Player_FallToKing,X` and
+/// `Map_ReturnStatus` still clear for both players exactly as vanilla, because
+/// they are not state the per-player world model has any claim on, and
+/// narrowing the change narrows the risk.
+///
+/// `A` is `$00` from the loop's own setup and this routine only stores, so it
+/// survives for the next iteration; `X` is the loop index and is untouched.
+#[rustfmt::skip]
+const CAMERA_KEEP: [u8; 12] = [
+    0xEC, PLAYER_CURRENT as u8, (PLAYER_CURRENT >> 8) as u8, //  0: CPX Player_Current
+    0xD0, 0x06,                                         //  3: BNE +6 -> skip
+
+    0x9D, MAP_PREV_XOFF as u8, (MAP_PREV_XOFF >> 8) as u8, //  5: STA Map_Prev_XOff,X
+    0x9D, MAP_PREV_XHI as u8, (MAP_PREV_XHI >> 8) as u8,  //  8: STA Map_Prev_XHi,X
+
+    0x60,                                               // 11: RTS  ; skip
+];
+
 // --- The other player's marker ------------------------------------------
 
 /// Answer `Map_No_Pan`'s "is the other player alive" question with "no" when
@@ -450,6 +542,15 @@ pub(crate) fn apply(rom: &mut Rom) {
 
     rom.write_range(FS_LOOP_TAIL, &LOOP_TAIL);
     rom.write_range(MAP_INIT_TAIL_OFFSET, &jmp(0x4C, LOOP_TAIL_CPU));
+
+    // The wand-return cutscene's camera wipe. Six vanilla bytes become a
+    // three-byte call and three `NOP`s rather than a tighter splice: the pair
+    // has to stay six bytes wide because the loop's `BPL` counts back to
+    // `$9062` and a shorter body would move the branch target.
+    rom.write_range(FS_CAMERA_KEEP, &CAMERA_KEEP);
+    let mut camera_hook = [0xEAu8; 6];
+    camera_hook[..3].copy_from_slice(&jmp(0x20, CAMERA_KEEP_CPU));
+    rom.write_range(WAND_CUTSCENE_CAMERA_OFFSET, &camera_hook);
 }
 
 /// A three-byte `JSR`/`JMP` to `target`.
@@ -470,6 +571,28 @@ mod asm_checks {
     const LOOP_HEAD_VANILLA: [u8; 3] = [0xAE, 0x2B, 0x07];
     /// Vanilla at [`MAP_INIT_TAIL_OFFSET`]: `DEX / BPL PRG011_A23E`.
     const LOOP_TAIL_VANILLA: [u8; 3] = [0xCA, 0x10, 0xCA];
+    /// Vanilla at [`WAND_CUTSCENE_CAMERA_OFFSET`]: the two camera stores.
+    #[rustfmt::skip]
+    const CAMERA_VANILLA: [u8; 6] = [0x9D, 0x22, 0x07, 0x9D, 0x24, 0x07];
+
+    #[test]
+    fn the_camera_keep_is_well_formed() {
+        let mut hook = [0xEAu8; 6];
+        hook[..3].copy_from_slice(&jmp(0x20, CAMERA_KEEP_CPU));
+        asm::check(&CAMERA_KEEP)
+            .allocation(FS_CAMERA_KEEP)
+            .origin(CAMERA_KEEP_CPU)
+            .hook(&CAMERA_VANILLA, 0, &hook)
+            .assert_ok();
+    }
+
+    /// The gated pair has to be the *same two stores* vanilla made, or the
+    /// cutscene stops clearing the live player's camera and they come back
+    /// framed on wherever they were before the airship.
+    #[test]
+    fn the_camera_keep_replays_both_stores_it_displaced() {
+        assert_eq!(CAMERA_KEEP[5..11], CAMERA_VANILLA, "both camera stores must be replayed");
+    }
 
     #[test]
     fn the_map_init_gate_is_well_formed() {
@@ -569,6 +692,11 @@ mod asm_checks {
         assert_eq!(
             bpl_target as usize, 0x1624E,
             "the displaced BPL does not branch to PRG011_A23E",
+        );
+        assert_eq!(
+            rom.data[WAND_CUTSCENE_CAMERA_OFFSET..WAND_CUTSCENE_CAMERA_OFFSET + 6],
+            CAMERA_VANILLA,
+            "the wand-return cutscene no longer zeroes the camera with two indexed stores",
         );
     }
 
