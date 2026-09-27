@@ -165,35 +165,46 @@ const WIPE_LEN: usize = 10;
 ///
 /// A no-op unless a portal set the flag, which is why this can sit
 /// unconditionally at the end of the completion swap.
+///
+/// **Every store is indexed by `Player_Current`, and that is a fix, not a
+/// flourish.** All ten of these are two-byte Mario/Luigi arrays, and this
+/// routine used to write the Mario half unconditionally — so in two-player mode
+/// a telepad taken by *Luigi* dropped him on the destination's start tile and
+/// planted his arrival coordinates in Mario's backup instead. Indexing costs
+/// three bytes for the one `LDX`: `STA abs,X` is the same width as `STA abs`,
+/// and with one player `X` is 0, which is the address it used to hardcode.
+/// [`super::player_worlds`] is what made this reachable — before it, both
+/// players were always in the same world.
 #[rustfmt::skip]
-const RESTORE_ARRIVAL: [u8; 56] = [
+const RESTORE_ARRIVAL: [u8; 59] = [
     0xAD, ARRIVAL_FLAG as u8, (ARRIVAL_FLAG >> 8) as u8,        //  0: LDA ARRIVAL_FLAG
-    0xF0, 0x32,                                                 //  3: BEQ +50 → done
+    0xF0, 0x35,                                                 //  3: BEQ +53 → done
     0xA9, 0x00,                                                 //  5: LDA #$00
     0x8D, ARRIVAL_FLAG as u8, (ARRIVAL_FLAG >> 8) as u8,        //  7: STA ARRIVAL_FLAG
+    0xAE, PLAYER_CURRENT as u8, (PLAYER_CURRENT >> 8) as u8,    // 10: LDX Player_Current
 
-    0xAD, ARRIVAL_Y as u8, (ARRIVAL_Y >> 8) as u8,              // 10: LDA ARRIVAL_Y
-    0x8D, MAP_ENTERED_Y as u8, (MAP_ENTERED_Y >> 8) as u8,      // 13: STA Map_Entered_Y
-    0x8D, MAP_PREVIOUS_Y as u8, (MAP_PREVIOUS_Y >> 8) as u8,    // 16: STA Map_Previous_Y
+    0xAD, ARRIVAL_Y as u8, (ARRIVAL_Y >> 8) as u8,              // 13: LDA ARRIVAL_Y
+    0x9D, MAP_ENTERED_Y as u8, (MAP_ENTERED_Y >> 8) as u8,      // 16: STA Map_Entered_Y,X
+    0x9D, MAP_PREVIOUS_Y as u8, (MAP_PREVIOUS_Y >> 8) as u8,    // 19: STA Map_Previous_Y,X
 
-    0xAD, ARRIVAL_X as u8, (ARRIVAL_X >> 8) as u8,              // 19: LDA ARRIVAL_X
-    0x8D, MAP_ENTERED_X as u8, (MAP_ENTERED_X >> 8) as u8,      // 22: STA Map_Entered_X
-    0x8D, MAP_PREVIOUS_X as u8, (MAP_PREVIOUS_X >> 8) as u8,    // 25: STA Map_Previous_X
+    0xAD, ARRIVAL_X as u8, (ARRIVAL_X >> 8) as u8,              // 22: LDA ARRIVAL_X
+    0x9D, MAP_ENTERED_X as u8, (MAP_ENTERED_X >> 8) as u8,      // 25: STA Map_Entered_X,X
+    0x9D, MAP_PREVIOUS_X as u8, (MAP_PREVIOUS_X >> 8) as u8,    // 28: STA Map_Previous_X,X
 
-    0xAD, ARRIVAL_XHI as u8, (ARRIVAL_XHI >> 8) as u8,          // 28: LDA ARRIVAL_XHI
-    0x8D, MAP_ENTERED_XHI as u8, (MAP_ENTERED_XHI >> 8) as u8,  // 31: STA Map_Entered_XHi
-    0x8D, MAP_PREVIOUS_XHI as u8,
-          (MAP_PREVIOUS_XHI >> 8) as u8,                        // 34: STA Map_Previous_XHi
+    0xAD, ARRIVAL_XHI as u8, (ARRIVAL_XHI >> 8) as u8,          // 31: LDA ARRIVAL_XHI
+    0x9D, MAP_ENTERED_XHI as u8, (MAP_ENTERED_XHI >> 8) as u8,  // 34: STA Map_Entered_XHi,X
+    0x9D, MAP_PREVIOUS_XHI as u8,
+          (MAP_PREVIOUS_XHI >> 8) as u8,                        // 37: STA Map_Previous_XHi,X
 
-    0xAD, ARRIVAL_SCRL as u8, (ARRIVAL_SCRL >> 8) as u8,        // 37: LDA ARRIVAL_SCRL
-    0x8D, MAP_PREV_XOFF as u8, (MAP_PREV_XOFF >> 8) as u8,      // 40: STA Map_Prev_XOff
-    0x8D, MAP_PREV_XOFF2 as u8, (MAP_PREV_XOFF2 >> 8) as u8,    // 43: STA Map_Prev_XOff2
+    0xAD, ARRIVAL_SCRL as u8, (ARRIVAL_SCRL >> 8) as u8,        // 40: LDA ARRIVAL_SCRL
+    0x9D, MAP_PREV_XOFF as u8, (MAP_PREV_XOFF >> 8) as u8,      // 43: STA Map_Prev_XOff,X
+    0x9D, MAP_PREV_XOFF2 as u8, (MAP_PREV_XOFF2 >> 8) as u8,    // 46: STA Map_Prev_XOff2,X
 
-    0xAD, ARRIVAL_SCRH as u8, (ARRIVAL_SCRH >> 8) as u8,        // 46: LDA ARRIVAL_SCRH
-    0x8D, MAP_PREV_XHI as u8, (MAP_PREV_XHI >> 8) as u8,        // 49: STA Map_Prev_XHi
-    0x8D, MAP_PREV_XHI2 as u8, (MAP_PREV_XHI2 >> 8) as u8,      // 52: STA Map_Prev_XHi2
+    0xAD, ARRIVAL_SCRH as u8, (ARRIVAL_SCRH >> 8) as u8,        // 49: LDA ARRIVAL_SCRH
+    0x9D, MAP_PREV_XHI as u8, (MAP_PREV_XHI >> 8) as u8,        // 52: STA Map_Prev_XHi,X
+    0x9D, MAP_PREV_XHI2 as u8, (MAP_PREV_XHI2 >> 8) as u8,      // 55: STA Map_Prev_XHi2,X
 
-    0x60,                                                       // 55: RTS   ; done
+    0x60,                                                       // 58: RTS   ; done
 ];
 
 // --- Writer -------------------------------------------------------------
@@ -781,11 +792,21 @@ mod asm_checks {
     /// Every variable `Map_Init` sets from `Map_Y_Starts` has to be rewritten.
     /// Missing one leaves the player half-moved — drawn at the portal's tile
     /// but resuming at the world's start after a death, or vice versa.
+    ///
+    /// The scan looks for `STA abs,X` (`$9D`) and **not** `STA abs` (`$8D`),
+    /// which is the whole point: all ten are Mario/Luigi arrays, and writing
+    /// the absolute address writes Mario's half whoever took the telepad.
     #[test]
     fn restore_covers_every_position_variable_map_init_writes() {
+        assert!(
+            !RESTORE_ARRIVAL.windows(3).any(|w| {
+                w[0] == 0x8D && w[1..] != [ARRIVAL_FLAG as u8, (ARRIVAL_FLAG >> 8) as u8]
+            }),
+            "a position store is absolute — it would write Mario's half for either player",
+        );
         let written: Vec<u16> = RESTORE_ARRIVAL
             .windows(3)
-            .filter(|w| w[0] == 0x8D)
+            .filter(|w| w[0] == 0x9D)
             .map(|w| u16::from_le_bytes([w[1], w[2]]))
             .collect();
         for (addr, name) in [

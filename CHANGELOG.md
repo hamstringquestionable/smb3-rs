@@ -47,13 +47,18 @@ deploys.
 
 ### Fixed
 
-- **World Maze, two players: each player stays in their own world.** Take a
-  telepad and your partner no longer gets dragged along — hand the turn over
-  and the map changes to wherever they were standing, with their own progress
-  and their own position waiting for them. It is still one shared maze: a
-  fortress one of you clears is cleared for the other when they get there. A
-  partner in another world also stops showing up as a marker stranded on your
-  map. One-player games are unaffected.
+- **World Maze, two players: each player stays in their own world, on their own
+  tile.** Take a telepad and your partner no longer gets dragged along — hand
+  the turn over and the map changes to wherever they were standing, with their
+  own progress and their own position waiting for them. Nothing you do moves
+  them: clear an airship or a castle and you move on alone, blow a whistle and
+  you travel alone, run out of lives and they carry on undisturbed. It is still
+  one shared maze — a fortress one of you clears is cleared for the other when
+  they get there. A partner in another world also stops showing up as a marker
+  stranded on your map. One-player games are unaffected.
+- **World Maze, two players: Luigi arrives where a telepad aimed him.** Pads
+  only ever placed Mario, so the second player landed on the world's start tile
+  instead — and overwrote Mario's saved position on the way.
 - **World Maze, two players: Luigi starts with a whistle too.** He had an
   empty item panel and no way to leave a world — the whistle only ever landed
   in Mario's bag.

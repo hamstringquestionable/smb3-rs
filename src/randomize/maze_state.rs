@@ -92,9 +92,27 @@ pub(crate) const MAP_OBJ_DEAD_LEN: usize = 9;
 pub(crate) const PLAYER_WORLD: u16 = MAP_OBJ_DEAD + MAP_OBJ_DEAD_LEN as u16;
 pub(crate) const PLAYER_WORLD_LEN: usize = 2;
 
+/// Which of three situations `Map_Init` is in, and so **which players it may
+/// reposition**. See [`super::player_worlds`] for the routines that read it.
+///
+/// | value | meaning | `Map_Init` resets |
+/// |---|---|---|
+/// | `$00` | an ordinary world change — airship, castle, whistle, warp zone, game-over return | the live player only |
+/// | `$01` | a turn hand-over | nobody |
+/// | `$02` | a new game | both, as vanilla does |
+///
+/// `$00` is the resting value, which is what makes it the default for every
+/// path that sets nothing: the rule "only the live player is ever repositioned"
+/// then holds for world changes this module has never heard of.
+///
+/// One byte and not two flags, because a single `LSR` splits all three — `$01`
+/// sets carry, `$02` leaves `A` non-zero, `$00` leaves it zero — which is a
+/// three-way branch in two bytes.
+pub(crate) const HANDOVER: u16 = PLAYER_WORLD + PLAYER_WORLD_LEN as u16;
+
 /// First byte after everything allocated above — where the next allocation
 /// starts.
-pub(crate) const MAZE_STATE_NEXT: u16 = PLAYER_WORLD + PLAYER_WORLD_LEN as u16;
+pub(crate) const MAZE_STATE_NEXT: u16 = HANDOVER + 1;
 
 /// Every byte the maze owns, as one contiguous run.
 ///
@@ -125,5 +143,9 @@ const _: () = {
     assert!(
         MAP_OBJ_DEAD + MAP_OBJ_DEAD_LEN as u16 <= PLAYER_WORLD,
         "the map-object store overlaps the per-player world bytes"
+    );
+    assert!(
+        PLAYER_WORLD + PLAYER_WORLD_LEN as u16 <= HANDOVER,
+        "the per-player world bytes overlap the hand-over flag"
     );
 };
