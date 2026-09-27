@@ -38,6 +38,9 @@ deploys.
 
 ### Fixed
 
+- **World Maze, two players: Luigi starts with a whistle too.** He had an
+  empty item panel and no way to leave a world — the whistle only ever landed
+  in Mario's bag.
 - 5-4's pipe no longer gets blocked by an immovable enemy. Under a wild enemy
   flagset the paratroopa beside it could become a Ptooie or Nipper, planted in
   the pipe mouth on a one-tile cloud with nowhere to stand — the only way past

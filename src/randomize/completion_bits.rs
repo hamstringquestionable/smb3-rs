@@ -937,15 +937,25 @@ const NEW_GAME_INIT_CPU: u16 = (0xC000 + FS_NEW_GAME_INIT - 0x32010) as u16;
 ///   in `Inventory_Items` (`$7D80..$7D9B`), so this displaces nothing and
 ///   stops short of `Inventory_Cards`.
 ///
-/// The whistle write is last on purpose. `A` must stay zero across the three
-/// loops, and this is the one place it is free again.
+///   **Luigi gets one too, in his own slot 0.** `Inventory_Items2` is a
+///   separate 28-slot array at `$7DA3` and the panel indexes it by
+///   `Player_Current`, so a whistle written only to Mario's array leaves the
+///   second player with a dead panel and no fast travel at all — the mode's
+///   one way out of a world, missing for half the game. The store is
+///   unconditional rather than gated on `Total_Players`: in one-player mode
+///   Luigi's array is never read, so the gate would cost bytes to buy nothing.
+///
+/// The two whistle writes are last on purpose. `A` must stay zero across the
+/// three loops, and this is the one place it is free again — and it is free
+/// once for both stores, which is why the second costs three bytes and not
+/// five.
 ///
 /// The three loops cannot be one: the store is at `$7997`, the maze's SRAM at
 /// `$7AC1` and the live array at `$7D00`, and `A` stays zero across all three
 /// so only the index and the base change. None of them reaches the inventory —
 /// the live array stops at `$7D7F`, one byte below it.
 #[rustfmt::skip]
-const NEW_GAME_INIT: [u8; 38] = [
+const NEW_GAME_INIT: [u8; 41] = [
     0x8D, LIVE_WORLD as u8, (LIVE_WORLD >> 8) as u8, //  0: STA LIVE_WORLD  ; A = World_Num
     0xA9, 0x00,                                     //  3: LDA #$00
     0x8D, DEBUG_FLAG as u8, (DEBUG_FLAG >> 8) as u8, //  5: STA Debug_Flag  ; what we displaced
@@ -969,7 +979,9 @@ const NEW_GAME_INIT: [u8; 38] = [
     0xA9, super::items::WARP_WHISTLE,               // 32: LDA #$0C
     0x8D, INVENTORY_WHISTLE_SLOT as u8,
           (INVENTORY_WHISTLE_SLOT >> 8) as u8,      // 34: STA Inventory_Items
-    0x60,                                           // 37: RTS
+    0x8D, INVENTORY_WHISTLE_SLOT_2 as u8,
+          (INVENTORY_WHISTLE_SLOT_2 >> 8) as u8,    // 37: STA Inventory_Items2
+    0x60,                                           // 40: RTS
 ];
 
 /// `Inventory_Items` — the first of Mario's 28 item slots (`$7D80..$7D9B`, four
@@ -977,6 +989,11 @@ const NEW_GAME_INIT: [u8; 38] = [
 /// while this slot is empty, so the maze's whistle owns it and the
 /// starting-items trampoline begins at slot 1. See [`NEW_GAME_INIT`].
 const INVENTORY_WHISTLE_SLOT: u16 = 0x7D80;
+
+/// `Inventory_Items2` — the first of Luigi's 28 slots, `$7D80 + $23`. Its own
+/// array, not a mirror: the panel picks between the two by `Player_Current`,
+/// so the second player's whistle has to be stored here explicitly.
+const INVENTORY_WHISTLE_SLOT_2: u16 = INVENTORY_WHISTLE_SLOT + 0x23;
 
 /// The `Map_Completions` wipe in `PRG030_84A0`: CPU `$84CD`, ten bytes, three
 /// whole instructions, nothing branching into the middle.
@@ -2006,6 +2023,7 @@ mod tests {
             mem.set_byte(PACKED + PACKED_LEN as u16, 0xAA);
             mem.set_byte(0x7D80, 0xAA);
             mem.set_byte(0x7D81, 0xAA);
+            mem.set_byte(INVENTORY_WHISTLE_SLOT_2, 0xAA);
             for i in 0..maze_state::MAZE_STATE_LEN {
                 mem.set_byte(maze_state::MAZE_STATE_START + i as u16, 0xAA);
             }
@@ -2072,6 +2090,14 @@ mod tests {
                 cpu.memory.get_byte(0x7D80),
                 crate::randomize::items::WARP_WHISTLE,
                 "the maze whistle must land in inventory slot 0",
+            );
+            // And one in Luigi's own array. `Inventory_Items2` is not a mirror
+            // of Mario's — a whistle missing here is a second player who can
+            // never leave a world.
+            assert_eq!(
+                cpu.memory.get_byte(INVENTORY_WHISTLE_SLOT_2),
+                crate::randomize::items::WARP_WHISTLE,
+                "the second player's whistle must land in Inventory_Items2 slot 0",
             );
         }
     }

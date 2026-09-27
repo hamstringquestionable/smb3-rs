@@ -125,7 +125,7 @@ is the one to read:
 | PRG007 | swapped, in-level (object AI) | 27 | 27 |
 | PRG010 | `$C000–$DFFF`, map | 160 | 64 |
 | PRG011 | `$A000–$BFFF`, map | 46 | 14 |
-| PRG025 | `$C000–$DFFF`, title screen | 2731 | 2719 |
+| PRG025 | `$C000–$DFFF`, title screen | 2707 | 2695 |
 | PRG012 | `$A000–$BFFF`, map reload | 620 | 240 |
 | PRG026 | `$A000–$BFFF`, map/inventory | 2269 | 2251 |
 | PRG027 | `$A000–$BFFF`, letter cutscene | 673 | 673 |

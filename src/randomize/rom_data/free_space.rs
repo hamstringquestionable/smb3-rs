@@ -154,10 +154,10 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
     fs(0x3FFF0, 26, &["card_speed_clear"], "XOR trampoline"),
     // PRG025 (file 0x32010, CPU $C000–$DFFF while the title screen runs)
     fs(
-        0x33FC8,
-        40,
+        0x33FB0,
+        64,
         &["completion_bits"],
-        "world-maze: the title screen's new-game signal (40 reserved, 38 used)",
+        "world-maze: the title screen's new-game signal (64 reserved, 41 used)",
     ),
     fs(0x33FF0, 32, &["title_screen"], "title menu B-to-mute toggle (32 reserved, 22 used)"),
     // PRG026 (file 0x34010, CPU $A000–$BFFF)
@@ -489,9 +489,9 @@ pub(crate) const FS_TITLE_MUTE: usize = 0x33FF0; // 32 reserved, 22 used
 // `STA Debug_Flag` at 0x30CC7 (PRG024 CPU $ACB7). Same bank and the same
 // reasoning as FS_TITLE_MUTE — PRG025 is at $C000 for the whole title screen —
 // and sited immediately *before* it, so the two sit at the tail of the run
-// together and a bundled title hack starting at 0x33529 still has 2719 bytes
+// together and a bundled title hack starting at 0x33529 still has 2695 bytes
 // of clear filler ahead of them.
-pub(crate) const FS_NEW_GAME_INIT: usize = 0x33FC8; // 40 reserved, 38 used
+pub(crate) const FS_NEW_GAME_INIT: usize = 0x33FB0; // 64 reserved, 41 used
 
 // The five world-maze constants below are **offset reservations**: the address
 // is decided here, in one place, so the features being built alongside each
