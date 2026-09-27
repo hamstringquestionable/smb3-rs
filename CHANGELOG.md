@@ -11,6 +11,10 @@ deploys.
 
 ### Changed
 
+- **World Maze: stepping onto a telepad plays the map's entry animation.** The
+  screen boxes closed the way it does when you enter a level, sound and all,
+  instead of the new world snapping in with no transition. A pad hop was the
+  only way into anything in the game that skipped it.
 - **World Maze: the boats are locked.** Canoes now sit one tile offshore, and
   the only way to call one over is to use an Anchor while standing on a dock.
   The water is a door and the Anchor is its key — so an Anchor is worth

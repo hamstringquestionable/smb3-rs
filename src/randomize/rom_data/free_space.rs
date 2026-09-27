@@ -317,6 +317,12 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
         &["world_travel"],
         "world-maze: game over returns to the starting world (32 reserved, 16 used)",
     ),
+    fs(
+        0x15DD0,
+        32,
+        &["world_persist"],
+        "world-maze: divert to the map init once the telepad's box-in has closed (32 reserved, 22 used)",
+    ),
     fs(0x15DF0, 35, &["fix_canoe_softlock"], "canoe_fix: death respawn position save"),
     fs(0x15E13, 162, &["map_warp"], "2P Start+Select warp-to-partner routine"),
     fs(
@@ -358,13 +364,13 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
         0x17DDB,
         160,
         &["world_persist"],
-        "world-maze: portal arrival stash + 6 x 16 portal table (160 reserved, 147 used)",
+        "world-maze: portal arrival stash + 6 x 16 portal table (160 reserved, 142 used)",
     ),
     fs(
         0x17E7B,
         128,
         &["world_persist"],
-        "world-maze: telepad enter hook + 3 x 16 pad key table (128 reserved, 111 used)",
+        "world-maze: telepad enter hook + 3 x 16 pad key table (128 reserved, 101 used)",
     ),
     fs(
         0x17EFB,
@@ -733,12 +739,12 @@ pub(crate) const FS_RESTORE_ARRIVAL: usize = 0x1566C; // 64 reserved, 56 used
 // and PRG010 has no run left that holds 147 bytes, while `prg011.asm` ends with
 // "Rest of ROM bank was empty" and leaves 565 unbroken from here to the bank
 // end. The stash also has to reach `Map_Init`, which is PRG011's own code.
-pub(crate) const FS_PORTAL_ARRIVAL: usize = 0x17DDB; // 160 reserved, 147 used
+pub(crate) const FS_PORTAL_ARRIVAL: usize = 0x17DDB; // 160 reserved, 142 used
 
 // The telepad enter hook. PRG010 is mapped at $C000 whenever the map runs, so
 // unlike the pipe portal's level-exit trigger this pays no always-mapped-bank
 // rent at all — it can sit in PRG011 beside the arrival stash it feeds.
-pub(crate) const FS_PAD_ENTER: usize = 0x17E7B; // 128 reserved, 111 used
+pub(crate) const FS_PAD_ENTER: usize = 0x17E7B; // 128 reserved, 101 used
 
 // World-maze phase 1: the completion-bit stencil, derived on the console.
 // The $FF run FS_LOCK_ENTRIES opened continues past FS_STASH_ARRIVAL to
@@ -757,6 +763,18 @@ pub(crate) const FS_UNPACK_WORLD: usize = 0x15F9C; // 36 reserved, 33 used
 pub(crate) const FS_WIPE_REPLACEMENT: usize = 0x15FC0; // 60 reserved, 34 used
 // Runs to 0x16010, the end of PRG010.
 pub(crate) const FS_SWAP_AT_RELOAD: usize = 0x15FFC; // 20 reserved, 18 used
+
+// The head of PRG010's tail filler, immediately after the DMC samples:
+// `prg010.asm`'s last `.byte` line before `DMC08_End` matches the sixteen bytes
+// at 0x15DC0 verbatim, so the run from 0x15DD0 to the bank end is filler and
+// nothing reads it.
+//
+// **Do not take PRG010's other advertised runs without this check.** The 64
+// bytes at 0x15B50 (CPU $DB40) that `--free-space` reports as this bank's
+// largest single gap sit *inside* a DPCM sample — sample data either side of
+// them — and `$FF` in a DMC stream is audio, not filler. The scan cannot tell
+// the difference.
+pub(crate) const FS_PAD_BOX_DONE: usize = 0x15DD0; // 32 reserved, 22 used
 
 pub(crate) const FS_CANOE_RESPAWN: usize = 0x15DF0; // 35 bytes
 pub(crate) const FS_MAP_WARP: usize = 0x15E13; // 162 bytes (CPU $DE03)

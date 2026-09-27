@@ -123,7 +123,7 @@ is the one to read:
 | PRG005 | swapped, in-level (object AI) | 58 | 58 |
 | PRG006 | `$C000–$DFFF`, in-level (enemy data) | 1392 | 1392 |
 | PRG007 | swapped, in-level (object AI) | 27 | 27 |
-| PRG010 | `$C000–$DFFF`, map | 192 | 64 |
+| PRG010 | `$C000–$DFFF`, map | 160 | 64 |
 | PRG011 | `$A000–$BFFF`, map | 46 | 14 |
 | PRG025 | `$C000–$DFFF`, title screen | 2731 | 2719 |
 | PRG012 | `$A000–$BFFF`, map reload | 620 | 240 |
@@ -144,6 +144,15 @@ Guard the PRG030 run accordingly.
 PRG029's 1528-byte run is mid-bank and has **not** been through the
 unreferenced check; its 20-byte tail (`prg029.asm` ends "Rest of ROM bank was
 empty" after `PRG029_DFEB`) has been, and is what `FS_ANCHOR_HOUSE` claims.
+
+**PRG010's 64-byte "largest gap" is not free — it is audio.** The run at file
+0x15B50 (CPU `$DB40`) sits *inside* a DPCM sample, with sample bytes either
+side of it, and `$FF` in a DMC stream is a valid run of set bits rather than
+filler. The scan cannot tell the two apart, so this bank is the clearest case
+of why the unreferenced check is per-gap and not per-bank. PRG010's usable
+space is the tail from 0x15DD0 to the bank end, which `prg010.asm` confirms:
+its last `.byte` line before `DMC08_End` matches the sixteen ROM bytes at
+0x15DC0 exactly. `FS_PAD_BOX_DONE` claims the head of it.
 
 **Check where your hook actually runs before paying that rent.** A hook on the
 world map does not need an always-mapped bank at all: `$84A0` maps PRG010 into
