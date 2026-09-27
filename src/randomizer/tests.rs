@@ -1131,6 +1131,7 @@ fn all_off_options() -> Options {
         world_count: 7,
         world_maze: false,
         maze_wands: 3,
+        item_gates: false,
         big_q_blocks: false,
         shuffle_airships: false,
         shuffle_hammer_bros: false,
@@ -1209,6 +1210,7 @@ fn all_on_options() -> Options {
         world_count: 3,
         world_maze: true,
         maze_wands: 5,
+        item_gates: true,
         big_q_blocks: true,
         shuffle_airships: true,
         shuffle_hammer_bros: true,
@@ -2471,4 +2473,88 @@ fn maze_options_change_nothing_without_the_maze() {
             );
         }
     }
+}
+
+/// **The canoe gate is the option's to install, and nobody else's.**
+///
+/// With it off — the default, maze or no maze — the Anchor has to be back to
+/// `mystery_anchor`'s surprise power-up and the boat has to answer a bare A
+/// press on any dock. Those are two different patches arguing over one
+/// `Inv_UseItem` word and one hook site, so the test reads both rather than
+/// trusting that skipping the model pass was enough.
+///
+/// The five free-space allocations are the third witness: with the gate off
+/// they must still hold the `$FF` filler they were carved out of, which is the
+/// difference between "the ROM side was not reached" and "it was reached and
+/// happened to agree".
+#[test]
+fn item_gates_only_install_when_the_option_is_on() {
+    use crate::randomize::rom_data::{
+        FS_ANCHOR_GET_GLUE, FS_ANCHOR_HAS, FS_ANCHOR_HOUSE, FS_ANCHOR_LETTER, FS_ANCHOR_USE,
+    };
+
+    let Ok(bytes) = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes") else {
+        eprintln!("SKIP: requires the ROM");
+        return;
+    };
+    // Every allocation the gate and its dedup patches claim, with the shortest
+    // routine's length — enough of each to tell filler from code.
+    let anchor_allocs =
+        [FS_ANCHOR_USE, FS_ANCHOR_HAS, FS_ANCHOR_GET_GLUE, FS_ANCHOR_HOUSE, FS_ANCHOR_LETTER];
+
+    let build = |maze: bool, gate: bool| {
+        let opts = crate::Options {
+            world_maze: maze,
+            item_gates: gate,
+            palettes: false,
+            palette_themed: false,
+            ..crate::Options::default()
+        };
+        let out = crate::generate_patched_rom(&bytes, 12345, &opts, None).expect("generate");
+        crate::rom::Rom::from_bytes_lax(&out, true).expect("readable ROM")
+    };
+
+    for maze in [false, true] {
+        let rom = build(maze, false);
+        assert!(
+            !crate::randomize::canoe_gate::is_installed(&rom),
+            "maze={maze}, gate off: the Anchor calls a boat instead of granting a power-up"
+        );
+        assert!(
+            crate::randomize::qol::a_press_hook_installed(&rom),
+            "maze={maze}, gate off: no free summon — a dock ignores an A press"
+        );
+        for alloc in anchor_allocs {
+            assert_eq!(
+                rom.read_range(alloc, 14),
+                [0xFF; 14],
+                "maze={maze}, gate off: something was written into the anchor allocation at \
+                 {alloc:#X}"
+            );
+        }
+    }
+
+    // And the on arm, so the assertions above are known to be able to fail.
+    let gated = build(true, true);
+    assert!(
+        crate::randomize::canoe_gate::is_installed(&gated),
+        "gate on: the Anchor is still the mystery power-up"
+    );
+    assert!(
+        !crate::randomize::qol::a_press_hook_installed(&gated),
+        "gate on: the free summon is still hooked, which opens the wall for nothing"
+    );
+    assert_ne!(
+        gated.read_range(FS_ANCHOR_USE, 14),
+        [0xFF; 14],
+        "gate on: the anchor's use handler was never written"
+    );
+
+    // Maze off cannot install it however the option is set: the key would have
+    // to sit in front of its own lock.
+    let no_maze = build(false, true);
+    assert!(
+        !crate::randomize::canoe_gate::is_installed(&no_maze),
+        "gate asked for outside the maze, and installed anyway"
+    );
 }

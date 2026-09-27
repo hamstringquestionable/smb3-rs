@@ -459,9 +459,18 @@ mod payload {
         /// rather than to silence.
         pub(super) hints: HintMode,
         pub(super) maze_wands: B3,
+        /// Item gates: a way forward shut until its key is found, which today
+        /// means boats offshore behind the Anchor. One bit for the class, so the
+        /// next gate kind costs none. Written
+        /// verbatim rather than zeroed with the maze off, the way `deja_vu_forts`
+        /// is — the field is new and false by default, so either choice leaves
+        /// every key in circulation byte-for-byte what it was, and verbatim keeps
+        /// the bool exhaustiveness guard honest. `randomize_inner` is what
+        /// ignores it outside the mode.
+        pub(super) item_gates: bool,
 
         // --- Reserve ---
-        // 132 bits. Adding an option is: declare it immediately above this
+        // 131 bits. Adding an option is: declare it immediately above this
         // block, then take the same number of bits off `B19`. An older key
         // simply has those bits zero, which is "off" for a bool and the default
         // for every enum here, so it stays a correct key for the settings it
@@ -476,7 +485,7 @@ mod payload {
         #[skip]
         __: B128,
         #[skip]
-        __: B4,
+        __: B3,
     }
 }
 
@@ -525,7 +534,8 @@ impl Options {
             cannons, water, bros, hb_encounters, limit_hazards, friendlier_levels,
             bro_battle_timer, deja_vu, deja_vu_forts,
             fire_flower, piranha_shuffle, wild_injections,
-            starting_lives, world_count, world_maze, maze_wands, hints, starting_items,
+            starting_lives, world_count, world_maze, maze_wands, hints, item_gates,
+            starting_items,
             // Not encoded — see NOT_ENCODED for the reason on each.
             palettes: _, palette_themed: _, player_color: _,
             remove_flashing: _, king_quotes: _, skip_rom_validation: _,
@@ -611,6 +621,7 @@ impl Options {
             // which is a flag-key compatibility event bought for nothing.
             .with_maze_wands(if *world_maze { (*maze_wands).min(7) } else { 0 })
             .with_hints(if *world_maze { *hints } else { HintMode::default() })
+            .with_item_gates(*item_gates)
             .with_starting_item_0(sanitize_item(item(0)))
             .with_starting_item_1(sanitize_item(item(1)))
             .with_starting_item_2(sanitize_item(item(2)))
@@ -711,6 +722,7 @@ impl Options {
             } else {
                 HintMode::default()
             },
+            item_gates: f.item_gates(),
             // Every pattern is a value now, 0 included — it is "start in Dark
             // Land", not "unset". A key minted before that meaning existed
             // cannot carry 0 (the encoder clamped to 1–7), so nothing older is

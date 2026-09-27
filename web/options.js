@@ -351,6 +351,11 @@ export const SCHEMA = [
 		tip: "What the map gives away about which fortress opens which lock. On Some the colour is the mark: tan means a fortress and its lock are together in one world, the odd colour on either one means the two are apart, and the beta fortress opens a lock or bridge in World 8. On Full the number is the mark instead — a lock wears the number of the world its fortress is in, and a lock with no number is local. Fortress designs read the same either way. On Off the designs are picked at random and say nothing. Hints never change the map, so the same seed has the same locks and fortresses whichever you pick.",
 		group: "maze", inFlagKey: true,
 		mode: "maze" },
+	{ id: "item_gates", type: "bool", default: false,
+		label: "Item Gates",
+		tip: "Ways forward can be locked behind an item you have to find first, and a seed always puts that item somewhere you can reach without it. Right now that means the water: canoes sit one tile offshore, and the only way to call one over is to use an Anchor while standing on a dock. The Anchor is never used up, so one opens every boat in every world, and Toad Houses can hand you one. Off, a boat waits at its dock and any dock summons it for free.",
+		group: "maze", inFlagKey: true,
+		mode: "maze" },
 
 	// --- Enemies ---
 	{ id: "ground", type: "tri", options: TRI, default: "shuffle",

@@ -540,12 +540,26 @@ impl GlobalState {
     /// placement pass will: install gates, then ask the ordinary question.
     /// There is no solver mode to switch on — that is the point of gates
     /// being data.
-    // Reason: the censuses are the readers until the placement pass lands.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn gate_every_canoe(&mut self, needs: Key) {
         self.gates = (0..self.worlds.len())
             .map(|wi| Gate { target: GateTarget::Canoe(wi), needs: vec![needs] })
             .collect();
+    }
+
+    /// Install every gate the `item_gates` option asks for.
+    ///
+    /// **The one place that decides which gates a run has.** The option is a
+    /// single bool for the whole class, so a new gate kind is added here — and
+    /// nowhere else on the model side: `key_sites`, `key_placement` and the
+    /// walker all read `gates` as data and neither know nor care what is in it.
+    /// The ROM side is the half that cannot be generic, since each target needs
+    /// its own patch; `randomize_inner` derives those per target, and a new
+    /// `GateTarget` variant makes that derivation fail to compile until its
+    /// patch is wired.
+    ///
+    /// Today: every canoe, keyed on the Anchor. MiMaze's `Cell` gates are next.
+    pub(crate) fn install_item_gates(&mut self) {
+        self.gate_every_canoe(Key::Anchor);
     }
 
     fn spheres_inner(

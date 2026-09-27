@@ -47,18 +47,18 @@ const POWERUP_ITEMS: &[u8] = &[
 
 /// Toad House pool — powerups and combat items only (no map consumables).
 ///
-/// **No Anchor here, unlike [`GOOD_ITEMS`]** — outside World Maze. A Toad House
-/// is a guaranteed, signposted grant and the player walks in expecting a
-/// power-up; a surprise belongs in the rewards they stumble into, not the one
-/// shop they are told about.
+/// **No Anchor here, unlike [`GOOD_ITEMS`]** — while the Anchor is nobody's
+/// key. A Toad House is a guaranteed, signposted grant and the player walks in
+/// expecting a power-up; a surprise belongs in the rewards they stumble into,
+/// not the one shop they are told about.
 ///
-/// In the maze that trade flips, because the Anchor stops being a surprise and
-/// becomes the boat key. More places to find one is the point, so
-/// [`TOAD_HOUSE_ITEMS_MAZE`] adds it. The solver and the key-placement pass
-/// still ignore Toad Houses entirely — see `key_sites` for why — so these are
-/// extra chances for the player, never something the model leans on. That
-/// asymmetry is safe in the direction it errs: the model believing in fewer
-/// Anchors than exist can only make it place one it did not need.
+/// Under the `item_gates` option that trade flips, because the Anchor stops
+/// being a surprise and becomes the boat key. More places to find one is the
+/// point, so [`TOAD_HOUSE_ITEMS_ANCHOR`] adds it. The solver and the key
+/// placement pass still ignore Toad Houses entirely — see `key_sites` for why —
+/// so these are extra chances for the player, never something the model leans
+/// on. That asymmetry is safe in the direction it errs: the model believing in
+/// fewer Anchors than exist can only make it place one it did not need.
 const TOAD_HOUSE_ITEMS: &[u8] = &[
     0x01, // Mushroom
     0x02, // Fire Flower
@@ -70,12 +70,12 @@ const TOAD_HOUSE_ITEMS: &[u8] = &[
     0x09, // Starman
 ];
 
-/// [`TOAD_HOUSE_ITEMS`] plus the Anchor, for World Maze.
+/// [`TOAD_HOUSE_ITEMS`] plus the Anchor, for a run where it is a key.
 ///
 /// One extra entry in a nine-wide pool, so roughly one house in nine carries
 /// one — a chance, not a guarantee, which is what a house rolling its reward
 /// from a 3-wide window could offer anyway.
-const TOAD_HOUSE_ITEMS_MAZE: &[u8] = &[
+const TOAD_HOUSE_ITEMS_ANCHOR: &[u8] = &[
     0x01, // Mushroom
     0x02, // Fire Flower
     0x03, // Leaf
@@ -208,10 +208,10 @@ pub fn randomize<R: Rng>(
     rng: &mut R,
     remove_whistles: bool,
     piranha_chests: bool,
-    world_maze: bool,
+    anchor_is_key: bool,
 ) {
     let pool = if remove_whistles { GOOD_ITEMS } else { GOOD_ITEMS_WITH_WHISTLE };
-    let house_pool = if world_maze { TOAD_HOUSE_ITEMS_MAZE } else { TOAD_HOUSE_ITEMS };
+    let house_pool = if anchor_is_key { TOAD_HOUSE_ITEMS_ANCHOR } else { TOAD_HOUSE_ITEMS };
 
     // Hammer Bros map items: randomize non-zero entries only (zero = no item).
     map_table(rom, HAMMER_BROS_ITEMS_OFFSET, HAMMER_BROS_ITEMS_LEN, |b| {
@@ -676,28 +676,28 @@ mod maze_house_tests {
         Rom::from_bytes(&data).ok()
     }
 
-    /// **Toad Houses can hand out an Anchor in the maze, and only there.**
+    /// **Toad Houses can hand out an Anchor where it is a key, and only there.**
     ///
-    /// The Anchor is the boat key in that mode, so more places to find one is
-    /// the point. Outside the maze it stays a surprise power-up and a house
-    /// stays the one shop the player is told about.
+    /// With `item_gates` on the Anchor opens the boats, so more places to find
+    /// one is the point. Without it the Anchor stays a surprise power-up and a
+    /// house stays the one shop the player is told about.
     ///
     /// The model does not know about this: `key_sites` offers no Toad House,
     /// so the solver never counts one. That asymmetry only errs safely — a
     /// model believing in fewer Anchors than exist can place one it did not
     /// need, never skip one it did.
     #[test]
-    fn only_the_maze_deals_anchors_from_toad_houses() {
+    fn only_an_anchor_key_run_deals_anchors_from_toad_houses() {
         let Some(base) = rom() else { return };
-        let anchor_seen = |maze: bool| {
+        let anchor_seen = |gate: bool| {
             (0..40u64).any(|seed| {
                 let mut r = base.clone();
                 let mut rng = ChaCha8Rng::seed_from_u64(seed);
-                randomize(&mut r, &mut rng, false, false, maze);
+                randomize(&mut r, &mut rng, false, false, gate);
                 r.read_range(TOAD_HOUSE_ITEMS_OFFSET, TOAD_HOUSE_ITEMS_LEN).contains(&ANCHOR)
             })
         };
-        assert!(anchor_seen(true), "40 maze seeds and no Toad House Anchor");
-        assert!(!anchor_seen(false), "a non-maze seed dealt an Anchor to a Toad House");
+        assert!(anchor_seen(true), "40 gated seeds and no Toad House Anchor");
+        assert!(!anchor_seen(false), "an ungated seed dealt an Anchor to a Toad House");
     }
 }

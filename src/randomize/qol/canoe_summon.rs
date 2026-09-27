@@ -173,6 +173,17 @@ pub fn remove_canoe_summon_hook(rom: &mut Rom) {
     rom.write_range(SCAN_SETUP_HOOK, &SCAN_SETUP_VANILLA);
 }
 
+/// Is the free A-press summon hooked up?
+///
+/// The one bit that tells the rescue apart from the canoe gate on a finished
+/// ROM: both install the same routine, and only the rescue hooks the map's
+/// tile scan so a dock answers a bare A press. Lives here so a caller asking
+/// the question does not re-derive the hook site.
+#[cfg(test)]
+pub fn a_press_hook_installed(rom: &Rom) -> bool {
+    rom.read_range(SCAN_SETUP_HOOK, 4) == scan_setup_hooked()
+}
+
 /// Install the "call the boat" summon: A on a dock warps the canoe alongside.
 pub fn apply_canoe_summon(rom: &mut Rom) {
     write_canoe_summon_routine(rom);

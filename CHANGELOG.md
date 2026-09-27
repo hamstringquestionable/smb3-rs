@@ -9,32 +9,33 @@ deploys.
 
 ## [Unreleased]
 
+### Added
+
+- **New option — Item Gates (World Maze).** Off by default. A way forward can be
+  locked behind an item you have to find first, and every seed is guaranteed to
+  put that item somewhere you can reach without it. Maze only: in a fixed world
+  order you cannot go back to a world you have left, so the key would have to
+  sit in front of its own lock.
+  - **Right now that means the boats.** Canoes sit one tile offshore, and the
+    only way to call one over is to use an Anchor while standing on a dock. The
+    water is a door and the Anchor is its key — so an Anchor is worth hunting
+    rather than shrugging at, and a stretch of water you can see across is a
+    reason to go looking. The Anchor is never used up, so once you have one
+    every boat in every world answers you. **Toad Houses can hand you one** too,
+    roughly one house in nine, on top of the Hammer Bros, Princess letters and
+    chests. And **a second Anchor is no longer handed over** — one is permanent
+    and does everything, so you watch the reveal and simply do not collect
+    another; a Toad House gives a power-up instead of nothing, the same one all
+    run.
+  - Leave it off and boats wait at their docks with the usual "press A on a
+    dock" summon, and the Anchor stays the surprise power-up it has been.
+
 ### Changed
 
 - **World Maze: stepping onto a telepad plays the map's entry animation.** The
   screen boxes closed the way it does when you enter a level, sound and all,
   instead of the new world snapping in with no transition. A pad hop was the
   only way into anything in the game that skipped it.
-- **World Maze: the boats are locked.** Canoes now sit one tile offshore, and
-  the only way to call one over is to use an Anchor while standing on a dock.
-  The water is a door and the Anchor is its key — so an Anchor is worth
-  hunting rather than shrugging at, and a stretch of water you can see across
-  is a reason to go looking. The Anchor is never used up, so once you have one
-  every boat in every world answers you. Every maze seed is guaranteed to put
-  an Anchor somewhere you can reach without a boat. Maze mode only: in a fixed
-  world order you cannot go back to a world you have left, so the key would
-  have to sit in front of its own lock.
-- **World Maze: a second Anchor is no longer handed over.** One is permanent
-  and does everything, so a duplicate was dead weight in your bag. Beat the
-  Hammer Bro, open the chest, read the letter — you watch the reveal and
-  simply do not collect another. A Toad House is the exception: rather than
-  give you nothing it hands over a power-up instead, the same one all run.
-  Outside the maze the Anchor is still a consumable surprise, so duplicates
-  are still worth having there.
-- **World Maze: Toad Houses can hand you an Anchor.** Roughly one house in
-  nine, on top of the Hammer Bros, Princess letters and chests that already
-  deal them — more places to find the key that opens the water. Outside the
-  maze a Toad House still never carries one.
 
 ### Fixed
 

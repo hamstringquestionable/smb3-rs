@@ -488,6 +488,28 @@ pub struct Options {
     /// only starts costing the median at 6–7.
     #[serde(default = "default_maze_wands")]
     pub maze_wands: u8,
+    /// **Item gates.** A way forward can be shut until the player holds the item
+    /// that opens it, and the placement pass guarantees that item sits somewhere
+    /// they can reach without it. One switch for the whole class rather than one
+    /// per gate: the model already carries gates as data (`maze::Gate` and
+    /// `GateTarget`, keyed by `item_keys::Key`), so this only decides whether
+    /// that list is populated — see `maze::GlobalState::install_item_gates` for
+    /// which gates a run installs.
+    ///
+    /// **Today that list is the boats.** Canoes park one tile offshore and the
+    /// only way to call one alongside is an Anchor used from the inventory while
+    /// standing on a dock, which makes a stretch of water a door and the Anchor
+    /// its key; the Anchor also stops being `items::write_mystery_anchor`'s
+    /// surprise power-up, becoming permanent and dealt by Toad Houses as well.
+    /// Off, boats sit where vanilla parks them and any dock summons one for
+    /// free. The next gate kind — MiMaze's sealed cells — joins this option
+    /// rather than bringing one of its own.
+    ///
+    /// **Only read when `world_maze` is on.** In a fixed world order the player
+    /// cannot go back to a world they have left, so a key would have to sit in
+    /// front of its own gate — see `canoe_gate` for the whole argument.
+    #[serde(default)]
+    pub item_gates: bool,
     #[serde(default)]
     pub big_q_blocks: bool,
     /// Shuffle airship levels across worlds 1-7.
@@ -800,6 +822,7 @@ impl Default for Options {
             world_count: default_world_count(),
             world_maze: false,
             maze_wands: default_maze_wands(),
+            item_gates: false,
             big_q_blocks: false,
             shuffle_airships: true,
             shuffle_hammer_bros: true,

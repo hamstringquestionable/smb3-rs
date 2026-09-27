@@ -221,6 +221,13 @@ struct Cli {
     #[arg(long, default_value_t = 3, value_parser = clap::value_parser!(u8).range(0..=7))]
     maze_wands: u8,
 
+    /// Lock ways forward behind the item that opens them, with the item placed
+    /// where it can be reached without it. Today that is the boats: canoes park
+    /// one tile offshore and calling one over means using an Anchor while
+    /// standing on a dock. Requires --world-maze; ignored without it.
+    #[arg(long)]
+    item_gates: bool,
+
     /// Enable Big ? Block randomization
     #[arg(long)]
     big_q_blocks: bool,
@@ -606,6 +613,7 @@ fn build_options(cli: &Cli) -> Options {
             world_count: cli.world_count,
             world_maze: cli.world_maze,
             maze_wands: cli.maze_wands,
+            item_gates: cli.item_gates,
             big_q_blocks: cli.big_q_blocks,
             shuffle_airships: !cli.no_shuffle_airships,
             shuffle_hammer_bros: !cli.no_shuffle_hammer_bros,
@@ -714,6 +722,12 @@ fn print_summary(options: &Options, seed: u64, output_path: &std::path::Path) {
     eprintln!("  World order: {}", if options.world_order { "on" } else { "off" });
     if options.world_maze {
         eprintln!("  World maze: on ({} wand(s) to open the castle)", options.maze_wands);
+        // Only under the mode: outside it the option is inert, so reporting it
+        // would name a setting the run ignores.
+        eprintln!(
+            "  Item gates: {}",
+            if options.item_gates { "on (boats need an Anchor)" } else { "off" }
+        );
     }
     // Silent under --world-maze: the mode pins the spine to all eight worlds, so
     // printing the player's value would report a setting the run ignores.

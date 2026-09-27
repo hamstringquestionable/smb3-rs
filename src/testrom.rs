@@ -1075,12 +1075,21 @@ pub fn build(vanilla: &[u8], spec: &TestRomSpec) -> Result<TestRom, String> {
     }
 
     // 5c. The canoe gate. Applied here rather than through `Options` for the
-    //     same reason as the hammer below — and because it has no option yet:
-    //     the maze cannot place an anchor, so a randomized seed that gated the
-    //     canoe could strand a player behind water.
+    //     same reason as the hammer below: it works on a vanilla base, where
+    //     testing what an Anchor does to a boat needs no map behind it.
+    //
+    //     The real option (`Options::canoe_gate`, maze only) reaches this path
+    //     through `--flags`, and that arm has already gated the worlds its key
+    //     placement could key. Applying on top would move those boats a second
+    //     time — two tiles out, past the water — so the flag defers to it and
+    //     says so.
     if spec.canoe_gate {
-        crate::randomize::canoe_gate::apply(&mut rom, &[true; 8]);
-        report.push("canoe gate: boats offshore, anchor summons".to_string());
+        if crate::randomize::canoe_gate::is_installed(&rom) {
+            report.push("canoe gate: already installed by the seed's own flags".to_string());
+        } else {
+            crate::randomize::canoe_gate::apply(&mut rom, &[true; 8]);
+            report.push("canoe gate: boats offshore, anchor summons".to_string());
+        }
     }
 
     // 6. Hammer tile-breaking. Applied here rather than via `Options` so it
