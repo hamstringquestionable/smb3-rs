@@ -528,8 +528,6 @@ impl GlobalState {
     /// gate the key opens, which is the circularity to avoid. Placing from
     /// here rather than placing-then-checking is what makes a key unable to
     /// land behind its own gate at all, at any number of gates.
-    // Reason: the censuses are the readers until the placement pass lands.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn spheres_and_reach(&self) -> (Spheres, walk::MazeReach) {
         self.spheres_inner(&HashSet::new(), None)
     }
