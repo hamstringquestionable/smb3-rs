@@ -164,10 +164,12 @@ const DRY_BONES = { // $13, 16x32 stacked from two picks
 	cols: 2,
 	palette: [0x0F, 0x1D, 0x10, 0x20],
 };
-const ROTODISCS = [ // $12, two rotation frames
-	{ tiles: [1176, 1178, 1177, 1179], cols: 2, palette: [0x0F, 0x18, 0x21, 0x20] },
-	{ tiles: [1180, 1182, 1181, 1183], cols: 2, palette: [0x0F, 0x18, 0x21, 0x20] },
-];
+// $12, two rotation frames. In game the disc flashes through colors, so each
+// page load also picks one: vanilla light blue, then red, green, orange, pink.
+const ROTODISCS = [0x21, 0x16, 0x2A, 0x27, 0x24].flatMap((c) => [
+	{ tiles: [1176, 1178, 1177, 1179], cols: 2, palette: [0x0F, 0x18, c, 0x20] },
+	{ tiles: [1180, 1182, 1181, 1183], cols: 2, palette: [0x0F, 0x18, c, 0x20] },
+]);
 const START_TILE = { tiles: [1488, 1490, 1489, 1491], cols: 2, palette: [0x0F, 0x38, 0x20, 0x04] }; // $17
 // World-map background tiles. Tile bytes are the map's own; tile indices are
 // the metatile's quadrants on BG CHR pages $14-$17. `clear: 3` makes the
@@ -248,6 +250,9 @@ const FIRE_CHOMP = { tiles: [920, 922, 921, 923], cols: 2, palette: PLAINS_SPR1 
 const FIRE_SNAKE = { tiles: [928, 930, 929, 931], cols: 2, palette: PLAINS_SPR1 }; // $59
 const PILEDRIVER = { tiles: [308, { t: 308, flip: true }, 309, { t: 309, flip: true }], cols: 2, palette: PLAINS_SPR3 }; // $6B
 const GOOMBA = { tiles: [5080, { t: 5080, flip: true }, 5081, { t: 5081, flip: true }], cols: 2, palette: PLAINS_SPR3 }; // $72
+// Poison Mushroom (poison_mushroom.rs): the 1-Up's own sprite, $51 mirrored on
+// page $04, in its palette 2, drawn upside down by SPR_VFLIP.
+const POISON_MUSHROOM = { tiles: [272, { t: 272, flip: true }, 273, { t: 273, flip: true }], cols: 2, palette: PLAINS_SPR2, flipY: true };
 // Troopas and Paragoombas are composites (Troopa_Draw / ParaGoomba_Draw in
 // PRG004), not one pattern-set frame: head tip $C1 over the lower head $CB and
 // shell $C5, feet $C7 $C9 below. Head and feet are always palette 3; the shell
@@ -755,6 +760,7 @@ export const SCHEMA = [
 	{ id: "poison_mushrooms", type: "bool", default: false,
 		label: "Poison Mushrooms",
 		tip: "Some 1-Up blocks hand out an upside-down poison mushroom that hurts you instead of a 1-Up. You can't tell which until you hit the block.",
+		icon: POISON_MUSHROOM,
 		group: "player", inFlagKey: true },
 	{ id: "starting_items", type: "items",
 		items: ITEM_OPTIONS, slots: 3,

@@ -103,7 +103,8 @@ export function renderTileToCanvas(canvas, romBytes, tileId, paletteRgb) {
 // after the grid, for parts the engine overlaps rather than tiles (a
 // Paratroopa's wing sits 8px into its shell). Tiles are composited: a tile's
 // transparent pixels leave whatever is under them.
-export function renderTiles(canvas, romBytes, tileIds, cols, paletteRgb, flipRight = false, over = []) {
+// flipY turns the finished image upside down, the way SPR_VFLIP does a sprite.
+export function renderTiles(canvas, romBytes, tileIds, cols, paletteRgb, flipRight = false, over = [], flipY = false) {
 	const w = cols * 8;
 	const h = Math.ceil(tileIds.length / cols) * 8;
 	canvas.width = w;
@@ -128,6 +129,14 @@ export function renderTiles(canvas, romBytes, tileIds, cols, paletteRgb, flipRig
 		place(tile, col * 8, Math.floor(i / cols) * 8, flip);
 	});
 	for (const o of over) place(o, o.x, o.y, !!o.flip);
+	if (flipY) {
+		const row = w * 4;
+		for (let y = 0; y < h / 2; y++) {
+			const a = img.data.slice(y * row, (y + 1) * row);
+			img.data.copyWithin(y * row, (h - 1 - y) * row, (h - y) * row);
+			img.data.set(a, (h - 1 - y) * row);
+		}
+	}
 	canvas.getContext("2d").putImageData(img, 0, 0);
 }
 
@@ -175,14 +184,14 @@ function renderMapTiles(canvas, romBytes, tileIds, cols, paletteRgb, clear) {
 }
 
 // Convenience: render an icon spec (from the schema) into a canvas.
-// spec = { tiles: [...row-major], cols?: 2, palette: [c0, c1, c2, c3], flipRight?, clear? }
+// spec = { tiles: [...row-major], cols?: 2, palette: [c0, c1, c2, c3], flipRight?, flipY?, over?, clear? }
 // `clear` marks a world-map tile and names its ground color; see renderMapTiles.
 export function renderIcon(canvas, romBytes, spec) {
 	if (!canvas || !romBytes || !spec) return;
 	const cols = spec.cols ?? 2;
 	const pal = resolvePalette(spec.palette);
 	if (spec.clear != null) renderMapTiles(canvas, romBytes, spec.tiles, cols, pal, spec.clear);
-	else renderTiles(canvas, romBytes, spec.tiles, cols, pal, !!spec.flipRight, spec.over);
+	else renderTiles(canvas, romBytes, spec.tiles, cols, pal, !!spec.flipRight, spec.over, !!spec.flipY);
 }
 
 // Draw an icon spec into a `box`-sized square: trimmed to its opaque pixels,
