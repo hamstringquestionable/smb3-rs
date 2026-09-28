@@ -125,9 +125,9 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
     ),
     fs(
         0x3DFE6,
-        20,
+        24,
         &["player_worlds"],
-        "world-maze: turn hand-over router, per-player worlds (20 reserved, 17 used — the \
+        "world-maze: turn hand-over router, per-player worlds (24 reserved, 22 used — the \
          bottom of PRG030's last run, leaving the $9FF4 question at its top untouched)",
     ),
     // PRG031 (always mapped $E000–$FFFF, file 0x3E010)
@@ -164,7 +164,7 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
         0x33FB0,
         64,
         &["completion_bits"],
-        "world-maze: the title screen's new-game signal (64 reserved, 50 used)",
+        "world-maze: the title screen's new-game signal (64 reserved, 55 used)",
     ),
     fs(0x33FF0, 32, &["title_screen"], "title menu B-to-mute toggle (32 reserved, 22 used)"),
     // PRG026 (file 0x34010, CPU $A000–$BFFF)
@@ -209,6 +209,13 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
         24,
         &["anchor_dedup"],
         "world-maze: Princess letter Anchor suppression (24 reserved, 15 used)",
+    ),
+    fs(
+        0x37D6F,
+        16,
+        &["player_worlds"],
+        "world-maze: keep the partner's map camera across the wand-return cutscene \
+         (16 reserved, 12 used)",
     ),
     // PRG029 (file 0x3A010, CPU $C000-$DFFF)
     fs(
@@ -261,7 +268,7 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
         0x1566C,
         64,
         &["world_persist"],
-        "world_persist POC: arrival-position restore after Map_Init (64 reserved, 56 used)",
+        "world_persist POC: arrival-position restore after Map_Init (64 reserved, 59 used)",
     ),
     fs(
         0x156AC,
@@ -269,6 +276,12 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
         &["player_worlds"],
         "world-maze: hide the other player's map marker when they are in another world \
          (24 reserved, 15 used)",
+    ),
+    fs(
+        0x156C4,
+        24,
+        &["player_worlds"],
+        "world-maze: stop Map_Init's player loop after the live player (24 reserved, 21 used)",
     ),
     fs(
         0x156DC,
@@ -311,7 +324,7 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
         0x15FC0,
         60,
         &["completion_bits"],
-        "world-maze: the Map_Completions wipe, replaced (60 reserved, 40 used)",
+        "world-maze: the Map_Completions wipe, replaced (60 reserved, 34 used)",
     ),
     fs(
         0x15FFC,
@@ -330,6 +343,13 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
         32,
         &["world_travel"],
         "world-maze: game over returns to the starting world (32 reserved, 16 used)",
+    ),
+    fs(
+        0x1564C,
+        32,
+        &["player_worlds"],
+        "world-maze: gate Map_Init's player loop — which players may be repositioned \
+         (32 reserved, 29 used)",
     ),
     fs(
         0x15DD0,
@@ -505,7 +525,7 @@ pub(crate) const FS_TITLE_MUTE: usize = 0x33FF0; // 32 reserved, 22 used
 // and sited immediately *before* it, so the two sit at the tail of the run
 // together and a bundled title hack starting at 0x33529 still has 2695 bytes
 // of clear filler ahead of them.
-pub(crate) const FS_NEW_GAME_INIT: usize = 0x33FB0; // 64 reserved, 50 used
+pub(crate) const FS_NEW_GAME_INIT: usize = 0x33FB0; // 64 reserved, 55 used
 
 // The five world-maze constants below are **offset reservations**: the address
 // is decided here, in one place, so the features being built alongside each
@@ -741,9 +761,19 @@ pub(crate) const FS_FORTRESS_FX: usize = 0x147CD; // 537 reserved, 484 used
 // the packed path replaced it; the gap now holds PACK_WORLD.
 pub(crate) const FS_PACK_WORLD: usize = 0x155C4; // 40 reserved, 33 used
 // 0x155EC..0x1566C is the 128-byte run the retired SELECT+START debug
-// world-jump left behind — `FS_MAZE_VISITED` takes the first 64 and
-// `FS_MAZE_GAMEOVER` the next 32, leaving 0x1564C..0x1566C unclaimed.
-pub(crate) const FS_RESTORE_ARRIVAL: usize = 0x1566C; // 64 reserved, 56 used
+// world-jump left behind — `FS_MAZE_VISITED` takes the first 64,
+// `FS_MAZE_GAMEOVER` the next 32 and `FS_MAP_INIT_GATE` the last 32.
+pub(crate) const FS_RESTORE_ARRIVAL: usize = 0x1566C; // 64 reserved, 59 used
+
+// `Map_Init`'s player-loop gate (`player_worlds`): decides whether the loop is
+// allowed to reposition the players, and records which world they are in. The
+// tail of the retired SELECT+START debug world-jump's 128-byte run, which the
+// three allocations above it already share — so the same note covers it.
+//
+// PRG010 is safe for a routine reached from inside `Map_Init` (PRG011) because
+// `Map_Init` has exactly one caller: `PRG030_84A0`'s `JSR` at `$84AD`, and
+// `$84A0`'s first act is to map PRG010 into `$C000` and PRG011 into `$A000`.
+pub(crate) const FS_MAP_INIT_GATE: usize = 0x1564C; // 32 reserved, 29 used
 
 // The other-player marker gate (`player_worlds`), hooked from PRG010's own
 // `Map_No_Pan`, so the bank is its caller's and no window has to be argued
@@ -751,6 +781,29 @@ pub(crate) const FS_RESTORE_ARRIVAL: usize = 0x1566C; // 64 reserved, 56 used
 // opens and FS_COMPLETION_BASES closes: the 48 bytes from 0x156AC to
 // FS_MASK_BUILD's 0x156DC, with our own allocations on both sides of it.
 pub(crate) const FS_MARKER_GATE: usize = 0x156AC; // 24 reserved, 15 used
+
+// The other end of `Map_Init`'s player loop (`player_worlds`), hooked over the
+// `DEX / BPL` that would otherwise carry the loop on to the second player.
+// Takes the rest of FS_MARKER_GATE's 48-byte gap, which ends at FS_MASK_BUILD.
+//
+// **Byte-adjacent to `MAP_INIT_SCROLL_SITE`** (0x1627E), which is the store
+// immediately before that `DEX` and which `start_airship_swap` splices its own
+// `JSR` over. The two hooks do not overlap, and the interaction is right: the
+// SAS helper re-stamps whichever player's slot the loop is on, so a single pass
+// stamps one player and the skipped loop stamps none.
+pub(crate) const FS_LOOP_TAIL: usize = 0x156C4; // 24 reserved, 21 used
+
+// PRG027 (file 0x36010, CPU $A000-$BFFF)
+// Keep the partner's map camera across the king's-wand-return cutscene
+// (`player_worlds`), which zeroes both players' scroll backups.
+//
+// **PRG027 and not an always-mapped bank**, which is the whole saving: the
+// cutscene sets PAGE_A000 = 27 before its loop and nothing between there and
+// the hook rebanks — vanilla calls `CineKing_DoWandReturn` at $A000 every
+// iteration, and `Clear_RAM_thru_ZeroPage` writes only RAM below $0700 while
+// PAGE_A000 lives at $0720. So this costs nothing from PRG030's last 18 bytes
+// or PRG031's last 16.
+pub(crate) const FS_CAMERA_KEEP: usize = 0x37D6F; // 16 reserved, 12 used
 
 // The portal arrival stash and the table it reads, together because the stash
 // addresses the table absolutely and so is origin-locked to it.
@@ -781,7 +834,7 @@ pub(crate) const FS_PACK_PLANE: usize = 0x15794; // 112 reserved, 99 used
 pub(crate) const FS_UNPACK_PLANE: usize = 0x15F4C; // 80 reserved, 72 used
 pub(crate) const FS_COMPLETION_BASES: usize = 0x15804; // 12 reserved, 9 used
 pub(crate) const FS_UNPACK_WORLD: usize = 0x15F9C; // 36 reserved, 33 used
-pub(crate) const FS_WIPE_REPLACEMENT: usize = 0x15FC0; // 60 reserved, 40 used
+pub(crate) const FS_WIPE_REPLACEMENT: usize = 0x15FC0; // 60 reserved, 34 used
 // Runs to 0x16010, the end of PRG010.
 pub(crate) const FS_SWAP_AT_RELOAD: usize = 0x15FFC; // 20 reserved, 18 used
 
@@ -913,7 +966,7 @@ pub(crate) const FS_STOMP_RISE: usize = 0x3DFC6; // 32 reserved, 26 used
 // It takes the BOTTOM of the 42-byte run above deliberately: the `JSR $9FF4`
 // question FS_STOMP_RISE's note leaves open is at the run's top ($9FF4 is file
 // 0x3E004), and this reservation ends at 0x3DFFA, well below it.
-pub(crate) const FS_TURN_SWAP: usize = 0x3DFE6; // 20 reserved, 17 used
+pub(crate) const FS_TURN_SWAP: usize = 0x3DFE6; // 24 reserved, 22 used
 
 /// CPU address of the rise-aware stomp-height routine ($9FB6).
 pub(crate) const STOMP_RISE_CPU: u16 = super::prg030_file_to_cpu(FS_STOMP_RISE);

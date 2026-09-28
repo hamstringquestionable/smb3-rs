@@ -11,6 +11,14 @@ deploys.
 
 ### Added
 
+- **New option — Mariomon.** Off by default. A permadeath challenge: nothing in
+  the game hands out a 1-Up any more — not the green mushroom, not 100 coins,
+  not the end-of-level cards, not the Toad House minigames — so the lives you
+  start with are every life you get. When they run out the Game Over popup no
+  longer offers a way back onto the map, and its first entry says CONCEDE
+  instead of CONTINUE to say so. Bundles MaCobra52's "No Extra Lives" and "No
+  Continues" patches behind one flag.
+
 - **New option — Item Gates (World Maze).** Off by default. A way forward can be
   locked behind an item you have to find first, and every seed is guaranteed to
   put that item somewhere you can reach without it. Maze only: in a fixed world
@@ -37,15 +45,36 @@ deploys.
   instead of the new world snapping in with no transition. A pad hop was the
   only way into anything in the game that skipped it.
 
+### Removed
+
+- **The two-player Vs Challenge.** Pressing A while standing on the other
+  player no longer starts a minigame — the tile you are on just does whatever it
+  normally does, which for a level your partner has already beaten is nothing.
+  It went for two reasons: it decided "you are on the same tile" by comparing
+  coordinates alone, which is wrong now that two players can be in different
+  worlds and was starting battles out of nowhere; and it was the one thing on
+  the world map that could enter a tile without checking whether that tile can
+  be entered at all. Retiring it also hands 339 bytes back to the ROM's most
+  crowded bank.
+
 ### Fixed
 
-- **World Maze, two players: each player stays in their own world.** Take a
-  telepad and your partner no longer gets dragged along — hand the turn over
-  and the map changes to wherever they were standing, with their own progress
-  and their own position waiting for them. It is still one shared maze: a
-  fortress one of you clears is cleared for the other when they get there. A
-  partner in another world also stops showing up as a marker stranded on your
-  map. One-player games are unaffected.
+- **World Maze, two players: each player stays in their own world, on their own
+  tile.** Take a telepad and your partner no longer gets dragged along — hand
+  the turn over and the map changes to wherever they were standing, with their
+  own progress and their own position waiting for them. Nothing you do moves
+  them: clear an airship or a castle and you move on alone, blow a whistle and
+  you travel alone, run out of lives and they carry on undisturbed. It is still
+  one shared maze — a fortress one of you clears is cleared for the other when
+  they get there. A partner in another world also stops showing up as a marker
+  stranded on your map. One-player games are unaffected.
+- **World Maze, two players: Luigi arrives where a telepad aimed him.** Pads
+  only ever placed Mario, so the second player landed on the world's start tile
+  instead — and overwrote Mario's saved position on the way.
+- **World Maze, two players: your partner's map is still framed on them after
+  you beat an airship.** The wand-return scene reset both players' cameras, so
+  the turn came back to a partner standing in the right place on a map scrolled
+  to the wrong screen.
 - **World Maze, two players: Luigi starts with a whistle too.** He had an
   empty item panel and no way to leave a world — the whistle only ever landed
   in Mario's bag.

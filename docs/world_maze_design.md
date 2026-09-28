@@ -1002,13 +1002,69 @@ full init. The two `completion_bits` hooks inside then pack the world being left
 and expand the one being entered with no new code, because their trigger is
 `World_Num != LIVE_WORLD` and nothing else.
 
-Three consequences worth writing down:
+**The rule, settled after the first playtest: only the live player is ever
+repositioned.** Nothing either player does may move the other — not a telepad,
+not an airship, not the whistle. That is a stronger statement than the first cut
+made, and it is the one the mode wants: two private traversals of one shared
+maze.
+
+`Map_Init`'s player loop (`PRG011_A23E`) is what fought it. It walks *both*
+player slots and resets each to `Map_Y_Starts[World_Num]` with X forced to `$20`,
+wiping `Map_Entered_*`, `Map_Previous_*` and the scroll backups — so the first
+cut, which routed a world-changing hand-over through the full `$84A0`, put both
+players on the new world's start tile. **That loop is not a bug**: it is
+vanilla's answer to a world change, where beating a world drags both players
+forward and neither has a position in the new world worth keeping. So it is
+gated, not removed, by a one-byte `HANDOVER` flag with three values:
+
+| value | set by | `Map_Init` resets |
+|---|---|---|
+| `$00` | nobody — the resting value | the live player only |
+| `$01` | the hand-over router | nobody |
+| `$02` | the new-game signal | both, as vanilla |
+
+`$00` covers the airship, the castle, the whistle, the warp zone and the
+game-over return, and being the *default* is what makes a world change nobody
+anticipated behave correctly. `$02` exists for one reason: vanilla leaned on the
+two-player pass to give Luigi an initial position at all, and without it a new
+game leaves his coordinates holding stale battery-backed SRAM.
+
+Gating one loop takes two hooks, at `$A23A` and `$A271`, because the loop counts
+`X` down from `Total_Players - 1` — without the tail, Luigi's pass would be
+followed by Mario's and clobber him. Reimplementing the body instead would be the
+same size and worse: `start_airship_swap` splices its own `JSR` over the body's
+last store to re-stamp a swapped world's start column, so a private copy would
+silently ignore swapped starts.
+
+**Game over needs no code.** `GAMEOVER_RETURN` sends the player who ran out of
+lives to the starting world, and because only the live player is repositioned the
+survivor is untouched; when the turn reaches them the router restores their own
+world and position.
+
+Three more consequences worth writing down:
 
 - **It stays one shared maze, not two games.** Completions are packed per
   *world* — both halves of `Map_Completions` — so a fortress one player clears
   is cleared for the other when they arrive. So are the wand table, the visited
   table and the map objects. Only *where you are* is per-player.
-- **The router has to live in PRG030**, and takes 20 of that bank's last 42
+- **The four unbanked per-world flags** (`Map_Anchored`, `Map_WhiteHouse`,
+  `Map_CoinShip`, `Map_Got13Warp`) are a known hole that two players in two
+  worlds makes visible — one player's summoned canoe can be set when the
+  other's map draws. Left alone deliberately (2026-09-27); fix it if it bites.
+- **A telepad arrival was Mario-only.** `RESTORE_ARRIVAL` wrote the absolute
+  `Map_Entered_*` addresses, so a pad taken by Luigi dropped him on the start
+  tile and planted his coordinates in Mario's backup. Every store is indexed by
+  `Player_Current` now; with one player that is the same address it hardcoded.
+- **The wand-return cutscene zeroed both players' cameras.** `PRG030_9062`,
+  which runs after an airship or castle clear and nothing else, loops over both
+  player slots clearing `Map_Prev_XOff/XHi` — the bytes `PRG030_8634` restores
+  `Horz_Scroll` from. Vanilla is right to: `Map_Init` then puts both players on
+  the new world's start tile, where a zeroed camera is the correct framing. With
+  independent worlds the partner's position survived and their camera did not, so
+  the turn came back to them correctly placed on a map scrolled to page 0. Gated
+  to the live player, in PRG027 — the cutscene has `PAGE_A000 = 27` throughout,
+  so this costs none of PRG030's or PRG031's last always-mapped bytes.
+- **The router has to live in PRG030**, and takes 24 of that bank's last 42
   bytes. The map loop banks PRG026 into `$A000` on its way to the hand-over, and
   `$84D7` opens by calling `SetPages_ByTileset` *because* it is entered with
   arbitrary banks — the death path at `PRG030_9130` jumps straight there out of a

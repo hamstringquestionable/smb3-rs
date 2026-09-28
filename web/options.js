@@ -556,6 +556,11 @@ export const SCHEMA = [
 		// Without it a Game Over wipes map completions, and in a mode built on
 		// "a world you can come back to" that is the whole point undone.
 		forcedInMaze: true },
+	{ id: "mariomon", type: "bool", default: false,
+		label: "Mariomon",
+		tip: "Permadeath run. Nothing gives you a 1-Up, and Game Over ends it — the lives you start with are all you get.",
+		credit: { name: "MaCobra52", url: "https://github.com/macobra52" },
+		group: "player", inFlagKey: true },
 	{ id: "faster_frog", type: "bool", default: false,
 		label: "Faster Frog",
 		tip: "Speeds up swimming and running while wearing the Frog Suit.",

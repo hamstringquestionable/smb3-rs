@@ -73,6 +73,10 @@ pub mod start_airship_swap;
 pub mod stomp_fairness;
 pub mod title_screen;
 pub mod troll_pipes;
+/// Retires the 2-player Vs Challenge, whose trigger is unsound once the two
+/// players can be in different worlds and which bypassed the map's
+/// tile-enterability rules. Unconditional, and it frees 339 bytes of PRG030.
+pub mod two_player_vs;
 /// The world maze's goal gate: a wall on World 8's bridge that stands until
 /// the player holds K of the seven wands, plus the counter that the wands are
 /// counted in. See `docs/world_maze_design.md`, "The wand gate".

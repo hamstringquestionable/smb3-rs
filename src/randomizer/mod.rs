@@ -617,6 +617,13 @@ fn randomize_inner(
         written.grids(rom),
     );
 
+    // Retire the 2-player Vs Challenge. Unconditional and order-free — it
+    // splices three sites nothing else touches. See the module docs for why it
+    // is not gated on `world_maze`: the 339 bytes it frees in PRG030 are only
+    // allocatable if they are free in every seed.
+    rom.set_tag("two_player_vs");
+    randomize::two_player_vs::apply(rom);
+
     // Big [?] bonus-room shuffle: every level with a Big [?] pipe draws from a
     // pool of 19 rooms (11 vanilla + 8 in the otherwise-dead "Unused Level 5").
     // Runs after the overworld builder because the BigQBlock_GotIt "already
@@ -877,6 +884,14 @@ fn randomize_inner(
     if options.no_game_over_penalty || options.world_maze {
         rom.set_tag("qol/no_game_over_penalty");
         randomize::qol::apply_no_game_over_penalty(rom);
+    }
+
+    // Mariomon (MaCobra52's "No Extra Lives" + "No Continues") — a permadeath
+    // challenge mode: no 1-Ups anywhere a single player can reach them, and the
+    // Game Over popup no longer offers a way back onto the map.
+    if options.mariomon {
+        rom.set_tag("qol/mariomon");
+        randomize::qol::apply_mariomon(rom);
     }
 
     // Card speed clear: one-of-each clears cards with +1 life but no cutscene.
