@@ -45,6 +45,18 @@ deploys.
   instead of the new world snapping in with no transition. A pad hop was the
   only way into anything in the game that skipped it.
 
+### Removed
+
+- **The two-player Vs Challenge.** Pressing A while standing on the other
+  player no longer starts a minigame — the tile you are on just does whatever it
+  normally does, which for a level your partner has already beaten is nothing.
+  It went for two reasons: it decided "you are on the same tile" by comparing
+  coordinates alone, which is wrong now that two players can be in different
+  worlds and was starting battles out of nowhere; and it was the one thing on
+  the world map that could enter a tile without checking whether that tile can
+  be entered at all. Retiring it also hands 339 bytes back to the ROM's most
+  crowded bank.
+
 ### Fixed
 
 - **World Maze, two players: each player stays in their own world, on their own

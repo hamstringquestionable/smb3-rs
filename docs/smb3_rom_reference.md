@@ -4074,12 +4074,34 @@ Tanooki/Mushroom/Leaf.
 | 0x04 | 10 Coins |
 | 0x05 | 20 Coins |
 
-### The 2-Player Vs Challenge — 339 reclaimable bytes in PRG030
+### The 2-Player Vs Challenge — 339 bytes RECLAIMED in PRG030
 
-**Not reclaimed. Surveyed 2026-09-27 and recorded because PRG030 is the ROM's
-scarcest bank** (always mapped at `$8000-$9FFF`, and down to one 18-byte `$FF`
-gap). This is by far the largest run available there, and the scan cannot see it
-because it was never `$FF` — the same situation as `FS_FORTRESS_FX` in PRG010.
+**Retired 2026-09-27 by `randomize/two_player_vs.rs`, unconditionally on every
+seed.** Both runs below are now free and **unclaimed** — the first feature that
+needs them adds its own `FS_*` row, exactly the way `FS_FORTRESS_FX` works,
+because neither run is `$FF` and `--free-space` cannot see either of them. Check
+`FREE_SPACE_ALLOCATIONS` alongside the scan, never instead of it.
+
+| run | file | bytes | unreferenced because |
+|---|---|---|---|
+| `$88F4..$8919` | 0x3C904 | 38 | `LDA Map_Enter2PFlag` at `$88F0` became `LDA #$00`, so the `BEQ` past it is always taken |
+| `$934C..$9478` | 0x3D35C | **301** | `JMP Do_2PVsChallenge` at `$8AE4` became three `NOP`s, removing the block's only reference |
+
+About 23 further bytes are dead in PRG010 (`$CE8A..$CEA6` — the compares and the
+flag store the new jump skips). Too small to be worth a row.
+
+**Why it was retired rather than fixed.** Its trigger compares three coordinate
+bytes and nothing else, which is unsound once the two players can be in
+different worlds (see `player_worlds`), and the collision path reaches `$CEA7`
+— "begin enter level" — **without running the tile-enterability test at all**,
+because the thing it is about to enter is the Vs battlefield rather than the
+tile's level. That made standing on your partner turn an otherwise-dead tile
+enterable. The removal sends the A-press to `PRG010_CEBF` instead, which is the
+path that already ran whenever the players were not stacked, so a beaten tile
+now correctly does nothing.
+
+The survey that established all of this follows, and remains the record of what
+was checked.
 
 The Vs Challenge is the minigame two players get when one presses A while
 standing on the other's map tile. It is spread over four banks, but only the
@@ -4092,7 +4114,7 @@ PRG030 part is worth anything:
 | PRG014 | `Vs_Battlefields` table + `PRG/levels/2PVs.asm` battlefield data | low |
 | PRG027 | `PalSet_2PVs` (palette set 18) | low (657 free already) |
 
-**It is cleanly detachable**, which is the part worth knowing:
+**It was cleanly detachable**, which is what made the removal safe:
 
 - `Do_2PVsChallenge` has **exactly one reference in the ROM** — `JMP
   Do_2PVsChallenge` at `$8AE4` (file 0x3CAF4, bytes `4C 4C 93`), reached only
@@ -4105,18 +4127,16 @@ PRG030 part is worth anything:
   references ROM-wide**: set to `#$12` at the collision test in PRG010
   (`prg010.asm` ~2748), read at `$88F0` (file 0x3C900, `A5 1D / F0 26`).
 
-**The caveat that makes this more than a two-byte change.** Neutralising the
-flag *read* at `$88F0` is two bytes (`A5 1D` → `A9 00`, so the `BEQ` is always
-taken), but it is not enough: the collision site sets the flag and then falls
-through to `Map_Operation = $10`, the "begin enter level" effect. Ignoring the
-flag alone would run a normal level entry with no level behind it. A correct
-disable belongs at the **collision test in PRG010**, so no Vs is ever requested
-— and what pressing A on top of the other player should then do is a design
-question, not a byte count.
+**How it was disabled.** Three splices, eight bytes: `LDA Player_Lives,Y` at
+`$CE87` became `JMP PRG010_CEBF`; `LDA Map_Enter2PFlag` at `$88F0` became
+`LDA #$00`; `JMP Do_2PVsChallenge` at `$8AE4` became three `NOP`s. Only the
+first is needed to change behaviour — the other two are what make the freed runs
+unreferenced by construction rather than by argument.
 
-**And it deletes a vanilla two-player feature for every mode**, not only the
-world maze, so it is a product decision before it is a space decision. Noted
-here so the option is costed rather than rediscovered.
+**One trap worth keeping.** Neutralising only the flag read would not have
+worked: the collision site sets the flag and then falls through to
+`Map_Operation = $10`, so the game would have begun a level entry with no level
+behind it. The disable has to be upstream, at the collision test.
 
 ---
 

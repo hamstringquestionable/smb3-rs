@@ -617,6 +617,13 @@ fn randomize_inner(
         written.grids(rom),
     );
 
+    // Retire the 2-player Vs Challenge. Unconditional and order-free — it
+    // splices three sites nothing else touches. See the module docs for why it
+    // is not gated on `world_maze`: the 339 bytes it frees in PRG030 are only
+    // allocatable if they are free in every seed.
+    rom.set_tag("two_player_vs");
+    randomize::two_player_vs::apply(rom);
+
     // Big [?] bonus-room shuffle: every level with a Big [?] pipe draws from a
     // pool of 19 rooms (11 vanilla + 8 in the otherwise-dead "Unused Level 5").
     // Runs after the overworld builder because the BigQBlock_GotIt "already
