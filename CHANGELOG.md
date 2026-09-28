@@ -9,6 +9,8 @@ deploys.
 
 ## [Unreleased]
 
+## [2.3.0] - 2026-09-28
+
 ### Added
 
 - **Web app — option icons drawn from your own ROM** for most map, maze and
