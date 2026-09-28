@@ -115,26 +115,48 @@ is the one to read:
 
 | Bank | Mapped at | Free left | Largest single gap |
 |------|-----------|-----------|--------------------|
-| PRG031 | `$E000–$FFFF`, always | 81 | **30** |
-| PRG030 | `$8000–$9FFF`, always | 42 | 42 |
+| PRG031 | `$E000–$FFFF`, always | 29 | **16** |
+| PRG030 | `$8000–$9FFF`, always | 18 | 18 |
 | PRG001 | swapped, in-level (object AI) | 60 | 38 |
 | PRG003 | swapped, in-level (object AI) | 5 | 5 |
 | PRG004 | swapped, in-level (object AI, group 3) | 426 | 426 |
 | PRG005 | swapped, in-level (object AI) | 58 | 58 |
 | PRG006 | `$C000–$DFFF`, in-level (enemy data) | 1392 | 1392 |
 | PRG007 | swapped, in-level (object AI) | 27 | 27 |
-| PRG010 | `$C000–$DFFF`, map | 192 | 64 |
+| PRG010 | `$C000–$DFFF`, map | 80 | 64 |
 | PRG011 | `$A000–$BFFF`, map | 46 | 14 |
-| PRG025 | `$C000–$DFFF`, title screen | 2731 | 2719 |
+| PRG025 | `$C000–$DFFF`, title screen | 2707 | 2695 |
 | PRG012 | `$A000–$BFFF`, map reload | 620 | 240 |
-| PRG026 | `$A000–$BFFF`, map/inventory | 2309 | 2291 |
+| PRG026 | `$A000–$BFFF`, map/inventory | 2269 | 2251 |
+| PRG027 | `$A000–$BFFF`, letter cutscene | 657 | 657 |
+| PRG029 | `$C000–$DFFF`, Toad House | 2548 | 1528 |
 
 PRG000 and PRG002 have no `$FF` filler left at all.
 
-The always-mapped banks are effectively full. A patch that must run regardless of
-the current bank has one 42-byte gap in PRG030 and nothing over 30 bytes in
-PRG031, so past that a trampoline into a swapped bank is the only option — and
-that costs bytes too.
+The always-mapped banks are effectively full, and PRG031's scraps are now
+spent: `anchor_dedup` took its 30- and 22-byte gaps in 2026-09, on the
+principle that a run too small for a real allocation should go to the routine
+that fits it. PRG030's run went the same way in 2026-09: `player_worlds`' hand-over router
+took 24 of its 42 bytes, because the turn hand-over is entered with the level's
+banks and could not be reasoned about from anywhere else. A patch that must run
+regardless of the current bank now has **one 18-byte gap in PRG030 and nothing
+over 16 bytes in PRG031**, so past that a trampoline into a swapped bank is the
+only option — and that costs bytes too. Guard what is left of the PRG030 run
+accordingly, and check first whether the hook really needs it: the router does,
+its sibling marker gate in PRG010 does not.
+
+PRG029's 1528-byte run is mid-bank and has **not** been through the
+unreferenced check; its 20-byte tail (`prg029.asm` ends "Rest of ROM bank was
+empty" after `PRG029_DFEB`) has been, and is what `FS_ANCHOR_HOUSE` claims.
+
+**PRG010's 64-byte "largest gap" is not free — it is audio.** The run at file
+0x15B50 (CPU `$DB40`) sits *inside* a DPCM sample, with sample bytes either
+side of it, and `$FF` in a DMC stream is a valid run of set bits rather than
+filler. The scan cannot tell the two apart, so this bank is the clearest case
+of why the unreferenced check is per-gap and not per-bank. PRG010's usable
+space is the tail from 0x15DD0 to the bank end, which `prg010.asm` confirms:
+its last `.byte` line before `DMC08_End` matches the sixteen ROM bytes at
+0x15DC0 exactly. `FS_PAD_BOX_DONE` claims the head of it.
 
 **Check where your hook actually runs before paying that rent.** A hook on the
 world map does not need an always-mapped bank at all: `$84A0` maps PRG010 into
@@ -182,6 +204,16 @@ code — check `FREE_SPACE_ALLOCATIONS` alongside the scan, not instead of it.
 in this ROM: one word, and a whole subsystem's code *and* data become free at
 once. It is worth asking, before writing a trampoline, whether the vanilla
 routine you are working around is reached from exactly one vector.
+
+**PRG030's largest run is reclaimed vanilla code, not `$FF`: the retired
+2-player Vs Challenge.** `two_player_vs.rs` disabled it on every seed in
+2026-09, which freed **301 bytes** at `$934C..$9478` (file 0x3D35C..0x3D489) and
+**38** at `$88F4..$8919`. Both are **unclaimed** — the first feature that needs
+always-mapped space adds its own `FS_*` row over them, the way `FS_FORTRESS_FX`
+works in PRG010. The `--free-space` scan cannot see either run, so the table
+above understates PRG030 by 339 bytes; read
+`docs/smb3_rom_reference.md` → "The 2-Player Vs Challenge" before concluding
+that an always-mapped patch will not fit.
 
 ### Size techniques that have actually paid off here
 

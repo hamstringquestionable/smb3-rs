@@ -80,9 +80,39 @@ pub(crate) const MAP_OBJ_DEAD: u16 = WANDS_TABLE + WANDS_TABLE_LEN as u16;
 /// reloads, so a "still beaten" bit for one of those would mean nothing.
 pub(crate) const MAP_OBJ_DEAD_LEN: usize = 9;
 
+/// Which world each player is standing in — one byte for Mario, one for Luigi.
+///
+/// `World_Num` is a single global byte, so this is the only thing the maze adds
+/// to make the two players independent; everything positional already is. See
+/// [`super::player_worlds`] for what reads it and what keeps it true.
+///
+/// Indexed by `Player_Current` straight off the register vanilla already
+/// loaded, which is what makes both readers three bytes each. Two entries
+/// exactly — `Player_Current` is 0 or 1 — and `player_worlds` pins that.
+pub(crate) const PLAYER_WORLD: u16 = MAP_OBJ_DEAD + MAP_OBJ_DEAD_LEN as u16;
+pub(crate) const PLAYER_WORLD_LEN: usize = 2;
+
+/// Which of three situations `Map_Init` is in, and so **which players it may
+/// reposition**. See [`super::player_worlds`] for the routines that read it.
+///
+/// | value | meaning | `Map_Init` resets |
+/// |---|---|---|
+/// | `$00` | an ordinary world change — airship, castle, whistle, warp zone, game-over return | the live player only |
+/// | `$01` | a turn hand-over | nobody |
+/// | `$02` | a new game | both, as vanilla does |
+///
+/// `$00` is the resting value, which is what makes it the default for every
+/// path that sets nothing: the rule "only the live player is ever repositioned"
+/// then holds for world changes this module has never heard of.
+///
+/// One byte and not two flags, because a single `LSR` splits all three — `$01`
+/// sets carry, `$02` leaves `A` non-zero, `$00` leaves it zero — which is a
+/// three-way branch in two bytes.
+pub(crate) const HANDOVER: u16 = PLAYER_WORLD + PLAYER_WORLD_LEN as u16;
+
 /// First byte after everything allocated above — where the next allocation
 /// starts.
-pub(crate) const MAZE_STATE_NEXT: u16 = MAP_OBJ_DEAD + MAP_OBJ_DEAD_LEN as u16;
+pub(crate) const MAZE_STATE_NEXT: u16 = HANDOVER + 1;
 
 /// Every byte the maze owns, as one contiguous run.
 ///
@@ -109,5 +139,13 @@ const _: () = {
     assert!(
         WANDS_TABLE + WANDS_TABLE_LEN as u16 <= MAP_OBJ_DEAD,
         "the wand table overlaps the map-object store"
+    );
+    assert!(
+        MAP_OBJ_DEAD + MAP_OBJ_DEAD_LEN as u16 <= PLAYER_WORLD,
+        "the map-object store overlaps the per-player world bytes"
+    );
+    assert!(
+        PLAYER_WORLD + PLAYER_WORLD_LEN as u16 <= HANDOVER,
+        "the per-player world bytes overlap the hand-over flag"
     );
 };

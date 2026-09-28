@@ -791,6 +791,13 @@ const UNPACK_WORLD: [u8; 33] = xfer_world!(UNPACK_PLANE_CPU);
 /// transition; the object store is written at the moment of defeat and never
 /// packed, so it has no transition to define.
 ///
+/// **[`super::player_worlds`]' table is deliberately *not* stamped here**, and
+/// it briefly was. This arm is the tidiest definition of "the live player's
+/// world is changing", but it is a redundant second writer: every path that
+/// reaches here ran `Map_Init` twenty bytes earlier, and that is where
+/// `player_worlds` hooks — so its gate sees every world change this arm sees,
+/// and has to decide about the player loop anyway.
+///
 /// 60 reserved, 34 used.
 #[rustfmt::skip]
 const WIPE_REPLACEMENT: [u8; 34] = [
@@ -937,15 +944,34 @@ const NEW_GAME_INIT_CPU: u16 = (0xC000 + FS_NEW_GAME_INIT - 0x32010) as u16;
 ///   in `Inventory_Items` (`$7D80..$7D9B`), so this displaces nothing and
 ///   stops short of `Inventory_Cards`.
 ///
-/// The whistle write is last on purpose. `A` must stay zero across the three
-/// loops, and this is the one place it is free again.
+///   **Luigi gets one too, in his own slot 0.** `Inventory_Items2` is a
+///   separate 28-slot array at `$7DA3` and the panel indexes it by
+///   `Player_Current`, so a whistle written only to Mario's array leaves the
+///   second player with a dead panel and no fast travel at all — the mode's
+///   one way out of a world, missing for half the game. The store is
+///   unconditional rather than gated on `Total_Players`: in one-player mode
+///   Luigi's array is never read, so the gate would cost bytes to buy nothing.
+///
+/// * both entries of [`super::player_worlds`]' table, seeded with the starting
+///   world. `world_order` can start a game in any world, so zeroed bytes would
+///   tell the second player they began in World 1 and their first hand-over
+///   would haul them there. This is the one write here that has to come
+///   *after* a loop rather than before: the table lives inside the maze's SRAM
+///   run, so the maze loop would otherwise zero it straight back. `A` is spent
+///   by then, which is what the `LDA LIVE_WORLD` recovers — three bytes to
+///   re-read the world this routine stored in its first instruction.
+///
+/// The table seed and the whistle writes are last on purpose. `A` must stay
+/// zero across the three loops, and this is the one place it is free again —
+/// and it is free once for both whistle stores, which is why the second costs
+/// three bytes and not five.
 ///
 /// The three loops cannot be one: the store is at `$7997`, the maze's SRAM at
 /// `$7AC1` and the live array at `$7D00`, and `A` stays zero across all three
 /// so only the index and the base change. None of them reaches the inventory —
 /// the live array stops at `$7D7F`, one byte below it.
 #[rustfmt::skip]
-const NEW_GAME_INIT: [u8; 38] = [
+const NEW_GAME_INIT: [u8; 55] = [
     0x8D, LIVE_WORLD as u8, (LIVE_WORLD >> 8) as u8, //  0: STA LIVE_WORLD  ; A = World_Num
     0xA9, 0x00,                                     //  3: LDA #$00
     0x8D, DEBUG_FLAG as u8, (DEBUG_FLAG >> 8) as u8, //  5: STA Debug_Flag  ; what we displaced
@@ -966,10 +992,22 @@ const NEW_GAME_INIT: [u8; 38] = [
     0xCA,                                           // 29: DEX
     0x10, 0xFA,                                     // 30: BPL -6 -> live_loop
 
-    0xA9, super::items::WARP_WHISTLE,               // 32: LDA #$0C
+    0xAD, LIVE_WORLD as u8, (LIVE_WORLD >> 8) as u8, // 32: LDA LIVE_WORLD  ; the starting world
+    0x8D, maze_state::PLAYER_WORLD as u8,
+          (maze_state::PLAYER_WORLD >> 8) as u8,    // 35: STA PLAYER_WORLD
+    0x8D, (maze_state::PLAYER_WORLD + 1) as u8,
+          ((maze_state::PLAYER_WORLD + 1) >> 8) as u8, // 38: STA PLAYER_WORLD+1
+
+    0xA9, 0x02,                                     // 41: LDA #$02
+    0x8D, maze_state::HANDOVER as u8,
+          (maze_state::HANDOVER >> 8) as u8,        // 43: STA HANDOVER  ; "a new game"
+
+    0xA9, super::items::WARP_WHISTLE,               // 46: LDA #$0C
     0x8D, INVENTORY_WHISTLE_SLOT as u8,
-          (INVENTORY_WHISTLE_SLOT >> 8) as u8,      // 34: STA Inventory_Items
-    0x60,                                           // 37: RTS
+          (INVENTORY_WHISTLE_SLOT >> 8) as u8,      // 48: STA Inventory_Items
+    0x8D, INVENTORY_WHISTLE_SLOT_2 as u8,
+          (INVENTORY_WHISTLE_SLOT_2 >> 8) as u8,    // 51: STA Inventory_Items2
+    0x60,                                           // 54: RTS
 ];
 
 /// `Inventory_Items` — the first of Mario's 28 item slots (`$7D80..$7D9B`, four
@@ -977,6 +1015,11 @@ const NEW_GAME_INIT: [u8; 38] = [
 /// while this slot is empty, so the maze's whistle owns it and the
 /// starting-items trampoline begins at slot 1. See [`NEW_GAME_INIT`].
 const INVENTORY_WHISTLE_SLOT: u16 = 0x7D80;
+
+/// `Inventory_Items2` — the first of Luigi's 28 slots, `$7D80 + $23`. Its own
+/// array, not a mirror: the panel picks between the two by `Player_Current`,
+/// so the second player's whistle has to be stored here explicitly.
+const INVENTORY_WHISTLE_SLOT_2: u16 = INVENTORY_WHISTLE_SLOT + 0x23;
 
 /// The `Map_Completions` wipe in `PRG030_84A0`: CPU `$84CD`, ten bytes, three
 /// whole instructions, nothing branching into the middle.
@@ -2006,6 +2049,7 @@ mod tests {
             mem.set_byte(PACKED + PACKED_LEN as u16, 0xAA);
             mem.set_byte(0x7D80, 0xAA);
             mem.set_byte(0x7D81, 0xAA);
+            mem.set_byte(INVENTORY_WHISTLE_SLOT_2, 0xAA);
             for i in 0..maze_state::MAZE_STATE_LEN {
                 mem.set_byte(maze_state::MAZE_STATE_START + i as u16, 0xAA);
             }
@@ -2042,11 +2086,33 @@ mod tests {
                 );
             }
             for i in 0..maze_state::MAZE_STATE_LEN {
-                assert_eq!(
-                    cpu.memory.get_byte(maze_state::MAZE_STATE_START + i as u16),
-                    0,
-                    "maze SRAM byte {i} survived a new game",
-                );
+                let at = maze_state::MAZE_STATE_START + i as u16;
+                // The per-player world bytes and the hand-over flag are the part
+                // of the run this routine *writes* rather than clears, and they
+                // are written after the loop for exactly that reason — see
+                // NEW_GAME_INIT.
+                if (maze_state::PLAYER_WORLD
+                    ..maze_state::PLAYER_WORLD + maze_state::PLAYER_WORLD_LEN as u16)
+                    .contains(&at)
+                {
+                    assert_eq!(
+                        cpu.memory.get_byte(at),
+                        start,
+                        "both players must start in the world the game starts in",
+                    );
+                    continue;
+                }
+                if at == maze_state::HANDOVER {
+                    // `$02` = "a new game": Map_Init may place both players.
+                    // Anything else and the second player starts off the map.
+                    assert_eq!(
+                        cpu.memory.get_byte(at),
+                        0x02,
+                        "a new game must let Map_Init position both players",
+                    );
+                    continue;
+                }
+                assert_eq!(cpu.memory.get_byte(at), 0, "maze SRAM byte {i} survived a new game");
             }
             // And nothing beyond any of the three regions.
             assert_eq!(
@@ -2072,6 +2138,14 @@ mod tests {
                 cpu.memory.get_byte(0x7D80),
                 crate::randomize::items::WARP_WHISTLE,
                 "the maze whistle must land in inventory slot 0",
+            );
+            // And one in Luigi's own array. `Inventory_Items2` is not a mirror
+            // of Mario's — a whistle missing here is a second player who can
+            // never leave a world.
+            assert_eq!(
+                cpu.memory.get_byte(INVENTORY_WHISTLE_SLOT_2),
+                crate::randomize::items::WARP_WHISTLE,
+                "the second player's whistle must land in Inventory_Items2 slot 0",
             );
         }
     }

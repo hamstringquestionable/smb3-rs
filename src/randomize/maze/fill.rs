@@ -472,7 +472,8 @@ fn constructive<R: Rng>(state: &mut GlobalState, knobs: &Knobs, rng: &mut R) -> 
 
     loop {
         let shut = state.shut_locks(&open);
-        let reach = walk_maze(&state.view(&bases, &shut), &links, state.start);
+        // The fill runs during generation, before any gate is installed.
+        let reach = walk_maze(&state.view(&bases, &shut, &HashSet::new()), &links, state.start);
 
         for (f, pos) in &forts {
             if !open.contains(f) && reach.contains((f.world, *pos)) {
@@ -572,7 +573,7 @@ fn widest_gate<R: Rng>(
         let saved = state.locks[i].fort;
         state.locks[i].fort = Some(probe);
         let shut = state.shut_locks(open);
-        let opened = walk_maze(&state.view(bases, &shut), links, state.start);
+        let opened = walk_maze(&state.view(bases, &shut, &HashSet::new()), links, state.start);
         state.locks[i].fort = saved;
 
         // Opening a gate only ever adds reachability, so this cannot go

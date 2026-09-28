@@ -974,6 +974,119 @@ Two couplings to remember:
   the packed-store design rests on. Two patches now edit the same short stretch
   of game-over code; check a seeded `--write-log` with both enabled.
 
+### Two players, two worlds — BUILT (2026-09-27)
+
+Vanilla cannot express "the players are in different worlds": `World_Num` is a
+single global byte, and worlds only ever advance. The maze breaks both halves of
+that, so a telepad used to drag the partner along — hand the turn over and they
+were standing in a world that had been replaced, at coordinates belonging to a
+map they never walked.
+
+`player_worlds.rs` adds the one thing vanilla is missing: `PLAYER_WORLD`, two
+SRAM bytes in `maze_state`'s run. **Everything else was already per-player** —
+`World_Map_Y/XHi/X`, `Map_Entered_*` and `Map_Prev_XOff/XHi` are all two-byte
+arrays indexed by `Player_Current`, and the map init restores both players' from
+the backups.
+
+**The whole feature is a choice between two entries the engine already has.**
+`PRG030_8775` ends a turn, picks the next living player at `PRG030_879B` and
+jumps to `PRG030_84D7` — the byte after the `Map_Completions` wipe inside
+`$84A0`. So vanilla already re-runs the back half of the map init on every
+hand-over, and that half redraws from `World_Num`. What it skips is the front
+half: `Map_Init`, which rebuilds the world's nine map-object slots from ROM, and
+the per-world flag clears. Skipping those is right when the world has not changed
+and wrong when it has — a hand-over into another world would keep the previous
+world's Hammer Bros standing on the new map. So the router sends a same-world
+hand-over to `$84D7` exactly as vanilla, and a world-changing one to `$84A0`, the
+full init. The two `completion_bits` hooks inside then pack the world being left
+and expand the one being entered with no new code, because their trigger is
+`World_Num != LIVE_WORLD` and nothing else.
+
+**The rule, settled after the first playtest: only the live player is ever
+repositioned.** Nothing either player does may move the other — not a telepad,
+not an airship, not the whistle. That is a stronger statement than the first cut
+made, and it is the one the mode wants: two private traversals of one shared
+maze.
+
+`Map_Init`'s player loop (`PRG011_A23E`) is what fought it. It walks *both*
+player slots and resets each to `Map_Y_Starts[World_Num]` with X forced to `$20`,
+wiping `Map_Entered_*`, `Map_Previous_*` and the scroll backups — so the first
+cut, which routed a world-changing hand-over through the full `$84A0`, put both
+players on the new world's start tile. **That loop is not a bug**: it is
+vanilla's answer to a world change, where beating a world drags both players
+forward and neither has a position in the new world worth keeping. So it is
+gated, not removed, by a one-byte `HANDOVER` flag with three values:
+
+| value | set by | `Map_Init` resets |
+|---|---|---|
+| `$00` | nobody — the resting value | the live player only |
+| `$01` | the hand-over router | nobody |
+| `$02` | the new-game signal | both, as vanilla |
+
+`$00` covers the airship, the castle, the whistle, the warp zone and the
+game-over return, and being the *default* is what makes a world change nobody
+anticipated behave correctly. `$02` exists for one reason: vanilla leaned on the
+two-player pass to give Luigi an initial position at all, and without it a new
+game leaves his coordinates holding stale battery-backed SRAM.
+
+Gating one loop takes two hooks, at `$A23A` and `$A271`, because the loop counts
+`X` down from `Total_Players - 1` — without the tail, Luigi's pass would be
+followed by Mario's and clobber him. Reimplementing the body instead would be the
+same size and worse: `start_airship_swap` splices its own `JSR` over the body's
+last store to re-stamp a swapped world's start column, so a private copy would
+silently ignore swapped starts.
+
+**Game over needs no code.** `GAMEOVER_RETURN` sends the player who ran out of
+lives to the starting world, and because only the live player is repositioned the
+survivor is untouched; when the turn reaches them the router restores their own
+world and position.
+
+Three more consequences worth writing down:
+
+- **It stays one shared maze, not two games.** Completions are packed per
+  *world* — both halves of `Map_Completions` — so a fortress one player clears
+  is cleared for the other when they arrive. So are the wand table, the visited
+  table and the map objects. Only *where you are* is per-player.
+- **The four unbanked per-world flags** (`Map_Anchored`, `Map_WhiteHouse`,
+  `Map_CoinShip`, `Map_Got13Warp`) are a known hole that two players in two
+  worlds makes visible — one player's summoned canoe can be set when the
+  other's map draws. Left alone deliberately (2026-09-27); fix it if it bites.
+- **A telepad arrival was Mario-only.** `RESTORE_ARRIVAL` wrote the absolute
+  `Map_Entered_*` addresses, so a pad taken by Luigi dropped him on the start
+  tile and planted his coordinates in Mario's backup. Every store is indexed by
+  `Player_Current` now; with one player that is the same address it hardcoded.
+- **The wand-return cutscene zeroed both players' cameras.** `PRG030_9062`,
+  which runs after an airship or castle clear and nothing else, loops over both
+  player slots clearing `Map_Prev_XOff/XHi` — the bytes `PRG030_8634` restores
+  `Horz_Scroll` from. Vanilla is right to: `Map_Init` then puts both players on
+  the new world's start tile, where a zeroed camera is the correct framing. With
+  independent worlds the partner's position survived and their camera did not, so
+  the turn came back to them correctly placed on a map scrolled to page 0. Gated
+  to the live player, in PRG027 — the cutscene has `PAGE_A000 = 27` throughout,
+  so this costs none of PRG030's or PRG031's last always-mapped bytes.
+- **The router has to live in PRG030**, and takes 24 of that bank's last 42
+  bytes. The map loop banks PRG026 into `$A000` on its way to the hand-over, and
+  `$84D7` opens by calling `SetPages_ByTileset` *because* it is entered with
+  arbitrary banks — the death path at `PRG030_9130` jumps straight there out of a
+  level. A jump into the map bank from that site would be a bet on the window.
+  Its sibling — the marker gate — is hooked from PRG010's own `Map_No_Pan` and
+  pays no such rent.
+- **`Map_No_Pan` draws the inactive player's marker**, which in separate worlds
+  is a partner stranded wherever their own map put them. The gate answers `$80`
+  to the alive test — reads as "deceased", so vanilla's own `BMI` skips the draw
+  — adding one new way to reach a branch that was already there.
+
+What keeps the table true is `completion_bits`, not this module:
+`WIPE_REPLACEMENT`'s world-changed arm is the single choke point for every world
+change the live player can make (telepad, whistle, airship, warp zone), and
+`NEW_GAME_INIT` seeds both entries with the starting world — which it must,
+because `world_order` can start a game anywhere and zeroed bytes would tell the
+second player they began in World 1.
+
+One-player mode never reaches any of it: `Player_Current` never leaves 0, so the
+router's compare is always equal and the marker gate sits behind vanilla's own
+`Total_Players` test.
+
 ## Cross-world locks
 
 > **SUPERSEDED by the fortress-FX rework (2026-09-06), one day after this was
@@ -1598,10 +1711,12 @@ wand counts — which is also the hardest setting. Nothing asks today.
 - **Whether K should scale with `world_count`** rather than being flat. It is
   currently clamped to the airships the spine offers, which is the safe half of
   the answer, not the interesting one.
-- **The water gap as a real key** (repurposing the anchor into a boat snap).
-  Parked: canoe edges gate on dock walk-reachability in the walker and that is
-  load-bearing, so a portable boat changes walker semantics rather than adding
-  an item.
+- ~~**The water gap as a real key**~~ (repurposing the anchor into a boat snap)
+  — **built**, as the `item_gates` option: maze only, off by default. It did
+  change walker semantics rather than adding an item, exactly as feared, which is
+  why the gate is *data* the walker reads (`walk::MazeWorld::canoe_locked`) and
+  an empty gate list restores the old shape byte for byte. See `canoe_gate`,
+  `key_sites` and `key_placement`.
 - **Same-world locks through the foreign-lock table.** It would free FX slots at
   the cost of the crumble animation, but the 4-byte rows do not fit a store that
   would then need both the packed `(byte, mask)` and the live

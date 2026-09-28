@@ -358,6 +358,11 @@ pub struct TestRomSpec {
     /// Starting lives. Only written when `starting_items` is non-empty, since
     /// the two share one trampoline.
     pub starting_lives: u8,
+    /// Gate the canoe on the Anchor: boats park out of reach, and only an
+    /// anchor used from the inventory while standing on a dock calls one over.
+    /// Pair with `--starting-items anchor` to test the unlock; without it the
+    /// wall is what gets tested.
+    pub canoe_gate: bool,
     /// Let the Hammer item break fortress lock tiles on the map.
     pub hammer_breaks_locks: bool,
     /// Let the Hammer item break water-gap (bridge) tiles on the map.
@@ -1069,6 +1074,24 @@ pub fn build(vanilla: &[u8], spec: &TestRomSpec) -> Result<TestRom, String> {
         None => report.push("open movement: off".to_string()),
     }
 
+    // 5c. The canoe gate. Applied here rather than through `Options` for the
+    //     same reason as the hammer below: it works on a vanilla base, where
+    //     testing what an Anchor does to a boat needs no map behind it.
+    //
+    //     The real option (`Options::canoe_gate`, maze only) reaches this path
+    //     through `--flags`, and that arm has already gated the worlds its key
+    //     placement could key. Applying on top would move those boats a second
+    //     time — two tiles out, past the water — so the flag defers to it and
+    //     says so.
+    if spec.canoe_gate {
+        if crate::randomize::canoe_gate::is_installed(&rom) {
+            report.push("canoe gate: already installed by the seed's own flags".to_string());
+        } else {
+            crate::randomize::canoe_gate::apply(&mut rom, &[true; 8]);
+            report.push("canoe gate: boats offshore, anchor summons".to_string());
+        }
+    }
+
     // 6. Hammer tile-breaking. Applied here rather than via `Options` so it
     //    works on a vanilla base too — testing what a hammer does to a lock
     //    shouldn't require randomizing the map first.
@@ -1231,6 +1254,7 @@ mod tests {
             remove_gaps: false,
             starting_items: Vec::new(),
             starting_lives: 5,
+            canoe_gate: false,
             hammer_breaks_locks: false,
             hammer_breaks_bridges: false,
             world_persist: false,

@@ -2291,3 +2291,141 @@ fn test_world_linearity_probe() {
         );
     }
 }
+
+/// **How often is the boat on the required route?**
+///
+/// The canoe gate is only worth building if the boat is already load-bearing
+/// on a real seed — if the target is always reachable on foot, an anchor gates
+/// nothing and the answer is to leave the water alone. This is that
+/// measurement, and it is the predicate the gate would key on, run over
+/// seeds rather than over one map.
+///
+/// **Locks are held open**, so what it reports is pure topology: the boat, not
+/// a fortress gate standing in front of the dock. Holding them shut would
+/// measure the locks instead — the same trap `forced_fort` fell into.
+///
+/// "Required" means exactly: the target is reachable with the boat and not
+/// without it. Content stranded behind water is counted separately, because a
+/// world can have half its levels on an island while the castle sits on the
+/// mainland, and those are different problems.
+///
+/// ```sh
+/// CENSUS_SEEDS=300 cargo test --release --lib canoe_requirement_census \
+///     -- --ignored --nocapture
+/// ```
+#[test]
+#[ignore]
+fn canoe_requirement_census() {
+    use super::super::map_walker::{walk_map, walk_map_without_canoe};
+
+    let Some(raw) = load_rom() else {
+        eprintln!("SKIP: requires the ROM, which is not included in the repo");
+        return;
+    };
+    let seeds: u64 = std::env::var("CENSUS_SEEDS").ok().and_then(|s| s.parse().ok()).unwrap_or(100);
+
+    for &wild in &[false, true] {
+        let rom = qol_variant(&raw, false, wild);
+        // Worlds that actually hold a boat under this arm — everything else is
+        // not a sample, and averaging it in would dilute the answer towards
+        // zero.
+        let mut worlds_with_canoe = 0usize;
+        let mut boat_required = 0usize;
+        let mut target_unreachable = 0usize;
+        let mut seeds_requiring = 0usize;
+        let mut stranded_nodes_sum = 0usize;
+        let mut stranded_nodes_max = 0usize;
+        let mut per_world = [(0usize, 0usize); 8];
+
+        for seed in 0..seeds {
+            let mut catalog = NodeCatalog::build(&rom, false);
+            let mut roll_rng = ChaCha8Rng::seed_from_u64(seed);
+            start_airship_swap::pick_swaps(&mut catalog, &mut roll_rng);
+            let pickup = pick_up(
+                &rom,
+                &catalog,
+                PickupFlags {
+                    shuffle_spade_games: false,
+                    shuffle_toad_houses: true,
+                    shuffle_hammer_bros: true,
+                },
+            );
+            let mut rng = ChaCha8Rng::seed_from_u64(seed ^ 0xC0FFEE);
+            let build = super::build(
+                &rom,
+                &OverworldData { pickup: &pickup, catalog: &catalog },
+                &mut rng,
+                BuildFlags {
+                    shuffle_toad_houses: true,
+                    shuffle_hammer_bros: true,
+                    eights_are_wild: wild,
+                    ..Default::default()
+                },
+            );
+
+            let mut this_seed = false;
+            for built in &build.worlds {
+                let wi = built.world_idx;
+                if rom_data::active_canoe_edges(wi, built.grid.eights_are_wild).is_empty() {
+                    continue;
+                }
+                worlds_with_canoe += 1;
+                per_world[wi].1 += 1;
+
+                let Some(target) = super::super::overworld_helpers::find_target(&built.grid, wi)
+                else {
+                    continue;
+                };
+                let blocked = HashSet::new();
+                let with = walk_map(&built.grid, &built.pipe_pairs, None, wi);
+                let without =
+                    walk_map_without_canoe(&built.grid, &built.pipe_pairs, None, wi, &blocked);
+
+                if !with.nodes.contains(&target) {
+                    // Not this census's business — the builder guarantees this
+                    // elsewhere — but counted so a spike cannot hide here.
+                    target_unreachable += 1;
+                    continue;
+                }
+                if !without.nodes.contains(&target) {
+                    boat_required += 1;
+                    per_world[wi].0 += 1;
+                    this_seed = true;
+                }
+                let stranded = with.nodes.len().saturating_sub(without.nodes.len());
+                stranded_nodes_sum += stranded;
+                stranded_nodes_max = stranded_nodes_max.max(stranded);
+            }
+            if this_seed {
+                seeds_requiring += 1;
+            }
+        }
+
+        let arm = if wild { "8s are Wild" } else { "standard" };
+        let pct = |n: usize, d: usize| if d == 0 { 0.0 } else { 100.0 * n as f64 / d as f64 };
+        eprintln!("\n=== the boat on the required route — {arm}, {seeds} seeds ===");
+        eprintln!("  worlds holding a boat          {worlds_with_canoe}");
+        eprintln!(
+            "  boat REQUIRED for the target   {boat_required}  ({:.1}% of those worlds)",
+            pct(boat_required, worlds_with_canoe)
+        );
+        eprintln!(
+            "  seeds with at least one         {seeds_requiring}  ({:.1}% of seeds)",
+            pct(seeds_requiring, seeds as usize)
+        );
+        eprintln!(
+            "  nodes behind the water         mean {:.1}, max {stranded_nodes_max}",
+            if worlds_with_canoe == 0 {
+                0.0
+            } else {
+                stranded_nodes_sum as f64 / worlds_with_canoe as f64
+            }
+        );
+        eprintln!("  target unreachable even with   {target_unreachable}  (should be 0)");
+        for (wi, &(req, total)) in per_world.iter().enumerate() {
+            if total > 0 {
+                eprintln!("     W{}: {req}/{total} required ({:.1}%)", wi + 1, pct(req, total));
+            }
+        }
+    }
+}

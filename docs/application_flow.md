@@ -188,7 +188,8 @@ they are fixes and fairness patches the project ships unconditionally.
 | 8.17 | `qol::apply_fast_mushroom_house` · `qol/fast_mushroom_house` | [opt `fast_mushroom_house`] |
 | 8.18 | `qol::apply_faster_tail_speed` · `qol/faster_tail_speed` | [opt `faster_tail_speed`] |
 | 8.19 | `qol::apply_no_game_over_penalty` · `qol/no_game_over_penalty` | [opt `no_game_over_penalty` **∨ `world_maze`**] — without it a game over wipes the map completions the maze is built on |
-| 8.20 | `qol::card_speed_clear` · `qol/card_speed_clear` | [opt `card_speed_clear`] |
+| 8.20 | `qol::apply_mariomon` · `qol/mariomon` | [opt `mariomon`] — no 1-Ups, and the Game Over popup stops offering a way back |
+| 8.21 | `qol::card_speed_clear` · `qol/card_speed_clear` | [opt `card_speed_clear`] |
 
 ### 9 · Title screen, starting items, final always-on patches, stamp
 

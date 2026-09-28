@@ -44,6 +44,7 @@ impl Phase for HammerBroFill {
                 section: 0,
                 is_hand_trap: false,
                 is_troll_pipe: false,
+                pin: None,
                 lock_hint: LockHint::default(),
             });
         }
@@ -73,6 +74,7 @@ impl Phase for HammerBroFill {
                 section: 0,
                 is_hand_trap: false,
                 is_troll_pipe: false,
+                pin: None,
                 lock_hint: LockHint::default(),
             });
             if let Some(partner) = row78_partner(pos) {

@@ -71,6 +71,19 @@ fn take_level_slot(
     (pool.pop_front().expect("level pool exhausted"), is_troll_pipe)
 }
 
+/// The pool entry holding a pinned pointer-table entry, if it is still in the
+/// deck.
+///
+/// Exact identity, not a class — a pin names one entry. The caller falls back
+/// to an ordinary draw when this is `None`, because the deck surgery upstream
+/// is allowed to have removed it.
+fn pool_entry_for_pin(pool: &[usize], data: &OverworldData, pin: (usize, usize)) -> Option<usize> {
+    pool.iter().position(|&pi| {
+        let ce = &data.catalog.entries[data.pickup.pool[pi].catalog_idx];
+        (ce.world_idx, ce.entry_idx) == pin
+    })
+}
+
 pub(super) fn assign_pool<R: Rng>(
     rom: &Rom,
     build: &BuildResult,
@@ -171,12 +184,57 @@ pub(super) fn assign_pool<R: Rng>(
     // the draw below is uniform over this list — would move 1-F for no reason.
     // A stable sort keeps the per-world order the locks gave.
     safe_slots.sort_by_key(|&(world, _)| world);
+    // A pinned fortress slot already knows what it gets, so keep 1-F's random
+    // draw off those cells — otherwise the two pre-assignments race for the
+    // same `(world, section)` and the pin loses silently. Falls back to the
+    // full list rather than failing in the (unreached) case where every safe
+    // slot is pinned.
+    let pinned_forts: HashSet<(usize, usize)> = build
+        .worlds
+        .iter()
+        .enumerate()
+        .flat_map(|(wi, b)| {
+            b.slots
+                .iter()
+                .filter(|s| s.kind == SlotKind::Fortress && s.pin.is_some())
+                .map(move |s| (wi, s.section))
+        })
+        .collect();
+    let unpinned_safe: Vec<(usize, usize)> =
+        safe_slots.iter().copied().filter(|s| !pinned_forts.contains(s)).collect();
+    let draw_from = if unpinned_safe.is_empty() { &safe_slots } else { &unpinned_safe };
     let mut preassigned_forts: HashMap<(usize, usize), usize> = HashMap::new();
-    if let Some(&slot) = safe_slots.choose(rng) {
+    if let Some(&slot) = draw_from.choose(rng) {
         preassigned_forts.insert(slot, fort_1f_pi);
     } else {
         // No safe slot available — return 1-F to the regular pool.
         fort_pool.push(fort_1f_pi);
+    }
+
+    // Misses, per world, from both pre-deals below. Reported rather than
+    // fatal — see `SlotAssignment::pin`.
+    let mut unmet_by_world: Vec<Vec<UnmetPin>> = vec![Vec::new(); 8];
+
+    // --- Pinned fortresses ---
+    //
+    // Before `fort_slots` counts what the regular deal has to cover, so the
+    // two cannot disagree about how big the deck needs to be.
+    for (wi, built) in build.worlds.iter().enumerate() {
+        for slot in built.slots.iter().filter(|s| s.kind == SlotKind::Fortress) {
+            let Some(pin) = slot.pin else { continue };
+            if preassigned_forts.contains_key(&(wi, slot.section)) {
+                // 1-F got here first; it only does so when every safe slot was
+                // pinned, and giving way is the safer of the two losses.
+                unmet_by_world[wi].push((slot.pos, pin));
+                continue;
+            }
+            match pool_entry_for_pin(&fort_pool, data, pin) {
+                Some(at) => {
+                    preassigned_forts.insert((wi, slot.section), fort_pool.remove(at));
+                }
+                None => unmet_by_world[wi].push((slot.pos, pin)),
+            }
+        }
     }
 
     // The number of fortress slots the deal below actually draws for: one per
@@ -208,10 +266,18 @@ pub(super) fn assign_pool<R: Rng>(
     //  - Never disguised as a troll pipe. Those don't clear when beaten, so
     //    the hand rooms could be farmed for items, and a chest level hidden
     //    behind a pipe tile is missed by players who skip them.
+    //
+    // A pinned entry is held out for the same reason: a pin says "this entry,
+    // this cell", and a second copy dealt elsewhere makes that a lie. Derived
+    // from the pins present, so a build with none computes an empty set and
+    // nothing changes.
+    let pinned: HashSet<(usize, usize)> =
+        build.worlds.iter().flat_map(|b| b.slots.iter()).filter_map(|s| s.pin).collect();
     let holds_unique_item = |pi: usize| -> bool {
         let ce = &catalog.entries[pickup.pool[pi].catalog_idx];
         rom_data::is_hand_level(ce.world_idx, ce.entry_idx)
             || rom_data::is_chest_level(ce.world_idx, ce.entry_idx)
+            || pinned.contains(&(ce.world_idx, ce.entry_idx))
     };
 
     // --- Deck surgery -------------------------------------------------
@@ -376,7 +442,27 @@ pub(super) fn assign_pool<R: Rng>(
     let mut fort_iter = fort_pool.into_iter();
     let mut level_pool: VecDeque<usize> = level_pool.into();
 
+    // --- Pinned levels ---
+    //
+    // After the deck surgery above, because that is what decides whether the
+    // named entry is still in the deck at all.
+    let mut preassigned_levels: HashMap<(usize, (usize, usize)), usize> = HashMap::new();
+    for (wi, built) in build.worlds.iter().enumerate() {
+        for slot in built.slots.iter().filter(|s| s.kind == SlotKind::Level) {
+            let Some(pin) = slot.pin else { continue };
+            let deck: Vec<usize> = level_pool.iter().copied().collect();
+            match pool_entry_for_pin(&deck, data, pin) {
+                Some(at) => {
+                    let pi = level_pool.remove(at).expect("index came from this deque");
+                    preassigned_levels.insert((wi, slot.pos), pi);
+                }
+                None => unmet_by_world[wi].push((slot.pos, pin)),
+            }
+        }
+    }
+
     let mut assignments: Vec<WorldAssignments> = Vec::with_capacity(8);
+    let mut unmet_by_world = unmet_by_world.into_iter();
 
     for wi in 0..8 {
         let built = &build.worlds[wi];
@@ -412,6 +498,7 @@ pub(super) fn assign_pool<R: Rng>(
         // than a pipe leading to the hand-trap behind it.
         let mut level = Vec::new();
         let mut demoted_troll_pipes: HashSet<(usize, usize)> = HashSet::new();
+        let unmet_pins = unmet_by_world.next().expect("one entry per world");
         let level_slots: Vec<&_> =
             built.slots.iter().filter(|s| s.kind == SlotKind::Level).collect();
         let mut ordered: Vec<&_> =
@@ -419,6 +506,16 @@ pub(super) fn assign_pool<R: Rng>(
         ordered.extend(level_slots.iter().copied().filter(|s| !s.is_troll_pipe));
 
         for slot in ordered {
+            if let Some(pi) = preassigned_levels.remove(&(wi, slot.pos)) {
+                // A pinned slot that is also a troll pipe keeps the pipe look
+                // only if its entry may wear one; `holds_unique_item` says a
+                // pinned entry may not, so it demotes like any other.
+                if slot.is_troll_pipe {
+                    demoted_troll_pipes.insert(slot.pos);
+                }
+                level.push(Assignment { pool_idx: pi, pos: slot.pos });
+                continue;
+            }
             let (pi, demoted) =
                 take_level_slot(&mut level_pool, slot.is_troll_pipe, holds_unique_item);
             if demoted {
@@ -586,6 +683,7 @@ pub(super) fn assign_pool<R: Rng>(
         }
 
         assignments.push(WorldAssignments {
+            unmet_pins,
             fortress,
             level,
             pipes,

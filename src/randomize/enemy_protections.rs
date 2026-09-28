@@ -153,6 +153,14 @@ pub(super) const LEVEL_PROTECTIONS: &[LevelProtection] = &[
             EntryRule { offset: 0x0C6AD, rule: EntryProtection::ForceStompable }, // Spike scr=10 col=4
         ],
     },
+    LevelProtection {
+        label: "5-4 (ParatroopaGreenHop guards a pipe; a hazard there would block it)",
+        enemy_ptr: 0xD039,
+        walker_segment: WalkerSegmentRule::Default,
+        entries: &[
+            EntryRule { offset: 0x0D074, rule: EntryProtection::ExcludeHazards }, // ParatroopaGreenHop scr=7 col=12 row=6
+        ],
+    },
     // --- Bro-fight rooms reached by a non-bro map object ---
     // A treasure-box room is cleared to be left, so it needs the bro-fight
     // pool: every enemy in it must be permanently killable. These two are

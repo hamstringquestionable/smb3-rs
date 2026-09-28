@@ -326,3 +326,43 @@ fn friendlier_blocked_forts_resolve() {
         );
     }
 }
+
+/// **Five Toad Houses hand over a fixed item; the other seventeen roll it.**
+///
+/// The split a key-placement pass rests on. A house's treasure type is the
+/// high byte of its object pointer and travels with the entry when it is
+/// dealt elsewhere, so a *fixed* house can be aimed at a cell and relied on to
+/// hand over what was written into it. A rolled house re-draws from a 3-wide
+/// window when the box is opened, which makes it no more dependable than an
+/// in-level chest the player can walk past.
+///
+/// See [`crate::randomize::rom_data::toad_house_reward_is_fixed`].
+#[test]
+fn toad_house_treasure_types_split_fixed_and_rolled() {
+    use crate::randomize::rom_data::{toad_house_reward_is_fixed, toad_house_treasure};
+
+    let rom = match load_rom() {
+        Some(r) => r,
+        None => return,
+    };
+    let catalog = NodeCatalog::build(&rom, false);
+
+    let mut fixed = 0usize;
+    let mut rolled = 0usize;
+    let mut by_type: HashMap<u8, usize> = HashMap::new();
+    for e in catalog.entries.iter().filter(|e| matches!(e.kind, NodeKind::ToadHouse)) {
+        let le = e.level_entry.as_ref().expect("a toad house entry carries level data");
+        let obj = (u16::from(le.obj_hi) << 8) | u16::from(le.obj_lo);
+        let treasure = toad_house_treasure(obj).expect("classified as a toad house");
+        *by_type.entry(treasure).or_default() += 1;
+        if toad_house_reward_is_fixed(treasure) {
+            fixed += 1;
+        } else {
+            rolled += 1;
+        }
+    }
+
+    assert_eq!(fixed + rolled, 22, "toad houses, by treasure type: {by_type:?}");
+    assert_eq!(fixed, 5, "fixed-reward houses (types 3/4/5): {by_type:?}");
+    assert_eq!(rolled, 17, "rolled-reward houses (types 6-9): {by_type:?}");
+}

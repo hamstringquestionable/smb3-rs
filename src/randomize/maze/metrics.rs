@@ -94,7 +94,10 @@ pub(crate) fn completion_cost(state: &GlobalState) -> CompletionCost {
 
     loop {
         let shut = state.shut_locks(&beaten);
-        let view = state.view(&bases, &shut);
+        // No keys: exact while `state.gates` is empty, which it is for every
+        // seed today. A gated maze wants this loop to accumulate found keys
+        // the way it already accumulates beaten forts.
+        let view = state.view(&bases, &shut, &HashSet::new());
         let reach = walk_maze(&view, &links, state.start);
         let cost = walk_maze_cost(&view, &links, state.start, &reach, |p| {
             u32::from(charged.contains(&p) && !cleared.contains(&p))

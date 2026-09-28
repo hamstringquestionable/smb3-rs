@@ -9,6 +9,87 @@ deploys.
 
 ## [Unreleased]
 
+## [2.3.0] - 2026-09-28
+
+### Added
+
+- **Web app — option icons drawn from your own ROM** for most map, maze and
+  enemy options: overworld tiles (toad houses, pipes, locks, fortresses, telepads,
+  each world's scenery), map sprites (Hammer Bros, airships, World 8's army),
+  the Bros' projectiles, and the enemy classes. Icons that pick a random variant
+  change on each page load, and every icon now sits in the same size slot.
+- **New option — Mariomon.** Off by default. A permadeath challenge: nothing in
+  the game hands out a 1-Up any more — not the green mushroom, not 100 coins,
+  not the end-of-level cards, not the Toad House minigames — so the lives you
+  start with are every life you get. When they run out the Game Over popup no
+  longer offers a way back onto the map, and its first entry says CONCEDE
+  instead of CONTINUE to say so. Bundles MaCobra52's "No Extra Lives" and "No
+  Continues" patches behind one flag.
+
+- **New option — Item Gates (World Maze).** Off by default. A way forward can be
+  locked behind an item you have to find first, and every seed is guaranteed to
+  put that item somewhere you can reach without it. Maze only: in a fixed world
+  order you cannot go back to a world you have left, so the key would have to
+  sit in front of its own lock.
+  - **Right now that means the boats.** Canoes sit one tile offshore, and the
+    only way to call one over is to use an Anchor while standing on a dock. The
+    water is a door and the Anchor is its key — so an Anchor is worth hunting
+    rather than shrugging at, and a stretch of water you can see across is a
+    reason to go looking. The Anchor is never used up, so once you have one
+    every boat in every world answers you. **Toad Houses can hand you one** too,
+    roughly one house in nine, on top of the Hammer Bros, Princess letters and
+    chests. And **a second Anchor is no longer handed over** — one is permanent
+    and does everything, so you watch the reveal and simply do not collect
+    another; a Toad House gives a power-up instead of nothing, the same one all
+    run.
+  - Leave it off and boats wait at their docks with the usual "press A on a
+    dock" summon, and the Anchor stays the surprise power-up it has been.
+
+### Changed
+
+- **World Maze: stepping onto a telepad plays the map's entry animation.** The
+  screen boxes closed the way it does when you enter a level, sound and all,
+  instead of the new world snapping in with no transition. A pad hop was the
+  only way into anything in the game that skipped it.
+
+### Removed
+
+- **The two-player Vs Challenge.** Pressing A while standing on the other
+  player no longer starts a minigame — the tile you are on just does whatever it
+  normally does, which for a level your partner has already beaten is nothing.
+  It went for two reasons: it decided "you are on the same tile" by comparing
+  coordinates alone, which is wrong now that two players can be in different
+  worlds and was starting battles out of nowhere; and it was the one thing on
+  the world map that could enter a tile without checking whether that tile can
+  be entered at all. Retiring it also hands 339 bytes back to the ROM's most
+  crowded bank.
+
+### Fixed
+
+- **World Maze, two players: each player stays in their own world, on their own
+  tile.** Take a telepad and your partner no longer gets dragged along — hand
+  the turn over and the map changes to wherever they were standing, with their
+  own progress and their own position waiting for them. Nothing you do moves
+  them: clear an airship or a castle and you move on alone, blow a whistle and
+  you travel alone, run out of lives and they carry on undisturbed. It is still
+  one shared maze — a fortress one of you clears is cleared for the other when
+  they get there. A partner in another world also stops showing up as a marker
+  stranded on your map. One-player games are unaffected.
+- **World Maze, two players: Luigi arrives where a telepad aimed him.** Pads
+  only ever placed Mario, so the second player landed on the world's start tile
+  instead — and overwrote Mario's saved position on the way.
+- **World Maze, two players: your partner's map is still framed on them after
+  you beat an airship.** The wand-return scene reset both players' cameras, so
+  the turn came back to a partner standing in the right place on a map scrolled
+  to the wrong screen.
+- **World Maze, two players: Luigi starts with a whistle too.** He had an
+  empty item panel and no way to leave a world — the whistle only ever landed
+  in Mario's bag.
+- 5-4's pipe no longer gets blocked by an immovable enemy. Under a wild enemy
+  flagset the paratroopa beside it could become a Ptooie or Nipper, planted in
+  the pipe mouth on a one-tile cloud with nowhere to stand — the only way past
+  was to take a hit.
+
 ## [2.2.2] - 2026-09-24
 
 **The Anchor is worth picking up again.** It has been a per-seed surprise

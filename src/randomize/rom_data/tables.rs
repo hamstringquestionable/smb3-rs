@@ -731,6 +731,59 @@ pub(crate) const BOWSER_ENTRY: (usize, usize) = (7, 40);
 pub(crate) const TOAD_HOUSE_OBJ_PTRS: &[u16] =
     &[0x0300, 0x0400, 0x0500, 0x0600, 0x0700, 0x0800, 0x0900];
 
+/// **Which Toad House rewards are a fixed byte, and which are rolled at the
+/// box.**
+///
+/// The high byte of a house's object pointer *is* `THouse_Treasure`:
+/// `PRG030_893F` intercepts a tileset-7 entry and reinterprets its pointer as
+/// `lo -> THouse_ID`, `hi -> THouse_Treasure` (`$03EB`). So the treasure type
+/// **travels with the entry** wherever the writer deals it, which is the only
+/// reason a house can be aimed at a cell at all.
+///
+/// `ToadHouse_ChestPressB` (file `0x3B1AB`) then splits on it:
+///
+/// ```text
+/// LDX THouse_Treasure / DEX / CPX #$05 / BMI +14
+/// ```
+///
+/// - **Types 1-5** take the branch and read `ToadHouse_Item2Inventory[type-1]`
+///   — one byte, the same item every visit.
+/// - **Types 6+** fall through to a `RandomN` draw over the 3-wide window at
+///   `ToadHouse_ItemOff[type-1]`, rolled **when the box is opened**. The player
+///   gets one of three and cannot pick which.
+///
+/// All three chest tiles share the one `THouse_Treasure`, so which box the
+/// player opens changes nothing — the variation players notice is this roll,
+/// not the choice. `docs/smb3_rom_reference.md` has the full disassembly.
+///
+/// **Only a fixed house can carry a key.** A rolled one hands over the wrong
+/// item two times in three, and a house is one visit, so it is no more
+/// dependable than an in-level chest the player can walk past.
+///
+/// Vanilla carries types 3-9 ([`TOAD_HOUSE_OBJ_PTRS`]): five fixed houses
+/// (types 3/4/5) and seventeen rolled ones.
+// Reason: the catalog split test is the only reader until the key-placement
+// pass lands and starts aiming a fixed house at a cell.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) const fn toad_house_reward_is_fixed(treasure: u8) -> bool {
+    // `DEX` then `CPX #$05` / `BMI` is exactly `type - 1 < 5`. Type 0 is not a
+    // house — `DEX` would wrap and index far outside the table.
+    matches!(treasure, 1..=5)
+}
+
+/// The `THouse_Treasure` an entry's object pointer carries, or `None` when the
+/// entry is not a Toad House at all.
+///
+/// Pairs with [`toad_house_reward_is_fixed`]: the catalog flattens every house
+/// to one `NodeKind::ToadHouse`, so this is how a pass that needs to *aim* one
+/// recovers the distinction from the entry it already holds.
+// Reason: the catalog split test is the only reader until the key-placement
+// pass lands and starts aiming a fixed house at a cell.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn toad_house_treasure(obj_ptr: u16) -> Option<u8> {
+    TOAD_HOUSE_OBJ_PTRS.contains(&obj_ptr).then_some((obj_ptr >> 8) as u8)
+}
+
 /// Known hammer bro level obj_ptrs. Each world's hammer bro encounters point
 /// to one of these object streams. Multiple pointer table entries share the
 /// same obj_ptr (with varying layouts/tilesets).

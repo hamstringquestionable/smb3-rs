@@ -164,11 +164,170 @@ const DRY_BONES = { // $13, 16x32 stacked from two picks
 	cols: 2,
 	palette: [0x0F, 0x1D, 0x10, 0x20],
 };
-const ROTODISCS = [ // $12, two rotation frames
-	{ tiles: [1176, 1178, 1177, 1179], cols: 2, palette: [0x0F, 0x18, 0x21, 0x20] },
-	{ tiles: [1180, 1182, 1181, 1183], cols: 2, palette: [0x0F, 0x18, 0x21, 0x20] },
-];
+// $12, two rotation frames. In game the disc flashes through colors, so each
+// page load also picks one: vanilla light blue, then red, green, orange, pink.
+const ROTODISCS = [0x21, 0x16, 0x2A, 0x27, 0x24].flatMap((c) => [
+	{ tiles: [1176, 1178, 1177, 1179], cols: 2, palette: [0x0F, 0x18, c, 0x20] },
+	{ tiles: [1180, 1182, 1181, 1183], cols: 2, palette: [0x0F, 0x18, c, 0x20] },
+]);
 const START_TILE = { tiles: [1488, 1490, 1489, 1491], cols: 2, palette: [0x0F, 0x38, 0x20, 0x04] }; // $17
+// World-map background tiles. Tile bytes are the map's own; tile indices are
+// the metatile's quadrants on BG CHR pages $14-$17. `clear: 3` makes the
+// ground transparent (see renderMapTiles in chr.js). The palette page is the
+// tile byte's high two bits; colors are World 1's unless noted.
+const W1_PAL0 = [0x0F, 0x0F, 0x30, 0x3C];
+const W1_PAL1 = [0x0F, 0x36, 0x27, 0x37];
+const W1_PAL2 = [0x0F, 0x21, 0x2A, 0x37];
+const W1_PAL3 = [0x0F, 0x30, 0x16, 0x37];
+// Toad House 0x50 / 0xE0: same art ($90-$93), different palette page.
+const TOAD_HOUSES = [
+	{ tiles: [1424, 1426, 1425, 1427], cols: 2, clear: 3, palette: W1_PAL1 }, // 0x50
+	{ tiles: [1424, 1426, 1425, 1427], cols: 2, clear: 3, palette: W1_PAL3 }, // 0xE0
+];
+// Hand trap 0xE6 ($26-$29), in World 8's palette 3 — the only world vanilla
+// places it in. The hand itself is a sprite.
+const HAND_TRAP = { tiles: [1318, 1320, 1319, 1321], cols: 2, clear: 3, palette: [0x0F, 0x35, 0x25, 0x17] };
+// Pipe 0xBC ($E0 $EF / $E2 $FA). Its ground is already color 0.
+const PIPE_TILE = { tiles: [1504, 1519, 1506, 1530], cols: 2, palette: W1_PAL2 };
+// Rock 0x51 ($0C-$0F).
+const ROCK_TILE = { tiles: [1292, 1294, 1293, 1295], cols: 2, clear: 3, palette: W1_PAL1 };
+// Maze hint marks: lock 0x54/0xE4 ($B6-$B9), fortress 0x67/0xEB ($C4-$C7),
+// and 0x6A ($64-$67).
+const HINT_TILES = [
+	{ tiles: [1462, 1464, 1463, 1465], cols: 2, clear: 3, palette: W1_PAL1 }, // 0x54
+	{ tiles: [1462, 1464, 1463, 1465], cols: 2, clear: 3, palette: W1_PAL3 }, // 0xE4
+	{ tiles: [1476, 1478, 1477, 1479], cols: 2, clear: 3, palette: W1_PAL1 }, // 0x67
+	{ tiles: [1380, 1382, 1381, 1383], cols: 2, clear: 3, palette: W1_PAL1 }, // 0x6A
+	{ tiles: [1476, 1478, 1477, 1479], cols: 2, clear: 3, palette: W1_PAL3 }, // 0xEB
+];
+// Completed-level panels: M ($88-$8B) and L ($DC-$DF). Ground is color 0.
+const PLAYER_PANELS = [
+	{ tiles: [1416, 1418, 1417, 1419], cols: 2, palette: W1_PAL0 }, // 0x00
+	{ tiles: [1500, 1502, 1501, 1503], cols: 2, palette: W1_PAL0 }, // 0x01
+	{ tiles: [1416, 1418, 1417, 1419], cols: 2, palette: W1_PAL1 }, // 0x40
+	{ tiles: [1500, 1502, 1501, 1503], cols: 2, palette: W1_PAL1 }, // 0x41
+	{ tiles: [1416, 1418, 1417, 1419], cols: 2, palette: W1_PAL3 }, // 0xC0
+	{ tiles: [1500, 1502, 1501, 1503], cols: 2, palette: W1_PAL3 }, // 0xC1
+];
+// World Maze: path junctions on land 0x4A, water 0xAF and sky 0xDE (W5's
+// palette 3), and the maze's own telepad 0xDF. The pad's quadrants are
+// TELEPAD_QUADRANTS ($80-$83), which the randomizer writes over vanilla's
+// alternate spiral — the player's ROM doesn't draw 0xDF this way.
+const MAZE_TILES = [
+	{ tiles: [1534, 1472, 1505, 1485], cols: 2, clear: 3, palette: W1_PAL1 }, // 0x4A
+	{ tiles: [1296, 1473, 1474, 1475], cols: 2, palette: W1_PAL2 }, // 0xAF
+	{ tiles: [1534, 1472, 1505, 1485], cols: 2, clear: 3, palette: [0x0F, 0x36, 0x21, 0x30] }, // 0xDE
+	{ tiles: [1408, 1409, 1410, 1411], cols: 2, palette: W1_PAL3 }, // 0xDF telepad
+];
+// World-map object sprites (MapObject_Pat1/Pat2 in PRG011; pages $20-$23) in
+// the map's object palettes. The W7 plant is one half drawn mirrored.
+const MAP_HAMMER_BRO = { tiles: [2244, 2246, 2245, 2247], cols: 2, palette: [0x0F, 0x17, 0x27, 0x0F] };
+const MAP_PIRANHA = { tiles: [2272, 2272, 2273, 2273], cols: 2, palette: [0x0F, 0x17, 0x36, 0x0F], flipRight: true };
+const MAP_AIRSHIP = { tiles: [2248, 2250, 2249, 2251], cols: 2, palette: [0x0F, 0x17, 0x36, 0x0F] };
+// In-level sprite palettes, as the level's sprite set loads them (PalSet_* in
+// PRG027, "SPR Pal 0"). An object's OA1_PAL picks one of the four; which set
+// depends on the level type, so each enemy uses the set of where it lives.
+const PLAINS_SPR1 = [0x0F, 0x0F, 0x30, 0x16];
+const PLAINS_SPR2 = [0x0F, 0x0F, 0x30, 0x2A];
+const PLAINS_SPR3 = [0x0F, 0x0F, 0x36, 0x27];
+const FORT_SPR1 = [0x0F, 0x06, 0x30, 0x16];
+const FORT_SPR2 = [0x0F, 0x0F, 0x30, 0x2C];
+const WATER_SPR1 = [0x0F, 0x0F, 0x30, 0x16];
+const WATER_SPR2 = [0x0F, 0x0F, 0x30, 0x2A];
+const WATER_SPR3 = [0x0F, 0x0F, 0x30, 0x27];
+
+// The enemy classes (src/randomize/enemies/tables.rs), one icon per distinct
+// look. Tiles are each object's first frame from its ObjectGroupNN_PatternSets
+// entry, on the page its PatTableSel loads. Patooie and the green cheep draw
+// from slot +5 without setting it; the $4F there is the piranha page they share.
+// Giant enemies draw through GiantEnemy_Draw and aren't included.
+const SPIKE = { tiles: [640, 642, 641, 643], cols: 2, palette: PLAINS_SPR2 }; // $29
+const PATOOIE = { tiles: [5092, { t: 5092, flip: true }, 5093, { t: 5093, flip: true }, 5088, { t: 5088, flip: true }, 5089, { t: 5089, flip: true }], cols: 2, palette: PLAINS_SPR2 }; // $2A
+const NIPPER = { tiles: [672, 674, 673, 675], cols: 2, palette: PLAINS_SPR2 }; // $33
+const BUSTER_BEETLE = { tiles: [688, 690, 689, 691], cols: 2, palette: PLAINS_SPR3 }; // $40
+const CHAIN_CHOMP = { tiles: [656, 658, 657, 659], cols: 2, palette: PLAINS_SPR1 }; // $4F
+const FIRE_CHOMP = { tiles: [920, 922, 921, 923], cols: 2, palette: PLAINS_SPR1 }; // $58
+const FIRE_SNAKE = { tiles: [928, 930, 929, 931], cols: 2, palette: PLAINS_SPR1 }; // $59
+const PILEDRIVER = { tiles: [308, { t: 308, flip: true }, 309, { t: 309, flip: true }], cols: 2, palette: PLAINS_SPR3 }; // $6B
+const GOOMBA = { tiles: [5080, { t: 5080, flip: true }, 5081, { t: 5081, flip: true }], cols: 2, palette: PLAINS_SPR3 }; // $72
+// Poison Mushroom (poison_mushroom.rs): the 1-Up's own sprite, $51 mirrored on
+// page $04, in its palette 2, drawn upside down by SPR_VFLIP.
+const POISON_MUSHROOM = { tiles: [272, { t: 272, flip: true }, 273, { t: 273, flip: true }], cols: 2, palette: PLAINS_SPR2, flipY: true };
+// Troopas and Paragoombas are composites (Troopa_Draw / ParaGoomba_Draw in
+// PRG004), not one pattern-set frame: head tip $C1 over the lower head $CB and
+// shell $C5, feet $C7 $C9 below. Head and feet are always palette 3; the shell
+// is the object's own. A paratroopa's wing $CD (palette 1) sits 8px above the
+// shell row, in front of it. A Paragoomba's wings are $CD in palette 2, the
+// left one mirrored, 10px above the body (the game also spreads them 2px out).
+const troopa = (shell, winged) => {
+	const skin = (t) => ({ t, palette: PLAINS_SPR3 });
+	return {
+		tiles: [skin(5056), null, skin(5057), null, skin(5066), 5060, skin(5067), 5061, skin(5062), skin(5064), skin(5063), skin(5065)],
+		cols: 2,
+		palette: shell,
+		over: winged ? [{ t: 5068, x: 8, y: 8, palette: PLAINS_SPR1 }, { t: 5069, x: 8, y: 16, palette: PLAINS_SPR1 }] : [],
+	};
+};
+const GREEN_TROOPA = troopa(PLAINS_SPR2, false); // $6C
+const RED_TROOPA = troopa(PLAINS_SPR1, false); // $6D
+const GREEN_PARATROOPA = troopa(PLAINS_SPR2, true); // $6E
+const RED_PARATROOPA = troopa(PLAINS_SPR1, true); // $6F
+const PARAGOOMBA = { // $73
+	tiles: [null, null, null, null, 5080, { t: 5080, flip: true }, 5081, { t: 5081, flip: true }],
+	cols: 2,
+	palette: PLAINS_SPR1,
+	over: [
+		{ t: 5068, x: 0, y: 6, flip: true, palette: PLAINS_SPR2 }, { t: 5069, x: 0, y: 14, flip: true, palette: PLAINS_SPR2 },
+		{ t: 5068, x: 8, y: 6, palette: PLAINS_SPR2 }, { t: 5069, x: 8, y: 14, palette: PLAINS_SPR2 },
+	],
+};
+const GREEN_PIRANHA = { tiles: [5088, { t: 5088, flip: true }, 5089, { t: 5089, flip: true }, 5090, { t: 5090, flip: true }, 5091, { t: 5091, flip: true }], cols: 2, palette: PLAINS_SPR2 }; // $A0
+const RED_PIRANHA = { tiles: [5088, { t: 5088, flip: true }, 5089, { t: 5089, flip: true }, 5090, { t: 5090, flip: true }, 5091, { t: 5091, flip: true }], cols: 2, palette: PLAINS_SPR1 }; // $A2
+const GREEN_FIRE_PIRANHA = { tiles: [5104, 5106, 5105, 5107, 5090, { t: 5090, flip: true }, 5091, { t: 5091, flip: true }], cols: 2, palette: PLAINS_SPR2 }; // $A4
+const VENUS_FIRE_TRAP = { tiles: [5104, 5106, 5105, 5107, 5090, { t: 5090, flip: true }, 5091, { t: 5091, flip: true }], cols: 2, palette: PLAINS_SPR1 }; // $A6
+const BOO = { tiles: [1172, 1174, 1173, 1175], cols: 2, palette: FORT_SPR1 }; // $2F
+const HOT_FOOT = { tiles: [1156, 1158, 1157, 1159], cols: 2, palette: FORT_SPR1 }; // $45
+// 24x32: Thwomp_Draw adds the right column as the left one mirrored ($B1/$BB).
+const THWOMP = { tiles: [1200, 1202, { t: 1200, flip: true }, 1201, 1203, { t: 1201, flip: true }, 1210, 1212, { t: 1210, flip: true }, 1211, 1213, { t: 1211, flip: true }], cols: 3, palette: FORT_SPR2 }; // $8A
+const GREEN_CHEEP = { tiles: [5094, 5096, 5095, 5097], cols: 2, palette: WATER_SPR2 }; // $77
+const RED_CHEEP = { tiles: [5094, 5096, 5095, 5097], cols: 2, palette: WATER_SPR1 }; // $76
+const ORANGE_CHEEP = { tiles: [5094, 5096, 5095, 5097], cols: 2, palette: WATER_SPR3 }; // $88
+const LAVA_LOTUS = { tiles: [1728, 1732, 1729, 1733, 1730, 1734, 1731, 1735], cols: 2, palette: WATER_SPR2 }; // $67
+// The Bros' projectiles, all in level sprite palette 1 (every special object
+// ORs in SPR_PAL1). Boomerang and hammer are Boomerang_Patterns and
+// Hammer_Patterns in PRG007, on the Bros' page $4E; each shape is also shown
+// mirrored, the way the game flips it for direction of travel. The fireball is
+// one 8x16 sprite from page $04, the level's fixed slot +3.
+// A 16x16 sprite from two 8x16 halves, and its mirror image.
+const spr16 = (l, r) => [
+	{ tiles: [l, r, l + 1, r + 1], cols: 2, palette: PLAINS_SPR1 },
+	{ tiles: [{ t: r, flip: true }, { t: l, flip: true }, { t: r + 1, flip: true }, { t: l + 1, flip: true }], cols: 2, palette: PLAINS_SPR1 },
+];
+const BOOMERANGS = [...spr16(5000, 5002), ...spr16(5004, 5006)];
+const HAMMERS = [...spr16(5024, 5026), ...spr16(5038, 5048)];
+const FIREBALLS = [
+	{ tiles: [292, 293], cols: 1, palette: PLAINS_SPR1 },
+	{ tiles: [294, 295], cols: 1, palette: PLAINS_SPR1 },
+];
+// World 8's tank, battleship and airship.
+const W8_MILITARY = [
+	{ tiles: [2276, 2278, 2277, 2279], cols: 2, palette: [0x0F, 0x17, 0x27, 0x0F] },
+	{ tiles: [2292, 2294, 2293, 2295], cols: 2, palette: [0x0F, 0x17, 0x27, 0x0F] },
+	{ tiles: [2300, 2302, 2301, 2303], cols: 2, palette: [0x0F, 0x17, 0x36, 0x0F] },
+];
+// One scenery tile per world, each in that world's own palette. W3's water
+// fills its square, so it has no ground to clear.
+const WORLD_TILES = [
+	{ tiles: [1280, 1282, 1281, 1283], cols: 2, clear: 3, palette: W1_PAL2 }, // 0xB4, W1
+	{ tiles: [1326, 1328, 1327, 1329], cols: 2, clear: 3, palette: [0x0F, 0x36, 0x27, 0x28] }, // 0x69, W2
+	{ tiles: [1288, 1290, 1289, 1291], cols: 2, clear: 3, palette: [0x0F, 0x12, 0x2A, 0x28] }, // 0xBB, W2
+	{ tiles: [1296, 1297, 1310, 1311], cols: 2, palette: W1_PAL2 }, // 0x8D, W3
+	{ tiles: [1322, 1324, 1323, 1325], cols: 2, clear: 3, palette: [0x0F, 0x12, 0x2A, 0x3A] }, // 0xBD, W4
+	{ tiles: [1376, 1378, 1377, 1379], cols: 2, clear: 3, palette: [0x0F, 0x36, 0x27, 0x3B] }, // 0x5F, W5
+	{ tiles: [1298, 1300, 1299, 1301], cols: 2, clear: 3, palette: [0x0F, 0x30, 0x22, 0x30] }, // 0xEA, W6
+	{ tiles: [1302, 1308, 1303, 1309], cols: 2, clear: 3, palette: [0x0F, 0x11, 0x1A, 0x2A] }, // 0xBE, W7
+	{ tiles: [1313, 1316, 1315, 1350], cols: 2, clear: 3, palette: [0x0F, 0x35, 0x25, 0x17] }, // 0xE1, W8
+];
 const KOOPALING_RING = { tiles: [4762, 4762, 4763, 4763], cols: 2, palette: [0x0F, 0x1E, 0x20, 0x25], flipRight: true }; // $4A
 const Q_ORB = { tiles: [4988, 4990, 4989, 4991], cols: 2, palette: [0x0F, 0x1D, 0x38, 0x20] }; // $4D, Boom-Boom's Q ball
 
@@ -202,6 +361,9 @@ const BIG_Q = {
 };
 const SPADE = { tiles: [1448, 1448, 1449, 1449], cols: 2, palette: [0x0F, 0x20, 0x20, 0x1D], flipRight: true }; // $16
 const WAND = { tiles: [1982, 1983], cols: 1, palette: [0x0F, 0x28, 0x37, 0x03] }; // $1E, 8x16
+// The jewel's upper facets are the only pixels in color 3, so swapping that one
+// entry recolors the jewel alone: vanilla purple plus six others, one per wand.
+const WANDS = [0x03, 0x16, 0x2A, 0x21, 0x27, 0x30, 0x14].map((c) => ({ ...WAND, palette: [0x0F, 0x28, 0x37, c] }));
 const N_CARD = { tiles: [2064, 2064, 2065, 2065], cols: 2, palette: [0x0F, 0x20, 0x20, 0x1D], flipRight: true }; // $20
 
 // Water enemies, page $1A. Boss Bass is 24x32 — his two halves aren't adjacent
@@ -247,28 +409,34 @@ export const SCHEMA = [
 	{ id: "shuffle_toad_houses", type: "bool", default: true,
 		label: "Shuffle Toad Houses",
 		tip: "Move Toad Houses to random spots across all worlds. Items inside are still randomized.",
+		icon: TOAD_HOUSES,
 		group: "map", inFlagKey: true },
 	{ id: "infinite_mushroom_houses", type: "bool", default: false,
 		label: "Infinite Mushroom Houses",
 		tip: "Toad / Mushroom Houses don't disappear after entering — visit them any number of times.",
+		icon: TOAD_HOUSES,
 		credit: { name: "MaCobra52", url: "https://github.com/macobra52" },
 		group: "map", inFlagKey: true },
 	{ id: "fast_mushroom_house", type: "bool", default: false,
 		label: "Fast Mushroom House",
 		tip: "Skip the entry animation and shorten the exit when using a Toad / Mushroom House.",
+		icon: TOAD_HOUSES,
 		credit: { name: "MaCobra52", url: "https://github.com/macobra52" },
 		group: "map", inFlagKey: true },
 	{ id: "shuffle_airships", type: "bool", default: true,
 		label: "Shuffle Airships",
 		tip: "Shuffle airship levels across worlds 1-7",
+		icon: MAP_AIRSHIP,
 		group: "map", inFlagKey: true },
 	{ id: "shuffle_hammer_bros", type: "bool", default: true,
 		label: "Shuffle HammerBro Locations",
 		tip: "Spread the wandering Hammer Bros across all worlds (random spots, 1-3 per world) instead of their fixed vanilla locations.",
+		icon: MAP_HAMMER_BRO,
 		group: "map", inFlagKey: true },
 	{ id: "hands_levels", type: "bool", default: true,
 		label: "Hand-Trap Levels", flavor: "It's a trap!",
 		tip: "Add visible hand-trap tiles. Walking onto one grabs you and pulls you into a level.",
+		icon: HAND_TRAP,
 		group: "map", inFlagKey: true },
 	{ id: "swap_start_airship", type: "bool", default: false,
 		label: "Swap Start / Airship", flavor: "Beat the map backwards.",
@@ -292,14 +460,17 @@ export const SCHEMA = [
 	{ id: "troll_pipes", type: "tri", options: ON_OFF_MAYBE, default: "on",
 		label: "Troll Pipes", flavor: "Looks like a pipe…",
 		tip: "Disguise one level per world (W2-W8) as a pipe. You can walk past freely, but pressing A loads the hidden level. Maybe: the seed secretly decides on or off, so you won't know until you play.",
+		icon: PIPE_TILE,
 		group: "map", inFlagKey: true },
 	{ id: "more_hammer_rocks", type: "tri", options: ON_OFF_MAYBE, default: "off",
 		label: "More hammer rocks",
 		tip: "Add hammer-breakable rocks as shortcuts: one by the W1 toad house and one in W8. Maybe: the seed secretly decides on or off, so you won't know until you play.",
+		icon: ROCK_TILE,
 		group: "map", inFlagKey: true },
 	{ id: "eights_are_wild", type: "tri", options: ON_OFF_MAYBE, default: "off",
 		label: "8s are Wild",
 		tip: "Open up World 8 with a canoe and extra paths. Maybe: the seed secretly decides on or off, so you won't know until you play.",
+		icon: W8_MILITARY,
 		group: "map", inFlagKey: true },
 	{ id: "antechamber_shuffle", type: "tri", options: ON_OFF_MAYBE, default: "off",
 		label: "Lobby Shuffle", flavor: "Wrong door…",
@@ -308,15 +479,18 @@ export const SCHEMA = [
 	{ id: "piranha_shuffle", type: "tri", options: OFF_ON_WILD, default: "off",
 		label: "Piranha Shuffle",
 		tip: "Free the two W7 piranha plant levels into the level shuffle. On: their plants travel with them, guarding wherever they land. Wild: the plants scatter instead — one lands on a random level in each world, and stepping on a plant starts the level under it.",
+		icon: MAP_PIRANHA,
 		group: "map", inFlagKey: true },
 	{ id: "limit_bro_movement", type: "bool", default: false,
 		label: "Limit Bro Movement",
 		tip: "Gate Hammer Bro overworld Movements to increase race equality.",
+		icon: MAP_HAMMER_BRO,
 		credit: { name: "MaCobra52", url: "https://github.com/macobra52" },
 		group: "map", inFlagKey: true },
 	{ id: "world_order", type: "bool", default: false,
 		label: "World Order",
 		tip: "Shuffle the order you progress through Worlds 1-8",
+		icon: WORLD_TILES,
 		group: "map", inFlagKey: true,
 		// The maze reads this table as its airship spine, so it cannot run
 		// without it — see `randomizer::randomize_inner`.
@@ -328,6 +502,7 @@ export const SCHEMA = [
 		default: 7,
 		label: "World Count",
 		tip: "Number of worlds before Dark Land (fewer = shorter game). 0 starts you in Dark Land — it becomes the whole game, and there is no airship before Bowser's castle.",
+		icon: WORLD_TILES,
 		group: "map", inFlagKey: true,
 		mode: "standard",
 		enabledWhen: { world_order: true } },
@@ -338,17 +513,25 @@ export const SCHEMA = [
 	{ id: "world_maze", type: "bool", default: false,
 		label: "World Maze",
 		tip: "The eight maps become one big maze. Warp pads link them, a fortress can open a lock in another world, and your progress in a world is still there when you come back. Turns World Order on, and uses all eight worlds.",
+		icon: MAZE_TILES,
 		group: "maze", inFlagKey: true },
 	{ id: "maze_wands", type: "tri", numeric: true,
 		options: [0,1,2,3,4,5,6,7].map(n => ({ value: n, label: String(n) })),
 		default: 3,
 		label: "Wands To Enter",
 		tip: "Wands needed before Bowser's castle will open. Fewer is a shorter game; 0 lets you walk straight in if you find a way there.",
+		icon: WANDS,
 		group: "maze", inFlagKey: true,
 		mode: "maze" },
 	{ id: "hints", type: "tri", options: OFF_SOME_FULL, default: "some",
 		label: "Hints",
 		tip: "What the map gives away about which fortress opens which lock. On Some the colour is the mark: tan means a fortress and its lock are together in one world, the odd colour on either one means the two are apart, and the beta fortress opens a lock or bridge in World 8. On Full the number is the mark instead — a lock wears the number of the world its fortress is in, and a lock with no number is local. Fortress designs read the same either way. On Off the designs are picked at random and say nothing. Hints never change the map, so the same seed has the same locks and fortresses whichever you pick.",
+		icon: HINT_TILES,
+		group: "maze", inFlagKey: true,
+		mode: "maze" },
+	{ id: "item_gates", type: "bool", default: false,
+		label: "Item Gates",
+		tip: "Ways forward can be locked behind an item you have to find first, and a seed always puts that item somewhere you can reach without it. Right now that means the water: canoes sit one tile offshore, and the only way to call one over is to use an Anchor while standing on a dock. The Anchor is never used up, so one opens every boat in every world, and Toad Houses can hand you one. Off, a boat waits at its dock and any dock summons it for free.",
 		group: "maze", inFlagKey: true,
 		mode: "maze" },
 
@@ -356,29 +539,32 @@ export const SCHEMA = [
 	{ id: "ground", type: "tri", options: TRI, default: "shuffle",
 		label: "Ground",
 		tip: "Ground-walking enemies (Goomba, Spiny, Spike, etc.)",
-		icon: [SPINY, BOB_OMB, KURIBO_SHOE],
+		icon: [GOOMBA, SPINY, BOB_OMB, KURIBO_SHOE, SPIKE, PATOOIE, NIPPER, BUSTER_BEETLE, CHAIN_CHOMP, FIRE_CHOMP, FIRE_SNAKE, PILEDRIVER],
 		group: "enemies", inFlagKey: true },
 	{ id: "shell", type: "tri", options: TRI, default: "shuffle",
 		label: "Shell",
 		tip: "Shelled enemies (Koopa, Buzzy Beetle, etc.)",
-		icon: BUZZY_BEETLE,
+		icon: [GREEN_TROOPA, RED_TROOPA, BUZZY_BEETLE],
 		group: "enemies", inFlagKey: true },
 	{ id: "flying", type: "tri", options: TRI, default: "shuffle",
 		label: "Flying",
 		tip: "Flying/hopping enemies (Paratroopa, Paragoomba, etc.)",
+		icon: [GREEN_PARATROOPA, RED_PARATROOPA, PARAGOOMBA],
 		group: "enemies", inFlagKey: true },
 	{ id: "piranhas", type: "tri", options: TRI, default: "shuffle",
 		label: "Piranhas",
 		tip: "Piranha plant variants (upward and ceiling)",
+		icon: [GREEN_PIRANHA, RED_PIRANHA, GREEN_FIRE_PIRANHA, VENUS_FIRE_TRAP],
 		group: "enemies", inFlagKey: true },
 	{ id: "ghosts", type: "tri", options: TRI, default: "shuffle",
 		label: "Ghosts",
 		tip: "Ghost house enemies (Boo, Hot Foot)",
-		icon: DRY_BONES,
+		icon: [DRY_BONES, BOO, HOT_FOOT],
 		group: "enemies", inFlagKey: true },
 	{ id: "thwomps", type: "tri", options: TRI, default: "off",
 		label: "Thwomps",
 		tip: "Thwomp movement variants (diagonal slides, sideways, up-down)",
+		icon: THWOMP,
 		group: "enemies", inFlagKey: true },
 	{ id: "rotodiscs", type: "tri", options: TRI, default: "off",
 		label: "Rotodiscs",
@@ -393,15 +579,17 @@ export const SCHEMA = [
 	{ id: "water", type: "tri", options: TRI, default: "shuffle",
 		label: "Water",
 		tip: "Water enemies (Blooper, Big Bertha, etc.)",
-		icon: [BLOOPER, MINI_CHEEP],
+		icon: [BLOOPER, MINI_CHEEP, BOSS_BASS, GREEN_CHEEP, RED_CHEEP, ORANGE_CHEEP, LAVA_LOTUS],
 		group: "enemies", inFlagKey: true },
 	{ id: "bros", type: "tri", options: TRI, default: "shuffle",
 		label: "Bros",
 		tip: "Hammer / Boomerang / Fire Bros inside levels",
+		icon: [...HAMMERS, ...BOOMERANGS, ...FIREBALLS],
 		group: "enemies", inFlagKey: true },
 	{ id: "hb_encounters", type: "tri", options: TRI, default: "off",
 		label: "HB Encounters",
 		tip: "All enemies in overworld Hammer Bro mini-battles",
+		icon: MAP_HAMMER_BRO,
 		group: "enemies", inFlagKey: true },
 	{ id: "friendlier_levels", type: "bool", default: false,
 		label: "Friendlier Levels",
@@ -410,6 +598,7 @@ export const SCHEMA = [
 	{ id: "deja_vu", type: "tri", options: OFF_DOUBLE_WILD, default: "off",
 		label: "Deja Vu", flavor: "Haven't we been here?",
 		tip: "Let the same level show up on more than one tile. Double: every level gets a second copy in the deck, so some show up twice and others sit the seed out. Wild: no limit — a level can turn up over and over, or never. Levels that hand you an item still appear exactly once.",
+		icon: BOOMERANGS,
 		credit: { name: "MaCobra52", url: "https://github.com/macobra52" },
 		group: "map", inFlagKey: true },
 	{ id: "deja_vu_forts", type: "bool", default: false, pillOf: "deja_vu",
@@ -474,7 +663,7 @@ export const SCHEMA = [
 		label: "Skip Wand Cutscene", flavor: "Jump Up, Super Star!",
 		tip: "Skip the wand falling cutscene after defeating a Koopaling — jump to grab the wand instead",
 		credit: { name: "MaCobra52", url: "https://github.com/macobra52" },
-		icon: WAND,
+		icon: WANDS,
 		group: "bosses", inFlagKey: true },
 
 	// --- Items & Pickups ---
@@ -532,6 +721,7 @@ export const SCHEMA = [
 		options: STARTING_LIVES_OPTIONS, default: 5,
 		label: "Starting Lives",
 		tip: "Number of lives you start with. The label is Mario's power-up state; the bracketed number is the actual count.",
+		icon: PLAYER_PANELS,
 		group: "player", inFlagKey: true },
 	{ id: "japanese_damage", type: "bool", default: false,
 		label: "Japanese Damage System",
@@ -551,6 +741,11 @@ export const SCHEMA = [
 		// Without it a Game Over wipes map completions, and in a mode built on
 		// "a world you can come back to" that is the whole point undone.
 		forcedInMaze: true },
+	{ id: "mariomon", type: "bool", default: false,
+		label: "Mariomon",
+		tip: "Permadeath run. Nothing gives you a 1-Up, and Game Over ends it — the lives you start with are all you get.",
+		credit: { name: "MaCobra52", url: "https://github.com/macobra52" },
+		group: "player", inFlagKey: true },
 	{ id: "faster_frog", type: "bool", default: false,
 		label: "Faster Frog",
 		tip: "Speeds up swimming and running while wearing the Frog Suit.",
@@ -565,6 +760,7 @@ export const SCHEMA = [
 	{ id: "poison_mushrooms", type: "bool", default: false,
 		label: "Poison Mushrooms",
 		tip: "Some 1-Up blocks hand out an upside-down poison mushroom that hurts you instead of a 1-Up. You can't tell which until you hit the block.",
+		icon: POISON_MUSHROOM,
 		group: "player", inFlagKey: true },
 	{ id: "starting_items", type: "items",
 		items: ITEM_OPTIONS, slots: 3,
@@ -1229,46 +1425,18 @@ function tipBlock(entry) {
 // Art the game assembles from scattered tiles (Bowser) needs two picks joined
 // by hand; see BOWSER above for the shape that takes.
 //
-// Native pixel size of an icon spec: a CHR tile grid, 8px per tile.
-function iconNativeSize(spec) {
-	const cols = spec.cols ?? 2;
-	return { w: cols * 8, h: Math.ceil(spec.tiles.length / cols) * 8 };
-}
-
-// Icons are pixel art, so they may only be scaled by a whole number — at a
-// fractional scale the browser snaps some source pixels to two device pixels
-// and others to one, and the sprite reads as squashed. Pick the largest integer
-// scale that keeps the icon inside ICON_BOX; art already that big renders 1:1
-// rather than being shrunk to fit.
-const ICON_BOX = 32;
-
-function iconScale({ w, h }) {
-	return Math.max(1, Math.floor(ICON_BOX / Math.max(w, h)));
-}
-
-// Set an icon canvas's displayed size to its native size times a whole number.
-// `iconCanvas` reserves space using the largest variant; the renderer calls
-// this again with the variant actually drawn, since a smaller one displayed at
-// the reserved size would be back to a fractional scale.
-export function applyIconScale(canvas, spec) {
-	if (!canvas || !spec) return;
-	const native = iconNativeSize(spec);
-	const k = iconScale(native);
-	canvas.style.width = `${native.w * k}px`;
-	canvas.style.height = `${native.h * k}px`;
-}
+// Every icon sits in the same ICON_BOX square, so labels line up whatever the
+// art's size. Icons are pixel art and may only be scaled by a whole number — at
+// a fractional scale some source pixels land on two device pixels and others on
+// one, and the sprite reads as squashed. So the renderer trims each sprite to
+// its opaque pixels and scales it by the largest whole number that fits, capped
+// at ICON_MAX_SCALE so a small sprite keeps the same pixel size as its
+// neighbours; tall enemies stay 1x. See renderIconBox in chr.js.
+export const ICON_BOX = 32;
+export const ICON_MAX_SCALE = 2;
 
 function iconCanvas(entry) {
 	if (!entry.icon) return null;
-	// A random-per-load array can hold variants of differing size (the
-	// Koopalings differ by a pixel), so reserve the largest.
-	const specs = Array.isArray(entry.icon) ? entry.icon : [entry.icon];
-	const sizes = specs.map(iconNativeSize);
-	const native = {
-		w: Math.max(...sizes.map((s) => s.w)),
-		h: Math.max(...sizes.map((s) => s.h)),
-	};
-	const k = iconScale(native);
 	// Hidden until something is actually drawn into it. An undrawn canvas is
 	// transparent but still occupies its box, which would indent icon'd options
 	// past icon-less ones and read as a set of broken images.
@@ -1276,9 +1444,9 @@ function iconCanvas(entry) {
 		class: "opt-icon",
 		id: `icon-${entry.id}`,
 		"data-icon": entry.id,
-		width: native.w,
-		height: native.h,
-		style: `width:${native.w * k}px;height:${native.h * k}px`,
+		width: ICON_BOX,
+		height: ICON_BOX,
+		style: `width:${ICON_BOX}px;height:${ICON_BOX}px`,
 		hidden: true,
 	});
 }

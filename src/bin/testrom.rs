@@ -171,6 +171,12 @@ struct Cli {
     #[arg(long)]
     bro_battle_timer: bool,
 
+    /// Gate the canoe on the Anchor: boats park one tile out of reach, and
+    /// only an anchor used from the inventory while standing on a dock calls
+    /// one alongside. Pair with `--starting-items anchor` to test the unlock.
+    #[arg(long)]
+    canoe_gate: bool,
+
     /// Let the Hammer item break fortress lock tiles on the map.
     #[arg(long)]
     hammer_locks: bool,
@@ -448,6 +454,7 @@ fn main() {
         starting_items,
         starting_lives: cli.starting_lives,
         bro_battle_timer: cli.bro_battle_timer,
+        canoe_gate: cli.canoe_gate,
         hammer_breaks_locks: cli.hammer_locks,
         hammer_breaks_bridges: cli.hammer_bridges,
         include_beta: cli.beta,

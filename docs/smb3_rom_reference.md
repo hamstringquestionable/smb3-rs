@@ -1737,6 +1737,66 @@ construction. **`Inventory_Items` ($7D80..$7D9B) is below the start of that loop
 and is never touched**, which is what lets a permanent-item inventory survive a
 Continue with no new code.
 
+### Every 1-Up in the Game: the Seven `INC Player_Lives,X` Sites
+
+`Player_Lives` is `$0736` (Mario) / `$0737` (Luigi), and with one exception
+every award in the ROM is the same three bytes, `FE 36 07` —
+`INC Player_Lives,X` with `X = Player_Current`. Suppressing extra lives is
+therefore an offset list, not a code change. Verified against USA Rev1:
+
+| File | Bank / CPU | Southbird label | Reachable in 1P |
+|---|---|---|---|
+| **0x05D99** | PRG002 | `EndLevelCard_Give1UpsAndCycle` | yes — end-of-level card award, one INC per life |
+| **0x0EB0F** | PRG007 | score-popup path, `CPY #$0D` | yes — the green mushroom, stomp chains, every in-level 1-Up |
+| **0x2D2BE** | PRG022 $D2AE | before `Roulette_DrawXUpReward` | yes — Spade-panel roulette X-Up |
+| **0x2DD50** | PRG022 $DD40 | `CMP #CARD_1UP` match | yes — N-Spade card game |
+| **0x350A7** | PRG026 $B097 | coin rollover (see above) | yes — 100 coins |
+| 0x2CD75 | PRG022 $CD65 | `Bonus_GetDiePrize` | **no** — 2P dice bonus game only |
+| — | PRG009 $A011 | `Vs_CardAwardLives` | **no** — 2P Vs. battle only |
+
+The last one is also the one exception to the idiom: it `ADD`s from
+`Vs_LivesReward` (PRG009 **$A000**, file **0x12010**, eight bytes indexed by an
+OR of `Vs_CardWeight` values), so it can hand out 2, 3 or 5 at once. Zeroing
+that table is the way to neuter it; `qol::card_speed_clear` already zeroes
+index 7.
+
+`qol::apply_mariomon` NOPs the five 1P-reachable sites and leaves the two
+2P-only ones as upstream does.
+
+### The Game Over Menu Reads Its Cursor Twice, in Two Banks
+
+`Map_GameOver_CursorY` (**$7DCB**) is both the popup cursor's Y position *and*
+the selection: `$60` on the top entry (CONTINUE), `$68` on the bottom one
+(END), so **bit 3 is the answer** and the engine tests it with `AND #$08`
+rather than comparing. `GameOver_DoMenu` toggles it with `EOR #$08`.
+
+The decision is then spread across two banks, which is the part worth knowing
+before patching either half:
+
+1. **PRG010 $C738 (`GameOver_DoMenu`, file 0x14748)** turns the cursor into
+   `GameOver_State`: `LDX #$09` (END), `AND #$08`, `BNE` past `LDX #$02`
+   (CONTINUE). State 2 erases the box and twirls the player back onto the map.
+   State 9 falls out of `GameOver_Loop` entirely — "handled specially outside
+   of this routine".
+2. **PRG030 $92B6 (file 0x3D2C6)** is where state 9 lands, and it re-reads
+   `$7DCB` and branches on bit 3 a *second* time. Set → `$932A`, the
+   out-of-lives hand-off (reset, or pass the turn to the other player in 2P).
+   Clear → restore lives to 4 and the saved map position, then clear cards,
+   coins and map completions — the Game Over penalty
+   `qol::apply_no_game_over_penalty` defuses.
+
+So "continue" is reachable through two independent doors, and closing only the
+PRG010 one leaves the PRG030 restore path live. `qol::apply_mariomon` shuts
+both: it retunes the `LDX #$02` operand to `#$09` and NOPs the `AND #$08` at
+PRG030 $92C1 (file 0x3D2D1), after which `A` is `$60` or `$68`, both non-zero,
+so the hand-off is taken whichever entry was picked.
+
+**The popup text is written twice, too.** The map is horizontally mirrored, so
+`Video_DoGameOver00` (PRG010, file ~0x14110) emits each string into both
+nametables, and the second copy is split around the seam: CONTINUE is one run
+at VRAM `$29AF` and, separately, `"C"` at `$29BF` plus `"ONTINUE"` at `$29A0`.
+Any retitling has to hit both, at file **0x1412C** and **0x141AC**.
+
 ### Reclaimable Dead *Code* in PRG000 — Invisible to `--free-space`
 
 `smb3-rs --free-space` counts `$FF` filler runs, so it reports PRG000 as having
@@ -1818,6 +1878,31 @@ corrected here.
 
 Items 1–8 all route to the shared `Inv_UseItem_Powerup` handler. Items 9+ have dedicated
 handlers with incompatible animation/state machine layouts.
+
+**The shared tail, and what consumes an item.** Every handler that succeeds ends
+`JSR Inv_UseItem_ShiftOver` ($A61B) then `JMP Inventory_ForceFlip` ($A426).
+`ShiftOver` is the half that *deletes* the item — it copies each later slot back
+over the used one and zeroes the last. So **a handler that omits it leaves the
+item in the inventory**, which is the whole mechanism behind a permanent,
+re-usable item; there is no flag for it anywhere. `Inventory_ForceFlip` closes
+the panel and returns to the map.
+
+`Inv_UseItem_Denial` ($A687) is the failure tail: queue `SND_MAPDENY` ($80) into
+`Sound_QMap` ($04F6) and `RTS`, leaving the item alone. It is shared — the
+Hammer jumps to it when no rock is adjacent — so it is live code sitting inside
+the vanilla Anchor handler's byte range and must not be reclaimed along with it.
+`Sound_QLevel1` ($04F2) with `SND_LEVELPOOF` ($80) is the matching success cue.
+
+**PRG010 is still mapped at $C000 while the inventory panel is open.**
+`Inv_UseItem_Hammer` calls `MapTile_Get_By_Offset` there, so an item handler in
+PRG026 can `JSR` into map-side code at $C000-$DFFF directly. The $8000 window is
+PRG030 as always, so map tables like `Tile_Mem_Addr` are reachable too.
+
+**Anchor specifics.** `Inv_UseItem_Anchor` tests and sets `Map_Anchored`
+($7970), a per-map flag `Map_Init` clears (`prg030.asm:548`). With the wand
+cutscene skipped the airship never leaves its castle tile, so the vanilla effect
+is dead — which is what makes item $0A the free slot that both
+`items::write_mystery_anchor` and `canoe_gate` repurpose.
 
 Inside `Inv_UseItem_Powerup`, the instruction `LDX $7D80,Y` at CPU $A5C8 (file 0x345D8)
 re-reads the item ID into X. **`X` is the whole interface** — the handler acts on it
@@ -3989,6 +4074,70 @@ Tanooki/Mushroom/Leaf.
 | 0x04 | 10 Coins |
 | 0x05 | 20 Coins |
 
+### The 2-Player Vs Challenge — 339 bytes RECLAIMED in PRG030
+
+**Retired 2026-09-27 by `randomize/two_player_vs.rs`, unconditionally on every
+seed.** Both runs below are now free and **unclaimed** — the first feature that
+needs them adds its own `FS_*` row, exactly the way `FS_FORTRESS_FX` works,
+because neither run is `$FF` and `--free-space` cannot see either of them. Check
+`FREE_SPACE_ALLOCATIONS` alongside the scan, never instead of it.
+
+| run | file | bytes | unreferenced because |
+|---|---|---|---|
+| `$88F4..$8919` | 0x3C904 | 38 | `LDA Map_Enter2PFlag` at `$88F0` became `LDA #$00`, so the `BEQ` past it is always taken |
+| `$934C..$9478` | 0x3D35C | **301** | `JMP Do_2PVsChallenge` at `$8AE4` became three `NOP`s, removing the block's only reference |
+
+About 23 further bytes are dead in PRG010 (`$CE8A..$CEA6` — the compares and the
+flag store the new jump skips). Too small to be worth a row.
+
+**Why it was retired rather than fixed.** Its trigger compares three coordinate
+bytes and nothing else, which is unsound once the two players can be in
+different worlds (see `player_worlds`), and the collision path reaches `$CEA7`
+— "begin enter level" — **without running the tile-enterability test at all**,
+because the thing it is about to enter is the Vs battlefield rather than the
+tile's level. That made standing on your partner turn an otherwise-dead tile
+enterable. The removal sends the A-press to `PRG010_CEBF` instead, which is the
+path that already ran whenever the players were not stacked, so a beaten tile
+now correctly does nothing.
+
+The survey that established all of this follows, and remains the record of what
+was checked.
+
+The Vs Challenge is the minigame two players get when one presses A while
+standing on the other's map tile. It is spread over four banks, but only the
+PRG030 part is worth anything:
+
+| Bank | What | Value |
+|---|---|---|
+| **PRG030** | `$88F4..$8919` (38 bytes, the setup between the flag test and `PRG030_891A`) and `Do_2PVsChallenge` at **`$934C..$9478`, file 0x3D35C..0x3D489 (301 bytes)** | **high** — the scarcest bank |
+| PRG009 | `Vs_2PVsPauseHandler`, `Vs_2PVsInit`, `Vs_2PVsRun` — the minigame itself | low (167 free already) |
+| PRG014 | `Vs_Battlefields` table + `PRG/levels/2PVs.asm` battlefield data | low |
+| PRG027 | `PalSet_2PVs` (palette set 18) | low (657 free already) |
+
+**It was cleanly detachable**, which is what made the removal safe:
+
+- `Do_2PVsChallenge` has **exactly one reference in the ROM** — `JMP
+  Do_2PVsChallenge` at `$8AE4` (file 0x3CAF4, bytes `4C 4C 93`), reached only
+  when `Level_Tileset == 18`.
+- Every internal label of the 301-byte block (`PRG030_939A`, `_93B1`, `_93E7`,
+  `_93F1`, `_93F4`, `_946C`) is referenced **only from inside it** — checked
+  across the whole disassembly. Its one outward branch is the closing
+  `JMP PRG030_8FB2`.
+- `Map_Enter2PFlag` (**zero page `$1D`**) is the trigger and has **exactly two
+  references ROM-wide**: set to `#$12` at the collision test in PRG010
+  (`prg010.asm` ~2748), read at `$88F0` (file 0x3C900, `A5 1D / F0 26`).
+
+**How it was disabled.** Three splices, eight bytes: `LDA Player_Lives,Y` at
+`$CE87` became `JMP PRG010_CEBF`; `LDA Map_Enter2PFlag` at `$88F0` became
+`LDA #$00`; `JMP Do_2PVsChallenge` at `$8AE4` became three `NOP`s. Only the
+first is needed to change behaviour — the other two are what make the freed runs
+unreferenced by construction rather than by argument.
+
+**One trap worth keeping.** Neutralising only the flag read would not have
+worked: the collision site sets the flag and then falls through to
+`Map_Operation = $10`, so the game would have begun a level entry with no level
+behind it. The disable has to be upstream, at the collision test.
+
 ---
 
 ## Sprite Data
@@ -5867,3 +6016,135 @@ The clock icon at `$2B50` is static in both template copies, but PRG030's
 is likewise shared. Blanking the icon in any of them removes it from every
 level. A readout placed in these cells wears the clock whether it wants to or
 not.
+
+## The map→level entry transition, and the JP "box out" the US build removed
+
+Entering anything from the world map runs a closing-box wipe before the level
+loads. `Map_EnterLevelFX` (`$20`, zero page — shared with `Map_IntBoxErase`,
+`Map_ClearLevelFXCnt` and `Map_ScrollOddEven`) is its state:
+
+| value | meaning |
+|---|---|
+| 0 | not in a transition |
+| 1 | boxing **in** — live in the US release |
+| 2 | boxing **out** — Japanese version only, unreachable in the US build |
+
+The two halves are split between the main loop, which computes what the border
+should look like, and the NMI, which blits it:
+
+* **Driver** — `PRG030_87BD` onward. It is reached from `PRG030_873F` when
+  `Map_Operation >= $F` and `Map_Player_SkidBack` is zero, and it jumps
+  **straight** to the box-in with no `Palette_FadeOut` first (the fade belongs to
+  `PRG030_874F`, the skid-back / `Map_Operation = 4` path). Setting
+  `Map_Operation = $10` is therefore what commits to the transition; that store
+  lives at `PRG010_CEA7`.
+* **Renderer** — `Map_EnterLevel_Effect`, PRG026 `$ACCB`-ish, called from the
+  NMI's Update_Select "Normal" path at PRG031 `$F610`. The NMI banks PRG026 into
+  `$A000` itself before the call, so the renderer is reachable regardless of what
+  the main loop has mapped there.
+
+### Pacing and geometry
+
+`PRG030_87BD` initialises, at CPU `$882A` for the count:
+
+```
+Map_EntTran_Cnt   = $30   ; $0450 — 49 loop iterations, one WaitVSync each (~0.82s NTSC)
+Map_EntTran_TBCnt = $1F   ; top/bottom strip, 32 tiles wide
+Map_EntTran_LRCnt = $17   ; left/right strip, 24 tiles tall
+Map_EntTran_BVAddrH/L[0..3]   ; per-edge VRAM address: top, bottom, right, left
+```
+
+`Map_EntTran_BorderLoop` (`$044F`) cycles 0-3, so **each edge is drawn and
+advanced once every four frames** — about 12 steps per edge over the 49 frames.
+The loop tail is `DEC Map_EntTran_Cnt` at CPU `$88A5` (file 0x3C8B5, exactly
+three bytes), falling out at `PRG030_88AD`, "Completed the entrance transition".
+
+The advance is `Border_Do` (PRG026), and it is **diagonal, not orthogonal**:
+
+| edge | delta | note |
+|---|---|---|
+| top | `+33` | one row down, one column right |
+| bottom | `−31` | one row up, one column right |
+| right | `+31` | |
+| left | `+33`, and `LRCnt -= 2` | marches right *and* down while shrinking |
+
+So the left/right edges are not column strips and cannot be turned into a
+straight left-to-right wipe by reparameterising — the constants are shared by
+every level entry.
+
+**The init comments in `PRG030_87BD` have "left" and "right" swapped.** The
+source labels `BVAddrL+2` as left, but it initialises to `$1F` (column 31) and
+`Border_Do`'s jump table is `Top, Bottom, Right, Left`. Slot 2 is the right edge,
+slot 3 the left. The table is the authority.
+
+The last six frames stop animating and pump in a fixed fill instead: when
+`Map_EntTran_Cnt < 6` the renderer writes 32 black tiles at `$2B00 |
+PRG026_ACCB[Cnt]`, where `PRG026_ACCB = $40, $40, $20, $00, $00, $00` — only
+three distinct rows near the bottom, a patch-up rather than a full-screen
+backstop. Shortening `Map_EntTran_Cnt` therefore leaves the box visibly
+unclosed.
+
+### What the US build removed, and what survives
+
+`PRG030` skips the box-out init with a single unconditional `JMP PRG030_8CB8`,
+leaving roughly **260 bytes of dead driver** between it and that label, plus the
+dead helpers `BoxOut_SetThisBorderVRAM`, `BoxOut_PutPatternInStrip`,
+`BoxOut_CalcOffsets`, `BoxOut_CalcWhich8x8` and a 30-byte LUT
+(`BoxOut_ByVStart`, `BoxOut_InitVAddrH`, `BoxOut_InitVAddrL0..3`). Note
+`Map_Clear_EntTranMem` sits among those helpers and **is** still live, so the
+dead region is not one contiguous run. None of it is `$FF`, so `--free-space`
+counts none of it.
+
+**The renderer half was never removed.** PRG031 still dispatches
+`Map_EnterLevelFX = 2`:
+
+```
+0x3F63E:  20 F1 AD    JSR $ADF1   ; Level_Opening_Effect (PRG026), plus BorderOut_Do
+```
+
+That makes the `FX = 2` arm a ready-made hook for any second map-entry effect:
+one word at 0x3F63F repoints it, and the dead PRG026 code underneath is space in
+the bank the NMI already maps. `prg030.asm` even carries the maintenance note
+that a revived box-out "needs to sync with `BoxOut_ByVStart`".
+
+The box-out reads **level** tile memory to restore what it uncovers
+(`Level_Tileset` → `TileLayout_ByTileset` → `[Map_Tile_AddrL],Y`). That is not
+map-specific in principle — `TileLayout_ByTileset` entry 0 is literally
+`Tile_Layout_TS0 ; 0 - Map`, and PRG010's own map scroll-draw uses the identical
+chain — but the driver assumes a level's geometry: it omits the
+`INC Map_Tile_AddrH` that PRG010 applies ("Map is always on the *lower* tile
+memory"), ignores the map's four-screen base and scroll, reads `Level_7Vertical`
+and `Level_SizeOrig`, and indexes `BoxOut_InitVAddrH` off `Vert_Scroll` against
+`GamePlay_VStart`, whose row-0 entry is `$21` where the map's nametables are
+`$28`/`$2A`.
+
+### Where the warp zone diverges
+
+World 9 is the one entry that runs the box-in and then does *not* load a level.
+`PRG030_892A`, **after** the zero-page wipe at `PRG030_88C8` and after
+`Map_PrepareLevel`:
+
+```
+	LDA World_Num
+	CMP #$08
+	BNE PRG030_893F
+	LDA #MUS1_STOPMUSIC / STA Sound_QMusic1
+	LDA Map_Warp_PrevWorld / STA World_Num
+	JMP PRG030_84A0
+```
+
+`Map_PrepareLevel` is why that branch cannot be borrowed for an arbitrary tile.
+Its position search (`PRG012_B150` / `B17D`) is **unbounded**: on no match it does
+`INC Temp_Var2 / JMP` and advances a whole pointer page, retrying until some
+byte's high nibble happens to match. For a tile with no pointer-table entry it
+reads arbitrary ROM. Anything wanting "box in, then go to `$84A0`" should divert
+at `PRG030_88AD`, before both the wipe and that search — which is what
+`world_persist`'s `PAD_BOX_DONE` does.
+
+Also note `PRG030_87BD` stamps `Map_Entered_XHi,X` from `World_Map_XHi,X` on the
+way in (along with `Map_Entered_Y`/`X` and `Map_Prev_X*`), so that byte cannot
+carry anything across the transition.
+
+Relevant addresses gathered here: `Map_EnterLevelFX` `$20`, `PPU_CTL2_Copy`
+`$16`, `Map_EntTran_Cnt` `$0450`, `Map_EntTran_BorderLoop` `$044F`,
+`Map_Operation` `$0729`, `PPU_CTL2` `$2001`.

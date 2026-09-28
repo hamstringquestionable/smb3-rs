@@ -507,6 +507,107 @@ pub fn apply_modern_powerups(rom: &mut Rom) {
     rom.write_byte(MODERN_POWERUP_TABLE_C_OFFSET, 0x03);
 }
 
+// Mariomon (by MaCobra52) — a permadeath challenge mode that bundles two
+// upstream patches, "No Continues.ips" and "No Extra Lives.ips". Every write
+// below is reproduced byte-for-byte from those two IPS files and each one was
+// checked against vanilla USA Rev1 (see `mariomon_overwrites_vanilla_bytes`,
+// which re-reads the real ROM and asserts the displaced instruction).
+//
+// Together they mean: the lives you start with are all the lives you will ever
+// have, and when they run out the run is over. Nothing here touches damage
+// handling — a hit still demotes a power-up the way the rest of the flagset
+// says it should.
+//
+// ## No Extra Lives — five `INC Player_Lives,X` sites NOP'd out
+//
+// Every 1-Up in the game funnels through `INC Player_Lives,X` (`FE 36 07`).
+// There are seven such sites in the ROM; the patch kills the five a
+// single-player run can reach, each becoming three NOPs:
+//
+//   * 0x05D99  PRG002 `EndLevelCard_Give1UpsAndCycle` — the end-of-level card
+//     award (matching triples hand out 1-Ups one at a time through here).
+//   * 0x0EB0F  PRG007 — the in-level score-popup path, taken whenever a score
+//     object's value is $0D, i.e. the 1-Up. This is the green mushroom, the
+//     stomp chain, the 1-Up from a shell, all of them.
+//   * 0x2D2BE  PRG022 — the Spade-panel roulette's X-Up reward.
+//   * 0x2DD50  PRG022 — a matched 1-Up pair in the N-Spade card game.
+//   * 0x350A7  PRG026 — the 100-coin 1-Up.
+//
+// The two left alone are both two-player-only and unreachable in a 1P run:
+// `Bonus_GetDiePrize` (PRG022 $CD65, the dice bonus game) and
+// `Vs_CardAwardLives` (PRG009 $A011, the Vs. battle game's card payout, which
+// adds from a table rather than INCing). Left as upstream has them.
+//
+// ## No Continues — the Game Over menu stops offering a way back
+//
+// Vanilla's Game Over popup is two options tracked by `Map_GameOver_CursorY`
+// ($7DCB), which is $60 on the top entry and $68 on the bottom one — so bit 3
+// *is* the selection. `GameOver_DoMenu` (PRG010 $C738) turns that into a state:
+//
+//     LDX #$09              ; END
+//     LDA Map_GameOver_CursorY
+//     AND #$08
+//     BNE +                 ; bottom entry chosen -> keep 9
+//     LDX #$02              ; CONTINUE
+//   + STX GameOver_State
+//
+// State 2 erases the box and twirls the player back to the map; state 9 hands
+// off to PRG030 $92B6, which reads the same cursor byte a second time and
+// branches: bit 3 set goes to $932A (the player is out, reset or hand over to
+// the other player), bit 3 clear restores lives to 4 and the saved map position
+// — vanilla's only *other* way back into the game. Four writes close both:
+//
+//   1. 0x14750 — the `LDX #$02` operand becomes `#$09`, so choosing the top
+//      entry now produces the same state 9 as the bottom one.
+//   2. 0x3D2D1 — the `AND #$08` in PRG030 $92B6 becomes two NOPs. `A` is then
+//      $60 or $68, both non-zero, so the `BNE` always takes $932A and the
+//      restore-lives-and-position branch is dead whichever entry was picked.
+//   3. 0x1412C / 0x141AC — the menu would otherwise lie. The word CONTINUE is
+//      drawn from PRG010's Game Over VRAM update, where both nametables are
+//      written because the map is horizontally mirrored: once contiguously at
+//      $29AF, and once split around the nametable seam as "C" at $29BF plus
+//      "ONTINUE" at $29A0. Five tile bytes at the tail of each ("TINUE" ->
+//      "CEDE "+blank, using the same font IDs the neighbouring strings use)
+//      turn both copies into CONCEDE, which is what the entry now does. The
+//      length prefixes are unchanged because the replacement is the same width.
+//
+// Note both halves are in-place edits over vanilla code and data — Mariomon
+// claims no free space and has no FREE_SPACE_ALLOCATIONS row.
+
+/// `INC Player_Lives,X` — the instruction every 1-Up site shares.
+const MARIOMON_INC_LIVES: [u8; 3] = [0xFE, 0x36, 0x07];
+
+/// The five single-player-reachable 1-Up sites, in file-offset order.
+const MARIOMON_LIFE_SITES: [usize; 5] = [0x05D99, 0x0EB0F, 0x2D2BE, 0x2DD50, 0x350A7];
+
+/// The two Game Over text runs, and the five tiles that turn CONTINUE into
+/// CONCEDE at the tail of each. Both nametable copies get the same bytes.
+const MARIOMON_TEXT_SITES: [usize; 2] = [0x1412C, 0x141AC];
+#[cfg(test)]
+const MARIOMON_TEXT_VANILLA: [u8; 5] = [0xEA, 0xFC, 0xDB, 0xDA, 0xE8]; // "TINUE"
+const MARIOMON_TEXT_BYTES: [u8; 5] = [0xED, 0xE8, 0xEE, 0xE8, 0xFE]; // "CEDE "
+
+/// PRG010 $C740: the `LDX #$02` operand that selected GameOver_State 2.
+const MARIOMON_STATE_OFFSET: usize = 0x14750;
+
+/// PRG030 $92C1: the `AND #$08` that told the hand-off which entry was picked.
+const MARIOMON_GUARD_OFFSET: usize = 0x3D2D1;
+const MARIOMON_GUARD_BYTES: [u8; 2] = [0xEA, 0xEA];
+
+/// Apply MaCobra52's "No Extra Lives" + "No Continues" as one challenge mode:
+/// nothing in a single-player run grants a 1-Up, and the Game Over popup's
+/// first entry reads CONCEDE because neither entry returns to the map.
+pub fn apply_mariomon(rom: &mut Rom) {
+    for site in MARIOMON_LIFE_SITES {
+        rom.write_range(site, &[0xEA; MARIOMON_INC_LIVES.len()]);
+    }
+    for site in MARIOMON_TEXT_SITES {
+        rom.write_range(site, &MARIOMON_TEXT_BYTES);
+    }
+    rom.write_byte(MARIOMON_STATE_OFFSET, 0x09);
+    rom.write_range(MARIOMON_GUARD_OFFSET, &MARIOMON_GUARD_BYTES);
+}
+
 /// Apply MaCobra's always-on bugfixes and fairness patches.
 pub fn apply_macobra_patches(rom: &mut Rom) {
     // Prevent forced hammer bro fights (4 NOPs)
@@ -743,6 +844,63 @@ mod tests {
         assert_eq!(rom.read_range(NGO_HOOK_B_OFFSET, NGO_HOOK_B_BYTES.len()), &NGO_HOOK_B_BYTES);
         assert_eq!(rom.read_range(NGO_ROUTINE_OFFSET, NGO_ROUTINE.len()), &NGO_ROUTINE);
         assert_eq!(rom.read_range(NGO_NOP_OFFSET, NGO_NOP_BYTES.len()), &NGO_NOP_BYTES);
+    }
+
+    #[test]
+    fn test_mariomon_writes() {
+        let mut rom = make_test_rom();
+        apply_mariomon(&mut rom);
+
+        for site in MARIOMON_LIFE_SITES {
+            assert_eq!(rom.read_range(site, 3), &[0xEA, 0xEA, 0xEA], "1-Up site {site:#07X}");
+        }
+        for site in MARIOMON_TEXT_SITES {
+            assert_eq!(rom.read_range(site, 5), &MARIOMON_TEXT_BYTES, "text site {site:#07X}");
+        }
+        assert_eq!(rom.read_byte(MARIOMON_STATE_OFFSET), 0x09);
+        assert_eq!(rom.read_range(MARIOMON_GUARD_OFFSET, 2), &MARIOMON_GUARD_BYTES);
+    }
+
+    /// Every Mariomon write lands on the vanilla bytes it is supposed to
+    /// displace — a whole instruction, or the exact text run.
+    ///
+    /// This is the guard that matters for this patch: nothing here is a new
+    /// routine an `asm::check` could decode, so the only real failure mode is
+    /// an offset that is a byte or two off, which would leave a live opcode
+    /// half-overwritten and still boot. Needs the real ROM, so it skips where
+    /// the ROM is absent — it guards the machine the patch is written on.
+    #[test]
+    fn mariomon_overwrites_vanilla_bytes() {
+        let Ok(bytes) = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes") else {
+            return;
+        };
+        let rom = Rom::from_bytes(&bytes).expect("vanilla ROM parses");
+
+        for site in MARIOMON_LIFE_SITES {
+            assert_eq!(
+                rom.read_range(site, 3),
+                &MARIOMON_INC_LIVES,
+                "expected INC Player_Lives,X at {site:#07X}"
+            );
+        }
+        for site in MARIOMON_TEXT_SITES {
+            assert_eq!(
+                rom.read_range(site, 5),
+                &MARIOMON_TEXT_VANILLA,
+                "expected the tail of CONTINUE at {site:#07X}"
+            );
+        }
+        // LDX #$02 — the opcode has to be immediately before the operand we
+        // retune, or we are rewriting somebody else's byte.
+        assert_eq!(rom.read_byte(MARIOMON_STATE_OFFSET - 1), 0xA2, "expected LDX #imm");
+        assert_eq!(rom.read_byte(MARIOMON_STATE_OFFSET), 0x02);
+        // AND #$08, preceded by LDA Map_GameOver_CursorY ($7DCB).
+        assert_eq!(rom.read_range(MARIOMON_GUARD_OFFSET, 2), &[0x29, 0x08], "expected AND #$08");
+        assert_eq!(
+            rom.read_range(MARIOMON_GUARD_OFFSET - 3, 3),
+            &[0xAD, 0xCB, 0x7D],
+            "expected LDA Map_GameOver_CursorY"
+        );
     }
 }
 

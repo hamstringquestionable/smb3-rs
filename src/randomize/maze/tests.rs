@@ -16,6 +16,7 @@ use rand_chacha::ChaCha8Rng;
 use super::graph::{Knobs, PAD_BUDGET};
 use super::{GenReport, GlobalState, IDENTITY_SPINE, MazeEdge};
 
+use crate::randomize::item_keys::Key;
 use crate::randomize::map_walker::walk_reachable;
 use crate::randomize::maze::walk::{MazePos, MazeWorld, walk_maze};
 use crate::randomize::node_catalog::NodeCatalog;
@@ -161,7 +162,12 @@ fn maze_walk_matches_the_per_world_walker() {
         let view: Vec<MazeWorld> = grids
             .iter()
             .zip(&state.worlds)
-            .map(|(grid, w)| MazeWorld { grid, pipe_pairs: &w.pipe_pairs, blocked: &no_locks })
+            .map(|(grid, w)| MazeWorld {
+                grid,
+                pipe_pairs: &w.pipe_pairs,
+                blocked: &no_locks,
+                canoe_locked: false,
+            })
             .collect();
 
         for (wi, grid) in grids.iter().enumerate() {
@@ -1698,7 +1704,8 @@ fn forward_fill_terminates_when_ordered_by_territory() {
             loop {
                 let bases = state.base_grids(&HashSet::new());
                 let shut = state.shut_locks(&open);
-                let reach = walk_maze(&state.view(&bases, &shut), &links, state.start);
+                let reach =
+                    walk_maze(&state.view(&bases, &shut, &HashSet::new()), &links, state.start);
 
                 for (f, pos) in &forts {
                     if !open.contains(f) && reach.contains((f.world, *pos)) {
@@ -1752,7 +1759,11 @@ fn forward_fill_terminates_when_ordered_by_territory() {
                         let saved = state.locks[i].fort;
                         state.locks[i].fort = Some(probe);
                         let s2 = state.shut_locks(&open);
-                        let r2 = walk_maze(&state.view(&bases, &s2), &links, state.start);
+                        let r2 = walk_maze(
+                            &state.view(&bases, &s2, &HashSet::new()),
+                            &links,
+                            state.start,
+                        );
                         state.locks[i].fort = saved;
                         let gain: usize =
                             (0..state.worlds.len()).map(|w| r2.world_len(w)).sum::<usize>() - base;
@@ -2277,7 +2288,7 @@ fn w8_bridge_keys() {
             loop {
                 let bases = st.base_grids(&HashSet::new());
                 let shut = st.shut_locks(&open);
-                let reach = walk_maze(&st.view(&bases, &shut), &links, st.start);
+                let reach = walk_maze(&st.view(&bases, &shut, &HashSet::new()), &links, st.start);
                 for (f, pos) in &forts {
                     if !open.contains(f) && reach.contains((f.world, *pos)) {
                         open.insert(*f);
@@ -2324,7 +2335,7 @@ fn w8_bridge_keys() {
                     let saved = st.locks[i].fort;
                     st.locks[i].fort = Some(probe);
                     let s2 = st.shut_locks(&open);
-                    let r2 = walk_maze(&st.view(&bases, &s2), &links, st.start);
+                    let r2 = walk_maze(&st.view(&bases, &s2, &HashSet::new()), &links, st.start);
                     st.locks[i].fort = saved;
                     let gain: usize =
                         (0..st.worlds.len()).map(|w| r2.world_len(w)).sum::<usize>() - base;
@@ -3161,4 +3172,388 @@ fn valley_pad_census() {
             hist.join(" "),
         );
     }
+}
+
+/// **How often is the boat required with no Anchor reachable in front of it?**
+///
+/// The rejection rate for the canoe gate, measured on the flow the gate would
+/// actually run: place four Anchors (letter, Hammer Bro, in-level chest, Toad
+/// House), ask the fixpoint one question, then either move the boats offshore
+/// or leave them where they are.
+///
+/// **One canoe-free fixpoint answers both halves.** If it still reports
+/// `solvable`, the boat is optional on this seed and gating it strands nobody
+/// whatever the Anchors do. If it does not, the boat is on the required route,
+/// and the reach it stopped at is exactly the set an Anchor has to lie inside
+/// — anything outside is behind the very water the Anchor opens, which is the
+/// circularity the gate must not walk into.
+///
+/// Sites are counted by *kind of slot*, not by a written byte: a slot of that
+/// kind inside the canoe-free reach is somewhere the item could go. So this is
+/// the ceiling — the rate at which a keyable seed exists at all — and a real
+/// placement pass can only do worse.
+///
+/// **Only a source the player cannot miss counts.** Reaching a cell has to
+/// mean holding the item, or the model is looser than the game and the
+/// difference strands somebody:
+///
+/// - **Princess letter** — finishing the world hands it over. Counts.
+/// - **Hammer Bro** — beating it hands the reward over. Counts.
+/// - **Toad House** — counts *only* if the pass pins a fixed-reward house
+///   there (treasure types 3/4/5, five of the twenty-two). The other
+///   seventeen roll the item from a 3-wide window when the box is opened, so
+///   the player gets the right item one time in three and the house is one
+///   visit. See `rom_data::toad_house_reward_is_fixed`.
+/// - **In-level chest** — does **not** count. A level can be beaten without
+///   ever opening its chest, so reaching it proves nothing. Extra Anchors
+///   dealt into chests are a kindness the model must not lean on.
+///
+/// The headline is therefore split two ways: what the two *stamped* sources
+/// reach on their own (no pin plumbing needed), and what they reach once a
+/// pinned fixed house is allowed. The chest column is still reported, marked
+/// excluded, because it is how much an earlier reading of this census was
+/// inflated by counting it.
+///
+/// Runs with `shuffle_hammer_bros` **on**, because the default census arm has
+/// it off and the builder then populates no Hammer Bro slots at all: that
+/// source would read a flat zero and the reading would mean nothing.
+///
+/// ```sh
+/// CENSUS_SEEDS=200 cargo test --release --lib anchor_keyability_census \
+///     -- --ignored --nocapture
+/// ```
+#[test]
+#[ignore]
+fn anchor_keyability_census() {
+    use crate::randomize::overworld_build::SlotKind;
+
+    let Some(raw) = load_rom() else { return };
+    let seeds = census_seeds(100);
+    let knobs = Knobs::default();
+    let k = super::DEFAULT_WANDS_REQUIRED;
+
+    // [standard, 8s are Wild]
+    let mut generated_n = [0usize; 2];
+    let mut boat_optional = [0usize; 2];
+    let mut boat_required = [0usize; 2];
+    let mut keyable = [0usize; 2];
+    let mut stamp_only = [0usize; 2];
+    let mut rejected = [0usize; 2];
+    let mut by_kind = [[0usize; 4]; 2];
+
+    for seed in 0..seeds {
+        // The harness rolls the map arm off the seed; `8s are Wild` is arm 3.
+        let arm = usize::from(seed % 4 == 3);
+        let ((_rom, result), _swaps) = census_build_arm(&raw, seed, true);
+        let mut rng = ChaCha8Rng::seed_from_u64(seed ^ 0x5EED_1234);
+        let (mut state, _report) =
+            super::generate(&result, &IDENTITY_SPINE, k, &knobs, SEALABLE_NEEDED, &mut rng);
+        generated_n[arm] += 1;
+
+        if !state.spheres().solvable {
+            // Not this census's business — the generator guarantees it.
+            continue;
+        }
+
+        // Beach every boat until an Anchor turns up, and hand none out.
+        state.gate_every_canoe(Key::Anchor);
+        let (without, reach) = state.spheres_and_reach();
+        if without.solvable {
+            boat_optional[arm] += 1;
+            continue;
+        }
+        boat_required[arm] += 1;
+
+        // The letter is granted by finishing a world, so its site is that
+        // world/s target rather than a slot — and only W1-W7 have one.
+        let letter = state
+            .worlds
+            .iter()
+            .filter(|w| state.in_maze[w.world_idx] && w.world_idx < 7)
+            .any(|w| w.target.is_some_and(|p| reach.contains((w.world_idx, p))));
+        let slot_kind = |kind: SlotKind| {
+            state
+                .worlds
+                .iter()
+                .filter(|w| state.in_maze[w.world_idx])
+                .flat_map(|w| w.slots.iter().map(move |s| (w.world_idx, s)))
+                .any(|(wi, s)| s.kind == kind && reach.contains((wi, s.pos)))
+        };
+        let found = [
+            letter,
+            slot_kind(SlotKind::HammerBro),
+            slot_kind(SlotKind::ToadHouse),
+            slot_kind(SlotKind::Level),
+        ];
+        for (i, &f) in found.iter().enumerate() {
+            if f {
+                by_kind[arm][i] += 1;
+            }
+        }
+        // The chest column (index 3) is reported but never counted: a level
+        // can be beaten without opening its chest.
+        let stamped = found[0] || found[1];
+        let any = stamped || found[2];
+        if stamped {
+            stamp_only[arm] += 1;
+        }
+        if any {
+            keyable[arm] += 1;
+        } else {
+            rejected[arm] += 1;
+        }
+    }
+
+    let pct = |n: usize, d: usize| if d == 0 { 0.0 } else { 100.0 * n as f64 / d as f64 };
+    for (arm, name) in ["standard", "8s are Wild"].iter().enumerate() {
+        let gen_n = generated_n[arm];
+        let req = boat_required[arm];
+        eprintln!("\n=== can the canoe gate be keyed? — {name}, {gen_n} seeds ===");
+        eprintln!(
+            "  boat optional (gate is free)   {}  ({:.1}%)",
+            boat_optional[arm],
+            pct(boat_optional[arm], gen_n)
+        );
+        eprintln!("  boat REQUIRED                  {req}  ({:.1}%)", pct(req, gen_n));
+        eprintln!(
+            "     keyable, stamped only        {}  ({:.1}%)   <- no pin needed",
+            stamp_only[arm],
+            pct(stamp_only[arm], req)
+        );
+        eprintln!(
+            "     keyable, + pinned fixed TH   {}  ({:.1}%)",
+            keyable[arm],
+            pct(keyable[arm], req)
+        );
+        eprintln!(
+            "     REJECTED (no gate)           {}  ({:.1}%)",
+            rejected[arm],
+            pct(rejected[arm], req)
+        );
+        for (i, kind) in ["letter (airship)", "hammer bro", "toad house", "level (chest) EXCL"]
+            .iter()
+            .enumerate()
+        {
+            eprintln!(
+                "       source in front: {kind:<19} {}/{req}  ({:.1}%)",
+                by_kind[arm][i],
+                pct(by_kind[arm][i], req)
+            );
+        }
+    }
+}
+
+/// **If the boats went offshore today, with no placement pass, how often
+/// would the player be stranded?**
+///
+/// The question the guards exist to answer, asked of the seeds the randomizer
+/// already produces. Anchors are dealt into Hammer Bro rewards, Princess
+/// letters and chests as of 2.2.2, so a seed may key its own canoe gate by
+/// luck. This counts how often luck is enough.
+///
+/// Mirrors the shipping order — QoL, then `items::randomize` off its own
+/// substream, then pickup, build, maze — because the reward a Hammer Bro holds
+/// is only knowable from the model *because* the item tables now roll first.
+///
+/// **Conservative on purpose.** Only the two sources whose position is known
+/// at maze time are counted: a Hammer Bro's `grid_pos`, and a world's target
+/// for its Princess letter. An anchor in an in-level chest is real supply the
+/// player can reach, but which cell that chest lands on is `assign_pool`'s
+/// call, downstream of here — so this under-counts anchors and therefore
+/// over-counts strandings. The true stranding rate is no worse than reported.
+///
+/// ```sh
+/// CENSUS_SEEDS=400 cargo test --release --lib anchor_softlock_census \
+///     -- --ignored --nocapture
+/// ```
+#[test]
+#[ignore]
+fn anchor_softlock_census() {
+    /// `PRINCESS_REWARDS_OFFSET` — one item byte per world, W1-W7.
+    const LETTERS: usize = 0x360DE;
+    let anchor = Key::Anchor.item_byte();
+
+    let Some(raw) = load_rom() else { return };
+    let seeds = census_seeds(200);
+    let knobs = Knobs::default();
+    let k = super::DEFAULT_WANDS_REQUIRED;
+
+    // [standard, 8s are Wild]
+    let mut generated_n = [0usize; 2];
+    let mut boat_required = [0usize; 2];
+    let mut keyed_by_luck = [0usize; 2];
+    let mut stranded = [0usize; 2];
+    let mut any_anchor = [0usize; 2];
+    let mut by_src = [[0usize; 2]; 2]; // [arm][0=hammer bro, 1=letter]
+
+    for seed in 0..seeds {
+        let arm = usize::from(seed % 4 == 3);
+        let wild = arm == 1;
+
+        // Shipping order: the item tables roll before the overworld reads them.
+        let mut rom = qol_variant(&raw, false, wild);
+        let mut item_rng = ChaCha8Rng::seed_from_u64(seed ^ 0x4954_454D_535F_5631);
+        crate::randomize::items::randomize(&mut rom, &mut item_rng, false, false, true);
+
+        let mut catalog = NodeCatalog::build(&rom, false);
+        let mut swap_rng = ChaCha8Rng::seed_from_u64(seed);
+        start_airship_swap::pick_swaps(&mut catalog, &mut swap_rng);
+        let pickup = pick_up(
+            &rom,
+            &catalog,
+            PickupFlags {
+                shuffle_spade_games: true,
+                shuffle_toad_houses: true,
+                shuffle_hammer_bros: true,
+            },
+        );
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
+        let result = build(
+            &rom,
+            &OverworldData { pickup: &pickup, catalog: &catalog },
+            &mut rng,
+            BuildFlags {
+                shuffle_toad_houses: true,
+                shuffle_hammer_bros: true,
+                eights_are_wild: wild,
+                ..Default::default()
+            },
+        );
+        let mut mrng = ChaCha8Rng::seed_from_u64(seed ^ 0x5EED_1234);
+        let (mut state, _report) =
+            super::generate(&result, &IDENTITY_SPINE, k, &knobs, SEALABLE_NEEDED, &mut mrng);
+        generated_n[arm] += 1;
+
+        // Does this seed hold an anchor anywhere the model can see?
+        let hb_anywhere =
+            result.worlds.iter().any(|w| w.hb_sprites.iter().any(|h| h.reward == anchor));
+        let letter_anywhere = (0..7).any(|wi| rom.read_byte(LETTERS + wi) == anchor);
+        if hb_anywhere || letter_anywhere {
+            any_anchor[arm] += 1;
+        }
+
+        if !state.spheres().solvable {
+            continue;
+        }
+        state.gate_every_canoe(Key::Anchor);
+        let (without, reach) = state.spheres_and_reach();
+        if without.solvable {
+            continue; // boat optional — gating it stands nobody up
+        }
+        boat_required[arm] += 1;
+
+        // An anchor the player can reach WITHOUT the boat.
+        let hb_ok = result.worlds.iter().any(|w| {
+            state.in_maze[w.world_idx]
+                && w.hb_sprites
+                    .iter()
+                    .any(|h| h.reward == anchor && reach.contains((w.world_idx, h.grid_pos)))
+        });
+        let letter_ok = state.worlds.iter().any(|w| {
+            w.world_idx < 7
+                && state.in_maze[w.world_idx]
+                && rom.read_byte(LETTERS + w.world_idx) == anchor
+                && w.target.is_some_and(|p| reach.contains((w.world_idx, p)))
+        });
+        if hb_ok {
+            by_src[arm][0] += 1;
+        }
+        if letter_ok {
+            by_src[arm][1] += 1;
+        }
+        if hb_ok || letter_ok {
+            keyed_by_luck[arm] += 1;
+        } else {
+            stranded[arm] += 1;
+        }
+    }
+
+    let pct = |n: usize, d: usize| if d == 0 { 0.0 } else { 100.0 * n as f64 / d as f64 };
+    for (arm, name) in ["standard", "8s are Wild"].iter().enumerate() {
+        let gen_n = generated_n[arm];
+        let req = boat_required[arm];
+        eprintln!("\n=== boats offshore with NO placement pass — {name}, {gen_n} seeds ===");
+        eprintln!(
+            "  seeds holding an anchor at all  {}  ({:.1}%)",
+            any_anchor[arm],
+            pct(any_anchor[arm], gen_n)
+        );
+        eprintln!("  boat REQUIRED                   {req}  ({:.1}%)", pct(req, gen_n));
+        eprintln!(
+            "     keyed by luck                 {}  ({:.1}%)",
+            keyed_by_luck[arm],
+            pct(keyed_by_luck[arm], req)
+        );
+        eprintln!(
+            "     STRANDED                      {}  ({:.1}%)  <- softlocks",
+            stranded[arm],
+            pct(stranded[arm], req)
+        );
+        eprintln!("       via hammer bro {}   via letter {}", by_src[arm][0], by_src[arm][1]);
+    }
+}
+
+/// **A gate shuts the water; a key inside the reach opens it again.**
+///
+/// The guard for the solver's inventory. `anchor_keyability_census` exercises
+/// the gate half — install a canoe gate with no source and watch the maze stop
+/// being solvable — but nothing exercised the *source* half, so deleting the
+/// key accumulator outright would have left every test green.
+///
+/// Three legs, on a seed the boat is genuinely required on:
+///
+/// 1. gate installed, no source -> not solvable (the counterfactual)
+/// 2. a source **inside** the canoe-free reach -> solvable again
+/// 3. a source **outside** it -> still not solvable
+///
+/// Leg 3 is the one worth having. It is the circularity the placement pass
+/// must never walk into: an Anchor sitting behind the very water it opens is
+/// not a key, and a model that counted it would strand a player. Drawing the
+/// site from the reach makes that unrepresentable, and this is what says so.
+#[test]
+fn a_key_inside_the_reach_opens_the_canoe_gate() {
+    let Some(raw) = load_rom() else { return };
+    let knobs = Knobs::default();
+    let k = super::DEFAULT_WANDS_REQUIRED;
+
+    for seed in 0..60u64 {
+        let ((_rom, result), _swaps) = census_build_arm(&raw, seed, true);
+        let mut rng = ChaCha8Rng::seed_from_u64(seed ^ 0x5EED_1234);
+        let (mut state, _report) =
+            super::generate(&result, &IDENTITY_SPINE, k, &knobs, SEALABLE_NEEDED, &mut rng);
+        if !state.spheres().solvable {
+            continue;
+        }
+
+        state.gate_every_canoe(Key::Anchor);
+        let (without, reach) = state.spheres_and_reach();
+        if without.solvable {
+            continue; // boat optional on this seed — no gate to open
+        }
+
+        // Leg 1 held to get here: gated, unsourced, unsolvable.
+
+        // Leg 2 — the start cell is reachable by definition.
+        state.sources = vec![super::KeySource { pos: state.start, key: Key::Anchor }];
+        assert!(
+            state.spheres().solvable,
+            "seed {seed}: an Anchor at the start should free every boat"
+        );
+
+        // Leg 3 — a cell the canoe-free walk never got to.
+        let stranded = state
+            .forts()
+            .into_iter()
+            .find(|(f, pos)| !reach.contains((f.world, *pos)))
+            .map(|(f, pos)| (f.world, pos));
+        if let Some(pos) = stranded {
+            state.sources = vec![super::KeySource { pos, key: Key::Anchor }];
+            assert!(
+                !state.spheres().solvable,
+                "seed {seed}: an Anchor behind the water it opens is not a key"
+            );
+        }
+        return;
+    }
+    panic!("no seed in 0..60 required the boat — the census says ~18% should");
 }

@@ -42,6 +42,18 @@ pub(super) const FLAG_KEY_PREFIX: &str = "SMB3R-";
 /// flags produces byte-identical output to before this feature existed.
 pub(super) const MAYBE_SALT: u64 = 0x4D41_5942_455F_5631; // "MAYBE_V1"
 
+/// Salt for the substream that rolls chest, Toad House, Hammer Bro and letter
+/// items.
+///
+/// Those rolls used to draw from the main stream late in the run. They were
+/// moved ahead of `overworld_pickup`, which reads the Hammer Bro reward table
+/// out of the ROM to build the pool the builder reattaches — so the rewards
+/// the builder distributes are now the randomized ones, decided once instead
+/// of rolled, stamped and rolled again. A substream is what makes that move
+/// cost nothing: the main stream never sees these draws, so the overworld is
+/// byte-identical either way.
+pub(super) const ITEM_SALT: u64 = 0x4954_454D_535F_5631; // "ITEMS_V1"
+
 /// Bytes of payload the format can address, past the two-byte envelope.
 ///
 /// 99 bits are spent today, leaving 141 in reserve — years of headroom at the
@@ -447,9 +459,22 @@ mod payload {
         /// rather than to silence.
         pub(super) hints: HintMode,
         pub(super) maze_wands: B3,
+        /// Item gates: a way forward shut until its key is found, which today
+        /// means boats offshore behind the Anchor. One bit for the class, so the
+        /// next gate kind costs none. Written
+        /// verbatim rather than zeroed with the maze off, the way `deja_vu_forts`
+        /// is — the field is new and false by default, so either choice leaves
+        /// every key in circulation byte-for-byte what it was, and verbatim keeps
+        /// the bool exhaustiveness guard honest. `randomize_inner` is what
+        /// ignores it outside the mode.
+        pub(super) item_gates: bool,
+        /// Mariomon: no 1-Ups anywhere, and a Game Over ends the run. Appended
+        /// and false by default, so every key in circulation is byte-for-byte
+        /// what it was.
+        pub(super) mariomon: bool,
 
         // --- Reserve ---
-        // 132 bits. Adding an option is: declare it immediately above this
+        // 130 bits. Adding an option is: declare it immediately above this
         // block, then take the same number of bits off `B19`. An older key
         // simply has those bits zero, which is "off" for a bool and the default
         // for every enum here, so it stays a correct key for the settings it
@@ -464,7 +489,7 @@ mod payload {
         #[skip]
         __: B128,
         #[skip]
-        __: B4,
+        __: B2,
     }
 }
 
@@ -513,7 +538,9 @@ impl Options {
             cannons, water, bros, hb_encounters, limit_hazards, friendlier_levels,
             bro_battle_timer, deja_vu, deja_vu_forts,
             fire_flower, piranha_shuffle, wild_injections,
-            starting_lives, world_count, world_maze, maze_wands, hints, starting_items,
+            starting_lives, world_count, world_maze, maze_wands, hints, item_gates,
+            mariomon,
+            starting_items,
             // Not encoded — see NOT_ENCODED for the reason on each.
             palettes: _, palette_themed: _, player_color: _,
             remove_flashing: _, king_quotes: _, skip_rom_validation: _,
@@ -599,6 +626,8 @@ impl Options {
             // which is a flag-key compatibility event bought for nothing.
             .with_maze_wands(if *world_maze { (*maze_wands).min(7) } else { 0 })
             .with_hints(if *world_maze { *hints } else { HintMode::default() })
+            .with_item_gates(*item_gates)
+            .with_mariomon(*mariomon)
             .with_starting_item_0(sanitize_item(item(0)))
             .with_starting_item_1(sanitize_item(item(1)))
             .with_starting_item_2(sanitize_item(item(2)))
@@ -661,6 +690,7 @@ impl Options {
             lakitu_stays_down: f.lakitu_stays_down(),
             shuffle_big_q_rooms: f.shuffle_big_q_rooms(),
             no_game_over_penalty: f.no_game_over_penalty(),
+            mariomon: f.mariomon(),
             poison_mushrooms: f.poison_mushrooms(),
             modern_powerups: f.modern_powerups(),
             anchor_visuals: f.anchor_visuals(),
@@ -699,6 +729,7 @@ impl Options {
             } else {
                 HintMode::default()
             },
+            item_gates: f.item_gates(),
             // Every pattern is a value now, 0 included — it is "start in Dark
             // Land", not "unset". A key minted before that meaning existed
             // cannot carry 0 (the encoder clamped to 1–7), so nothing older is

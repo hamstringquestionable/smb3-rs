@@ -187,6 +187,7 @@ impl WorldState {
                 section: 0,
                 is_hand_trap: false,
                 is_troll_pipe: false,
+                pin: None,
                 lock_hint: LockHint::default(),
             });
         }

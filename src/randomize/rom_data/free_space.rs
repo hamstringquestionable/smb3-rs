@@ -123,6 +123,13 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
         &["stomp_fairness"],
         "stomp_rise: rise-aware stomp height (32 reserved, 26 used)",
     ),
+    fs(
+        0x3DFE6,
+        24,
+        &["player_worlds"],
+        "world-maze: turn hand-over router, per-player worlds (24 reserved, 22 used — the \
+         bottom of PRG030's last run, leaving the $9FF4 question at its top untouched)",
+    ),
     // PRG031 (always mapped $E000–$FFFF, file 0x3E010)
     fs(0x3E924, 25, &["title_screen"], "sprite copy routine"),
     fs(0x3E93D, 40, &["title_screen"], "sprite data table"),
@@ -139,13 +146,25 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
         "4 tables (X/XHi/ScrL/ScrH × 8) + Map_Init seed helper",
     ),
     fs(0x3E965, 13, &["title_screen"], "intro skip + menu music routine"),
+    fs(
+        0x3E972,
+        30,
+        &["anchor_dedup"],
+        "world-maze: does the player already hold an Anchor (30 reserved, 27 used)",
+    ),
+    fs(
+        0x3FF3A,
+        22,
+        &["anchor_dedup"],
+        "world-maze: Player_GetItem hook body — Hammer Bro + chest (22 reserved, 18 used)",
+    ),
     fs(0x3FFF0, 26, &["card_speed_clear"], "XOR trampoline"),
     // PRG025 (file 0x32010, CPU $C000–$DFFF while the title screen runs)
     fs(
-        0x33FC8,
-        40,
+        0x33FB0,
+        64,
         &["completion_bits"],
-        "world-maze: the title screen's new-game signal (40 reserved, 38 used)",
+        "world-maze: the title screen's new-game signal (64 reserved, 55 used)",
     ),
     fs(0x33FF0, 32, &["title_screen"], "title menu B-to-mute toggle (32 reserved, 22 used)"),
     // PRG026 (file 0x34010, CPU $A000–$BFFF)
@@ -172,6 +191,12 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
     ),
     fs(0x355B1, 12, &["anchor_visuals"], "items-vs-cards index guard trampoline"),
     fs(
+        0x3571D,
+        40,
+        &["canoe_gate"],
+        "world-maze: use an Anchor on a dock to summon the boat (40 reserved, 23 used)",
+    ),
+    fs(
         0x355BD,
         224,
         &["big_q_blocks"],
@@ -179,6 +204,26 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
     ),
     // PRG027 (file 0x36010, CPU $A000–$BFFF)
     fs(0x379D9, 894, &["king_quotes"], "7 quotes + hook (7×120 + 54)"),
+    fs(
+        0x37D57,
+        24,
+        &["anchor_dedup"],
+        "world-maze: Princess letter Anchor suppression (24 reserved, 15 used)",
+    ),
+    fs(
+        0x37D6F,
+        16,
+        &["player_worlds"],
+        "world-maze: keep the partner's map camera across the wand-return cutscene \
+         (16 reserved, 12 used)",
+    ),
+    // PRG029 (file 0x3A010, CPU $C000-$DFFF)
+    fs(
+        0x3BFFC,
+        20,
+        &["anchor_dedup"],
+        "world-maze: Toad House Anchor suppression (20 reserved, 14 used)",
+    ),
     // PRG010 (file 0x14010, CPU $C000–$DFFF during map)
     fs(
         0x147CD,
@@ -223,7 +268,20 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
         0x1566C,
         64,
         &["world_persist"],
-        "world_persist POC: arrival-position restore after Map_Init (64 reserved, 56 used)",
+        "world_persist POC: arrival-position restore after Map_Init (64 reserved, 59 used)",
+    ),
+    fs(
+        0x156AC,
+        24,
+        &["player_worlds"],
+        "world-maze: hide the other player's map marker when they are in another world \
+         (24 reserved, 15 used)",
+    ),
+    fs(
+        0x156C4,
+        24,
+        &["player_worlds"],
+        "world-maze: stop Map_Init's player loop after the live player (24 reserved, 21 used)",
     ),
     fs(
         0x156DC,
@@ -286,9 +344,27 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
         &["world_travel"],
         "world-maze: game over returns to the starting world (32 reserved, 16 used)",
     ),
+    fs(
+        0x1564C,
+        32,
+        &["player_worlds"],
+        "world-maze: gate Map_Init's player loop — which players may be repositioned \
+         (32 reserved, 29 used)",
+    ),
+    fs(
+        0x15DD0,
+        32,
+        &["world_persist"],
+        "world-maze: divert to the map init once the telepad's box-in has closed (32 reserved, 22 used)",
+    ),
     fs(0x15DF0, 35, &["fix_canoe_softlock"], "canoe_fix: death respawn position save"),
     fs(0x15E13, 162, &["map_warp"], "2P Start+Select warp-to-partner routine"),
-    fs(0x15EB5, 151, &["canoe_summon"], "A-on-dock call-the-boat routine + offset tables"),
+    fs(
+        0x15EB5,
+        151,
+        &["canoe_summon", "canoe_gate"],
+        "A-on-dock call-the-boat routine + offset tables — the gate writes the same routine and          then removes the A-press hook, so both modes own it",
+    ),
     // PRG011 (file 0x16010, CPU $A000–$BFFF during map)
     fs(0x17C87, 36, &["start_airship_swap"], "game-over twirl finalize helper"),
     fs(
@@ -322,13 +398,13 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
         0x17DDB,
         160,
         &["world_persist"],
-        "world-maze: portal arrival stash + 6 x 16 portal table (160 reserved, 147 used)",
+        "world-maze: portal arrival stash + 6 x 16 portal table (160 reserved, 142 used)",
     ),
     fs(
         0x17E7B,
         128,
         &["world_persist"],
-        "world-maze: telepad enter hook + 3 x 16 pad key table (128 reserved, 111 used)",
+        "world-maze: telepad enter hook + 3 x 16 pad key table (128 reserved, 101 used)",
     ),
     fs(
         0x17EFB,
@@ -447,9 +523,9 @@ pub(crate) const FS_TITLE_MUTE: usize = 0x33FF0; // 32 reserved, 22 used
 // `STA Debug_Flag` at 0x30CC7 (PRG024 CPU $ACB7). Same bank and the same
 // reasoning as FS_TITLE_MUTE — PRG025 is at $C000 for the whole title screen —
 // and sited immediately *before* it, so the two sit at the tail of the run
-// together and a bundled title hack starting at 0x33529 still has 2719 bytes
+// together and a bundled title hack starting at 0x33529 still has 2695 bytes
 // of clear filler ahead of them.
-pub(crate) const FS_NEW_GAME_INIT: usize = 0x33FC8; // 40 reserved, 38 used
+pub(crate) const FS_NEW_GAME_INIT: usize = 0x33FB0; // 64 reserved, 55 used
 
 // The five world-maze constants below are **offset reservations**: the address
 // is decided here, in one place, so the features being built alongside each
@@ -685,9 +761,49 @@ pub(crate) const FS_FORTRESS_FX: usize = 0x147CD; // 537 reserved, 484 used
 // the packed path replaced it; the gap now holds PACK_WORLD.
 pub(crate) const FS_PACK_WORLD: usize = 0x155C4; // 40 reserved, 33 used
 // 0x155EC..0x1566C is the 128-byte run the retired SELECT+START debug
-// world-jump left behind — `FS_MAZE_VISITED` takes the first 64 and
-// `FS_MAZE_GAMEOVER` the next 32, leaving 0x1564C..0x1566C unclaimed.
-pub(crate) const FS_RESTORE_ARRIVAL: usize = 0x1566C; // 64 reserved, 56 used
+// world-jump left behind — `FS_MAZE_VISITED` takes the first 64,
+// `FS_MAZE_GAMEOVER` the next 32 and `FS_MAP_INIT_GATE` the last 32.
+pub(crate) const FS_RESTORE_ARRIVAL: usize = 0x1566C; // 64 reserved, 59 used
+
+// `Map_Init`'s player-loop gate (`player_worlds`): decides whether the loop is
+// allowed to reposition the players, and records which world they are in. The
+// tail of the retired SELECT+START debug world-jump's 128-byte run, which the
+// three allocations above it already share — so the same note covers it.
+//
+// PRG010 is safe for a routine reached from inside `Map_Init` (PRG011) because
+// `Map_Init` has exactly one caller: `PRG030_84A0`'s `JSR` at `$84AD`, and
+// `$84A0`'s first act is to map PRG010 into `$C000` and PRG011 into `$A000`.
+pub(crate) const FS_MAP_INIT_GATE: usize = 0x1564C; // 32 reserved, 29 used
+
+// The other-player marker gate (`player_worlds`), hooked from PRG010's own
+// `Map_No_Pan`, so the bank is its caller's and no window has to be argued
+// about. Sited in the unclaimed middle of the same $FF run FS_LOCK_ENTRIES
+// opens and FS_COMPLETION_BASES closes: the 48 bytes from 0x156AC to
+// FS_MASK_BUILD's 0x156DC, with our own allocations on both sides of it.
+pub(crate) const FS_MARKER_GATE: usize = 0x156AC; // 24 reserved, 15 used
+
+// The other end of `Map_Init`'s player loop (`player_worlds`), hooked over the
+// `DEX / BPL` that would otherwise carry the loop on to the second player.
+// Takes the rest of FS_MARKER_GATE's 48-byte gap, which ends at FS_MASK_BUILD.
+//
+// **Byte-adjacent to `MAP_INIT_SCROLL_SITE`** (0x1627E), which is the store
+// immediately before that `DEX` and which `start_airship_swap` splices its own
+// `JSR` over. The two hooks do not overlap, and the interaction is right: the
+// SAS helper re-stamps whichever player's slot the loop is on, so a single pass
+// stamps one player and the skipped loop stamps none.
+pub(crate) const FS_LOOP_TAIL: usize = 0x156C4; // 24 reserved, 21 used
+
+// PRG027 (file 0x36010, CPU $A000-$BFFF)
+// Keep the partner's map camera across the king's-wand-return cutscene
+// (`player_worlds`), which zeroes both players' scroll backups.
+//
+// **PRG027 and not an always-mapped bank**, which is the whole saving: the
+// cutscene sets PAGE_A000 = 27 before its loop and nothing between there and
+// the hook rebanks — vanilla calls `CineKing_DoWandReturn` at $A000 every
+// iteration, and `Clear_RAM_thru_ZeroPage` writes only RAM below $0700 while
+// PAGE_A000 lives at $0720. So this costs nothing from PRG030's last 18 bytes
+// or PRG031's last 16.
+pub(crate) const FS_CAMERA_KEEP: usize = 0x37D6F; // 16 reserved, 12 used
 
 // The portal arrival stash and the table it reads, together because the stash
 // addresses the table absolutely and so is origin-locked to it.
@@ -697,12 +813,12 @@ pub(crate) const FS_RESTORE_ARRIVAL: usize = 0x1566C; // 64 reserved, 56 used
 // and PRG010 has no run left that holds 147 bytes, while `prg011.asm` ends with
 // "Rest of ROM bank was empty" and leaves 565 unbroken from here to the bank
 // end. The stash also has to reach `Map_Init`, which is PRG011's own code.
-pub(crate) const FS_PORTAL_ARRIVAL: usize = 0x17DDB; // 160 reserved, 147 used
+pub(crate) const FS_PORTAL_ARRIVAL: usize = 0x17DDB; // 160 reserved, 142 used
 
 // The telepad enter hook. PRG010 is mapped at $C000 whenever the map runs, so
 // unlike the pipe portal's level-exit trigger this pays no always-mapped-bank
 // rent at all — it can sit in PRG011 beside the arrival stash it feeds.
-pub(crate) const FS_PAD_ENTER: usize = 0x17E7B; // 128 reserved, 111 used
+pub(crate) const FS_PAD_ENTER: usize = 0x17E7B; // 128 reserved, 101 used
 
 // World-maze phase 1: the completion-bit stencil, derived on the console.
 // The $FF run FS_LOCK_ENTRIES opened continues past FS_STASH_ARRIVAL to
@@ -721,6 +837,18 @@ pub(crate) const FS_UNPACK_WORLD: usize = 0x15F9C; // 36 reserved, 33 used
 pub(crate) const FS_WIPE_REPLACEMENT: usize = 0x15FC0; // 60 reserved, 34 used
 // Runs to 0x16010, the end of PRG010.
 pub(crate) const FS_SWAP_AT_RELOAD: usize = 0x15FFC; // 20 reserved, 18 used
+
+// The head of PRG010's tail filler, immediately after the DMC samples:
+// `prg010.asm`'s last `.byte` line before `DMC08_End` matches the sixteen bytes
+// at 0x15DC0 verbatim, so the run from 0x15DD0 to the bank end is filler and
+// nothing reads it.
+//
+// **Do not take PRG010's other advertised runs without this check.** The 64
+// bytes at 0x15B50 (CPU $DB40) that `--free-space` reports as this bank's
+// largest single gap sit *inside* a DPCM sample — sample data either side of
+// them — and `$FF` in a DMC stream is audio, not filler. The scan cannot tell
+// the difference.
+pub(crate) const FS_PAD_BOX_DONE: usize = 0x15DD0; // 32 reserved, 22 used
 
 pub(crate) const FS_CANOE_RESPAWN: usize = 0x15DF0; // 35 bytes
 pub(crate) const FS_MAP_WARP: usize = 0x15E13; // 162 bytes (CPU $DE03)
@@ -756,6 +884,46 @@ pub(crate) const FS_WAND_READOUT: usize = 0x35530; // 48 reserved, 35 used (CPU 
 
 pub(crate) const FS_MYSTERY_ANCHOR: usize = 0x35572; // 13 reserved, 10 used
 
+// PRG026 - the anchor's inventory handler under the canoe gate (canoe_gate.rs):
+// test the dock tile, JSR the canoe summon, poof, and flip back to the map.
+// Sits in the bank's dead tail, after the last assembled byte (prg026.asm ends
+// at PRG026_B51F with "Rest of ROM bank was empty"), and after every other
+// allocation already sited there.
+//
+// Registered since the gate was wired to `world_maze`: a real run now places
+// an Anchor and installs this, so the audit -- which requires every row to be
+// written by a real run -- has a writer to find. It was deliberately left out
+// while `testrom` was the only caller, because a registered row with no writer
+// fails the audit, and registering it early would have traded that failure for
+// a stranded seed.
+pub(crate) const FS_ANCHOR_USE: usize = 0x3571D; // 40 reserved, 23 used (CPU $B70D)
+
+/// The shared "do you already hold an Anchor" test, and the three hook bodies
+/// that call it.
+///
+/// **The test must be always mapped**, because the three grant paths run in
+/// three different bank configurations: `Player_GetItem` is reached from level
+/// banks, the Toad House tail from PRG029, the letter from PRG027. That is why
+/// it sits in PRG031 rather than somewhere roomier.
+///
+/// PRG031's 30-byte scrap rather than PRG030's 42-byte run, deliberately: that
+/// run is the only always-mapped gap left big enough for a feature needing a
+/// real allocation, and 27 bytes of scrap was never going to hold one. Both
+/// PRG031 gaps were checked unreferenced (2026-09-24) — `0x3E972` continues the
+/// filler `title_screen` already carves into and ends before the `55` data
+/// table at `0x3E990`; `0x3FF3A` sits between a routine's `RTS` at `0x3FF39`
+/// and the reset handler at `0x3FF50`.
+pub(crate) const FS_ANCHOR_HAS: usize = 0x3E972; // 30 reserved, 27 used (CPU $E962)
+pub(crate) const FS_ANCHOR_GET_GLUE: usize = 0x3FF3A; // 22 reserved, 18 used (CPU $FF2A)
+
+/// Toad House suppression, in PRG029's documented tail (`prg029.asm` ends
+/// "Rest of ROM bank was empty" after `PRG029_DFEB`).
+pub(crate) const FS_ANCHOR_HOUSE: usize = 0x3BFFC; // 20 reserved, 14 used (CPU $DFEC)
+
+/// Princess letter suppression, in PRG027's tail — the run begins exactly where
+/// `FS_KING_QUOTES` ends.
+pub(crate) const FS_ANCHOR_LETTER: usize = 0x37D57; // 24 reserved, 15 used (CPU $BD47)
+
 pub(crate) const FS_HAMMER_LOCKS: usize = 0x3557F; // 50 bytes
 
 /// The hammer check's three parallel tables — breakable tile, what it becomes,
@@ -787,6 +955,18 @@ pub(crate) const FS_ANCHOR_ITEM_GUARD: usize = 0x355B1; // 12 bytes (CPU $B5A1)
 // outside this reservation either way, but anyone taking the remaining 42 bytes
 // should confirm that before trusting the top of the gap.)
 pub(crate) const FS_STOMP_RISE: usize = 0x3DFC6; // 32 reserved, 26 used
+
+// The world maze's turn hand-over router (`player_worlds`). It has to be in an
+// always-mapped bank: the map loop banks PRG026 into $A000 on its way to the
+// hand-over, and `PRG030_84D7` is entered with arbitrary banks from the death
+// path — so a jump into the map bank from this site would be a bet on the
+// window. The routine touches only RAM and jumps back into PRG030, so it needs
+// no window at all.
+//
+// It takes the BOTTOM of the 42-byte run above deliberately: the `JSR $9FF4`
+// question FS_STOMP_RISE's note leaves open is at the run's top ($9FF4 is file
+// 0x3E004), and this reservation ends at 0x3DFFA, well below it.
+pub(crate) const FS_TURN_SWAP: usize = 0x3DFE6; // 24 reserved, 22 used
 
 /// CPU address of the rise-aware stomp-height routine ($9FB6).
 pub(crate) const STOMP_RISE_CPU: u16 = super::prg030_file_to_cpu(FS_STOMP_RISE);

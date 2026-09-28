@@ -1,9 +1,15 @@
+pub mod anchor_dedup;
 pub mod anchor_visuals;
 pub mod antechambers;
 pub mod autoscroll;
 pub mod beta_tornado;
 pub mod big_q_rooms;
 pub mod bowser_castle;
+/// The canoe as a lock and the Anchor as its key: boats park out of reach and
+/// only an anchor used from the inventory, while standing on a dock, calls one
+/// alongside. World-maze only — in a fixed world order the key would have to
+/// sit in front of its own lock.
+pub mod canoe_gate;
 /// World-maze phase 1: the packed per-world completion-bit storage the
 /// two-world swap in [`world_persist`] has to become. Reached on both targets:
 /// `randomize_inner` applies it whenever `world_maze` is set, and the web app
@@ -19,7 +25,10 @@ pub mod fire_flower;
 pub mod frog_softlocks;
 pub mod hand_rooms;
 pub mod hands_levels;
+pub mod item_keys;
 pub mod items;
+pub mod key_placement;
+pub mod key_sites;
 pub mod king_quotes;
 pub mod koopalings;
 pub mod level_helpers;
@@ -50,6 +59,10 @@ pub mod palette_variants;
 pub mod palettes;
 pub mod pipe_helpers;
 pub mod piranha_rooms;
+/// Two players, two worlds: in the maze each player keeps the world they are
+/// standing in, and the turn hand-over carries the map with it. One-player mode
+/// never reaches the new path. Its SRAM byte pair is [`maze_state`]'s.
+pub mod player_worlds;
 pub mod podoboo_gauntlet;
 pub mod poison_mushroom;
 pub mod powerups;
@@ -60,6 +73,10 @@ pub mod start_airship_swap;
 pub mod stomp_fairness;
 pub mod title_screen;
 pub mod troll_pipes;
+/// Retires the 2-player Vs Challenge, whose trigger is unsound once the two
+/// players can be in different worlds and which bypassed the map's
+/// tile-enterability rules. Unconditional, and it frees 339 bytes of PRG030.
+pub mod two_player_vs;
 /// The world maze's goal gate: a wall on World 8's bridge that stands until
 /// the player holds K of the seven wands, plus the counter that the wands are
 /// counted in. See `docs/world_maze_design.md`, "The wand gate".

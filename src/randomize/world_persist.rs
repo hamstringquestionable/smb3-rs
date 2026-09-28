@@ -90,9 +90,9 @@ use super::pipe_helpers;
 #[cfg(test)]
 use super::rom_data::NMI_SAFE_MAX;
 use super::rom_data::{
-    FS_PAD_ENTER, FS_PORTAL_ARRIVAL, FS_RESTORE_ARRIVAL, Grid, PLAYER_CURRENT, TILE_TELEPAD,
-    WORLD_MAP_INIT_CPU, WORLD_MAP_TILE, WORLD_MAP_X, WORLD_MAP_XHI, WORLD_MAP_Y, WORLD_NUM,
-    prg010_file_to_cpu, prg011_file_to_cpu,
+    FS_PAD_BOX_DONE, FS_PAD_ENTER, FS_PORTAL_ARRIVAL, FS_RESTORE_ARRIVAL, Grid, PLAYER_CURRENT,
+    TILE_TELEPAD, WORLD_MAP_INIT_CPU, WORLD_MAP_TILE, WORLD_MAP_X, WORLD_MAP_XHI, WORLD_MAP_Y,
+    WORLD_NUM, prg010_file_to_cpu, prg011_file_to_cpu,
 };
 
 // PRG010 is mapped at $C000 whenever this runs — `$84A0` maps it itself — the
@@ -165,35 +165,46 @@ const WIPE_LEN: usize = 10;
 ///
 /// A no-op unless a portal set the flag, which is why this can sit
 /// unconditionally at the end of the completion swap.
+///
+/// **Every store is indexed by `Player_Current`, and that is a fix, not a
+/// flourish.** All ten of these are two-byte Mario/Luigi arrays, and this
+/// routine used to write the Mario half unconditionally — so in two-player mode
+/// a telepad taken by *Luigi* dropped him on the destination's start tile and
+/// planted his arrival coordinates in Mario's backup instead. Indexing costs
+/// three bytes for the one `LDX`: `STA abs,X` is the same width as `STA abs`,
+/// and with one player `X` is 0, which is the address it used to hardcode.
+/// [`super::player_worlds`] is what made this reachable — before it, both
+/// players were always in the same world.
 #[rustfmt::skip]
-const RESTORE_ARRIVAL: [u8; 56] = [
+const RESTORE_ARRIVAL: [u8; 59] = [
     0xAD, ARRIVAL_FLAG as u8, (ARRIVAL_FLAG >> 8) as u8,        //  0: LDA ARRIVAL_FLAG
-    0xF0, 0x32,                                                 //  3: BEQ +50 → done
+    0xF0, 0x35,                                                 //  3: BEQ +53 → done
     0xA9, 0x00,                                                 //  5: LDA #$00
     0x8D, ARRIVAL_FLAG as u8, (ARRIVAL_FLAG >> 8) as u8,        //  7: STA ARRIVAL_FLAG
+    0xAE, PLAYER_CURRENT as u8, (PLAYER_CURRENT >> 8) as u8,    // 10: LDX Player_Current
 
-    0xAD, ARRIVAL_Y as u8, (ARRIVAL_Y >> 8) as u8,              // 10: LDA ARRIVAL_Y
-    0x8D, MAP_ENTERED_Y as u8, (MAP_ENTERED_Y >> 8) as u8,      // 13: STA Map_Entered_Y
-    0x8D, MAP_PREVIOUS_Y as u8, (MAP_PREVIOUS_Y >> 8) as u8,    // 16: STA Map_Previous_Y
+    0xAD, ARRIVAL_Y as u8, (ARRIVAL_Y >> 8) as u8,              // 13: LDA ARRIVAL_Y
+    0x9D, MAP_ENTERED_Y as u8, (MAP_ENTERED_Y >> 8) as u8,      // 16: STA Map_Entered_Y,X
+    0x9D, MAP_PREVIOUS_Y as u8, (MAP_PREVIOUS_Y >> 8) as u8,    // 19: STA Map_Previous_Y,X
 
-    0xAD, ARRIVAL_X as u8, (ARRIVAL_X >> 8) as u8,              // 19: LDA ARRIVAL_X
-    0x8D, MAP_ENTERED_X as u8, (MAP_ENTERED_X >> 8) as u8,      // 22: STA Map_Entered_X
-    0x8D, MAP_PREVIOUS_X as u8, (MAP_PREVIOUS_X >> 8) as u8,    // 25: STA Map_Previous_X
+    0xAD, ARRIVAL_X as u8, (ARRIVAL_X >> 8) as u8,              // 22: LDA ARRIVAL_X
+    0x9D, MAP_ENTERED_X as u8, (MAP_ENTERED_X >> 8) as u8,      // 25: STA Map_Entered_X,X
+    0x9D, MAP_PREVIOUS_X as u8, (MAP_PREVIOUS_X >> 8) as u8,    // 28: STA Map_Previous_X,X
 
-    0xAD, ARRIVAL_XHI as u8, (ARRIVAL_XHI >> 8) as u8,          // 28: LDA ARRIVAL_XHI
-    0x8D, MAP_ENTERED_XHI as u8, (MAP_ENTERED_XHI >> 8) as u8,  // 31: STA Map_Entered_XHi
-    0x8D, MAP_PREVIOUS_XHI as u8,
-          (MAP_PREVIOUS_XHI >> 8) as u8,                        // 34: STA Map_Previous_XHi
+    0xAD, ARRIVAL_XHI as u8, (ARRIVAL_XHI >> 8) as u8,          // 31: LDA ARRIVAL_XHI
+    0x9D, MAP_ENTERED_XHI as u8, (MAP_ENTERED_XHI >> 8) as u8,  // 34: STA Map_Entered_XHi,X
+    0x9D, MAP_PREVIOUS_XHI as u8,
+          (MAP_PREVIOUS_XHI >> 8) as u8,                        // 37: STA Map_Previous_XHi,X
 
-    0xAD, ARRIVAL_SCRL as u8, (ARRIVAL_SCRL >> 8) as u8,        // 37: LDA ARRIVAL_SCRL
-    0x8D, MAP_PREV_XOFF as u8, (MAP_PREV_XOFF >> 8) as u8,      // 40: STA Map_Prev_XOff
-    0x8D, MAP_PREV_XOFF2 as u8, (MAP_PREV_XOFF2 >> 8) as u8,    // 43: STA Map_Prev_XOff2
+    0xAD, ARRIVAL_SCRL as u8, (ARRIVAL_SCRL >> 8) as u8,        // 40: LDA ARRIVAL_SCRL
+    0x9D, MAP_PREV_XOFF as u8, (MAP_PREV_XOFF >> 8) as u8,      // 43: STA Map_Prev_XOff,X
+    0x9D, MAP_PREV_XOFF2 as u8, (MAP_PREV_XOFF2 >> 8) as u8,    // 46: STA Map_Prev_XOff2,X
 
-    0xAD, ARRIVAL_SCRH as u8, (ARRIVAL_SCRH >> 8) as u8,        // 46: LDA ARRIVAL_SCRH
-    0x8D, MAP_PREV_XHI as u8, (MAP_PREV_XHI >> 8) as u8,        // 49: STA Map_Prev_XHi
-    0x8D, MAP_PREV_XHI2 as u8, (MAP_PREV_XHI2 >> 8) as u8,      // 52: STA Map_Prev_XHi2
+    0xAD, ARRIVAL_SCRH as u8, (ARRIVAL_SCRH >> 8) as u8,        // 49: LDA ARRIVAL_SCRH
+    0x9D, MAP_PREV_XHI as u8, (MAP_PREV_XHI >> 8) as u8,        // 52: STA Map_Prev_XHi,X
+    0x9D, MAP_PREV_XHI2 as u8, (MAP_PREV_XHI2 >> 8) as u8,      // 55: STA Map_Prev_XHi2,X
 
-    0x60,                                                       // 55: RTS   ; done
+    0x60,                                                       // 58: RTS   ; done
 ];
 
 // --- Writer -------------------------------------------------------------
@@ -256,7 +267,7 @@ pub(crate) fn apply(rom: &mut Rom, telepads: &[Telepad], grids: &[Grid], retire_
 pub(crate) const PORTAL_MAX: usize = 16;
 
 /// Length of [`STASH_ARRIVAL`]'s code, and so the offset of its first table.
-pub(crate) const PORTAL_TABLE_OFF: usize = 51;
+pub(crate) const PORTAL_TABLE_OFF: usize = 46;
 
 /// The six per-arrival tables, in the order [`STASH_ARRIVAL`] reads them.
 /// Parallel arrays rather than 6-byte rows: indexing a row would cost a
@@ -292,37 +303,49 @@ const MAP_INIT_CPU: u16 = 0xA1D8;
 /// `$84CD` has not run yet — it packs `LIVE_WORLD`, not `World_Num`, so
 /// changing the latter here cannot make it pack the wrong world.
 ///
-/// The id arrives in `Map_Entered_XHi` — where [`PAD_ENTER`] leaves it, and
-/// where the retired pipe portal's `ObjNorm_PipewayCtlr` left the destination's
-/// screen nibble. Either way it is four bits, so indexing six 16-byte tables
-/// with it needs no bound of its own.
+/// **The id rides in `ARRIVAL_FLAG` itself, biased by one.** It used to arrive
+/// in `Map_Entered_XHi`, where the retired pipe portal's `ObjNorm_PipewayCtlr`
+/// left the destination's screen nibble and where [`PAD_ENTER`] used to put it.
+/// That stopped being a place a pad could leave anything the moment the pad
+/// started letting the box-in play: `PRG030_8775`, on the way into the
+/// transition, stamps `Map_Entered_XHi,X` from `World_Map_XHi,X` — so the id was
+/// overwritten with the screen the player was standing on before this routine
+/// ever ran.
+///
+/// So `PAD_ENTER` stores `id + 1` into the flag, and the flag is now both "a
+/// portal aimed you somewhere" and which one. `id + 1` is 1..=16 and can never
+/// be zero, so every `BEQ`/`BNE` on the flag stays a correct boolean test —
+/// the same reuse [`super::world_travel`]'s `MARK_VISITED` makes of
+/// `Map_Y_Starts`. Decoding costs `TAX / DEX` against an `A` that is already
+/// loaded, which is five bytes *less* than the `LDX Player_Current / LDA
+/// Map_Entered_XHi,X / TAX` it replaces.
+///
+/// The id is still four bits, so indexing six 16-byte tables with it needs no
+/// bound of its own.
 ///
 /// A no-op unless a telepad set the flag, which is why it can sit on a
 /// path every map init takes.
 #[rustfmt::skip]
 const STASH_ARRIVAL: [u8; PORTAL_TABLE_OFF] = [
     0xAD, ARRIVAL_FLAG as u8, (ARRIVAL_FLAG >> 8) as u8,        //  0: LDA ARRIVAL_FLAG
-    0xF0, 0x2B,                                                 //  3: BEQ +43 -> Map_Init
-    0xAE, PLAYER_CURRENT as u8,
-          (PLAYER_CURRENT >> 8) as u8,                          //  5: LDX Player_Current
-    0xBD, MAP_ENTERED_XHI as u8,
-          (MAP_ENTERED_XHI >> 8) as u8,                         //  8: LDA Map_Entered_XHi,X
-    0xAA,                                                       // 11: TAX          ; portal id
+    0xF0, 0x26,                                                 //  3: BEQ +38 -> Map_Init
+    0xAA,                                                       //  5: TAX      ; id + 1
+    0xCA,                                                       //  6: DEX      ; portal id
 
-    0xBD, PORTAL_WORLD_CPU as u8, (PORTAL_WORLD_CPU >> 8) as u8, // 12: LDA PORTAL_WORLD,X
-    0x8D, WORLD_NUM as u8, (WORLD_NUM >> 8) as u8,              // 15: STA World_Num
-    0xBD, PORTAL_Y_CPU as u8, (PORTAL_Y_CPU >> 8) as u8,        // 18: LDA PORTAL_Y,X
-    0x8D, ARRIVAL_Y as u8, (ARRIVAL_Y >> 8) as u8,              // 21: STA ARRIVAL_Y
-    0xBD, PORTAL_XHI_CPU as u8, (PORTAL_XHI_CPU >> 8) as u8,    // 24: LDA PORTAL_XHI,X
-    0x8D, ARRIVAL_XHI as u8, (ARRIVAL_XHI >> 8) as u8,          // 27: STA ARRIVAL_XHI
-    0xBD, PORTAL_X_CPU as u8, (PORTAL_X_CPU >> 8) as u8,        // 30: LDA PORTAL_X,X
-    0x8D, ARRIVAL_X as u8, (ARRIVAL_X >> 8) as u8,              // 33: STA ARRIVAL_X
-    0xBD, PORTAL_SCRL_CPU as u8, (PORTAL_SCRL_CPU >> 8) as u8,  // 36: LDA PORTAL_SCRL,X
-    0x8D, ARRIVAL_SCRL as u8, (ARRIVAL_SCRL >> 8) as u8,        // 39: STA ARRIVAL_SCRL
-    0xBD, PORTAL_SCRH_CPU as u8, (PORTAL_SCRH_CPU >> 8) as u8,  // 42: LDA PORTAL_SCRH,X
-    0x8D, ARRIVAL_SCRH as u8, (ARRIVAL_SCRH >> 8) as u8,        // 45: STA ARRIVAL_SCRH
+    0xBD, PORTAL_WORLD_CPU as u8, (PORTAL_WORLD_CPU >> 8) as u8, //  7: LDA PORTAL_WORLD,X
+    0x8D, WORLD_NUM as u8, (WORLD_NUM >> 8) as u8,              // 10: STA World_Num
+    0xBD, PORTAL_Y_CPU as u8, (PORTAL_Y_CPU >> 8) as u8,        // 13: LDA PORTAL_Y,X
+    0x8D, ARRIVAL_Y as u8, (ARRIVAL_Y >> 8) as u8,              // 16: STA ARRIVAL_Y
+    0xBD, PORTAL_XHI_CPU as u8, (PORTAL_XHI_CPU >> 8) as u8,    // 19: LDA PORTAL_XHI,X
+    0x8D, ARRIVAL_XHI as u8, (ARRIVAL_XHI >> 8) as u8,          // 22: STA ARRIVAL_XHI
+    0xBD, PORTAL_X_CPU as u8, (PORTAL_X_CPU >> 8) as u8,        // 25: LDA PORTAL_X,X
+    0x8D, ARRIVAL_X as u8, (ARRIVAL_X >> 8) as u8,              // 28: STA ARRIVAL_X
+    0xBD, PORTAL_SCRL_CPU as u8, (PORTAL_SCRL_CPU >> 8) as u8,  // 31: LDA PORTAL_SCRL,X
+    0x8D, ARRIVAL_SCRL as u8, (ARRIVAL_SCRL >> 8) as u8,        // 34: STA ARRIVAL_SCRL
+    0xBD, PORTAL_SCRH_CPU as u8, (PORTAL_SCRH_CPU >> 8) as u8,  // 37: LDA PORTAL_SCRH,X
+    0x8D, ARRIVAL_SCRH as u8, (ARRIVAL_SCRH >> 8) as u8,        // 40: STA ARRIVAL_SCRH
 
-    0x4C, MAP_INIT_CPU as u8, (MAP_INIT_CPU >> 8) as u8,        // 48: JMP Map_Init
+    0x4C, MAP_INIT_CPU as u8, (MAP_INIT_CPU >> 8) as u8,        // 43: JMP Map_Init
 ];
 
 /// Write the six arrival tables: one row per arrival id.
@@ -417,7 +440,7 @@ const PAD_HOOK_VANILLA: [u8; PAD_HOOK_LEN] = [
 ];
 
 /// Offset of the pad key tables inside [`PAD_ENTER`].
-pub(crate) const PAD_TABLE_OFF: usize = 63;
+pub(crate) const PAD_TABLE_OFF: usize = 53;
 
 /// Three parallel key tables, sixteen rows — one per shared arrival id. A row
 /// says "a pad standing here uses this id", so the id *is* the row index and no
@@ -432,11 +455,18 @@ const PAD_X_CPU: u16 = PAD_Y_CPU + PORTAL_MAX as u16;
 /// Teleport instead of entering the tile, when the tile is a pad the table
 /// knows about.
 ///
-/// **It writes the portal id into `Map_Entered_XHi` and jumps to `$84A0`**,
-/// which is exactly what a pipe portal leaves behind for [`STASH_ARRIVAL`] to
-/// find — so the whole arrival path, the completion pack and unpack, and
-/// [`RESTORE_ARRIVAL`] are reused with no change at all. A pad is a different
-/// way to *reach* the transition, not a different transition.
+/// **It raises `ARRIVAL_FLAG` carrying the portal id, then lets the tile entry
+/// proceed** — so the map's box-in transition plays and [`PAD_BOX_DONE`] diverts
+/// to `$84A0` once it has closed. Everything past that point is what a pipe
+/// portal left behind for [`STASH_ARRIVAL`] to find: the whole arrival path, the
+/// completion pack and unpack, and [`RESTORE_ARRIVAL`] are reused with no change
+/// at all. A pad is a different way to *reach* the transition, not a different
+/// transition.
+///
+/// It used to jump straight to `$84A0` from here, which skipped the transition
+/// entirely: the hook site is the one that sets `Map_Operation = $10`, and
+/// `Map_Operation >= $F` is exactly what `PRG030_873F` dispatches to the box-in.
+/// A pad hop was the only tile entry in the game with no transition at all.
 ///
 /// No transit room, so no destination-table slot: the twenty-four rooms stay
 /// entirely with vanilla's intra-world pipes.
@@ -449,7 +479,7 @@ const PAD_X_CPU: u16 = PAD_Y_CPU + PORTAL_MAX as u16;
 const PAD_ENTER: [u8; PAD_TABLE_OFF + 3 * PORTAL_MAX] = [
     0xA5, WORLD_MAP_TILE,                                   //  0: LDA World_Map_Tile
     0xC9, TILE_TELEPAD,                                     //  2: CMP #pad tile
-    0xD0, 0x24,                                             //  4: BNE +36 -> ordinary
+    0xD0, 0x29,                                             //  4: BNE +41 -> ordinary
     0xAE, PLAYER_CURRENT as u8,
           (PLAYER_CURRENT >> 8) as u8,                      //  6: LDX Player_Current
     0xA0, (PORTAL_MAX - 1) as u8,                           //  9: LDY #15
@@ -466,39 +496,143 @@ const PAD_ENTER: [u8; PAD_TABLE_OFF + 3 * PORTAL_MAX] = [
     0x29, 0xF0,                                             // 30: AND #$F0     ; column
     0x15, WORLD_MAP_XHI,                                    // 32: ORA World_Map_XHi,X  ; screen
     0xD9, PAD_X_CPU as u8, (PAD_X_CPU >> 8) as u8,          // 34: CMP PAD_X,Y
-    0xF0, 0x09,                                             // 37: BEQ +9 -> found
+    0xF0, 0x03,                                             // 37: BEQ +3 -> found
 
     // ----- next (39) -----
     0x88,                                                   // 39: DEY
     0x10, 0xE1,                                             // 40: BPL -31 -> scan
 
-    // ----- ordinary: the displaced instructions (42) -----
-    0xA9, 0x10,                                             // 42: LDA #$10
-    0x8D, MAP_OPERATION as u8, (MAP_OPERATION >> 8) as u8,  // 44: STA Map_Operation
-    0x60,                                                   // 47: RTS
-
-    // ----- found (48): Y is the arrival id -----
+    // ----- found (42): Y is the arrival id -----
     //
     // No transition flag to raise: `STASH_ARRIVAL` sets `World_Num` from the
     // arrival row at `$84AD`, which is before the pack hook at `$84CD`, so the
     // `World_Num != LIVE_WORLD` compare already sees the jump.
-    0x98,                                                   // 48: TYA
-    0x9D, MAP_ENTERED_XHI as u8,
-          (MAP_ENTERED_XHI >> 8) as u8,                     // 49: STA Map_Entered_XHi,X  ; the id
-    0xA9, 0x01,                                             // 52: LDA #$01
-    0x8D, ARRIVAL_FLAG as u8, (ARRIVAL_FLAG >> 8) as u8,    // 54: STA ARRIVAL_FLAG
-    0xA2, 0xFF,                                             // 57: LDX #$FF
-    0x9A,                                                   // 59: TXS
-    0x4C, WORLD_MAP_INIT_CPU as u8,
-          (WORLD_MAP_INIT_CPU >> 8) as u8,                  // 60: JMP $84A0 (never returns)
+    //
+    // **It falls through into the displaced instructions rather than jumping to
+    // `$84A0`.** A pad commits to an ordinary tile entry, so the map's own
+    // box-in transition plays — `SND_MAPENTERLEVEL` and the sprite-hiding
+    // border included — and [`PAD_BOX_DONE`] takes over at the far end of it.
+    // That is the whole of the animation: the pad supplies no frames of its own.
+    //
+    // The id goes into `ARRIVAL_FLAG` biased by one, because the box-in path
+    // clobbers `Map_Entered_XHi` — see [`STASH_ARRIVAL`], which decodes it.
+    // `INY` is what makes the value non-zero, so the flag stays a correct
+    // boolean for every reader that tests it with `BEQ`/`BNE`.
+    //
+    // **The exhausted scan falls straight through this block, and that is the
+    // correct behaviour rather than a hazard to branch around.** The loop can
+    // only leave by `DEY` taking `Y` below zero, so `Y` is `$FF` here and
+    // exactly here: `INY` makes it `0`, and storing `0` to the flag says "no
+    // arrival", which is what a pad tile the table does not know about means.
+    // A `BMI` over the block would cost two bytes to avoid a store that is
+    // already right — and the store additionally scrubs a stale flag, so a
+    // `PAD_BOX_DONE` divert can never strand a real level entry.
+    //
+    // `Y` is therefore the one thing separating the two paths, and a match at
+    // id 0 is still distinguishable: it arrives with `Y = 0`, not `$FF`.
+    0xC8,                                                   // 42: INY      ; id + 1, never 0
+    0x98,                                                   // 43: TYA
+    0x8D, ARRIVAL_FLAG as u8, (ARRIVAL_FLAG >> 8) as u8,    // 44: STA ARRIVAL_FLAG
+    // ...and fall through.
 
-    // ----- PAD_WORLD (63), PAD_Y (79), PAD_X (95); $FF world = unclaimed -----
+    // ----- ordinary: the displaced instructions (47) -----
+    0xA9, 0x10,                                             // 47: LDA #$10
+    0x8D, MAP_OPERATION as u8, (MAP_OPERATION >> 8) as u8,  // 49: STA Map_Operation
+    0x60,                                                   // 52: RTS
+
+    // ----- PAD_WORLD (53), PAD_Y (69), PAD_X (85); $FF world = unclaimed -----
     0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
     0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+];
+
+// --- The far end of the box-in ----------------------------------------------
+
+/// `Map_EnterLevelFX` (`$20`) — `0` none, `1` boxing in, `2` boxing out (the
+/// effect the US release removed). The box-in loop re-stores `1` every frame,
+/// so it is still `1` at the hook site and **must** be cleared before the map
+/// init runs: the value is read by the NMI's Update_Select path
+/// (`PRG031_F610`), which would go on painting borders over the map `$84A0` is
+/// building. Vanilla gets this for free from the `$00`-`$9D` zero-page wipe at
+/// `PRG030_88C8`, fourteen bytes past where this diverts.
+const MAP_ENTER_LEVEL_FX: u8 = 0x20;
+
+/// `PPU_CTL2_Copy` (`$16`) — the NMI writes `PPU_CTL2` from this, so blanking
+/// the display means zeroing both or the copy puts it straight back.
+const PPU_CTL2_COPY: u8 = 0x16;
+
+/// `PPU_CTL2` (`$2001`).
+const PPU_CTL2: u16 = 0x2001;
+
+/// `PRG030_88AD` — "Completed the entrance transition" (CPU `$88AD` = file
+/// 0x3C8BD). Its first four bytes are two whole instructions:
+///
+/// ```text
+/// A9 18       LDA #$18            ; show BG + sprites
+/// 85 16       STA PPU_CTL2_Copy
+/// ```
+///
+/// **The one place that knows the box has finished closing.** The box-in loop
+/// at `PRG030_884C` falls out of here exactly once, and nothing branches into
+/// these four bytes, so a `JSR` with the tail NOP-padded displaces them cleanly.
+///
+/// Diverting *here* rather than further on is what keeps "the exact same rest"
+/// true. Fourteen bytes later `PRG030_88C8` wipes zero page and `$7E02`, and
+/// then `PRG030_891A` calls `Map_PrepareLevel` — which searches the pointer
+/// tables for the row and column the player is standing on and, for a tile with
+/// no entry, walks pages until something happens to match. A pad has no business
+/// in there. This site is before both.
+///
+/// **PRG030 is always mapped, but the routine does not have to be.** At this
+/// point in the transition PAGE_C000 is still 10 and PAGE_A000 still 11 —
+/// nothing between `PRG030_87BD` and here touches either — so the target sits
+/// in PRG010 and pays none of that bank's 42-byte rent.
+const BOX_DONE_HOOK_OFFSET: usize = 0x3C8BD;
+const BOX_DONE_HOOK_LEN: usize = 4;
+
+/// Vanilla bytes at [`BOX_DONE_HOOK_OFFSET`].
+#[cfg(test)]
+#[rustfmt::skip]
+const BOX_DONE_HOOK_VANILLA: [u8; BOX_DONE_HOOK_LEN] = [
+    0xA9, 0x18,             // LDA #$18
+    0x85, PPU_CTL2_COPY,    // STA PPU_CTL2_Copy
+];
+
+const PAD_BOX_DONE_CPU: u16 = prg010_file_to_cpu(FS_PAD_BOX_DONE);
+
+/// Once the box has closed: if a telepad started this, go to the map init
+/// instead of loading a level.
+///
+/// 32 reserved, 22 used.
+///
+/// A no-op on every other tile entry — it replays the two displaced
+/// instructions and returns, which is why it can sit on the one path every
+/// level entry in the game takes.
+#[rustfmt::skip]
+const PAD_BOX_DONE: [u8; 22] = [
+    0xAD, ARRIVAL_FLAG as u8, (ARRIVAL_FLAG >> 8) as u8,    //  0: LDA ARRIVAL_FLAG
+    0xD0, 0x05,                                             //  3: BNE +5 -> divert
+
+    // ----- ordinary level entry (5): the displaced instructions -----
+    0xA9, 0x18,                                             //  5: LDA #$18
+    0x85, PPU_CTL2_COPY,                                    //  7: STA PPU_CTL2_Copy
+    0x60,                                                   //  9: RTS
+
+    // ----- divert (10) -----
+    //
+    // One zero serves three stores. Clearing the FX is the load-bearing one;
+    // blanking the display matches what `$84A0` does four instructions in
+    // anyway, and doing it here means the closed box is what stays on screen
+    // rather than a frame of half-built map.
+    0xA9, 0x00,                                             // 10: LDA #$00
+    0x85, MAP_ENTER_LEVEL_FX,                               // 12: STA Map_EnterLevelFX
+    0x85, PPU_CTL2_COPY,                                    // 14: STA PPU_CTL2_Copy
+    0x8D, PPU_CTL2 as u8, (PPU_CTL2 >> 8) as u8,            // 16: STA PPU_CTL2
+    0x4C, WORLD_MAP_INIT_CPU as u8,
+          (WORLD_MAP_INIT_CPU >> 8) as u8,                  // 19: JMP $84A0 (never returns)
 ];
 
 /// A pad: which world it stands in, and where it puts you.
@@ -550,6 +684,14 @@ fn apply_telepads(rom: &mut Rom, telepads: &[Telepad]) {
     hook[1] = PAD_ENTER_CPU as u8;
     hook[2] = (PAD_ENTER_CPU >> 8) as u8;
     rom.write_range(PAD_HOOK_OFFSET, &hook);
+
+    // The far end of the transition the pad now lets play.
+    rom.write_range(FS_PAD_BOX_DONE, &PAD_BOX_DONE);
+    let mut done = [0xEA_u8; BOX_DONE_HOOK_LEN];
+    done[0] = 0x20; // JSR
+    done[1] = PAD_BOX_DONE_CPU as u8;
+    done[2] = (PAD_BOX_DONE_CPU >> 8) as u8;
+    rom.write_range(BOX_DONE_HOOK_OFFSET, &done);
 }
 
 /// Decode the pad key tables back out of a finished ROM: one
@@ -650,11 +792,21 @@ mod asm_checks {
     /// Every variable `Map_Init` sets from `Map_Y_Starts` has to be rewritten.
     /// Missing one leaves the player half-moved — drawn at the portal's tile
     /// but resuming at the world's start after a death, or vice versa.
+    ///
+    /// The scan looks for `STA abs,X` (`$9D`) and **not** `STA abs` (`$8D`),
+    /// which is the whole point: all ten are Mario/Luigi arrays, and writing
+    /// the absolute address writes Mario's half whoever took the telepad.
     #[test]
     fn restore_covers_every_position_variable_map_init_writes() {
+        assert!(
+            !RESTORE_ARRIVAL.windows(3).any(|w| {
+                w[0] == 0x8D && w[1..] != [ARRIVAL_FLAG as u8, (ARRIVAL_FLAG >> 8) as u8]
+            }),
+            "a position store is absolute — it would write Mario's half for either player",
+        );
         let written: Vec<u16> = RESTORE_ARRIVAL
             .windows(3)
-            .filter(|w| w[0] == 0x8D)
+            .filter(|w| w[0] == 0x9D)
             .map(|w| u16::from_le_bytes([w[1], w[2]]))
             .collect();
         for (addr, name) in [
@@ -706,17 +858,24 @@ mod asm_checks {
             assert_eq!(STASH_ARRIVAL[at], 0xBD, "offset {at} is not an LDA abs,X");
             u16::from_le_bytes([STASH_ARRIVAL[at + 1], STASH_ARRIVAL[at + 2]])
         };
-        assert_eq!(operand(8), MAP_ENTERED_XHI, "the id comes from Map_Entered_XHi");
+        // The id is decoded from `ARRIVAL_FLAG`, not read from a table: `A` is
+        // already loaded by offset 0, so `TAX / DEX` is the whole of it. Pinned
+        // because the bias is the only thing keeping the flag a valid boolean.
+        assert_eq!(
+            &STASH_ARRIVAL[0..7],
+            &[0xAD, ARRIVAL_FLAG as u8, (ARRIVAL_FLAG >> 8) as u8, 0xF0, 0x26, 0xAA, 0xCA],
+            "the id must come from ARRIVAL_FLAG, biased by one"
+        );
 
         let first = STASH_ARRIVAL_CPU + PORTAL_TABLE_OFF as u16;
         let last = first + (PORTAL_TABLE_LEN - 1) as u16;
         for (at, want, name) in [
-            (12, PORTAL_WORLD_CPU, "PORTAL_WORLD"),
-            (18, PORTAL_Y_CPU, "PORTAL_Y"),
-            (24, PORTAL_XHI_CPU, "PORTAL_XHI"),
-            (30, PORTAL_X_CPU, "PORTAL_X"),
-            (36, PORTAL_SCRL_CPU, "PORTAL_SCRL"),
-            (42, PORTAL_SCRH_CPU, "PORTAL_SCRH"),
+            (7, PORTAL_WORLD_CPU, "PORTAL_WORLD"),
+            (13, PORTAL_Y_CPU, "PORTAL_Y"),
+            (19, PORTAL_XHI_CPU, "PORTAL_XHI"),
+            (25, PORTAL_X_CPU, "PORTAL_X"),
+            (31, PORTAL_SCRL_CPU, "PORTAL_SCRL"),
+            (37, PORTAL_SCRH_CPU, "PORTAL_SCRH"),
         ] {
             let got = operand(at);
             assert_eq!(got, want, "offset {at} should read {name}");
@@ -752,7 +911,7 @@ mod asm_checks {
             "PRG010_CEA7 has moved"
         );
         assert_eq!(
-            PAD_ENTER[42..47],
+            PAD_ENTER[47..52],
             PAD_HOOK_VANILLA,
             "the ordinary path must replay what the hook overwrote"
         );
@@ -767,6 +926,46 @@ mod asm_checks {
             .data_from(PAD_TABLE_OFF)
             .zero_page(NMI_SAFE_MAX, &[WORLD_MAP_TILE, WORLD_MAP_Y, WORLD_MAP_XHI, WORLD_MAP_X])
             .hook(&PAD_HOOK_VANILLA, 0, &jsr)
+            .assert_ok();
+    }
+
+    #[test]
+    fn pad_box_done_is_well_formed() {
+        asm::check(&PAD_BOX_DONE)
+            .allocation(FS_PAD_BOX_DONE)
+            .origin(PAD_BOX_DONE_CPU)
+            // Both zero-page bytes are engine variables, and clearing
+            // `Map_EnterLevelFX` is the point of the routine. Straight-line
+            // code, so there is no loop for the NMI to land inside.
+            .zero_page(NMI_SAFE_MAX, &[MAP_ENTER_LEVEL_FX, PPU_CTL2_COPY])
+            .assert_ok();
+    }
+
+    /// The box-done hook displaces two whole instructions and replays them, so
+    /// an ordinary level entry finishes its transition exactly as before.
+    #[test]
+    fn box_done_hook_displaces_whole_instructions() {
+        let Some(rom) = load_vanilla() else { return };
+        assert_eq!(
+            rom.read_range(BOX_DONE_HOOK_OFFSET, BOX_DONE_HOOK_LEN),
+            BOX_DONE_HOOK_VANILLA,
+            "PRG030_88AD has moved"
+        );
+        assert_eq!(
+            PAD_BOX_DONE[5..9],
+            BOX_DONE_HOOK_VANILLA,
+            "the ordinary path must replay what the hook overwrote"
+        );
+
+        let mut jsr = [0xEA_u8; BOX_DONE_HOOK_LEN];
+        jsr[0] = 0x20;
+        jsr[1] = PAD_BOX_DONE_CPU as u8;
+        jsr[2] = (PAD_BOX_DONE_CPU >> 8) as u8;
+        asm::check(&PAD_BOX_DONE)
+            .allocation(FS_PAD_BOX_DONE)
+            .origin(PAD_BOX_DONE_CPU)
+            .zero_page(NMI_SAFE_MAX, &[MAP_ENTER_LEVEL_FX, PPU_CTL2_COPY])
+            .hook(&BOX_DONE_HOOK_VANILLA, 0, &jsr)
             .assert_ok();
     }
 
@@ -919,8 +1118,12 @@ mod asm_checks {
         cpu.registers.program_counter = PAD_ENTER_CPU;
         for _ in 0..10_000 {
             match cpu.registers.program_counter {
-                WORLD_MAP_INIT_CPU => return true,
-                PAD_SENTINEL => return false,
+                // It used to jump here itself, which is what skipped the
+                // transition. Reaching the map init from inside PAD_ENTER is now
+                // a bug: `PAD_BOX_DONE` owns that jump, at the far end of the
+                // box-in.
+                WORLD_MAP_INIT_CPU => panic!("PAD_ENTER jumped to the map init instead of RTSing"),
+                PAD_SENTINEL => return true,
                 _ => {
                     cpu.single_step();
                 }
@@ -1027,41 +1230,63 @@ mod asm_checks {
         mos6502::cpu::CPU::new(mem, Ricoh2a03)
     }
 
-    /// Standing on a pad teleports: it hands the arrival id to the place
-    /// `STASH_ARRIVAL` reads, raises the arrival flag, and never sets
-    /// `Map_Operation` — the map must not also start an enter-level effect.
+    /// Standing on a pad arms the arrival and then lets the tile entry proceed:
+    /// `ARRIVAL_FLAG` carries `id + 1`, and `Map_Operation` is set to `$10` so
+    /// the map's box-in transition plays. `PAD_BOX_DONE` is what diverts to the
+    /// map init once it has closed.
+    ///
+    /// **`Map_Entered_XHi` must be left alone.** The id used to live there and
+    /// cannot any more: `PRG030_8775` overwrites it from `World_Map_XHi` on the
+    /// way into the very transition this now lets play.
     ///
     /// Run with a sub-tile pixel offset on both axes, because the player's
     /// position is a pixel coordinate and the key has to mask it off.
     #[test]
-    fn a_pad_hands_over_its_id_and_teleports() {
+    fn a_pad_arms_the_arrival_and_lets_the_box_in_play() {
         let pads = &[(0usize, 0u8, (4usize, 8usize)), (5, 4, (6, 22)), (15, 8, (0, 47))];
         for &(id, world, at) in pads {
             for sub_tile in [0x00, 0x0F] {
                 let mut cpu = pad_cpu(TILE_TELEPAD, world, id as u8 % 2, at, sub_tile, pads);
-                let player = id as u8 % 2;
                 assert!(
                     call_pad_enter(&mut cpu),
-                    "W{} pad at {at:?} did not teleport (sub-tile {sub_tile:#04X})",
+                    "W{} pad at {at:?} did not return (sub-tile {sub_tile:#04X})",
                     world + 1
                 );
                 assert_eq!(
-                    cpu.memory.get_byte(MAP_ENTERED_XHI + player as u16),
-                    id as u8,
-                    "the arrival id must land in the current player's Map_Entered_XHi"
+                    cpu.memory.get_byte(ARRIVAL_FLAG),
+                    id as u8 + 1,
+                    "W{} pad at {at:?}: ARRIVAL_FLAG must carry the id biased by one",
+                    world + 1
                 );
-                assert_eq!(
-                    cpu.memory.get_byte(MAP_ENTERED_XHI + (1 - player) as u16),
-                    0xAA,
-                    "and not in the other player's"
-                );
-                assert_eq!(cpu.memory.get_byte(ARRIVAL_FLAG), 1, "ARRIVAL_FLAG");
                 assert_eq!(
                     cpu.memory.get_byte(MAP_OPERATION),
-                    0xAA,
-                    "Map_Operation must not be touched on the teleport path"
+                    0x10,
+                    "Map_Operation must start the enter-level effect, so the box-in plays"
                 );
+                for p in 0..2u16 {
+                    assert_eq!(
+                        cpu.memory.get_byte(MAP_ENTERED_XHI + p),
+                        0xAA,
+                        "Map_Entered_XHi must not carry the id — the box-in path clobbers it"
+                    );
+                }
             }
+        }
+    }
+
+    /// The bias is what keeps `ARRIVAL_FLAG` a valid boolean: every reader tests
+    /// it with `BEQ`/`BNE`, so the value a pad leaves must never be zero. Id 0
+    /// is the case that would break, and it is the id `apply_telepads` deals
+    /// first.
+    #[test]
+    fn the_arrival_flag_is_never_zero_for_any_pad_id() {
+        for id in 0..PORTAL_MAX {
+            let pads = &[(id, 2u8, (5usize, 19usize))];
+            let mut cpu = pad_cpu(TILE_TELEPAD, 2, 0, (5, 19), 0, pads);
+            assert!(call_pad_enter(&mut cpu), "pad id {id} did not return");
+            let flag = cpu.memory.get_byte(ARRIVAL_FLAG);
+            assert_ne!(flag, 0, "pad id {id} left ARRIVAL_FLAG zero — every reader would miss it");
+            assert_eq!(flag, id as u8 + 1, "pad id {id}");
         }
     }
 
@@ -1077,10 +1302,10 @@ mod asm_checks {
         ];
         for &(id, world, at) in pads {
             let mut cpu = pad_cpu(TILE_TELEPAD, world, 0, at, 0, pads);
-            assert!(call_pad_enter(&mut cpu), "pad {id} at {at:?} did not teleport");
+            assert!(call_pad_enter(&mut cpu), "pad {id} at {at:?} did not return");
             assert_eq!(
-                cpu.memory.get_byte(MAP_ENTERED_XHI),
-                id as u8,
+                cpu.memory.get_byte(ARRIVAL_FLAG),
+                id as u8 + 1,
                 "W{} pad at {at:?} must use arrival id {id}",
                 world + 1
             );
@@ -1104,9 +1329,27 @@ mod asm_checks {
         ];
         for (what, tile, world, at) in cases {
             let mut cpu = pad_cpu(tile, world, 0, at, 0, pads);
-            assert!(!call_pad_enter(&mut cpu), "{what} teleported");
+            assert!(call_pad_enter(&mut cpu), "{what} did not return");
             assert_eq!(cpu.memory.get_byte(MAP_OPERATION), 0x10, "{what}: Map_Operation");
-            assert_eq!(cpu.memory.get_byte(ARRIVAL_FLAG), 0xAA, "{what}: ARRIVAL_FLAG touched");
+
+            // The flag is what separates "entered a level" from "took a pad"
+            // now that both paths set `Map_Operation` and return, so what
+            // matters either way is that it does not come out *set*.
+            //
+            // Which of the two clear values depends on how far the routine got.
+            // A tile that is not the pad tile at all leaves at the first `BNE`
+            // and never reaches the store, so the poison survives. A pad tile
+            // the table does not know about runs the scan out and falls through
+            // the found block with `Y = $FF`, so `INY` stores a zero — see
+            // [`PAD_ENTER`].
+            let want = if tile == TILE_TELEPAD { 0x00 } else { 0xAA };
+            assert_eq!(
+                cpu.memory.get_byte(ARRIVAL_FLAG),
+                want,
+                "{what}: ARRIVAL_FLAG must not come out set"
+            );
+            assert_ne!(cpu.memory.get_byte(ARRIVAL_FLAG), 0x01, "{what}: read as pad id 0");
+
             assert_eq!(
                 cpu.memory.get_byte(MAP_ENTERED_XHI),
                 0xAA,
