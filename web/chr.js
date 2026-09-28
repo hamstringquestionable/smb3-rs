@@ -43,18 +43,21 @@ export function resolvePalette(indices) {
 	return indices.map((i) => NES_PALETTE[i & 0x3F]);
 }
 
+// Color index (0-3) of pixel (x, y) in a CHR tile.
+function tilePixel(romBytes, tileId, x, y) {
+	const base = CHR_BASE + tileId * TILE_BYTES;
+	const bit = 7 - x;
+	return (((romBytes[base + 8 + y] >> bit) & 1) << 1) | ((romBytes[base + y] >> bit) & 1);
+}
+
 // Decode a single 8×8 CHR tile to an ImageData. paletteRgb = 4 [r,g,b] tuples.
 // Color 0 → fully transparent. Colors 1-3 → opaque.
 // flipX mirrors horizontally, the way OAM attribute bit 6 does.
 export function decodeTile(romBytes, tileId, paletteRgb, flipX = false) {
-	const base = CHR_BASE + tileId * TILE_BYTES;
 	const data = new Uint8ClampedArray(8 * 8 * 4);
 	for (let y = 0; y < 8; y++) {
-		const p0 = romBytes[base + y];
-		const p1 = romBytes[base + 8 + y];
 		for (let x = 0; x < 8; x++) {
-			const bit = 7 - x;
-			const idx = (((p1 >> bit) & 1) << 1) | ((p0 >> bit) & 1);
+			const idx = tilePixel(romBytes, tileId, x, y);
 			const o = (y * 8 + (flipX ? 7 - x : x)) * 4;
 			if (idx === 0) {
 				data[o + 3] = 0; // transparent
@@ -85,7 +88,9 @@ export function renderTileToCanvas(canvas, romBytes, tileId, paletteRgb) {
 // non-rectangular sprite can skip tiles it doesn't use), or `{ t, flip: true }`
 // to h-flip that one tile. Per-tile flips are for composites whose parts differ:
 // Bowser's top half is stored as a left half and mirrored, while his bottom half
-// is stored whole, so no whole-grid rule covers both.
+// is stored whole, so no whole-grid rule covers both. `{ t, palette: [...] }`
+// gives one tile its own four NES colors, for sprites the engine assembles from
+// parts in different palettes (a Troopa's head and feet vs. its shell).
 //
 // The canvas is sized to the grid in native pixels — callers scale via CSS with
 // `image-rendering: pixelated`.
@@ -93,25 +98,37 @@ export function renderTileToCanvas(canvas, romBytes, tileId, paletteRgb) {
 // half and drawn twice (the title-screen seed hash does this). Paired with a
 // tile list whose right half repeats the left in reverse, it mirrors the whole
 // sprite; for the common 2-column case that's just "flip the right column".
-export function renderTiles(canvas, romBytes, tileIds, cols, paletteRgb, flipRight = false) {
-	const rows = Math.ceil(tileIds.length / cols);
-	canvas.width = cols * 8;
-	canvas.height = rows * 8;
-	const ctx = canvas.getContext("2d");
-	ctx.clearRect(0, 0, canvas.width, canvas.height);
-	for (let i = 0; i < tileIds.length; i++) {
-		const entry = tileIds[i];
-		if (entry == null) continue;
-		const perTile = typeof entry === "object";
-		const tid = perTile ? entry.t : entry;
+//
+// `over` places extra `{ t, x, y, flip?, palette? }` tiles at pixel positions
+// after the grid, for parts the engine overlaps rather than tiles (a
+// Paratroopa's wing sits 8px into its shell). Tiles are composited: a tile's
+// transparent pixels leave whatever is under them.
+export function renderTiles(canvas, romBytes, tileIds, cols, paletteRgb, flipRight = false, over = []) {
+	const w = cols * 8;
+	const h = Math.ceil(tileIds.length / cols) * 8;
+	canvas.width = w;
+	canvas.height = h;
+	const img = new ImageData(w, h);
+	const place = (entry, px, py, flip) => {
+		const pal = entry.palette ? resolvePalette(entry.palette) : paletteRgb;
+		const tile = decodeTile(romBytes, entry.t, pal, flip).data;
+		for (let y = 0; y < 8; y++) {
+			for (let x = 0; x < 8; x++) {
+				const s = (y * 8 + x) * 4;
+				if (!tile[s + 3] || px + x < 0 || px + x >= w || py + y < 0 || py + y >= h) continue;
+				img.data.set(tile.subarray(s, s + 4), ((py + y) * w + px + x) * 4);
+			}
+		}
+	};
+	tileIds.forEach((entry, i) => {
+		if (entry == null) return;
+		const tile = typeof entry === "object" ? entry : { t: entry };
 		const col = i % cols;
-		const flip = perTile ? !!entry.flip : flipRight && col >= cols / 2;
-		ctx.putImageData(
-			decodeTile(romBytes, tid, paletteRgb, flip),
-			col * 8,
-			Math.floor(i / cols) * 8,
-		);
-	}
+		const flip = typeof entry === "object" ? !!entry.flip : flipRight && col >= cols / 2;
+		place(tile, col * 8, Math.floor(i / cols) * 8, flip);
+	});
+	for (const o of over) place(o, o.x, o.y, !!o.flip);
+	canvas.getContext("2d").putImageData(img, 0, 0);
 }
 
 // Render a 2×2 metasprite (16×16 px) from four tile IDs in [tl, tr, bl, br] order.
@@ -119,10 +136,86 @@ export function renderMetatile(canvas, romBytes, tileIds, paletteRgb, flipRight 
 	renderTiles(canvas, romBytes, tileIds, 2, paletteRgb, flipRight);
 }
 
+// Render world-map background tiles, whose art is the reverse of a sprite's:
+// the ground fills the square in color `clear` and the outline is color 0.
+// Ground pixels reachable from the edge go transparent — a flood fill, not a
+// color swap, because a bush or flower reuses the ground color inside its own
+// outline — and color 0 draws opaque. Tiles are plain indices (no flips).
+function renderMapTiles(canvas, romBytes, tileIds, cols, paletteRgb, clear) {
+	const w = cols * 8;
+	const h = Math.ceil(tileIds.length / cols) * 8;
+	const idx = new Int8Array(w * h);
+	tileIds.forEach((tid, i) => {
+		const ox = (i % cols) * 8;
+		const oy = Math.floor(i / cols) * 8;
+		for (let y = 0; y < 8; y++) {
+			for (let x = 0; x < 8; x++) idx[(oy + y) * w + ox + x] = tilePixel(romBytes, tid, x, y);
+		}
+	});
+	const stack = [];
+	for (let x = 0; x < w; x++) stack.push(x, (h - 1) * w + x);
+	for (let y = 0; y < h; y++) stack.push(y * w, y * w + w - 1);
+	while (stack.length) {
+		const p = stack.pop();
+		if (idx[p] !== clear) continue;
+		idx[p] = -1;
+		const x = p % w;
+		if (x > 0) stack.push(p - 1);
+		if (x < w - 1) stack.push(p + 1);
+		if (p >= w) stack.push(p - w);
+		if (p < w * (h - 1)) stack.push(p + w);
+	}
+	canvas.width = w;
+	canvas.height = h;
+	const img = new ImageData(w, h);
+	for (let p = 0; p < w * h; p++) {
+		if (idx[p] >= 0) img.data.set([...paletteRgb[idx[p]], 255], p * 4);
+	}
+	canvas.getContext("2d").putImageData(img, 0, 0);
+}
+
 // Convenience: render an icon spec (from the schema) into a canvas.
-// spec = { tiles: [...row-major], cols?: 2, palette: [c0, c1, c2, c3], flipRight? }
+// spec = { tiles: [...row-major], cols?: 2, palette: [c0, c1, c2, c3], flipRight?, clear? }
+// `clear` marks a world-map tile and names its ground color; see renderMapTiles.
 export function renderIcon(canvas, romBytes, spec) {
 	if (!canvas || !romBytes || !spec) return;
 	const cols = spec.cols ?? 2;
-	renderTiles(canvas, romBytes, spec.tiles, cols, resolvePalette(spec.palette), !!spec.flipRight);
+	const pal = resolvePalette(spec.palette);
+	if (spec.clear != null) renderMapTiles(canvas, romBytes, spec.tiles, cols, pal, spec.clear);
+	else renderTiles(canvas, romBytes, spec.tiles, cols, pal, !!spec.flipRight, spec.over);
+}
+
+// Draw an icon spec into a `box`-sized square: trimmed to its opaque pixels,
+// scaled by the largest whole number that fits (never above `maxScale`, so small
+// art keeps the same pixel size as the rest), and centred. Art that is bigger
+// than the box at 1x grows the canvas instead of being shrunk. The canvas is
+// displayed 1:1 — the scaling is in its pixels, not in CSS.
+export function renderIconBox(canvas, romBytes, spec, box, maxScale) {
+	const art = document.createElement("canvas");
+	renderIcon(art, romBytes, spec);
+	const { data, width, height } = art.getContext("2d").getImageData(0, 0, art.width, art.height);
+	let x0 = width, y0 = height, x1 = -1, y1 = -1;
+	for (let y = 0; y < height; y++) {
+		for (let x = 0; x < width; x++) {
+			if (!data[(y * width + x) * 4 + 3]) continue;
+			x0 = Math.min(x0, x);
+			x1 = Math.max(x1, x);
+			y0 = Math.min(y0, y);
+			y1 = Math.max(y1, y);
+		}
+	}
+	if (x1 < 0) return;
+	const w = x1 - x0 + 1;
+	const h = y1 - y0 + 1;
+	const k = Math.max(1, Math.min(maxScale, Math.floor(box / Math.max(w, h))));
+	canvas.width = Math.max(box, w * k);
+	canvas.height = Math.max(box, h * k);
+	canvas.style.width = `${canvas.width}px`;
+	canvas.style.height = `${canvas.height}px`;
+	const ctx = canvas.getContext("2d");
+	ctx.imageSmoothingEnabled = false;
+	ctx.clearRect(0, 0, canvas.width, canvas.height);
+	const dx = Math.floor((canvas.width - w * k) / 2);
+	const dy = Math.floor((canvas.height - h * k) / 2);
+	ctx.drawImage(art, x0, y0, w, h, dx, dy, w * k, h * k);
 }
