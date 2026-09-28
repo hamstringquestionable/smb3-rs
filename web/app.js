@@ -12,7 +12,7 @@ import init, {
 	apply_ips_patch,
 	version,
 } from "./pkg/smb3_rs.js";
-import { renderIcon as renderChrIcon } from "./chr.js";
+import { renderIcon as renderChrIcon, renderIconBox } from "./chr.js";
 import {
 	renderOptions,
 	wireListeners,
@@ -30,7 +30,8 @@ import {
 	PRESETS,
 	applyPreset,
 	assertPresetParity,
-	applyIconScale,
+	ICON_BOX,
+	ICON_MAX_SCALE,
 } from "./options.js";
 
 let wasmReady = false;
@@ -346,8 +347,7 @@ function renderAllIcons() {
 		const spec = Array.isArray(entry.icon)
 			? entry.icon[iconVariant.get(entry.id)]
 			: entry.icon;
-		applyIconScale(canvas, spec);
-		if (rom) renderChrIcon(canvas, rom, spec);
+		if (rom) renderIconBox(canvas, rom, spec, ICON_BOX, ICON_MAX_SCALE);
 		canvas.hidden = !rom;
 	}
 }

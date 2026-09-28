@@ -11,6 +11,11 @@ deploys.
 
 ### Added
 
+- **Web app — option icons drawn from your own ROM** for most map, maze and
+  enemy options: overworld tiles (toad houses, pipes, locks, fortresses, telepads,
+  each world's scenery), map sprites (Hammer Bros, airships, World 8's army),
+  the Bros' projectiles, and the enemy classes. Icons that pick a random variant
+  change on each page load, and every icon now sits in the same size slot.
 - **New option — Mariomon.** Off by default. A permadeath challenge: nothing in
   the game hands out a 1-Up any more — not the green mushroom, not 100 coins,
   not the end-of-level cards, not the Toad House minigames — so the lives you
