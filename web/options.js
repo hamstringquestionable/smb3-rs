@@ -14,6 +14,7 @@
 // drift in either direction via console.error.
 
 import { NES_PALETTE } from "./chr.js";
+import { W1_PAL0, W1_PAL1, W1_PAL2, W1_PAL3, HINT_TILES, MAZE_TILES, W8_MILITARY, WORLD_TILES, WANDS } from "./icons.js";
 
 const ITEM_OPTIONS = [
 	{ value: 0, label: "None" },
@@ -171,14 +172,6 @@ const ROTODISCS = [0x21, 0x16, 0x2A, 0x27, 0x24].flatMap((c) => [
 	{ tiles: [1180, 1182, 1181, 1183], cols: 2, palette: [0x0F, 0x18, c, 0x20] },
 ]);
 const START_TILE = { tiles: [1488, 1490, 1489, 1491], cols: 2, palette: [0x0F, 0x38, 0x20, 0x04] }; // $17
-// World-map background tiles. Tile bytes are the map's own; tile indices are
-// the metatile's quadrants on BG CHR pages $14-$17. `clear: 3` makes the
-// ground transparent (see renderMapTiles in chr.js). The palette page is the
-// tile byte's high two bits; colors are World 1's unless noted.
-const W1_PAL0 = [0x0F, 0x0F, 0x30, 0x3C];
-const W1_PAL1 = [0x0F, 0x36, 0x27, 0x37];
-const W1_PAL2 = [0x0F, 0x21, 0x2A, 0x37];
-const W1_PAL3 = [0x0F, 0x30, 0x16, 0x37];
 // Toad House 0x50 / 0xE0: same art ($90-$93), different palette page.
 const TOAD_HOUSES = [
 	{ tiles: [1424, 1426, 1425, 1427], cols: 2, clear: 3, palette: W1_PAL1 }, // 0x50
@@ -191,15 +184,6 @@ const HAND_TRAP = { tiles: [1318, 1320, 1319, 1321], cols: 2, clear: 3, palette:
 const PIPE_TILE = { tiles: [1504, 1519, 1506, 1530], cols: 2, palette: W1_PAL2 };
 // Rock 0x51 ($0C-$0F).
 const ROCK_TILE = { tiles: [1292, 1294, 1293, 1295], cols: 2, clear: 3, palette: W1_PAL1 };
-// Maze hint marks: lock 0x54/0xE4 ($B6-$B9), fortress 0x67/0xEB ($C4-$C7),
-// and 0x6A ($64-$67).
-const HINT_TILES = [
-	{ tiles: [1462, 1464, 1463, 1465], cols: 2, clear: 3, palette: W1_PAL1 }, // 0x54
-	{ tiles: [1462, 1464, 1463, 1465], cols: 2, clear: 3, palette: W1_PAL3 }, // 0xE4
-	{ tiles: [1476, 1478, 1477, 1479], cols: 2, clear: 3, palette: W1_PAL1 }, // 0x67
-	{ tiles: [1380, 1382, 1381, 1383], cols: 2, clear: 3, palette: W1_PAL1 }, // 0x6A
-	{ tiles: [1476, 1478, 1477, 1479], cols: 2, clear: 3, palette: W1_PAL3 }, // 0xEB
-];
 // Completed-level panels: M ($88-$8B) and L ($DC-$DF). Ground is color 0.
 const PLAYER_PANELS = [
 	{ tiles: [1416, 1418, 1417, 1419], cols: 2, palette: W1_PAL0 }, // 0x00
@@ -208,16 +192,6 @@ const PLAYER_PANELS = [
 	{ tiles: [1500, 1502, 1501, 1503], cols: 2, palette: W1_PAL1 }, // 0x41
 	{ tiles: [1416, 1418, 1417, 1419], cols: 2, palette: W1_PAL3 }, // 0xC0
 	{ tiles: [1500, 1502, 1501, 1503], cols: 2, palette: W1_PAL3 }, // 0xC1
-];
-// World Maze: path junctions on land 0x4A, water 0xAF and sky 0xDE (W5's
-// palette 3), and the maze's own telepad 0xDF. The pad's quadrants are
-// TELEPAD_QUADRANTS ($80-$83), which the randomizer writes over vanilla's
-// alternate spiral — the player's ROM doesn't draw 0xDF this way.
-const MAZE_TILES = [
-	{ tiles: [1534, 1472, 1505, 1485], cols: 2, clear: 3, palette: W1_PAL1 }, // 0x4A
-	{ tiles: [1296, 1473, 1474, 1475], cols: 2, palette: W1_PAL2 }, // 0xAF
-	{ tiles: [1534, 1472, 1505, 1485], cols: 2, clear: 3, palette: [0x0F, 0x36, 0x21, 0x30] }, // 0xDE
-	{ tiles: [1408, 1409, 1410, 1411], cols: 2, palette: W1_PAL3 }, // 0xDF telepad
 ];
 // World-map object sprites (MapObject_Pat1/Pat2 in PRG011; pages $20-$23) in
 // the map's object palettes. The W7 plant is one half drawn mirrored.
@@ -309,25 +283,6 @@ const FIREBALLS = [
 	{ tiles: [292, 293], cols: 1, palette: PLAINS_SPR1 },
 	{ tiles: [294, 295], cols: 1, palette: PLAINS_SPR1 },
 ];
-// World 8's tank, battleship and airship.
-const W8_MILITARY = [
-	{ tiles: [2276, 2278, 2277, 2279], cols: 2, palette: [0x0F, 0x17, 0x27, 0x0F] },
-	{ tiles: [2292, 2294, 2293, 2295], cols: 2, palette: [0x0F, 0x17, 0x27, 0x0F] },
-	{ tiles: [2300, 2302, 2301, 2303], cols: 2, palette: [0x0F, 0x17, 0x36, 0x0F] },
-];
-// One scenery tile per world, each in that world's own palette. W3's water
-// fills its square, so it has no ground to clear.
-const WORLD_TILES = [
-	{ tiles: [1280, 1282, 1281, 1283], cols: 2, clear: 3, palette: W1_PAL2 }, // 0xB4, W1
-	{ tiles: [1326, 1328, 1327, 1329], cols: 2, clear: 3, palette: [0x0F, 0x36, 0x27, 0x28] }, // 0x69, W2
-	{ tiles: [1288, 1290, 1289, 1291], cols: 2, clear: 3, palette: [0x0F, 0x12, 0x2A, 0x28] }, // 0xBB, W2
-	{ tiles: [1296, 1297, 1310, 1311], cols: 2, palette: W1_PAL2 }, // 0x8D, W3
-	{ tiles: [1322, 1324, 1323, 1325], cols: 2, clear: 3, palette: [0x0F, 0x12, 0x2A, 0x3A] }, // 0xBD, W4
-	{ tiles: [1376, 1378, 1377, 1379], cols: 2, clear: 3, palette: [0x0F, 0x36, 0x27, 0x3B] }, // 0x5F, W5
-	{ tiles: [1298, 1300, 1299, 1301], cols: 2, clear: 3, palette: [0x0F, 0x30, 0x22, 0x30] }, // 0xEA, W6
-	{ tiles: [1302, 1308, 1303, 1309], cols: 2, clear: 3, palette: [0x0F, 0x11, 0x1A, 0x2A] }, // 0xBE, W7
-	{ tiles: [1313, 1316, 1315, 1350], cols: 2, clear: 3, palette: [0x0F, 0x35, 0x25, 0x17] }, // 0xE1, W8
-];
 const KOOPALING_RING = { tiles: [4762, 4762, 4763, 4763], cols: 2, palette: [0x0F, 0x1E, 0x20, 0x25], flipRight: true }; // $4A
 const Q_ORB = { tiles: [4988, 4990, 4989, 4991], cols: 2, palette: [0x0F, 0x1D, 0x38, 0x20] }; // $4D, Boom-Boom's Q ball
 
@@ -360,10 +315,6 @@ const BIG_Q = {
 	palette: [0x0F, 0x1D, 0x28, 0x20],
 };
 const SPADE = { tiles: [1448, 1448, 1449, 1449], cols: 2, palette: [0x0F, 0x20, 0x20, 0x1D], flipRight: true }; // $16
-const WAND = { tiles: [1982, 1983], cols: 1, palette: [0x0F, 0x28, 0x37, 0x03] }; // $1E, 8x16
-// The jewel's upper facets are the only pixels in color 3, so swapping that one
-// entry recolors the jewel alone: vanilla purple plus six others, one per wand.
-const WANDS = [0x03, 0x16, 0x2A, 0x21, 0x27, 0x30, 0x14].map((c) => ({ ...WAND, palette: [0x0F, 0x28, 0x37, c] }));
 const N_CARD = { tiles: [2064, 2064, 2065, 2065], cols: 2, palette: [0x0F, 0x20, 0x20, 0x1D], flipRight: true }; // $20
 
 // Water enemies, page $1A. Boss Bass is 24x32 — his two halves aren't adjacent

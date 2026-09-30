@@ -180,6 +180,7 @@ body {
     background: #14142c;
     padding: 0.5rem 0.8rem;
 }
+.count .icon { align-self: center; }
 .count .k { font-size: 0.8rem; letter-spacing: 0.06em; color: #7a7a96; text-transform: uppercase; }
 .count .v { font-size: 1.15rem; font-weight: bold; color: #e0e0e0; }
 .count.full { border-color: #5eb85e; }
@@ -254,7 +255,32 @@ body {
     .worlds { grid-template-columns: minmax(0, 1fr); }
 }
 .wcard.droppable { outline: 3px dashed #f0c040; outline-offset: 3px; }
-.wcard.dragover { background: #1e1e3e; }
+.wcard.dragover { background-color: #1e1e3e; --veil: rgba(30, 30, 62, 0.8); }
+
+/* A named world wears its own map scenery, tiled, under a veil of the card
+   colour so the chips on top stay the readable thing. Only with a ROM cached:
+   the tile is decoded from the player's CHR and arrives as --tile. */
+.wcard.tiled {
+    background-image:
+        linear-gradient(var(--veil, rgba(16, 16, 38, 0.84)), var(--veil, rgba(16, 16, 38, 0.84))),
+        var(--tile);
+    background-size: auto, calc(32px * var(--icon-k, 2) / var(--tracker-scale, 1));
+    image-rendering: pixelated;
+}
+
+/* --- ROM-drawn icons ---
+   Pixel art only ever scales by a whole number, and the board is zoomed by a
+   fraction. So an icon is sized in pixels of its own art times --icon-k (a
+   whole number the size slider picks) and then divided by the zoom, which
+   cancels it: the icons step between sizes while everything else scales
+   smoothly. --w and --h are the art's native size, set per canvas. */
+.icon { position: relative; display: inline-flex; flex: none; }
+.icon canvas {
+    display: block;
+    image-rendering: pixelated;
+    width: calc(var(--w) * 1px * var(--icon-k, 2) / var(--tracker-scale, 1));
+    height: calc(var(--h) * 1px * var(--icon-k, 2) / var(--tracker-scale, 1));
+}
 
 .wcard-head { display: flex; align-items: flex-start; gap: 0.6rem; }
 .wcol { display: flex; flex-direction: column; align-items: center; gap: 0.4rem; }
@@ -377,6 +403,13 @@ body {
     padding: 0.45rem 0.6rem;
     min-height: 2.3rem;
 }
+/* With an icon the art sets the height, so the padding gives way to it. */
+.chip .body.has-icon {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.15rem 0.55rem;
+}
 .chip .body:hover { background: rgba(255, 255, 255, 0.07); }
 .chip .body + .body { border-left: 1px solid #2a2a50; }
 /* Divider rather than a gap, so the whole chip stays one solid target with
@@ -396,6 +429,15 @@ body {
 .chip .mini:hover { color: #fff; background: rgba(228, 68, 52, 0.35); }
 .chip.done { opacity: 0.45; }
 .chip.done .body { text-decoration: line-through; }
+/* An icon has no text to strike, so it gets the line drawn across it. */
+.chip.done .icon::after {
+    content: "";
+    position: absolute;
+    left: -3px;
+    right: -3px;
+    top: calc(50% - 1px);
+    border-top: 2px solid currentColor;
+}
 
 /* Fortress designs — the three map tiles, plus "not looked yet". */
 .fort.hint-unknown { border-color: #3a3a5c; color: #8a8aa4; }
@@ -522,21 +564,21 @@ body {
     <div class="legend section">
         <h2>What the map is telling you</h2>
         <dl>
-            <dt><span class="chip fort hint-here"><span class="body">Fortress</span></span></dt>
+            <dt><span class="chip fort hint-here"><span class="body" data-icon="fort-here">Fortress</span></span></dt>
             <dd>Plain fortress — the lock it opens is in this same world.</dd>
-            <dt><span class="chip fort hint-away"><span class="body">Fortress</span></span></dt>
+            <dt><span class="chip fort hint-away"><span class="body" data-icon="fort-away">Fortress</span></span></dt>
             <dd>Fortress in the odd colour — its lock is in another world.</dd>
-            <dt><span class="chip fort hint-w8"><span class="body">Fortress</span></span></dt>
+            <dt><span class="chip fort hint-w8"><span class="body" data-icon="fort-w8">Fortress</span></span></dt>
             <dd>The special fortress — its lock is in Dark Land. You will never see
                 it <em>in</em> Dark Land: there it would only mean "here", so a Dark
                 Land fortress is plain or tinted.</dd>
-            <dt><span class="chip lock"><span class="body">Lock</span></span></dt>
+            <dt><span class="chip lock"><span class="body" data-icon="lock-here">Lock</span></span></dt>
             <dd>Plain lock — the fortress that opens it is in this world.</dd>
-            <dt><span class="chip lock away"><span class="body">Lock</span></span></dt>
+            <dt><span class="chip lock away"><span class="body" data-icon="lock-away">Lock</span></span></dt>
             <dd>Tinted lock — its fortress is somewhere else. The board always
                 tints one; the game says it with the colour on Some hints, and with
                 the world number in place of the colour on Full.</dd>
-            <dt><span class="chip lock unattributed"><span class="body">Lock</span></span></dt>
+            <dt><span class="chip lock unattributed"><span class="body" data-icon="lock-here">Lock</span></span></dt>
             <dd>Dashed: a lock you have seen but cannot yet pin on a fortress. Say
                 which world its key is in and it joins up with one. There are seventeen
                 locks and seventeen fortresses, one each, so a lock you cannot
@@ -546,7 +588,7 @@ body {
             <dd>A world calls for help until you clear its castle and take its wand.
                 Click the balloon to cross it off. Dark Land has none — that is where
                 the wands get spent.</dd>
-            <dt><span class="chip pad"><span class="body">Warp pad</span></span></dt>
+            <dt><span class="chip pad"><span class="body" data-icon="pad">Warp pad</span></span></dt>
             <dd>Pads come in pairs and work both ways, so linking one here draws
                 its partner on the other world too.</dd>
         </dl>
@@ -563,21 +605,26 @@ body {
 </div>
 
 <script type="module">
+import { renderIcon } from "./chr.js";
+import { loadRom } from "./rom-cache.js";
+import { HINT_TILES, MAZE_TILES, W8_MILITARY, WORLD_TILES, WANDS } from "./icons.js";
+
 // --- Vocabulary ---------------------------------------------------------
 
 // The seven maps that can land in slots 1-7, plus the fixed slot 8. Names are
 // the ones players use; the accent tints each card so a filled-in tracker is
-// scannable at a glance.
+// scannable at a glance. `tile` is that map's scenery tile, drawn from the
+// player's ROM when one is cached.
 const TERRAINS = [
-	{ id: "grass",  name: "Grass Land",  accent: "#5eb85e" },
-	{ id: "desert", name: "Desert Land", accent: "#d4a14e" },
-	{ id: "sea",    name: "Sea Side",    accent: "#4ea1d4" },
-	{ id: "giant",  name: "Giant Land",  accent: "#9a7ee0" },
-	{ id: "sky",    name: "Sky Land",    accent: "#8ab4fc" },
-	{ id: "ice",    name: "Ice Land",    accent: "#7ad4d4" },
-	{ id: "pipe",   name: "Pipe Maze",   accent: "#4ed48a" },
+	{ id: "grass",  name: "Grass Land",  accent: "#5eb85e", tile: WORLD_TILES[0] },
+	{ id: "desert", name: "Desert Land", accent: "#d4a14e", tile: WORLD_TILES[1] },
+	{ id: "sea",    name: "Sea Side",    accent: "#4ea1d4", tile: WORLD_TILES[3] },
+	{ id: "giant",  name: "Giant Land",  accent: "#9a7ee0", tile: WORLD_TILES[4] },
+	{ id: "sky",    name: "Sky Land",    accent: "#8ab4fc", tile: WORLD_TILES[5] },
+	{ id: "ice",    name: "Ice Land",    accent: "#7ad4d4", tile: WORLD_TILES[6] },
+	{ id: "pipe",   name: "Pipe Maze",   accent: "#4ed48a", tile: WORLD_TILES[7] },
 ];
-const DARK_LAND = { name: "Dark Land", accent: "#e44434" };
+const DARK_LAND = { name: "Dark Land", accent: "#e44434", tile: WORLD_TILES[8] };
 
 // Where a fortress says its lock is. Cycled by clicking the chip.
 const HINTS = [
@@ -590,6 +637,24 @@ const HINTS = [
 // World 8 always fields exactly four fortresses, three of them wearing an army
 // sprite. The fourth is a plain one. (src/randomize/overworld_writer/sprites.rs)
 const W8_FORTS = ["Battleship", "Air Force", "Super Tank", "Fortress"];
+
+// What each chip is drawn with. A fortress wears the map tile its hint names;
+// one nobody has read yet is the plain design in grey. Dark Land's army keeps
+// its own sprite whatever the hint, since that is how it is found on the map.
+// The numbered locks of Full hints are randomizer-made tiles and are not in
+// the cached ROM, so a lock is always the plain or the tinted one.
+const ICONS = {
+	"fort-unknown": { ...HINT_TILES[2], palette: [0x0F, 0x10, 0x00, 0x10] },
+	"fort-here": HINT_TILES[2],
+	"fort-away": HINT_TILES[4],
+	"fort-w8": HINT_TILES[3],
+	"lock-here": HINT_TILES[0],
+	"lock-away": HINT_TILES[1],
+	"pad": MAZE_TILES[3],
+	"Battleship": W8_MILITARY[1],
+	"Air Force": W8_MILITARY[2],
+	"Super Tank": W8_MILITARY[0],
+};
 
 // The generator's budgets, and they are budgets for the whole game rather than
 // per world — which is the useful part for a tracker, because a total that is
@@ -631,12 +696,15 @@ function blankState() {
 			pads: [],
 		});
 	}
-	// A starting guess, not a guarantee. The builder deals every world 1-7 at
-	// least one fortress, but `maze::relocate` can carry that one out again, so
-	// a world really can hold none (measured ~3.5% of worlds). The seeded chip
-	// says nothing until the player gives it a hint — an "unknown" fortress
-	// draws no lock anywhere — so a wrong guess costs one deletion.
-	for (let w = 0; w < 7; w++) worlds[w].forts.push(newFort());
+	// Every world 1-7 starts with one lock nobody has pinned on a fortress,
+	// and no fortress. The builder deals each of them at least one of both, but
+	// `maze::relocate` can carry a fortress out again and never moves a lock —
+	// so a world can end up with no fortress (measured ~3.5% of worlds) while
+	// its lock is always still there.
+	for (let w = 0; w < 7; w++) worlds[w].locks.push({ id: 0, keyWorld: null, done: false });
+	// Dark Land is held out of that move, so its four fortresses and its four
+	// locks are both always there.
+	for (let i = 0; i < 4; i++) worlds[W8].locks.push({ id: 0, keyWorld: null, done: false });
 	worlds[W8].forts = W8_FORTS.map(label => newFort(label));
 	return { nextId: 1, worlds };
 }
@@ -691,6 +759,9 @@ function loadScale() {
 
 function applyScale(percent) {
 	document.documentElement.style.setProperty("--tracker-scale", String(percent / 100));
+	// Whole-number size for the ROM icons; see the .icon rule.
+	document.documentElement.style.setProperty("--icon-k",
+		percent < 100 ? "1" : percent < 150 ? "2" : "3");
 	if (scaleValueEl) scaleValueEl.textContent = `${percent}%`;
 	try { localStorage.setItem(SCALE_KEY, String(percent)); } catch { /* private mode */ }
 	// The cards just changed size, so the curves between them are measuring a
@@ -740,6 +811,37 @@ function lockWorldOf(world, fort) {
 		case "away": return fort.lockWorld;
 		default:     return null;
 	}
+}
+
+// A blank board seeds each world with locks nobody has pinned on a fortress.
+// When a fortress's lock turns out to be in a world, it takes one of those
+// rather than standing beside it — otherwise the same lock is on the card
+// twice — and puts it back if the player changes their mind.
+function takeLock(w, fort) {
+	const target = lockWorldOf(w, fort);
+	fort.took = false;
+	if (target == null) return;
+	const locks = state.worlds[target].locks;
+	const i = locks.findIndex(lock => lock.keyWorld == null);
+	if (i < 0) return;
+	fort.done = fort.done || locks[i].done;
+	locks.splice(i, 1);
+	fort.took = true;
+}
+
+function releaseLock(w, fort) {
+	const target = lockWorldOf(w, fort);
+	if (fort.took && target != null) {
+		state.worlds[target].locks.push({ id: id(), keyWorld: null, done: false });
+	}
+	fort.took = false;
+}
+
+// Every change to where a fortress's lock is goes through here.
+function retarget(w, fort, change) {
+	releaseLock(w, fort);
+	change();
+	takeLock(w, fort);
 }
 
 // Every lock standing in `target`.
@@ -903,6 +1005,8 @@ function claimKeyWorld(lockWorld, lock, keyWorld) {
 		flash(`Added a fortress to World ${keyWorld + 1} — that is what opens this lock.`);
 	}
 
+	// This free lock is the one the fortress takes, unless it already had one.
+	if (lockWorldOf(keyWorld, fort) == null) fort.took = true;
 	fort.hint = wanted;
 	fort.lockWorld = wanted === "away" ? lockWorld : null;
 	fort.done = fort.done || lock.done;
@@ -996,10 +1100,83 @@ function el(tag, attrs = {}, ...children) {
 	return node;
 }
 
+function terrainOf(w) {
+	if (w === W8) return DARK_LAND;
+	return TERRAINS.find(t => t.id === state.worlds[w].terrain) ?? null;
+}
+
 function accentOf(w) {
-	if (w === W8) return DARK_LAND.accent;
-	const t = TERRAINS.find(t => t.id === state.worlds[w].terrain);
-	return t ? t.accent : "#2a2a50";
+	return terrainOf(w)?.accent ?? "#2a2a50";
+}
+
+// --- ROM-drawn icons ----------------------------------------------------
+//
+// Art comes from the ROM the randomizer page cached, never from this site.
+// Without one `rom` stays null, every helper here returns nothing, and the
+// board is the text-and-emoji one it has always been.
+
+let rom = null;
+
+// A spec drawn at its native size, or null. The canvas is scaled by CSS.
+function icon(spec) {
+	if (!rom || !spec) return null;
+	const canvas = document.createElement("canvas");
+	renderIcon(canvas, rom, spec);
+	canvas.style.setProperty("--w", String(canvas.width));
+	canvas.style.setProperty("--h", String(canvas.height));
+	return el("span", { class: "icon" }, canvas);
+}
+
+// What goes inside a chip's button: the icon and its text, or the emoji the
+// text version has always used.
+function face(spec, emoji, text = "") {
+	const art = icon(spec);
+	if (!art) return [text ? `${emoji} ${text}` : emoji];
+	return text ? [art, text] : [art];
+}
+
+function faceClass(base) {
+	return rom ? `${base} has-icon` : base;
+}
+
+// A world's scenery tile as a repeating background: two copies on the
+// diagonals of a double-size cell, so it reads as scattered scenery rather
+// than a solid wall of it.
+const tileUrls = new Map();
+function tileUrl(spec) {
+	if (!rom || !spec) return null;
+	if (!tileUrls.has(spec)) {
+		let url = null;
+		try {
+			const art = document.createElement("canvas");
+			renderIcon(art, rom, spec);
+			const cell = document.createElement("canvas");
+			cell.width = art.width * 2;
+			cell.height = art.height * 2;
+			const ctx = cell.getContext("2d");
+			ctx.drawImage(art, 0, 0);
+			ctx.drawImage(art, art.width, art.height);
+			// A tile with no ground to clear (the sea) fills its square, and
+			// on the diagonals alone it would be a chequerboard. Fill it in.
+			if (spec.clear == null) {
+				ctx.drawImage(art, art.width, 0);
+				ctx.drawImage(art, 0, art.height);
+			}
+			url = cell.toDataURL();
+		} catch { /* decoration: a card without it is still a card */ }
+		tileUrls.set(spec, url);
+	}
+	return tileUrls.get(spec);
+}
+
+// The legend's example chips are static markup, so they are painted once.
+function paintLegend() {
+	for (const body of document.querySelectorAll(".legend [data-icon]")) {
+		const art = icon(ICONS[body.getAttribute("data-icon")]);
+		if (!art) continue;
+		body.classList.add("has-icon");
+		body.prepend(art);
+	}
 }
 
 function render() {
@@ -1122,6 +1299,7 @@ function renderCounts() {
 	];
 	for (const [label, have, max] of rows) {
 		countsEl.appendChild(el("div", { class: "count" + (have >= max ? " full" : "") },
+			label === "Wands" ? icon(WANDS[0]) : null,
 			el("span", { class: "k" }, label),
 			el("span", { class: "v" }, `${have}/${max}`)));
 	}
@@ -1133,6 +1311,11 @@ function renderWorld(w) {
 		class: "wcard" + (w === W8 ? " dark-land" : "") + (aiming ? " droppable" : ""),
 		style: `--accent:${accentOf(w)}`,
 	});
+	const tile = tileUrl(terrainOf(w)?.tile);
+	if (tile) {
+		card.classList.add("tiled");
+		card.style.setProperty("--tile", `url(${tile})`);
+	}
 
 	// Dropping anywhere on the card is the same act as clicking it while aiming.
 	card.addEventListener("dragover", ev => { ev.preventDefault(); card.classList.add("dragover"); });
@@ -1183,6 +1366,9 @@ function renderHead(w) {
 				render();
 			},
 		}, "HELP"));
+		// The wand itself, once it is held — each world's in its own jewel colour.
+		const wand = held ? icon(WANDS[w]) : null;
+		if (wand) col.appendChild(wand);
 	}
 	const head = el("div", { class: "wcard-head" }, col);
 	if (w === W8) {
@@ -1264,11 +1450,12 @@ function renderForts(w) {
 			class: `chip fort hint-${fort.hint}` + (fort.done ? " done" : ""),
 		});
 		chip.appendChild(el("button", {
-			class: "body",
+			class: faceClass("body"),
 			type: "button",
 			title: "Where its lock is — click to change",
 			onclick: ev => { ev.stopPropagation(); cycleHint(w, fort); render(); },
-		}, fort.label ? `🏰 ${fort.label} · ${hint.label}` : `🏰 ${hint.label}`));
+		}, ...face(ICONS[fort.label] ?? ICONS[`fort-${hint.id}`], "🏰",
+			fort.label ? `${fort.label} · ${hint.label}` : hint.label)));
 
 		// An "away" fortress carries its lock around until the player finds it.
 		if (fort.hint === "away" && fort.lockWorld == null) {
@@ -1287,6 +1474,7 @@ function renderForts(w) {
 				title: "Remove",
 				onclick: ev => {
 					ev.stopPropagation();
+					releaseLock(w, fort);
 					state.worlds[w].forts = state.worlds[w].forts.filter(f => f.id !== fort.id);
 					render();
 				},
@@ -1310,14 +1498,16 @@ function hintsFor(w) {
 function cycleHint(w, fort) {
 	const cycle = hintsFor(w);
 	const next = (cycle.findIndex(h => h.id === fort.hint) + 1) % cycle.length;
-	fort.hint = cycle[next].id;
-	if (fort.hint !== "away") fort.lockWorld = null;
+	retarget(w, fort, () => {
+		fort.hint = cycle[next].id;
+		if (fort.hint !== "away") fort.lockWorld = null;
+	});
 }
 
 function lockToken(w, fort) {
 	const active = aiming && aiming.kind === "lock" && aiming.id === fort.id;
 	const token = el("button", {
-		class: "body token" + (active ? " aiming-now" : ""),
+		class: faceClass("body token") + (active ? " aiming-now" : ""),
 		type: "button",
 		draggable: "true",
 		title: "Which world is its lock in? Drag onto a world, or click and pick one.",
@@ -1330,7 +1520,7 @@ function lockToken(w, fort) {
 			ev.dataTransfer.setData("text/plain",
 				JSON.stringify({ kind: "lock", world: w, id: fort.id }));
 		},
-	}, "🔒?");
+	}, ...(rom ? face(ICONS["lock-away"], "🔒", "?") : ["🔒?"]));
 	return token;
 }
 
@@ -1343,11 +1533,11 @@ function renderLocks(w) {
 			class: "chip lock" + (away ? " away" : "") + (fort.done ? " done" : ""),
 		});
 		chip.appendChild(el("button", {
-			class: "body",
+			class: faceClass("body"),
 			type: "button",
 			title: fort.done ? "Mark shut again" : "Mark open",
 			onclick: ev => { ev.stopPropagation(); fort.done = !fort.done; render(); },
-		}, fort.done ? "🔓" : "🔒"));
+		}, ...face(ICONS[away ? "lock-away" : "lock-here"], fort.done ? "🔓" : "🔒")));
 		chip.appendChild(el("span", { class: "src" },
 			away ? `W${world + 1}${fort.label ? " " + fort.label : ""}` : "here"));
 		// Only an "away" placement is a guess the player made, so only that one
@@ -1362,6 +1552,7 @@ function renderLocks(w) {
 					// A fortress that exists only because a lock named its world
 					// goes away with that claim, the same way a pad's drawn half
 					// does. One the player put there stays; only its lock moves.
+					releaseLock(world, fort);
 					if (fort.auto) {
 						state.worlds[world].forts =
 							state.worlds[world].forts.filter(f => f.id !== fort.id);
@@ -1387,11 +1578,11 @@ function renderLocks(w) {
 function renderFreeLock(w, lock) {
 	const chip = el("span", { class: "chip lock unattributed" + (lock.done ? " done" : "") });
 	chip.appendChild(el("button", {
-		class: "body",
+		class: faceClass("body"),
 		type: "button",
 		title: lock.done ? "Mark shut again" : "Mark open",
 		onclick: ev => { ev.stopPropagation(); lock.done = !lock.done; render(); },
-	}, lock.done ? "🔓" : "🔒"));
+	}, ...face(ICONS["lock-here"], lock.done ? "🔓" : "🔒")));
 	// Full hints stamp a world number on a lock whose fortress is elsewhere;
 	// this is where that number goes.
 	const pick = el("select", {
@@ -1426,7 +1617,7 @@ function renderPads(w) {
 		const active = aiming && aiming.kind === "pad" && aiming.id === pad.id;
 		const chip = el("span", { class: "chip pad" });
 		chip.appendChild(el("button", {
-			class: "body" + (linked ? "" : " token") + (active ? " aiming-now" : ""),
+			class: faceClass("body") + (linked ? "" : " token") + (active ? " aiming-now" : ""),
 			type: "button",
 			draggable: linked ? null : "true",
 			title: linked
@@ -1442,7 +1633,7 @@ function renderPads(w) {
 				ev.dataTransfer.setData("text/plain",
 					JSON.stringify({ kind: "pad", world: w, id: pad.id }));
 			},
-		}, linked ? `⇄ W${pad.dest + 1}` : "⇄ ?"));
+		}, ...face(ICONS.pad, "⇄", linked ? `W${pad.dest + 1}` : "?")));
 		chip.appendChild(el("button", {
 			class: "mini",
 			type: "button",
@@ -1462,8 +1653,10 @@ function place(target, world) {
 		// An "away" fortress means the lock is somewhere else. Dropping it back
 		// on its own world is the player telling us the design said otherwise.
 		if (fort) {
-			if (world === target.world) fort.hint = "here";
-			else fort.lockWorld = world;
+			retarget(target.world, fort, () => {
+				if (world === target.world) fort.hint = "here";
+				else fort.lockWorld = world;
+			});
 		}
 	} else {
 		linkPad(target.world, target.id, world);
@@ -1514,6 +1707,18 @@ if (typeof window !== "undefined") {
 
 stampIds();
 render();
+
+// The board is already up and usable; the art joins it if there is a ROM to
+// draw from. Anything too short to hold the CHR pages is not one.
+const ROM_BYTES = 393232;
+if (typeof indexedDB !== "undefined") {
+	loadRom().then(bytes => {
+		if (!bytes || bytes.length < ROM_BYTES) return;
+		rom = bytes;
+		paintLegend();
+		render();
+	}).catch(() => { /* no cache, no art */ });
+}
 </script>
 </body>
 </html>

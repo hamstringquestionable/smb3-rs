@@ -118,6 +118,7 @@ input[type=text], input[type=number], select { background: #0a0a1a; border: 1px 
 // tile grid — what chr-viewer.html shows — every sprite's halves sit side by
 // side and nothing is recognizable. Here each cell is one 8x16 pair.
 import { NES_PALETTE, decodeTile, resolvePalette, renderTiles } from "./chr.js";
+import { loadRom } from "./rom-cache.js";
 
 const TILES_PER_PAGE = 64; // 1 KB CHR page
 const TOTAL_TILES = 8192;  // 128 KB of CHR
@@ -152,27 +153,7 @@ let rom = null;
 const picks = [];
 let drag = null; // { c0, r0, c1, r1 } in pair-cell coords
 
-// ROM cache via IndexedDB (mirrors app.js / chr-viewer.html)
-const DB = "smb3-rs", STORE = "rom";
-function openDb() {
-	return new Promise((res, rej) => {
-		const r = indexedDB.open(DB, 1);
-		r.onupgradeneeded = () => r.result.createObjectStore(STORE);
-		r.onsuccess = () => res(r.result);
-		r.onerror = () => rej(r.error);
-	});
-}
-async function loadCachedRom() {
-	const db = await openDb();
-	return new Promise((res) => {
-		const tx = db.transaction(STORE, "readonly");
-		const r = tx.objectStore(STORE).get("data");
-		r.onsuccess = () => res(r.result || null);
-		r.onerror = () => res(null);
-	});
-}
-
-loadCachedRom().then((bytes) => {
+loadRom().then((bytes) => {
 	if (bytes) {
 		rom = bytes;
 		romStatus.textContent = "using ROM cached by the randomizer page";
