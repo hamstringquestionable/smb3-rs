@@ -187,6 +187,10 @@ struct Cli {
     #[arg(long)]
     hammer_bridges: bool,
 
+    /// Let Mario stomp swimming water enemies (Bloopers, Cheeps) from dry land.
+    #[arg(long)]
+    water_stomp: bool,
+
     /// Overwrite one enemy slot outright, as "PTR:SLOT:ID" in hex, e.g.
     /// "DA0F:1:66" to put a downward water current in the Coin Ship fight's
     /// second slot. Repeatable. Use to see what an object actually does in a
@@ -515,6 +519,7 @@ fn main() {
         canoe_gate: cli.canoe_gate,
         hammer_breaks_locks: cli.hammer_locks,
         hammer_breaks_bridges: cli.hammer_bridges,
+        water_stomp: cli.water_stomp,
         include_beta: cli.beta,
         big_q_unused5: cli.bigq_unused5,
         big_q_palette: Some(cli.bigq_palette),

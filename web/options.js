@@ -532,6 +532,14 @@ export const SCHEMA = [
 		tip: "Water enemies (Blooper, Big Bertha, etc.)",
 		icon: [BLOOPER, MINI_CHEEP, BOSS_BASS, GREEN_CHEEP, RED_CHEEP, ORANGE_CHEEP, LAVA_LOTUS],
 		group: "enemies", inFlagKey: true },
+	// The ROM side doesn't care about the water mode; the page only offers the
+	// pill beside Wild, the one mode that puts swimmers on land.
+	{ id: "water_stomp", type: "bool", default: false, pillOf: "water",
+		label: "Stompable", flavorWhenOn: "Wittle Baby Mode",
+		summaryLabel: "Water (stompable)",
+		tip: "Bloopers and Cheep Cheeps can be stomped when you're out of the water.",
+		group: "enemies", inFlagKey: true,
+		enabledWhen: { water: "wild" }, hideWhenDisabled: true },
 	{ id: "bros", type: "tri", options: TRI, default: "shuffle",
 		label: "Bros",
 		tip: "Hammer / Boomerang / Fire Bros inside levels",
@@ -1441,6 +1449,14 @@ function renderTri(entry) {
 	const icon = iconCanvas(entry);
 	if (icon) wrap.appendChild(icon);
 	wrap.appendChild(document.createTextNode(entry.label));
+	// A pill's flavor shows on its host's label, only while the pill is lit
+	// (see `applyPillFlavors`).
+	for (const flag of pillFlagsFor(entry)) {
+		if (!flag.flavorWhenOn) continue;
+		wrap.appendChild(el("span", {
+			class: "option-flavor", id: `${domId(flag.id)}-flavor`, hidden: !flag.default,
+		}, flag.flavorWhenOn));
+	}
 	const btn = tipBtn(entry);
 	if (btn) wrap.appendChild(btn);
 	const group = el("div", { class: "pill-group" });
@@ -1916,6 +1932,15 @@ export function applyEnabledWhen() {
 	// maze pins World Order on, which is what un-greys the row beside it), and
 	// an option the mode has made inert must stay greyed whatever its host says.
 	applyModeStates();
+	applyPillFlavors();
+}
+
+function applyPillFlavors() {
+	for (const entry of SCHEMA) {
+		if (!entry.flavorWhenOn) continue;
+		const span = document.getElementById(`${domId(entry.id)}-flavor`);
+		if (span) span.hidden = !readValue(entry);
+	}
 }
 
 function applyEntryEnabled(entry, enabled) {
@@ -1928,6 +1953,12 @@ function applyEntryEnabled(entry, enabled) {
 			// Its wrapper is the host's pill group — greying that out would
 			// grey out the choice it rides on. Only its own label dims.
 			elNode.nextElementSibling?.classList.toggle("pill-disabled", !enabled);
+			// Some pills only mean anything beside one host value, and are
+			// shown only there rather than greyed everywhere else.
+			if (entry.hideWhenDisabled) {
+				elNode.hidden = !enabled;
+				if (elNode.nextElementSibling) elNode.nextElementSibling.hidden = !enabled;
+			}
 			continue;
 		}
 		// Walk up to the row that wraps the whole option — its label, or the

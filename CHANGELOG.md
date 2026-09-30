@@ -9,6 +9,12 @@ deploys.
 
 ## [Unreleased]
 
+### Added
+
+- **Stompable water enemies.** A new pill beside Wild on the Water enemies row
+  lets you stomp Bloopers and Cheep Cheeps when you're out of the water. In the
+  water they still can't be stomped, and Lava Lotus still hurts.
+
 ### Changed
 
 - **World 2's bro arena is rebuilt.** The block of sand bricks on the right,

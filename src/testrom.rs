@@ -428,6 +428,8 @@ pub struct TestRomSpec {
     pub hammer_breaks_locks: bool,
     /// Let the Hammer item break water-gap (bridge) tiles on the map.
     pub hammer_breaks_bridges: bool,
+    /// Let Mario stomp swimming water enemies from dry land.
+    pub water_stomp: bool,
     /// **World-maze POC.** Keep every world's map progress across transitions
     /// — pack the world being left, expand the one being entered — instead of
     /// wiping `Map_Completions`. Beat a level, leave the world by any route the
@@ -1262,6 +1264,12 @@ pub fn build(vanilla: &[u8], spec: &TestRomSpec) -> Result<TestRom, String> {
         report.push(format!("hammer breaks: {what}"));
     }
 
+    if spec.water_stomp {
+        rom.set_tag("water_stomp");
+        crate::randomize::water_stomp::apply(&mut rom);
+        report.push("water stomp: bloopers + cheeps stompable on land".to_string());
+    }
+
     // 6b. Bro-encounter clock. Same reasoning as the hammer patch above: it is
     //     applied directly so a vanilla-base ROM can walk into W1's Hammer Bro
     //     and see the 10-second clock without randomizing anything.
@@ -1430,6 +1438,7 @@ mod tests {
             canoe_gate: false,
             hammer_breaks_locks: false,
             hammer_breaks_bridges: false,
+            water_stomp: false,
             world_persist: false,
             telepads: Vec::new(),
             bro_battle_timer: false,

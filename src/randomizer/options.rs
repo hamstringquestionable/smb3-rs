@@ -757,6 +757,10 @@ pub struct Options {
     /// Water enemies (Blooper, Big Bertha, etc.)
     #[serde(default = "default_shuffle")]
     pub water: EnemyMode,
+    /// Swimming water enemies (Bloopers, Cheeps) can be stomped from dry land.
+    /// Independent of `water`; the web page only offers it beside Wild.
+    #[serde(default)]
+    pub water_stomp: bool,
     /// Hammer/Boomerang/Fire/Heavy Bros (only in non-HB segments)
     #[serde(default = "default_shuffle")]
     pub bros: EnemyMode,
@@ -879,6 +883,7 @@ impl Default for Options {
             rotodiscs: EnemyMode::Off,
             cannons: EnemyMode::Off,
             water: EnemyMode::Shuffle,
+            water_stomp: false,
             bros: EnemyMode::Shuffle,
             hb_encounters: EnemyMode::Off,
             limit_hazards: HazardLimit::Off,
