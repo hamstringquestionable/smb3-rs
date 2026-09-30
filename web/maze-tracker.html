@@ -321,6 +321,19 @@ body {
     text-decoration-thickness: 2px;
 }
 .help.done::before { border-bottom-color: #2a2a44; }
+/* With a ROM the balloon is the game's own sprite, which brings its own shape
+   and tail, so the drawn ones step aside. */
+.help.sprite {
+    width: auto;
+    display: inline-flex;
+    padding: 0;
+    background: none;
+    color: #e44434;
+}
+.help.sprite::before { display: none; }
+.help.sprite:hover { background: none; filter: brightness(1.2); }
+.help.sprite.done { background: none; }
+.help.sprite.done canvas { opacity: 0.4; }
 
 .wnum {
     flex: none;
@@ -333,6 +346,25 @@ body {
     color: #0c0c1e;
     font-weight: bold;
     font-size: 1.3rem;
+    position: relative;
+    border: none;
+    padding: 0;
+    font-family: inherit;
+    cursor: pointer;
+}
+.wnum:hover { filter: brightness(1.15); }
+/* Ticked off by the player. The number stays readable under the tick: which
+   world this is still matters after it is finished. */
+.wnum.checked { color: rgba(12, 12, 30, 0.45); }
+.wnum.checked::after {
+    content: "✓";
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    color: #fff;
+    font-size: 1.9rem;
+    text-shadow: 0 0 3px #0c0c1e, 0 0 3px #0c0c1e, 0 1px 0 #0c0c1e;
 }
 .wcard-head select {
     flex: 1;
@@ -430,7 +462,8 @@ body {
 .chip.done { opacity: 0.45; }
 .chip.done .body { text-decoration: line-through; }
 /* An icon has no text to strike, so it gets the line drawn across it. */
-.chip.done .icon::after {
+.chip.done .icon::after,
+.help.done .icon::after {
     content: "";
     position: absolute;
     left: -3px;
@@ -584,7 +617,7 @@ body {
                 locks and seventeen fortresses, one each, so a lock you cannot
                 account for means there is a fortress somewhere you have not
                 found — not necessarily in this world.</dd>
-            <dt><span class="help" style="display:inline-block">HELP</span></dt>
+            <dt><span class="help" data-icon="help" style="display:inline-block">HELP</span></dt>
             <dd>A world calls for help until you clear its castle and take its wand.
                 Click the balloon to cross it off. Dark Land has none — that is where
                 the wands get spent.</dd>
@@ -651,6 +684,9 @@ const ICONS = {
 	"lock-here": HINT_TILES[0],
 	"lock-away": HINT_TILES[1],
 	"pad": MAZE_TILES[3],
+	// The king's HELP balloon: map object $01, its second frame ($29/$2B on
+	// page $20), in map object palette 3.
+	"help": { tiles: [2088, 2090, 2089, 2091], cols: 2, palette: [0x0F, 0x30, 0x16, 0x0F] },
 	"Battleship": W8_MILITARY[1],
 	"Air Force": W8_MILITARY[2],
 	"Super Tank": W8_MILITARY[0],
@@ -691,6 +727,7 @@ function blankState() {
 		worlds.push({
 			terrain: null,
 			wand: false,
+			checked: false,
 			forts: [],
 			locks: [],
 			pads: [],
@@ -1174,7 +1211,13 @@ function paintLegend() {
 	for (const body of document.querySelectorAll(".legend [data-icon]")) {
 		const art = icon(ICONS[body.getAttribute("data-icon")]);
 		if (!art) continue;
-		body.classList.add("has-icon");
+		// The balloon's sprite says HELP itself; a chip keeps its label.
+		if (body.classList.contains("help")) {
+			body.textContent = "";
+			body.classList.add("sprite");
+		} else {
+			body.classList.add("has-icon");
+		}
 		body.prepend(art);
 	}
 }
@@ -1349,14 +1392,29 @@ function renderWorld(w) {
 }
 
 function renderHead(w) {
-	const col = el("div", { class: "wcol" }, el("span", { class: "wnum" }, String(w + 1)));
+	// The number is the player's own tick box. It claims nothing the rest of the
+	// board checks — "done with this world" means whatever they want it to.
+	const checked = !!state.worlds[w].checked;
+	const col = el("div", { class: "wcol" }, el("button", {
+		class: "wnum" + (checked ? " checked" : ""),
+		type: "button",
+		title: checked ? "Untick this world" : "Tick this world off",
+		"aria-pressed": String(checked),
+		onclick: ev => {
+			ev.stopPropagation();
+			state.worlds[w].checked = !checked;
+			render();
+		},
+	}, String(w + 1)));
 	// Dark Land has no king and no wand of its own — it is where the wands get
 	// spent — so it carries no balloon.
 	if (w !== W8) {
 		const held = !!state.worlds[w].wand;
+		const balloon = icon(ICONS.help);
 		col.appendChild(el("button", {
-			class: "help" + (held ? " done" : ""),
+			class: "help" + (balloon ? " sprite" : "") + (held ? " done" : ""),
 			type: "button",
+			"aria-label": "Help",
 			title: held
 				? "Castle cleared, wand held — click if that was wrong"
 				: "Still calling for help. Click once you have cleared its castle.",
@@ -1365,7 +1423,7 @@ function renderHead(w) {
 				state.worlds[w].wand = !held;
 				render();
 			},
-		}, "HELP"));
+		}, balloon ?? "HELP"));
 		// The wand itself, once it is held — each world's in its own jewel colour.
 		const wand = held ? icon(WANDS[w]) : null;
 		if (wand) col.appendChild(wand);

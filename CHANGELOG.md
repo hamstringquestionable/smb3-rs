@@ -13,8 +13,11 @@ deploys.
 
 - **World Maze tracker — art from your own ROM.** With a ROM loaded on the
   randomizer page, the tracker draws its fortresses, locks, warp pads, Dark
-  Land's army and held wands from it, and each named world's card is tiled with
-  that world's scenery. Without a ROM it is the text board it was.
+  Land's army and held wands from it, each named world's card is tiled with
+  that world's scenery, and the HELP balloon is the game's own sprite. Without
+  a ROM it is the text board it was.
+- **World Maze tracker — tick a world off.** Click a world's number to put a
+  check over it, and again to take it off.
 
 ### Changed
 
