@@ -165,8 +165,8 @@ PRG_OFFSET = 0x10       # after 16-byte iNES header
 
 # Level data regions by tileset (file offset ranges + extra-byte dispatch info)
 # From powerups.rs / rom_data.rs::LEVEL_DATA_REGIONS.
-# `randomize_note_wood` mirrors the Rust struct field — in TS2 / TS9 the same
-# group-2 byte2 shapes map to bridge / desert decoration tiles instead of
+# `randomize_note_wood` mirrors the Rust struct field — in TS2 the same
+# group-2 byte2 shapes map to bridge / decoration tiles instead of
 # note/wood powerups, so they must not be flagged or shuffled.
 LEVEL_DATA_REGIONS = [
     {
@@ -228,7 +228,7 @@ LEVEL_DATA_REGIONS = [
         "start": 0x28F36,
         "end": 0x2A005,
         "extra_byte_dispatches": {10, 11, 12, 13, 35, 36, 37, 38, 39, 40, 41, 42},
-        "randomize_note_wood": False,  # shapes 1-5 = palms/cacti in TS9
+        "randomize_note_wood": True,
     },
     {
         "name": "Dungeon (TS2)",
@@ -695,8 +695,8 @@ def parse_level_commands(rom, offset, region):
             # munchers / invis blocks) — see POWER_NAMES.
             # Group 2 (0x40): byte2 1..3 = note blocks (flower/leaf/star),
             # byte2 4..6 = wood blocks (flower/leaf/star). These are powerups
-            # *only* in regions where `randomize_note_wood` is true (in TS2/TS9
-            # the same shapes are bridges / desert decorations).
+            # *only* in regions where `randomize_note_wood` is true (in TS2
+            # the same shapes are bridges / decorations).
             if group == 1 and 16 <= fixed_idx < 16 + len(LL_POWER_BLOCKS):
                 power_idx = fixed_idx - 16
                 cmd["powerup"] = True

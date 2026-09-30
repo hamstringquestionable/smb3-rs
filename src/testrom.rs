@@ -287,7 +287,53 @@ pub struct Placement {
     pub level: String,
     /// Target numbered tile (1-based). `None` means "next free slot".
     pub slot: Option<u8>,
+    /// Show the level under a different tileset. `None` places it as it is.
+    pub reskin: Option<Reskin>,
 }
+
+/// A tileset override on a placement, for seeing what a layout looks like in
+/// graphics it was not authored for.
+///
+/// Two forms because a tileset is not just a skin: `PAGE_A000_BY_TILESET`
+/// picks the bank the layout pointer is resolved in, so changing the byte
+/// alone only keeps pointing at the same layout when both tilesets share a
+/// bank (5/11/13, 4/12, 6/7/8).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Reskin {
+    /// Change the entry's tileset byte and nothing else. Refused across banks,
+    /// where the pointer would land on unrelated data.
+    Raw(u8),
+    /// Copy the layout into filler in the target tileset's bank and point its
+    /// header at that tileset's usual graphics page and palette.
+    Copy(u8),
+}
+
+/// Longest layout `Reskin::Copy` will move. The end is found by scanning for
+/// the `$FF` terminator, which is only trustworthy on a short layout: a long
+/// one can carry `$FF` as a generator parameter. Every bro arena is under 50.
+const RESKIN_MAX_LEN: usize = 64;
+
+/// `(Level_BG_Page1_2, tile palette)` a vanilla level of each tileset usually
+/// carries in its header, indexed by tileset. The page is the tileset number
+/// except for hills (19, the alternate hills page every tileset-3 level uses)
+/// and underground (3, shared with hills).
+const RESKIN_HEADER: [(u8, u8); 15] = [
+    (0, 0),
+    (1, 2),
+    (2, 4),
+    (19, 0),
+    (4, 0),
+    (5, 0),
+    (6, 0),
+    (7, 0),
+    (8, 0),
+    (9, 0),
+    (10, 6),
+    (11, 0),
+    (12, 0),
+    (13, 0),
+    (3, 4),
+];
 
 /// One enemy slot overwritten by hand, for "what does object X actually do in
 /// room Y" experiments the randomizer's pools would never produce.
@@ -302,6 +348,21 @@ pub struct EnemyOverride {
     pub slot: usize,
     /// Object ID to write.
     pub id: u8,
+    /// Replacement `(column, row)`, or `None` to leave the slot where it is.
+    pub pos: Option<(u8, u8)>,
+}
+
+/// Bytes written over part of a level's layout, for trying a different set of
+/// generator commands in a room before committing to a patch.
+///
+/// Addressed by level name and an offset into its layout (header included),
+/// so the bank arithmetic stays in `rom_data::layout_file_offset`.
+pub struct LayoutOverride {
+    /// Level name as the catalog spells it.
+    pub level: String,
+    /// Byte offset from the start of the layout; the 9-byte header is 0..9.
+    pub offset: usize,
+    pub bytes: Vec<u8>,
 }
 
 /// A full description of the test ROM to build.
@@ -400,6 +461,8 @@ pub struct TestRomSpec {
     /// Enemy slots to overwrite outright. Applied last, so they win over the
     /// randomizer's own choices on a `--randomize` base.
     pub set_enemies: Vec<EnemyOverride>,
+    /// Layout bytes overwritten by hand, applied with the enemy overrides.
+    pub set_layouts: Vec<LayoutOverride>,
 }
 
 /// Result of a build: the ROM bytes plus a human-readable account of what was
@@ -448,6 +511,77 @@ fn resolve(catalog: &[EntryView], name: &str) -> Result<LevelEntry, String> {
     hit.level_entry
         .clone()
         .ok_or_else(|| format!("{name:?} is a {} and has no level data to place", hit.kind_label))
+}
+
+/// Apply a [`Reskin`] to an entry about to be placed, returning the entry to
+/// write and a report line.
+///
+/// `used` tracks bytes already carved from each filler gap (keyed by the gap's
+/// file offset), so several copies into one bank sit end to end.
+fn reskin_entry(
+    rom: &mut Rom,
+    entry: &LevelEntry,
+    reskin: Reskin,
+    used: &mut std::collections::HashMap<usize, usize>,
+) -> Result<(LevelEntry, String), String> {
+    let (Reskin::Raw(ts) | Reskin::Copy(ts)) = reskin;
+    if !(1..RESKIN_HEADER.len()).contains(&(ts as usize)) {
+        return Err(format!("tileset {ts} is not a level tileset (expected 1-14)"));
+    }
+    let src_bank = rom_data::PAGE_A000_BY_TILESET[entry.tileset as usize];
+    let bank = rom_data::PAGE_A000_BY_TILESET[ts as usize];
+    let mut out = entry.clone();
+    out.tileset = ts;
+
+    if let Reskin::Raw(_) = reskin {
+        if bank != src_bank {
+            return Err(format!(
+                "tileset {} lives in PRG{src_bank:03} and tileset {ts} in PRG{bank:03}; a raw \
+                 swap needs both in one bank — use @ts{ts} to copy the layout across",
+                entry.tileset
+            ));
+        }
+        return Ok((out, format!("tileset {} -> {ts}, layout untouched", entry.tileset)));
+    }
+
+    let lay = (entry.lay_hi as u16) << 8 | entry.lay_lo as u16;
+    let src = rom_data::layout_file_offset(lay, entry.tileset)
+        .ok_or_else(|| format!("layout ${lay:04X} is not level data"))?;
+    let body = (9..RESKIN_MAX_LEN)
+        .find(|&i| rom.read_byte(src + i) == 0xFF)
+        .ok_or_else(|| format!("layout ${lay:04X} is longer than {RESKIN_MAX_LEN} bytes"))?;
+    let mut bytes: Vec<u8> = (0..=body).map(|i| rom.read_byte(src + i)).collect();
+
+    let (bg_page, palette) = RESKIN_HEADER[ts as usize];
+    bytes[5] = (bytes[5] & !0x07) | palette;
+    bytes[6] = (bytes[6] & 0xF0) | ts;
+    bytes[7] = (bytes[7] & 0xE0) | bg_page;
+
+    let gaps = &rom_data::free_space_map(rom)[bank].gaps;
+    let dest = gaps
+        .iter()
+        .find_map(|g| {
+            let taken = used.entry(g.offset).or_insert(0);
+            (g.len - *taken >= bytes.len()).then(|| {
+                let at = g.offset + *taken;
+                *taken += bytes.len();
+                at
+            })
+        })
+        .ok_or_else(|| format!("PRG{bank:03} has no {}-byte filler run left", bytes.len()))?;
+    rom.write_range(dest, &bytes);
+
+    let cpu = rom_data::prg_bank_file_to_cpu(bank, dest);
+    out.lay_lo = cpu as u8;
+    out.lay_hi = (cpu >> 8) as u8;
+    Ok((
+        out,
+        format!(
+            "tileset {} -> {ts}, {} bytes copied to PRG{bank:03} ${cpu:04X}",
+            entry.tileset,
+            bytes.len()
+        ),
+    ))
 }
 
 /// Numbered-level slots in a world, ordered by level number.
@@ -916,7 +1050,11 @@ pub fn build(vanilla: &[u8], spec: &TestRomSpec) -> Result<TestRom, String> {
             crate::randomize::stomp_fairness::apply(&mut rom);
             rom.set_tag("qol/real_time_clock");
             crate::randomize::qol::apply_real_time_clock(&mut rom);
-            report.push("always-on patches: stomp_fairness, real_time_clock".to_string());
+            rom.set_tag("qol/desert_bro_arena");
+            crate::randomize::qol::rebuild_desert_bro_arena(&mut rom);
+            report.push(
+                "always-on patches: stomp_fairness, real_time_clock, desert_bro_arena".to_string(),
+            );
         } else {
             report.push("always-on patches: already present (randomized base)".to_string());
         }
@@ -997,8 +1135,15 @@ pub fn build(vanilla: &[u8], spec: &TestRomSpec) -> Result<TestRom, String> {
         }
 
         let mut next_free = 0usize;
+        let mut reskin_used = std::collections::HashMap::new();
         for placement in &spec.placements {
-            let entry = resolve(&catalog, &placement.level)?;
+            let mut entry = resolve(&catalog, &placement.level)?;
+            let mut reskin_note = String::new();
+            if let Some(reskin) = placement.reskin {
+                let (reskinned, note) = reskin_entry(&mut rom, &entry, reskin, &mut reskin_used)?;
+                entry = reskinned;
+                reskin_note = format!(" ({note})");
+            }
             let (num, entry_idx) = match placement.slot {
                 Some(want) => *slots.iter().find(|(num, _)| *num == want).ok_or_else(|| {
                     format!(
@@ -1020,7 +1165,11 @@ pub fn build(vanilla: &[u8], spec: &TestRomSpec) -> Result<TestRom, String> {
                 }
             };
             rom_data::write_entry(&mut rom, world, entry_idx, &entry);
-            report.push(format!("placed {} on W{}-{num}", placement.level, world_idx + 1));
+            report.push(format!(
+                "placed {} on W{}-{num}{reskin_note}",
+                placement.level,
+                world_idx + 1
+            ));
         }
     }
 
@@ -1209,6 +1358,30 @@ pub fn build(vanilla: &[u8], spec: &TestRomSpec) -> Result<TestRom, String> {
             "enemy ${:04X}[{}] @ 0x{off:05X}: {was:#04X} -> {:#04X}",
             ov.enemy_ptr, ov.slot, ov.id
         ));
+        if let Some((col, row)) = ov.pos {
+            rom.write_range(off + 1, &[col, row]);
+            report.push(format!("  moved to column {col:#04X}, row {row:#04X}"));
+        }
+    }
+
+    // 9. Hand-set layout bytes.
+    if !spec.set_layouts.is_empty() {
+        let catalog = source_catalog(vanilla, spec.include_beta)?;
+        for ov in &spec.set_layouts {
+            let entry = resolve(&catalog, &ov.level)?;
+            let lay = (entry.lay_hi as u16) << 8 | entry.lay_lo as u16;
+            let base = rom_data::layout_file_offset(lay, entry.tileset)
+                .ok_or_else(|| format!("{:?} has no layout data", ov.level))?;
+            let was = rom.read_range(base + ov.offset, ov.bytes.len()).to_vec();
+            rom.write_range(base + ov.offset, &ov.bytes);
+            report.push(format!(
+                "layout {} (${lay:04X}) +{} @ 0x{:05X}: {was:02X?} -> {:02X?}",
+                ov.level,
+                ov.offset,
+                base + ov.offset,
+                ov.bytes
+            ));
+        }
     }
 
     Ok(TestRom { bytes: rom.output_bytes().to_vec(), report })
@@ -1266,6 +1439,7 @@ mod tests {
             big_q_aim: None,
             big_q_notes: None,
             set_enemies: Vec::new(),
+            set_layouts: Vec::new(),
         }
     }
 
@@ -1288,7 +1462,7 @@ mod tests {
             &TestRomSpec {
                 world_persist: true,
                 remove_locks: true,
-                placements: vec![Placement { slot: Some(1), level: "6F1".into() }],
+                placements: vec![Placement { slot: Some(1), level: "6F1".into(), reskin: None }],
                 ..spec()
             },
         )
@@ -1322,7 +1496,7 @@ mod tests {
         let built = build(
             &van,
             &TestRomSpec {
-                placements: vec![Placement { level: "6-F1".into(), slot: Some(1) }],
+                placements: vec![Placement { level: "6-F1".into(), slot: Some(1), reskin: None }],
                 world: Some(1),
                 ..spec()
             },
@@ -1472,7 +1646,11 @@ mod tests {
         let built = build(
             &van,
             &TestRomSpec {
-                placements: vec![Placement { level: "coinship".into(), slot: Some(1) }],
+                placements: vec![Placement {
+                    level: "coinship".into(),
+                    slot: Some(1),
+                    reskin: None,
+                }],
                 world: Some(1),
                 ..spec()
             },
@@ -1782,7 +1960,7 @@ mod tests {
         let err = build(
             &van,
             &TestRomSpec {
-                placements: vec![Placement { level: "9-9".into(), slot: None }],
+                placements: vec![Placement { level: "9-9".into(), slot: None, reskin: None }],
                 ..spec()
             },
         )
@@ -1801,7 +1979,7 @@ mod tests {
         let err = build(
             &van,
             &TestRomSpec {
-                placements: vec![Placement { level: "1S".into(), slot: None }],
+                placements: vec![Placement { level: "1S".into(), slot: None, reskin: None }],
                 ..spec()
             },
         )

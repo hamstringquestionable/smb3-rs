@@ -9,6 +9,16 @@ deploys.
 
 ## [Unreleased]
 
+### Changed
+
+- **World 2's bro arena is rebuilt.** The block of sand bricks on the right,
+  which enemies could end up inside and out of reach, is replaced by a floating
+  row of bricks and a short column of wood blocks with an item in the top one.
+  On every seed.
+- **Desert wood and note item blocks are shuffled.** They were skipped by
+  mistake; the four in World 2's levels and the new one in the bro arena now
+  roll flower, leaf or star like everywhere else.
+
 ## [2.3.1] - 2026-09-30
 
 ### Added

@@ -34,6 +34,40 @@ hashes they describe are gone; the reasoning is not.
 
 ## Entries
 
+### 2026-09-30 — desert note/wood item blocks join the shuffle (feature/desert-bro-arena)
+
+**Intended: an RNG-stream shift, not a builder change.** `LEVEL_DATA_REGIONS`'
+desert row had `randomize_note_wood: false` on a misreading of the tileset's
+generator table (see `docs/smb3_rom_reference.md`, "Group 2 Fixed-Size"). It is
+now `true`, so `powerups::randomize` makes five more draws on the main stream —
+four vanilla blocks in World 2's levels and the item block in the rebuilt bro
+arena — and it runs ahead of the overworld builder.
+
+**What moved.** 11 of the 20 seeds (1, 4, 5, 6, 11, 15-20). The other nine keep
+their overworld.
+
+**How that was established.**
+
+- The always-on arena rebuild landed in the same branch first and left this
+  baseline green; the test went red only when the region flag flipped.
+- `rng.get_word_pos()` probed with the flag on and off, seeds 1 and 2: the
+  position after `powerups` is 243 against 238 in both seeds — the five draws.
+  At the builder's entry seed 1 is at 1379 against 1370 and is re-dealt; seed 2
+  is at 1375 both ways, the stages in between having drawn five fewer words,
+  and its map is untouched.
+- Byte diff of the same two seeds (`--patched-rom --no-palettes`): seed 2
+  differs only in level data from the desert region onward and in enemy data,
+  773 bytes, none of them map, pointer-table or pipe bytes. Seed 1 differs in
+  those and in its map grids and pointer tables, as a re-deal does.
+
+Why the intervening stages re-align in some seeds was not pursued; it is how
+the stream already behaved, not something this change introduced.
+
+**The route census cannot see this change**, and was not used as evidence for
+it: `test_route_census` drives the builder directly from its own per-seed
+generator and never runs `powerups`. Run on this tree at 1000 seeds it reads
+2.591 routes/world, 5.51% linear, 0.30% below floor.
+
 ### 2026-09-24 — the item tables roll before the overworld (feature/anchor-canoe)
 
 **Intended, and a re-capture of a re-capture.** The reorder landed first on the
