@@ -180,6 +180,7 @@ body {
     background: #14142c;
     padding: 0.5rem 0.8rem;
 }
+.count { align-items: center; }
 .count .icon { align-self: center; }
 .count .k { font-size: 0.8rem; letter-spacing: 0.06em; color: #7a7a96; text-transform: uppercase; }
 .count .v { font-size: 1.15rem; font-weight: bold; color: #e0e0e0; }
@@ -622,9 +623,12 @@ body {
             <dt><span class="chip fort hint-w8"><span class="body" data-icon="fort-w8">Fortress</span></span></dt>
             <dd>The special fortress — its lock is in Dark Land. You will never see
                 it <em>in</em> Dark Land: there it would only mean "here", so a Dark
-                Land fortress is plain or tinted.</dd>
+                Land fortress is plain or tinted. The Battleship, Air Force and
+                Super Tank show no design at all — the sprite covers it — so you
+                only learn where their locks are by beating them.</dd>
             <dt><span class="chip lock"><span class="body" data-icon="lock-here">Lock</span></span></dt>
-            <dd>Plain lock — the fortress that opens it is in this world.</dd>
+            <dd>Plain lock — the fortress that opens it is in this world. A gap in a
+                bridge is a lock too, and counts as one here.</dd>
             <dt><span class="chip lock away"><span class="body" data-icon="lock-away">Lock</span></span></dt>
             <dd>Tinted lock — its fortress is somewhere else. The board always
                 tints one; the game says it with the colour on Some hints, and with
@@ -688,7 +692,10 @@ const HINTS = [
 ];
 
 // What a lock nobody has pinned on a fortress says about where that fortress
-// is. Two answers, not three: a lock has no design for Dark Land.
+// is. Two answers, not three: a lock has no design for Dark Land. On Some
+// hints the alternate colour is "away"; on Full an away lock shows the world
+// number instead, and the token on the chip is where that number goes.
+// (src/randomize/lock_keys.rs lock_tile)
 const LOCK_HINTS = [
 	{ id: "unknown", label: "?" },
 	{ id: "here",    label: "Here" },
@@ -697,6 +704,10 @@ const LOCK_HINTS = [
 
 // World 8 always fields exactly four fortresses, three of them wearing an army
 // sprite. The fourth is a plain one. (src/randomize/overworld_writer/sprites.rs)
+//
+// The sprite covers the fortress tile, so those three never show a hint on the
+// map — only the plain one does. The chip still cycles, because the player
+// learns where the lock was by beating it.
 const W8_FORTS = ["Battleship", "Air Force", "Super Tank", "Fortress"];
 
 // What each chip is drawn with. A fortress wears the map tile its hint names;
@@ -725,10 +736,17 @@ const ICONS = {
 // per world — which is the useful part for a tracker, because a total that is
 // full says the thing you are still looking for is not out there.
 //
-//   capacity.rs redistribute_fortresses: worlds 1-7 share 13 fortresses, one
-//   to three each, and Dark Land always keeps 4. Seventeen, and one lock each.
-//   graph.rs: 3 pads per world, and PAD_BUDGET = world_persist::PORTAL_MAX = 16
-//   pad tiles overall — a pair is two tiles, so eight pairs.
+//   overworld_build/capacity.rs redistribute_fortresses: worlds 1-7 share 13
+//   fortresses, one to three each, and Dark Land always keeps 4. Seventeen,
+//   and one lock each.
+//   maze/graph.rs: at most 3 pads per world (PADS_PER_WORLD_MAX), and
+//   PAD_BUDGET = world_persist::PORTAL_MAX = 16 pad tiles overall — a pair is
+//   two tiles, so eight pairs.
+//
+// The fortress and lock totals are exact. The pad ones are ceilings: measured
+// over 400 seeds a seed has 8 to 16 pad tiles (16 on 57% of them) and a world
+// has 0 to 3, Dark Land included, so a pad count short of full does not mean
+// there is another pad to find.
 const PADS_MAX = 3;         // per world
 const PAD_TILES_MAX = 16;   // whole game; 8 pairs
 // **Fortresses and locks are counted separately, and that is not redundant.**
@@ -736,8 +754,13 @@ const PAD_TILES_MAX = 16;   // whole game; 8 pairs
 // then moves up to two fortresses into other worlds — never a lock — so a world
 // can hold five fortresses and one lock, or none and three. Dark Land is held
 // out of that move, so its four stay four. Measured over 400 seeds: at most 5
-// fortresses in a W1-W7 world, at most 3 locks, and the W1-W7 fortress total is
-// 13 on every seed.
+// fortresses in a W1-W7 world, 1 to 3 locks, always 4 locks in Dark Land, 17
+// locks in all, and the W1-W7 fortress total is 13 on every seed.
+//
+// The generator is allowed to leave a lock out (`MazeLock::fort == None`, open
+// path) as a last resort, which would make these one short. It did not happen
+// once in those 400 seeds, nor in 200 more at each wand setting, so the board
+// treats 17 as exact.
 const FORTS_MAX = 5;        // per world, worlds 1-7: 3 dealt + up to 2 moved in
 const LOCKS_MAX = 3;        // per world, worlds 1-7 — locks never move
 const FORTS_ROAMING = 13;   // whole game, worlds 1-7 — conserved by the move
@@ -776,7 +799,7 @@ function blankState() {
 }
 
 let state = load() ?? blankState();
-let aiming = null;   // { kind: "lock" | "pad", world, id }
+let aiming = null;   // { kind: "lock" | "key" | "pad", world, id }
 let message = null;  // one-off text for the bar, cleared by render's timer
 
 function newFort(label = null) {
@@ -1371,16 +1394,19 @@ function renderProblems() {
 
 function renderCounts() {
 	countsEl.textContent = "";
+	// "Locks" is every lock chip on the board, pinned on a fortress or not. It
+	// covers the bridge gaps too: on the map those are locks a fortress opens
+	// like any other, they only draw as water.
 	const rows = [
-		["Wands", countWands(), WANDS_TOTAL],
-		["Fortresses", countForts(), FORTS_TOTAL],
-		["Keys placed", countLockChips(), LOCKS_TOTAL],
-		["Pad tiles", countPadTiles(), PAD_TILES_MAX],
-		["Pairs linked", countPadPairs(), PAD_TILES_MAX / 2],
+		["Wands", countWands(), WANDS_TOTAL, WANDS[0]],
+		["Fortresses", countForts(), FORTS_TOTAL, ICONS["fort-here"]],
+		["Locks", countLockChips(), LOCKS_TOTAL, ICONS["lock-here"]],
+		["Pad tiles", countPadTiles(), PAD_TILES_MAX, ICONS.pad],
+		["Pairs linked", countPadPairs(), PAD_TILES_MAX / 2, ICONS.pad],
 	];
-	for (const [label, have, max] of rows) {
+	for (const [label, have, max, art] of rows) {
 		countsEl.appendChild(el("div", { class: "count" + (have >= max ? " full" : "") },
-			label === "Wands" ? icon(WANDS[0]) : null,
+			icon(art),
 			el("span", { class: "k" }, label),
 			el("span", { class: "v" }, `${have}/${max}`)));
 	}
