@@ -264,7 +264,8 @@ body {
     background-image:
         linear-gradient(var(--veil, rgba(16, 16, 38, 0.84)), var(--veil, rgba(16, 16, 38, 0.84))),
         var(--tile);
-    background-size: auto, calc(32px * var(--icon-k, 2) / var(--tracker-scale, 1));
+    /* The cell is two tiles across, each drawn at twice a chip icon's scale. */
+    background-size: auto, calc(64px * var(--icon-k, 2) / var(--tracker-scale, 1));
     image-rendering: pixelated;
 }
 
