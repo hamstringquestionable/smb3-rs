@@ -847,6 +847,12 @@ fn randomize_inner(
         randomize::qol::apply_bro_battle_timer(rom);
     }
 
+    // Bloopers and Cheeps can be stomped from dry land.
+    if options.water_stomp {
+        rom.set_tag("water_stomp");
+        randomize::water_stomp::apply(rom);
+    }
+
     // "Limit Bro Movement" — gate the wandering Hammer Bros' overworld roaming.
     if options.limit_bro_movement {
         rom.set_tag("qol/limit_bro_movement");

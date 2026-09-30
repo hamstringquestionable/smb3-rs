@@ -452,6 +452,10 @@ struct Cli {
     #[arg(long, default_value = "shuffle", value_parser = parse_enemy_mode)]
     water: EnemyMode,
 
+    /// Swimming water enemies (Bloopers, Cheeps) can be stomped from dry land
+    #[arg(long)]
+    water_stomp: bool,
+
     /// Hammer/Boomerang/Fire Bros: off, shuffle, or wild (default: shuffle)
     #[arg(long, default_value = "shuffle", value_parser = parse_enemy_mode)]
     bros: EnemyMode,
@@ -669,6 +673,7 @@ fn build_options(cli: &Cli) -> Options {
             rotodiscs: cli.rotodiscs,
             cannons: cli.cannons,
             water: cli.water,
+            water_stomp: cli.water_stomp,
             bros: cli.bros,
             hb_encounters: cli.hb_encounters,
             limit_hazards: cli.limit_hazards,

@@ -472,9 +472,11 @@ mod payload {
         /// and false by default, so every key in circulation is byte-for-byte
         /// what it was.
         pub(super) mariomon: bool,
+        /// Water enemies stompable on dry land. Appended and false by default.
+        pub(super) water_stomp: bool,
 
         // --- Reserve ---
-        // 130 bits. Adding an option is: declare it immediately above this
+        // 129 bits. Adding an option is: declare it immediately above this
         // block, then take the same number of bits off `B19`. An older key
         // simply has those bits zero, which is "off" for a bool and the default
         // for every enum here, so it stays a correct key for the settings it
@@ -489,7 +491,7 @@ mod payload {
         #[skip]
         __: B128,
         #[skip]
-        __: B2,
+        __: B1,
     }
 }
 
@@ -539,7 +541,7 @@ impl Options {
             bro_battle_timer, deja_vu, deja_vu_forts,
             fire_flower, piranha_shuffle, wild_injections,
             starting_lives, world_count, world_maze, maze_wands, hints, item_gates,
-            mariomon,
+            mariomon, water_stomp,
             starting_items,
             // Not encoded — see NOT_ENCODED for the reason on each.
             palettes: _, palette_themed: _, player_color: _,
@@ -628,6 +630,7 @@ impl Options {
             .with_hints(if *world_maze { *hints } else { HintMode::default() })
             .with_item_gates(*item_gates)
             .with_mariomon(*mariomon)
+            .with_water_stomp(*water_stomp)
             .with_starting_item_0(sanitize_item(item(0)))
             .with_starting_item_1(sanitize_item(item(1)))
             .with_starting_item_2(sanitize_item(item(2)))
@@ -691,6 +694,7 @@ impl Options {
             shuffle_big_q_rooms: f.shuffle_big_q_rooms(),
             no_game_over_penalty: f.no_game_over_penalty(),
             mariomon: f.mariomon(),
+            water_stomp: f.water_stomp(),
             poison_mushrooms: f.poison_mushrooms(),
             modern_powerups: f.modern_powerups(),
             anchor_visuals: f.anchor_visuals(),
