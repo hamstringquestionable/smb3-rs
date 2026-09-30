@@ -498,6 +498,7 @@ body {
 .lock { border-color: #c9a26a; color: #e2c493; background: #241d12; }
 .lock.away { border-color: #6aa2c9; color: #a6d2ee; background: #12202a; }
 .lock.unattributed { border-style: dashed; }
+.lock.hint-unknown { border-color: #3a3a5c; color: #8a8aa4; background: #1a1a34; }
 
 .lock .src {
     display: flex;
@@ -629,9 +630,10 @@ body {
                 tints one; the game says it with the colour on Some hints, and with
                 the world number in place of the colour on Full.</dd>
             <dt><span class="chip lock unattributed"><span class="body" data-icon="lock-here">Lock</span></span></dt>
-            <dd>Dashed: a lock you have seen but cannot yet pin on a fortress. Say
-                its key is here, or which world it is in, and it joins up with one;
-                "away" tints it for a lock that only says its fortress is elsewhere. There are seventeen
+            <dd>Dashed: a lock you have seen but cannot yet pin on a fortress. Click
+                it to say what its colour tells you — here, or away — and with a
+                world number on it, aim the away one at that world to join it up
+                with a fortress there. There are seventeen
                 locks and seventeen fortresses, one each, so a lock you cannot
                 account for means there is a fortress somewhere you have not
                 found — not necessarily in this world.</dd>
@@ -685,6 +687,14 @@ const HINTS = [
 	{ id: "w8",      label: "W8" },
 ];
 
+// What a lock nobody has pinned on a fortress says about where that fortress
+// is. Two answers, not three: a lock has no design for Dark Land.
+const LOCK_HINTS = [
+	{ id: "unknown", label: "?" },
+	{ id: "here",    label: "Here" },
+	{ id: "away",    label: "Away" },
+];
+
 // World 8 always fields exactly four fortresses, three of them wearing an army
 // sprite. The fourth is a plain one. (src/randomize/overworld_writer/sprites.rs)
 const W8_FORTS = ["Battleship", "Air Force", "Super Tank", "Fortress"];
@@ -699,6 +709,7 @@ const ICONS = {
 	"fort-here": HINT_TILES[2],
 	"fort-away": HINT_TILES[4],
 	"fort-w8": HINT_TILES[3],
+	"lock-unknown": { ...HINT_TILES[0], palette: [0x0F, 0x10, 0x00, 0x10] },
 	"lock-here": HINT_TILES[0],
 	"lock-away": HINT_TILES[1],
 	"pad": MAZE_TILES[3],
@@ -877,12 +888,12 @@ function takeLock(w, fort) {
 	fort.took = false;
 	if (target == null) return;
 	const locks = state.worlds[target].locks;
-	// A lock the player marked "away" cannot be the one a fortress standing in
-	// that same world opens, and is the first choice for one that is not.
-	const open = lock => lock.keyWorld == null;
-	const i = w === target
-		? locks.findIndex(lock => open(lock) && !lock.away)
-		: Math.max(locks.findIndex(lock => open(lock) && lock.away), locks.findIndex(open));
+	// A lock that says what the fortress says is the first choice, then one
+	// that says nothing. One that says the opposite is never this lock.
+	const says = w === target ? "here" : "away";
+	const unpinned = hint => locks.findIndex(lock =>
+		lock.keyWorld == null && (lock.hint ?? "unknown") === hint);
+	const i = unpinned(says) >= 0 ? unpinned(says) : unpinned("unknown");
 	if (i < 0) return;
 	fort.done = fort.done || locks[i].done;
 	locks.splice(i, 1);
@@ -892,7 +903,9 @@ function takeLock(w, fort) {
 function releaseLock(w, fort) {
 	const target = lockWorldOf(w, fort);
 	if (fort.took && target != null) {
-		state.worlds[target].locks.push({ id: id(), keyWorld: null, away: w !== target, done: false });
+		state.worlds[target].locks.push({
+			id: id(), keyWorld: null, hint: w === target ? "here" : "away", done: false,
+		});
 	}
 	fort.took = false;
 }
@@ -1258,7 +1271,9 @@ function render() {
 		aimingEl.hidden = false;
 		aimingText.textContent = aiming.kind === "lock"
 			? "Click the world this fortress's lock is in."
-			: "Click the world this pad leads to (its own world is allowed).";
+			: aiming.kind === "key"
+				? "Click the world this lock's fortress is in."
+				: "Click the world this pad leads to (its own world is allowed).";
 	} else if (message) {
 		aimingEl.hidden = false;
 		aimingEl.className = message.level === "warn" ? "aiming warn" : "aiming";
@@ -1660,39 +1675,51 @@ function renderLocks(w) {
 // the world's lock sections until you can say which fortress opens it, at which
 // point `claimKeyWorld` spends it.
 function renderFreeLock(w, lock) {
-	const away = !!lock.away && lock.keyWorld == null;
+	const hint = LOCK_HINTS.find(h => h.id === lock.hint) ?? LOCK_HINTS[0];
 	const chip = el("span", {
-		class: "chip lock unattributed" + (away ? " away" : "") + (lock.done ? " done" : ""),
+		class: `chip lock unattributed hint-${hint.id}`
+			+ (hint.id === "away" ? " away" : "") + (lock.done ? " done" : ""),
 	});
+	// Works the way a fortress chip does: click to say what the lock's colour
+	// tells you. Some hints stop there — here, or somewhere else, no world
+	// named — so neither answer pins it on a fortress by itself.
 	chip.appendChild(el("button", {
 		class: faceClass("body"),
 		type: "button",
-		title: lock.done ? "Mark shut again" : "Mark open",
-		onclick: ev => { ev.stopPropagation(); lock.done = !lock.done; render(); },
-	}, ...face(ICONS[away ? "lock-away" : "lock-here"], lock.done ? "🔓" : "🔒")));
-	// What the lock says about its fortress, as far as the hints go. Some hints
-	// only colour it — here, or somewhere else — so "away" names no world and
-	// stays a lock still looking for its fortress. Full hints stamp the world
-	// number on it, and that is what the numbered choices are for.
-	const pick = el("select", {
-		class: "src",
-		title: "Where its fortress is, as far as the lock says",
-		onclick: ev => ev.stopPropagation(),
-		onchange: ev => {
-			const value = ev.target.value;
-			lock.away = value === "away";
-			claimKeyWorld(w, lock, value === "" || value === "away" ? null : Number(value));
+		title: "Where its fortress is — click to change",
+		onclick: ev => {
+			ev.stopPropagation();
+			const next = (LOCK_HINTS.indexOf(hint) + 1) % LOCK_HINTS.length;
+			lock.hint = LOCK_HINTS[next].id;
 			render();
 		},
-	},
-		el("option", { value: "", selected: !away }, "key: ?"),
-		el("option", { value: String(w) }, "key: here"),
-		el("option", { value: "away", selected: away }, "key: away"));
-	for (let i = 0; i < 8; i++) {
-		if (i === w) continue;
-		pick.appendChild(el("option", { value: String(i) }, `key: W${i + 1}`));
+	}, ...face(ICONS[`lock-${hint.id}`], "🔒", hint.label)));
+	// Full hints stamp the world number on an "away" lock. Aiming this at that
+	// world is what joins the lock up with a fortress there.
+	if (hint.id === "away") {
+		const active = aiming && aiming.kind === "key" && aiming.id === lock.id;
+		chip.appendChild(el("button", {
+			class: faceClass("body token") + (active ? " aiming-now" : ""),
+			type: "button",
+			draggable: "true",
+			title: "Which world is its fortress in? Drag onto a world, or click and pick one.",
+			onclick: ev => {
+				ev.stopPropagation();
+				aiming = active ? null : { kind: "key", world: w, id: lock.id };
+				render();
+			},
+			ondragstart: ev => {
+				ev.dataTransfer.setData("text/plain",
+					JSON.stringify({ kind: "key", world: w, id: lock.id }));
+			},
+		}, ...face(ICONS["fort-away"], "🏰", "?")));
 	}
-	chip.appendChild(pick);
+	chip.appendChild(el("button", {
+		class: "mini",
+		type: "button",
+		title: lock.done ? "Mark shut again" : "Mark open",
+		onclick: ev => { ev.stopPropagation(); lock.done = !lock.done; render(); },
+	}, lock.done ? "↺" : "✓"));
 	chip.appendChild(el("button", {
 		class: "mini",
 		type: "button",
@@ -1752,6 +1779,13 @@ function place(target, world) {
 				if (world === target.world) fort.hint = "here";
 				else fort.lockWorld = world;
 			});
+		}
+	} else if (target.kind === "key") {
+		const lock = state.worlds[target.world].locks.find(l => l.id === target.id);
+		// Dropped back on its own world, the lock was a "here" one after all.
+		if (lock) {
+			if (world === target.world) lock.hint = "here";
+			else claimKeyWorld(target.world, lock, world);
 		}
 	} else {
 		linkPad(target.world, target.id, world);

@@ -16,9 +16,10 @@ deploys.
   Land's army and held wands from it, each named world's card is tiled with
   that world's scenery, and the HELP balloon is the game's own sprite. Without
   a ROM it is the text board it was.
-- **World Maze tracker — a lock can say just "here" or "away".** On Some hints
-  a lock only tells you whether its fortress is in the same world, so an
-  unpinned lock can now be marked either way without naming a world.
+- **World Maze tracker — a lock works like a fortress chip.** A lock you have
+  not pinned on a fortress starts unknown; click it to cycle Here / Away, the
+  way Some hints colour it, and tick it to strike it out. An Away lock can be
+  aimed at a world when the hint names one.
 - **World Maze tracker — tick a world off.** Click a world's number to put a
   check over it, and again to take it off.
 
