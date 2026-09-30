@@ -334,6 +334,12 @@ body {
 .help.sprite:hover { background: none; filter: brightness(1.2); }
 .help.sprite.done { background: none; }
 .help.sprite.done canvas { opacity: 0.4; }
+/* Twice the size of a chip's icon: it is the one thing on the card read from
+   across the room, and still a whole-number scale. */
+.help.sprite canvas {
+    width: calc(var(--w) * 2px * var(--icon-k, 2) / var(--tracker-scale, 1));
+    height: calc(var(--h) * 2px * var(--icon-k, 2) / var(--tracker-scale, 1));
+}
 
 .wnum {
     flex: none;
