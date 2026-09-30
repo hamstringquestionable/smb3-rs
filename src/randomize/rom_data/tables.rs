@@ -205,7 +205,7 @@ pub(crate) const LEVEL_DATA_REGIONS: &[LevelDataRegion] = &[
             10, 11, 12, 13, // DiagRect variants
             35, 36, 37, 38, 39, 40, 41, 42, // TopDecoBlocks
         ],
-        randomize_note_wood: false, // shapes 1-5 = desert decorations (palms, cacti) in TS9
+        randomize_note_wood: true,
     },
     LevelDataRegion {
         // Dungeon (TS2)

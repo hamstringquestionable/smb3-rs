@@ -98,8 +98,8 @@ fn qblock_pool(file_offset: usize, no_airship_stars: bool) -> &'static [u8] {
 /// {flower, leaf, star, 1-up}. Group 2 (0x40): note blocks swap among
 /// {flower, leaf, star}, wood blocks swap among {flower, leaf, star} — but only
 /// in tileset regions where note/wood variants share the same visual appearance.
-/// In Dungeon/Desert/Ship tilesets the note/wood tile IDs render as different
-/// decorations, so swapping would corrupt the level visuals.
+/// In the Dungeon tileset the same shapes dispatch to other generators, so
+/// swapping would corrupt the level (see `randomize_note_wood`).
 /// Protected offsets (like 7-7's star blocks) are never modified.
 ///
 /// When `no_airship_stars` is true, airship Q-blocks draw from {flower, leaf}

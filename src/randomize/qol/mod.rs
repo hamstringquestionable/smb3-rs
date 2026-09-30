@@ -3,6 +3,7 @@
 
 mod beta;
 pub(crate) mod big_q;
+mod bro_arena;
 mod bro_timer;
 mod canoe;
 mod canoe_summon;
@@ -17,6 +18,7 @@ mod starting_state;
 
 pub use beta::fix_beta_stages;
 pub use big_q::fix_big_q_block_rooms;
+pub use bro_arena::rebuild_desert_bro_arena;
 pub use bro_timer::apply_bro_battle_timer;
 pub use canoe::fix_canoe_softlock;
 #[cfg(test)]

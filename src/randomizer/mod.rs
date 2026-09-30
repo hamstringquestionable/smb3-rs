@@ -174,6 +174,11 @@ fn randomize_inner(
     rom.set_tag("qol/big_q_blocks");
     randomize::qol::fix_big_q_block_rooms(rom);
 
+    // The World 2 bro arena loses enemies inside its sand-brick block. Always
+    // applied, and before powerups and enemies so both see the rebuilt room.
+    rom.set_tag("qol/desert_bro_arena");
+    randomize::qol::rebuild_desert_bro_arena(rom);
+
     // Autoscroll must run BEFORE powerups and the overworld builder:
     // it writes pre-baked replacement level data for airship levels, and
     // powerups/enemies need to randomize on top of that patched data.

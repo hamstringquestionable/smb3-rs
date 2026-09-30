@@ -319,10 +319,19 @@ The canonical example is 1-3's "wood-block-with-leaf" at file offset **0x1EE95**
 
 **Exceptions** (`randomize_note_wood: false` regions):
 - **TS2 (Dungeon):** shapes 1-2 = `CCBridge`, shapes 3-7 = `TopDecoBlocks` decorations.
-- **TS9 (Desert):** shapes 1-5 = palms / cacti decorations.
 
-In these tilesets the dispatch produces non-powerup tiles, so swapping byte2 would
+In that tileset the dispatch produces non-powerup tiles, so swapping byte2 would
 corrupt level geometry.
+
+**TS9 (Desert) was listed here until 2026-09-30, wrongly.** The note that its
+shapes 1-5 were "palms / cacti" confused group 2 with group 0, where the desert
+tree (shape 4) and cloud (shape `$0A`) live. `LeveLoad_FixedSizeGen_TS9`
+(`prg020.asm`) sends indices 33-38 to `LoadLevel_PowerBlock` like every other
+tileset, vanilla desert levels carry four such blocks (shapes 1, 2 and two 5s),
+and on an emulator all six shapes draw as a note or wood block in the desert
+bro arena, with wood shapes 4/5/6 giving a mushroom, a mushroom and a star to
+small Mario when bumped. The stray desert tiles once blamed on this were the
+level-region bank overrun (issue #34).
 
 #### Variable-Size Generators
 
@@ -4851,6 +4860,56 @@ never be cleared by jumping, but a shell does kill it. It therefore sits in
 `HB_NEEDS_SHELL_ENEMIES`, which also means it can only be dealt into a 2-enemy
 room — the 1-enemy rooms (including the 8-Tank) draw from the stompable pool
 alone and never see one.
+
+### Bro Arenas Are Tileset Programs, Not Skins
+
+A bro encounter is a pointer-table entry — tileset, layout pointer, enemy
+pointer — and vanilla has arenas in six tilesets (1, 3, 9, 11, 12, 13). Two
+facts decide what can be done with them:
+
+- **The tileset picks the bank the layout pointer resolves in**
+  (`PAGE_A000_ByTileset`). Changing the tileset byte alone keeps the layout
+  only between tilesets that share a bank: 5/11/13 (PRG019), 4/12 (PRG017),
+  6/7/8 (PRG018).
+- **The generator tables are per bank**, so a layout copied into another bank
+  is decoded by a different set of routines. The shared block-run generators
+  (`32 07 16`, the brick rows most arenas carry) mean the same thing nearly
+  everywhere; the floor and scenery commands do not.
+
+Measured 2026-09-30 by copying 9 arenas into 13 tilesets and entering each on
+an emulator (117 combos): 39 loaded with no floor, 20 reset the game, 15 hung
+or failed a walk across the room, 11 did not fit their bank's filler, and of
+the 32 that held a floor 9 were the untouched originals. A byte-only same-bank
+swap keeps the arena's own graphics page, so it is a recolour with tile
+glitches — only the W4 giant arena as tileset 5 came out clean. Reskinning an
+arena means authoring one in the target tileset's own commands.
+
+`testrom --place NAME@tsN` (copy) and `NAME@rawN` (byte only) reproduce any of
+these.
+
+#### The desert arena (`$B1F6`, tileset 9, file `0x29206`)
+
+Eleven 3-byte commands after the header, 43 bytes with the terminator, and no
+slack after it. The ground is not a command — tileset 9 preloads it, top at
+row `$1A`.
+
+| Offset | Bytes | Meaning |
+|---|---|---|
+| 9, 12, 15 | `11 04 0A` `11 0C 0A` `14 0A 0A` | clouds |
+| 18, 21, 24 | `16 00 04` `16 05 04` `16 0D 04` | palm trees (top three tiles wide, centred one column right) |
+| 27, 30, 33 | `79 00 20` `79 02 23` `79 07 20` | cactus runs |
+| 36, 39 | `18 09 62` `19 09 62` | two stacked rows of three sand bricks |
+
+Both enemy streams (`$D14D` one bro, `$D142` two) put slot 0 at column `$0B`,
+row `$16` — on top of the sand bricks.
+
+`qol::rebuild_desert_bro_arena` rewrites offsets 30-41 on every seed: a brick
+row (`36 08 14`), and a three-block wood column at column 4 whose top block
+holds a leaf (`39 04 40` `38 04 40` `57 04 05`), and moves slot 0 to `(0A, 14)`.
+The desert tileset has no vertical block run, so each block of a column is its
+own command; the two cactus runs are what pays for it. The top block is a
+normal group-2 wood item block, so `powerups.rs` shuffles it among flower,
+leaf and star.
 
 ### `BattleEnemy_ByEnterID` Overrun — a Hammer Bro is a Placeholder
 
