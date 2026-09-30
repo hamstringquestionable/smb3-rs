@@ -9,6 +9,8 @@ deploys.
 
 ## [Unreleased]
 
+## [2.3.1] - 2026-09-30
+
 ### Added
 
 - **World Maze tracker — art from your own ROM.** With a ROM loaded on the
@@ -29,6 +31,8 @@ deploys.
   world.** A fortress can be moved out of its world, so worlds 1-7 now start
   with one unpinned lock each (Dark Land with four) and no fortress. Marking
   where a fortress's lock is takes one of those rather than adding a second.
+- **World Maze tracker — the "Keys placed" counter is now "Locks"**, and every
+  counter in the header has an icon. A gap in a bridge counts as a lock.
 
 ## [2.3.0] - 2026-09-28
 
