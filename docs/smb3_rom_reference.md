@@ -4685,6 +4685,24 @@ at `$A7C4` (`LDA $A3,X / ADD #$01 / ... / CMP $9A,X`).
 
 Same wild+other-wild gate as the visibility patch above.
 
+### Stompability: `OA3_NOTSTOMPABLE` and the in-water gate (PRG000)
+
+Whether landing on an object stomps it or hurts Mario is bit 5 (`$20`) of its
+`ObjectGroup_Attributes3` byte. Group N (IDs `N*$24 ..`) lives in PRG00(N+1),
+and every group bank `.org`s the table at `$A120`, so the file offset is
+`0x10 + (N+1)*0x2000 + 0x120 + id % $24`.
+
+The shared stomp test (`prg000.asm` `PRG000_D253`, ~CPU `$D253`) runs the
+height band and fall checks first, then tests **`Player_InWater` before the
+attribute bit**: a swimming Mario is hurt by everything, whatever the bit says.
+So clearing the bit only changes dry-land contact. Kuribo's shoe and the statue
+bypass both checks.
+
+`water_stomp.rs` clears it on `$48 $61 $62 $63 $6A $77 $88`. Playtested
+2026-09-30: Bloopers and the baby Cheep do go through this shared path (no
+private hurt routine), and all seven kick off-screen via
+`OA2_NOSHELLORSQUASH`. Lava Lotus (`$67`) keeps the bit by choice.
+
 ### Koopaling Stomp Threshold (PRG001)
 
 The Koopalings (object ID `$0E`) use `Objects_Var4` (zero-page `$7F–$83`, indexed by
