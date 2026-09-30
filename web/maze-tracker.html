@@ -334,6 +334,16 @@ body {
 .help.sprite:hover { background: none; filter: brightness(1.2); }
 .help.sprite.done { background: none; }
 .help.sprite.done canvas { opacity: 0.4; }
+/* The wand it was calling for, held up in front of the faded balloon. That
+   says "done" on its own, so the strike-through is not drawn as well. */
+.help.sprite .held-wand {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+}
+.help.sprite.done .held-wand canvas { opacity: 1; }
+.help.sprite.done .icon::after { display: none; }
 /* Twice the size of a chip's icon: it is the one thing on the card read from
    across the room, and still a whole-number scale. */
 .help.sprite canvas {
@@ -1432,7 +1442,10 @@ function renderHead(w) {
 		}, balloon ?? "HELP"));
 		// The wand itself, once it is held — each world's in its own jewel colour.
 		const wand = held ? icon(WANDS[w]) : null;
-		if (wand) col.appendChild(wand);
+		if (wand) {
+			wand.classList.add("held-wand");
+			col.lastChild.appendChild(wand);
+		}
 	}
 	const head = el("div", { class: "wcard-head" }, col);
 	if (w === W8) {
