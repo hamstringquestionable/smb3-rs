@@ -9,6 +9,31 @@ deploys.
 
 ## [Unreleased]
 
+## [2.3.1] - 2026-09-30
+
+### Added
+
+- **World Maze tracker — art from your own ROM.** With a ROM loaded on the
+  randomizer page, the tracker draws its fortresses, locks, warp pads, Dark
+  Land's army and held wands from it, each named world's card is tiled with
+  that world's scenery, and the HELP balloon is the game's own sprite. Without
+  a ROM it is the text board it was.
+- **World Maze tracker — a lock works like a fortress chip.** A lock you have
+  not pinned on a fortress starts unknown; click it to cycle Here / Away, the
+  way Some hints colour it, and tick it to strike it out. An Away lock can be
+  aimed at a world when the hint names one.
+- **World Maze tracker — tick a world off.** Click a world's number to put a
+  check over it, and again to take it off.
+
+### Changed
+
+- **World Maze tracker — a blank board no longer assumes a fortress in every
+  world.** A fortress can be moved out of its world, so worlds 1-7 now start
+  with one unpinned lock each (Dark Land with four) and no fortress. Marking
+  where a fortress's lock is takes one of those rather than adding a second.
+- **World Maze tracker — the "Keys placed" counter is now "Locks"**, and every
+  counter in the header has an icon. A gap in a bridge counts as a lock.
+
 ## [2.3.0] - 2026-09-28
 
 ### Added

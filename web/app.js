@@ -13,6 +13,7 @@ import init, {
 	version,
 } from "./pkg/smb3_rs.js";
 import { renderIcon as renderChrIcon, renderIconBox } from "./chr.js";
+import { loadRom, saveRom, deleteCached } from "./rom-cache.js";
 import {
 	renderOptions,
 	wireListeners,
@@ -123,44 +124,10 @@ const RANDOM_VISUAL_PATCH = "random";
 
 const visualPatchCache = new Map(); // id → Promise<Uint8Array>
 
-// --- IndexedDB ROM persistence ---
-
-const DB_NAME = "smb3-rs";
-const DB_STORE = "rom";
-
-function openDb() {
-	return new Promise((resolve, reject) => {
-		const req = indexedDB.open(DB_NAME, 1);
-		req.onupgradeneeded = () => req.result.createObjectStore(DB_STORE);
-		req.onsuccess = () => resolve(req.result);
-		req.onerror = () => reject(req.error);
-	});
-}
-
-async function saveRom(bytes) {
-	const db = await openDb();
-	const tx = db.transaction(DB_STORE, "readwrite");
-	tx.objectStore(DB_STORE).put(bytes, "data");
-}
-
-async function loadRom() {
-	const db = await openDb();
-	return new Promise((resolve) => {
-		const tx = db.transaction(DB_STORE, "readonly");
-		const req = tx.objectStore(DB_STORE).get("data");
-		req.onsuccess = () => resolve(req.result || null);
-		req.onerror = () => resolve(null);
-	});
-}
-
 // One-time cleanup: earlier versions cached uploaded visual-patch bytes
 // in IndexedDB. Selection is now persisted via localStorage instead, so
 // drop the orphan key on first run after upgrade.
-async function cleanupOrphanVisualPatch() {
-	const db = await openDb();
-	const tx = db.transaction(DB_STORE, "readwrite");
-	tx.objectStore(DB_STORE).delete("visual_patch");
-}
+const cleanupOrphanVisualPatch = () => deleteCached("visual_patch");
 
 // --- DOM lookups (static, non-schema elements) ---
 

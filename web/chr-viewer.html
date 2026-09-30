@@ -30,17 +30,13 @@ h1 { color: #5c94fc; margin: 0 0 0.5rem; font-size: 1rem; }
 
 <script type="module">
 import { CHR_BASE, decodeTile, resolvePalette, renderTileToCanvas } from "./chr.js";
+import { loadRom } from "./rom-cache.js";
 
 const romInput = document.getElementById("rom-input");
 const paletteInput = document.getElementById("palette");
 const pagesInput = document.getElementById("pages");
 const out = document.getElementById("output");
 let rom = null;
-
-// ROM cache via IndexedDB (mirrors app.js)
-const DB = "smb3-rs", STORE = "rom";
-function openDb() { return new Promise((res, rej) => { const r = indexedDB.open(DB, 1); r.onupgradeneeded = () => r.result.createObjectStore(STORE); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); }); }
-async function loadRom() { const db = await openDb(); return new Promise(res => { const tx = db.transaction(STORE, "readonly"); const r = tx.objectStore(STORE).get("data"); r.onsuccess = () => res(r.result || null); r.onerror = () => res(null); }); }
 
 function parsePalette(s) {
   return s.split(",").map(p => parseInt(p.trim(), 16) & 0x3F);
