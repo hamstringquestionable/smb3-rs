@@ -19,6 +19,7 @@ import {
 	wireListeners,
 	applyEnabledWhen,
 	applyRowStates,
+	applyPillFlavors,
 	getOptionsJson,
 	getChangedFields,
 	formatValue,
@@ -341,6 +342,7 @@ function renderVisualPatchPills() {
 			saveSettings();
 			updateVisualPatchAccent();
 			updateVisualPatchCredit();
+			applyPillFlavors(); // some flavors depend on the re-skin
 			refreshRomGraphics(); // the re-skin may change the CHR art
 		});
 		const label = document.createElement("label");

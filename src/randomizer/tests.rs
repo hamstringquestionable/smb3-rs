@@ -30,6 +30,7 @@ fn normalized(mut o: Options) -> Options {
     o.palette_themed = false;
     o.remove_flashing = true;
     o.king_quotes = true;
+    o.fireball_hearts = false;
     o
 }
 
@@ -482,6 +483,7 @@ fn flag_key_per_option_round_trip() {
         ("palette_themed", Box::new(|o| o.palette_themed = !o.palette_themed)),
         ("remove_flashing", Box::new(|o| o.remove_flashing = !o.remove_flashing)),
         ("king_quotes", Box::new(|o| o.king_quotes = !o.king_quotes)),
+        ("fireball_hearts", Box::new(|o| o.fireball_hearts = !o.fireball_hearts)),
     ];
     for (label, mutate) in cosmetic {
         check_round_trip(label, mutate, false);
@@ -1128,6 +1130,7 @@ fn all_off_options() -> Options {
         player_color: None,
         remove_flashing: false,
         king_quotes: false,
+        fireball_hearts: false,
         world_order: false,
         world_count: 7,
         world_maze: false,
@@ -1209,6 +1212,7 @@ fn all_on_options() -> Options {
         player_color: None,
         remove_flashing: true,
         king_quotes: true,
+        fireball_hearts: true,
         world_order: true,
         world_count: 3,
         world_maze: true,

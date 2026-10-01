@@ -61,6 +61,26 @@ MMC3 maps two switchable 8 KB banks + two fixed banks:
 |-------|------|----------|
 | 0x40010–0x6000F | 128 KB | All graphics tile data (sprites + backgrounds) |
 
+### Fireball Sprites
+
+Every fireball (Mario's, enemy fireballs, the Fire Chomp's tail) draws as the
+8x16 pair `$65`/`$67` (tiles `$64`–`$67`, `$1640`). Those four tiles exist in two
+sprite CHR pages, 1K pages `$04` (file 0x41250) and `$3C` (file 0x4F250), so a
+redraw has to write both. The spin is not animation frames: it is the same two
+tiles cycled through four attribute frames `01 01 C1 C1` (`SPR_PAL1`, then
+`SPR_PAL1 | SPR_HFLIP | SPR_VFLIP`). Three tables, each the 4-byte pattern table
+followed by the 4-byte attribute table:
+
+| Table | Bank | File (attributes) | CPU |
+|---|---|---|---|
+| `FireChompTail_Attributes` | PRG003 | 0x07ADF | `$BACF` |
+| `PlayerFireball_FlipBits` | PRG007 | 0x0E32B | `$A31B` |
+| `Fireball_Attributes` (enemy fireballs) | PRG007 | 0x0FA04 | `$B9F4` |
+
+MaCobra52's fireballs-to-hearts patch (`qol::apply_fireball_hearts`) redraws the
+tiles and clears the flip bits on the last two frames, since a heart cannot be
+flipped. The Dr. Mario reskins also redraw these tiles.
+
 ---
 
 ## Level Data
