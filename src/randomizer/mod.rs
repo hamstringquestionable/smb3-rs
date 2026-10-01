@@ -956,6 +956,14 @@ fn randomize_inner(
         randomize::qol::apply_remove_flashing(rom);
     }
 
+    // MaCobra52's "Change fireballs to hearts". Cosmetic, not in the flag key,
+    // no RNG. The visual patch is already on, so a reskin that redraws
+    // fireballs (Dr. Mario) is overridden — that is the point of choosing it.
+    if options.fireball_hearts {
+        rom.set_tag("qol/fireball_hearts");
+        randomize::qol::apply_fireball_hearts(rom);
+    }
+
     // A defeated Lakitu is deleted instead of re-seeded two screens back, so it
     // stops holding one of the five general object slots for the whole level
     // (and stops feeding Spiny Eggs into the other four).

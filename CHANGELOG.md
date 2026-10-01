@@ -14,6 +14,9 @@ deploys.
 - **Stompable water enemies.** A new pill beside Wild on the Water enemies row
   lets you stomp Bloopers and Cheep Cheeps when you're out of the water. In the
   water they still can't be stomped, and Lava Lotus still hurts.
+- **Fireball hearts.** A new Cosmetic toggle turns every fireball into a heart:
+  yours, the enemies', and the Fire Chomp's tail (MaCobra52's patch). Picked
+  with Dr. Mario, it replaces that patch's fireballs.
 
 ### Changed
 

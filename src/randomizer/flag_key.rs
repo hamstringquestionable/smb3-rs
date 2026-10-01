@@ -283,6 +283,7 @@ pub(super) const NOT_ENCODED: &[&str] = &[
     "player_color",        // cosmetic
     "remove_flashing",     // cosmetic/accessibility; static patch, no RNG
     "king_quotes",         // cosmetic flavor text; draws its RNG either way
+    "fireball_hearts",     // cosmetic; static patch, no RNG
     "skip_rom_validation", // operational (CLI/WASM input handling), not randomization
 ];
 
@@ -545,7 +546,7 @@ impl Options {
             starting_items,
             // Not encoded — see NOT_ENCODED for the reason on each.
             palettes: _, palette_themed: _, player_color: _,
-            remove_flashing: _, king_quotes: _, skip_rom_validation: _,
+            remove_flashing: _, king_quotes: _, fireball_hearts: _, skip_rom_validation: _,
         } = self;
 
         let item = |i: usize| starting_items.get(i).copied().unwrap_or(0);
@@ -748,6 +749,7 @@ impl Options {
             player_color: None,
             remove_flashing: true,
             king_quotes: true,
+            fireball_hearts: false,
             skip_rom_validation: false,
         }
     }

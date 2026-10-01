@@ -747,6 +747,14 @@ export const SCHEMA = [
 		tip: "Stop the full-screen flashing and fading effects. On by default so the game is safer for players sensitive to flashing lights.",
 		credit: { name: "MaCobra52", url: "https://github.com/macobra52" },
 		group: "cosmetic", inFlagKey: false },
+	{ id: "fireball_hearts", type: "bool", default: false,
+		label: "Fireball hearts",
+		// Only beside a re-skin whose own fireballs these hearts replace.
+		warnWhenOn: "Replaces Dr. Mario's fireballs",
+		warnWithVisualPatch: ["dr_mario", "dr_mario_viruses"],
+		tip: "Every fireball becomes a heart: yours, the enemies', and the Fire Chomp's tail. Picked with Dr. Mario, this replaces that patch's fireballs.",
+		credit: { name: "MaCobra52", url: "https://github.com/macobra52" },
+		group: "cosmetic", inFlagKey: false },
 	{ id: "king_quotes", type: "bool", default: true,
 		label: "King quotes",
 		tip: "Give each rescued king a new thing to say. Turn this off and the kings say what they say in the original game.",
@@ -1430,6 +1438,13 @@ function renderBool(entry) {
 	}
 	const btn = tipBtn(entry);
 	if (btn) wrap.appendChild(btn);
+	if (entry.warnWhenOn) {
+		// The maze's amber badge: a warning about the choice, not a joke.
+		// Shown only while it applies (see `applyPillFlavors`).
+		wrap.appendChild(el("span", {
+			class: "opt-badge", id: `${domId(entry.id)}-warn`, hidden: true,
+		}, entry.warnWhenOn));
+	}
 	const group = el("div", { class: "pill-group" });
 	for (const opt of BOOL_OPTIONS) {
 		const inputId = `${domId(entry.id)}-${opt.value}`;
@@ -1935,11 +1950,22 @@ export function applyEnabledWhen() {
 	applyPillFlavors();
 }
 
-function applyPillFlavors() {
+// A pill's `flavorWhenOn` shows while the pill is lit. A row's `warnWhenOn`
+// shows while the row is on and, with `warnWithVisualPatch`, only while one of
+// those re-skins is picked. The visual-patch radio is app.js's, so app.js calls
+// this when it changes.
+export function applyPillFlavors() {
+	const visualPatch = document.querySelector('input[name="visual-patch"]:checked')?.value ?? "";
 	for (const entry of SCHEMA) {
-		if (!entry.flavorWhenOn) continue;
-		const span = document.getElementById(`${domId(entry.id)}-flavor`);
-		if (span) span.hidden = !readValue(entry);
+		if (entry.flavorWhenOn) {
+			const span = document.getElementById(`${domId(entry.id)}-flavor`);
+			if (span) span.hidden = !readValue(entry);
+		}
+		if (entry.warnWhenOn) {
+			const span = document.getElementById(`${domId(entry.id)}-warn`);
+			const patchOk = !entry.warnWithVisualPatch || entry.warnWithVisualPatch.includes(visualPatch);
+			if (span) span.hidden = !(readValue(entry) && patchOk);
+		}
 	}
 }
 

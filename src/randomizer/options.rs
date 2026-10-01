@@ -455,6 +455,12 @@ pub struct Options {
     /// identical with this on or off. Cosmetic — not encoded in the flag key.
     #[serde(default = "default_true")]
     pub king_quotes: bool,
+    /// Redraw every fireball (Mario's, enemies', the Fire Chomp's tail) as a
+    /// heart (MaCobra52's "Change fireballs to hearts" patch). Written after
+    /// any visual patch, so it overrides one that redraws fireballs too (the
+    /// Dr. Mario reskins). Cosmetic — not encoded in the flag key, no RNG.
+    #[serde(default)]
+    pub fireball_hearts: bool,
     #[serde(default)]
     pub world_order: bool,
     /// Number of worlds before Dark Land (0–7, default 7). Only read when
@@ -827,6 +833,7 @@ impl Default for Options {
             player_color: None,
             remove_flashing: true,
             king_quotes: true,
+            fireball_hearts: false,
             world_order: false,
             world_count: default_world_count(),
             world_maze: false,

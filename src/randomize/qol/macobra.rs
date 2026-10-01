@@ -471,6 +471,48 @@ pub fn apply_remove_flashing(rom: &mut Rom) {
     }
 }
 
+// Fireball Hearts (by MaCobra52) — "Change fireballs to hearts.ips". Every
+// fireball draws as a heart: Mario's, the enemies' (Fire Bros, piranha spit)
+// and the Fire Chomp's tail.
+//
+// Vanilla spins a fireball by cycling the same two tiles through four
+// attribute frames: SPR_PAL1, SPR_PAL1, then SPR_PAL1 | SPR_HFLIP | SPR_VFLIP
+// twice (01 01 C1 C1). A heart cannot be flipped upside down, so the patch
+// clears the flip bits on the last two frames of each of the three tables.
+const FIREBALL_HEART_FLIP_FRAMES: [usize; 3] = [
+    0x07AE1, // FireChompTail_Attributes+2 (PRG003, CPU $BAD1)
+    0x0E32D, // PlayerFireball_FlipBits+2 (PRG007, CPU $A31D)
+    0x0FA06, // Fireball_Attributes+2 (PRG007, CPU $B9F6)
+];
+
+// The fireball tiles ($64-$67 at $1640) live in two sprite CHR pages, 1K
+// pages $04 and $3C, and the heart is drawn into both. The IPS only carries
+// the bytes that differ from vanilla; this writes all four tiles whole, so
+// the heart comes out clean over a visual patch that redrew them too (the
+// Dr. Mario reskins draw their own fireballs here).
+const FIREBALL_HEART_CHR: [usize; 2] = [0x41250, 0x4F250];
+#[rustfmt::skip]
+const FIREBALL_HEART_TILES: [u8; 64] = [
+    // $64/$65: top and bottom of the first frame
+    0x00, 0x00, 0x00, 0x00, 0x6E, 0x7E, 0x7E, 0x7E, 0x00, 0x00, 0x00, 0x6E, 0xFF, 0xFF, 0xFF, 0xFF,
+    0x3C, 0x3C, 0x18, 0x10, 0x00, 0x00, 0x00, 0x00, 0x7E, 0x7E, 0x3C, 0x38, 0x30, 0x00, 0x00, 0x00,
+    // $66/$67: the second frame, identical
+    0x00, 0x00, 0x00, 0x00, 0x6E, 0x7E, 0x7E, 0x7E, 0x00, 0x00, 0x00, 0x6E, 0xFF, 0xFF, 0xFF, 0xFF,
+    0x3C, 0x3C, 0x18, 0x10, 0x00, 0x00, 0x00, 0x00, 0x7E, 0x7E, 0x3C, 0x38, 0x30, 0x00, 0x00, 0x00,
+];
+
+/// Apply MaCobra52's "Change fireballs to hearts" patch. Cosmetic; not in the
+/// flag key and uses no RNG. Runs after the visual patch, so it wins over one
+/// that redraws fireballs.
+pub fn apply_fireball_hearts(rom: &mut Rom) {
+    for offset in FIREBALL_HEART_FLIP_FRAMES {
+        rom.write_range(offset, &[0x01, 0x01]);
+    }
+    for offset in FIREBALL_HEART_CHR {
+        rom.write_range(offset, &FIREBALL_HEART_TILES);
+    }
+}
+
 // Poison Mushrooms: the `--poison-mushrooms` flag no longer uses MaCobra52's
 // all-1UPs-poison recolor. It now installs the per-block poison trap in
 // `randomize::poison_mushroom` (each 1-Up block hands out a real 1-Up or a
@@ -832,6 +874,35 @@ mod tests {
         apply_remove_flashing(&mut rom);
         for &(offset, bytes) in REMOVE_FLASHING_WRITES {
             assert_eq!(rom.read_range(offset, bytes.len()), bytes);
+        }
+    }
+
+    #[test]
+    fn test_fireball_hearts_writes() {
+        let mut rom = make_test_rom();
+        apply_fireball_hearts(&mut rom);
+        for offset in FIREBALL_HEART_FLIP_FRAMES {
+            assert_eq!(rom.read_range(offset, 2), &[0x01, 0x01]);
+        }
+        for offset in FIREBALL_HEART_CHR {
+            assert_eq!(rom.read_range(offset, 64), &FIREBALL_HEART_TILES);
+        }
+    }
+
+    /// The three offsets must be the flipped frames of the fireball attribute
+    /// tables — a slip would clear flip bits on some other object.
+    #[test]
+    fn fireball_hearts_targets_the_flipped_frames() {
+        let Ok(bytes) = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes") else {
+            return;
+        };
+        for offset in FIREBALL_HEART_FLIP_FRAMES {
+            // Patterns $65 $67 $65 $67, then attributes 01 01 C1 C1.
+            assert_eq!(
+                &bytes[offset - 6..offset + 2],
+                &[0x65, 0x67, 0x65, 0x67, 0x01, 0x01, 0xC1, 0xC1],
+                "0x{offset:05X}"
+            );
         }
     }
 
