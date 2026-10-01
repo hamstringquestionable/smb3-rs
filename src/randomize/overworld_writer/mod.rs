@@ -10,7 +10,7 @@ use rand::seq::{IndexedRandom, SliceRandom};
 use crate::rom::Rom;
 use crate::{DejaVuMode, PiranhaMode};
 
-use super::lock_keys::LockEntry;
+use super::lock_keys::{LockEntry, LockTiles};
 use super::node_catalog::NodeKind;
 use super::overworld_build::{
     BuildResult, BuiltWorld, LockHint, OverworldData, SlotKind, VANILLA_LEVEL_COUNT, bfs_ordered,
@@ -76,11 +76,23 @@ pub(crate) fn write_overworld<R: Rng>(
     let mut hb_fallback_iter = hb_fallback_levels.iter().cycle().cloned();
 
     let mut grids: Vec<Grid> = Vec::with_capacity(8);
+    // One allocation for every world: the art and the removable table exist once
+    // in the ROM, and the maze swaps each world in against them.
+    let mut lock_tiles = LockTiles::default();
     for (wi, wa) in assignments.iter().enumerate() {
         let built = &build.worlds[wi];
         let sprite_mask = &sprite_masks[wi];
 
-        grids.push(write_tile_grid(rom, built, wa, data, sprite_mask, flags.hints, rng));
+        grids.push(write_tile_grid(
+            rom,
+            built,
+            wa,
+            data,
+            sprite_mask,
+            flags.hints,
+            &mut lock_tiles,
+            rng,
+        ));
         write_pointer_entries(rom, wi, built, wa, data, &mut hb_fallback_iter);
         write_pipe_dests(rom, wi, wa);
         // For swapped worlds, rewrite the Airship + Start entry coordinates
@@ -115,7 +127,7 @@ pub(crate) fn write_overworld<R: Rng>(
         super::start_airship_swap::write_engine_scaffolding(rom, data.catalog);
     }
 
-    WrittenOverworld { grids, one_f_world: world_holding_1f(&assignments, data) }
+    WrittenOverworld { grids, one_f_world: world_holding_1f(&assignments, data), lock_tiles }
 }
 
 /// Which world the 1-F fortress *level* landed in, or `None` when it sat the
@@ -234,6 +246,8 @@ pub(crate) struct WrittenOverworld {
     /// The world holding the 1-F fortress level, or `None` when the deal left
     /// it out — see [`world_holding_1f`].
     one_f_world: Option<usize>,
+    /// What every allocated lock tile on the map means. See [`LockTiles`].
+    lock_tiles: LockTiles,
 }
 
 impl WrittenOverworld {
@@ -263,6 +277,13 @@ impl WrittenOverworld {
     /// a fact about the assignment, not a second copy of something written.
     pub(crate) fn one_f_world(&self) -> Option<usize> {
         self.one_f_world
+    }
+
+    /// The lock-tile allocation the grids were stamped with. Everything that
+    /// gives an allocated tile meaning — its art, its removable row, its hammer
+    /// row — reads it from here.
+    pub(crate) fn lock_tiles(&self) -> &LockTiles {
+        &self.lock_tiles
     }
 }
 

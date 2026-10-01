@@ -103,7 +103,8 @@ pub(super) fn find_blank_slots(
 /// 2. Fortress: $67, $EB — routed straight to the removable scan.
 /// 3. The page's M/L **window**: `Tile_Attributes_TS0` at the bottom,
 ///    [`lock_keys::ML_RANGE_UPPER`] at the top.
-/// 4. `Map_Removable_Tiles`: [`lock_keys::REMOVABLE_PAIRS`].
+/// 4. `Map_Removable_Tiles`: [`lock_keys::REMOVABLE_PAIRS`], plus whatever the
+///    seed allocates from [`lock_keys::is_pool_tile`]'s two pools.
 ///
 /// **Step 3 is a window rather than a threshold because we made it one.** In
 /// vanilla it is `tile >= threshold`, and every undefined metatile index sits
@@ -127,10 +128,13 @@ pub(crate) fn is_completion_unsafe(tile: u8) -> bool {
     if tile >= THRESHOLDS[page] && tile < lock_keys::ML_RANGE_UPPER[page] {
         return true;
     }
-    // The whole vocabulary, not the rows a given seed emits: this predicate is
-    // asked during the *build*, before anything is stamped, and it is asked
-    // about tile bytes rather than about a map.
-    lock_keys::obstacle_vocabulary().iter().any(|&(obstacle, _)| obstacle == tile)
+    // Every byte that *could* be an obstacle, not the rows a given seed emits:
+    // this predicate is asked during the *build*, before anything is
+    // allocated, and it is asked about tile bytes rather than about a map.
+    // Both pools sit in pages' released tails, which no map places, so
+    // widening this to whole pools moves no build.
+    lock_keys::is_pool_tile(tile)
+        || lock_keys::REMOVABLE_PAIRS.iter().any(|&(obstacle, _)| obstacle == tile)
 }
 
 /// Collect positions whose tile/slot would be "caught" by the game's

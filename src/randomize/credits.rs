@@ -264,12 +264,16 @@ const CASTLE_ICON_COL: usize = 11;
 /// banks, palette, and attribute table — is untouched, so this cannot corrupt
 /// the montage. If the regenerated set somehow overruns the region the montage
 /// is left vanilla (no partial write).
-pub fn render_world_maps<R: Rng>(rom: &mut Rom, rng: &mut R) {
+///
+/// `allocated` is the seed's allocated lock tiles as `(tile, revealed path)`
+/// (`lock_keys::LockTiles::pairs`). Those bytes mean something different every
+/// seed, so no flat table can name them.
+pub fn render_world_maps<R: Rng>(rom: &mut Rom, rng: &mut R, allocated: &[(u8, u8)]) {
     let pictures: Vec<Vec<u8>> = (0..8)
         .map(|w| {
             let grid = rom_data::read_tile_grid(rom, w);
             let base = window_base(&grid, w, rng);
-            compress(&build_frame(&grid, base, w))
+            compress(&build_frame(&grid, base, w, allocated))
         })
         .collect();
 
@@ -327,11 +331,15 @@ const HAND_TRAP_TILE: u8 = 0xE6;
 const HAND_TRAP_MINI: u8 = 0x10;
 
 /// Mini-tile for one map cell: a [`MINI_TILE_LUT`] lookup, except a HANDTRAP node
-/// draws the [`HAND_TRAP_MINI`] ring marker.
-fn mini_tile_at(grid: &Grid, row: usize, col: usize) -> u8 {
+/// draws the [`HAND_TRAP_MINI`] ring marker, and an allocated lock tile draws as
+/// the vanilla obstacle whose art it copies — a padlock, or the water gap.
+fn mini_tile_at(grid: &Grid, row: usize, col: usize, allocated: &[(u8, u8)]) -> u8 {
     let tile = grid.get(row, col);
     if tile == HAND_TRAP_TILE {
         return HAND_TRAP_MINI;
+    }
+    if let Some(&(_, revealed)) = allocated.iter().find(|&&(t, _)| t == tile) {
+        return MINI_TILE_LUT[rom_data::gap_tile_for(revealed) as usize];
     }
     MINI_TILE_LUT[tile as usize]
 }
@@ -341,7 +349,7 @@ fn mini_tile_at(grid: &Grid, row: usize, col: usize) -> u8 {
 /// [`MINI_TILE_LUT`], and the world's decorative bottom-fill strip. The map's 9
 /// rows go into interior rows 1..9; the 10th interior row is the world's
 /// [`BOTTOM_FILL`] tile (not a stretched map row).
-fn build_frame(grid: &Grid, base: usize, world: usize) -> Vec<u8> {
+fn build_frame(grid: &Grid, base: usize, world: usize, allocated: &[(u8, u8)]) -> Vec<u8> {
     let mut f = vec![EDGE_TOP; FRAME_LEN];
     // Corners and side borders.
     f[0] = CORNER_TL;
@@ -356,7 +364,7 @@ fn build_frame(grid: &Grid, base: usize, world: usize) -> Vec<u8> {
     for r in 0..ROWS {
         for ic in 0..INTERIOR_W {
             let mc = (base + ic).min(grid.cols - 1);
-            f[(r + 1) * FRAME_W + (ic + 1)] = mini_tile_at(grid, r, mc);
+            f[(r + 1) * FRAME_W + (ic + 1)] = mini_tile_at(grid, r, mc, allocated);
         }
     }
     // Decorative bottom strip fills the extra 10th interior row.
@@ -508,9 +516,9 @@ mod tests {
     fn handtrap_renders_as_node_marker() {
         let g = Grid { tiles: vec![vec![0x45, HAND_TRAP_TILE]], cols: 2, eights_are_wild: false };
         // A hand-trap draws the ring marker regardless of its neighbors.
-        assert_eq!(mini_tile_at(&g, 0, 1), HAND_TRAP_MINI);
+        assert_eq!(mini_tile_at(&g, 0, 1, &[]), HAND_TRAP_MINI);
         // A non-hand-trap tile is a plain LUT lookup.
-        assert_eq!(mini_tile_at(&g, 0, 0), MINI_TILE_LUT[0x45]);
+        assert_eq!(mini_tile_at(&g, 0, 0, &[]), MINI_TILE_LUT[0x45]);
     }
 
     #[test]

@@ -1433,7 +1433,10 @@ mod tests {
         // silently come back short. Idempotent, so the randomized arms below are
         // unaffected.
         let mut owned = rom.clone();
-        let rows = super::super::lock_keys::removable_rows(&rom_data::read_all_tile_grids(&owned));
+        let rows = super::super::lock_keys::removable_rows(
+            &rom_data::read_all_tile_grids(&owned),
+            &super::super::lock_keys::allocated_pairs_on_rom(&owned),
+        );
         super::super::lock_keys::relocate_removable_tables(&mut owned, &rows);
         let rom = &owned;
 
@@ -1495,11 +1498,13 @@ mod tests {
         // because the builder asks before anything is stamped, while the ROM
         // carries rows only for obstacles this map actually wears. The two
         // claims that matter are both directional.
-        let table: Vec<u8> =
-            super::super::lock_keys::removable_rows(&rom_data::read_all_tile_grids(&rom))
-                .into_iter()
-                .map(|(obstacle, _)| obstacle)
-                .collect();
+        let table: Vec<u8> = super::super::lock_keys::removable_rows(
+            &rom_data::read_all_tile_grids(&rom),
+            &super::super::lock_keys::allocated_pairs_on_rom(&rom),
+        )
+        .into_iter()
+        .map(|(obstacle, _)| obstacle)
+        .collect();
 
         for tile in 0..=255u8 {
             cpu.registers.accumulator = tile;

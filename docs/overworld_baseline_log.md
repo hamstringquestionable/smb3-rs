@@ -34,6 +34,36 @@ hashes they describe are gone; the reasoning is not.
 
 ## Entries
 
+### 2026-09-30 — lock tiles are allocated per seed (#309, feature/lock-tile-allocator)
+
+**Intended: lock tile bytes move; no map, pointer or pipe byte does.** The
+fixed lock-tile tables in `lock_keys.rs` are replaced by a per-seed allocator,
+and a lock now opens into the exact path it stands on. In standard mode that
+changes every lock on a vertical sky path (`$DB`, #226) and on a page-2 path
+(`$AA`/`$AB`/`$AC`/`$B0`/`$B7`/`$B8`/`$B9`/`$BA`). Each of those used to wear
+`$54`/`$56` and reveal a plain ground path, and now takes an allocated byte that
+reveals itself. That is about 13% of locks (200-seed census of the tile under
+each lock), so most seeds have at least one.
+
+**What moved.** 19 of the 20 seeds. Seed 12 has no such lock, and its hash is
+unchanged.
+
+**How that was established.** Byte diff, `--patched-rom --no-palettes`, old tree
+against new, seeds 1, 8, 12 and 16 in standard mode and 1, 8, 12 and 16 in the
+world maze. Every changed byte falls in one of four lock-owned regions: the lock
+cells of the tile grids, the metatile art at the allocated indices, the
+removable table (`FS_MAP_REMOVABLE`) and its PRG011 mirror (`FS_LOCK_MIRROR`).
+Seed 12 is byte-identical across the whole ROM, and no level, enemy, item or
+king-quote byte moved in any seed, so the RNG stream did not shift.
+
+In the maze the ending montage also changed: `credits::render_world_maps` now
+draws an allocated lock as the padlock or water gap whose art it copies. Before,
+every hint tile fell to the `$3F` terrain entry of its lookup table.
+
+`test_route_census` at 1000 seeds is unchanged figure for figure. The only
+builder-visible change is `is_completion_unsafe` treating the whole of both
+pools as obstacles, which adds `$7C`–`$7F`, bytes no map places.
+
 ### 2026-09-30 — desert note/wood item blocks join the shuffle (feature/desert-bro-arena)
 
 **Intended: an RNG-stream shift, not a builder change.** `LEVEL_DATA_REGIONS`'

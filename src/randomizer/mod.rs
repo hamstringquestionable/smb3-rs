@@ -434,12 +434,11 @@ fn randomize_inner(
     // but a flag key or a CLI run can still carry `hints: some` with the mode
     // off — and `some` is the default.
     //
-    // Both consumers are no-ops there anyway: nothing sets `SlotAssignment::
-    // lock_hint` outside the maze, and `lock_keys::stamp_hint_locks` only
-    // touches away locks. That is an accident of two other modules rather than
-    // a decision, though, and the day either changes it would switch a
-    // maze-only feature on in standard mode with nothing to say it should not.
-    // Say it here instead. The key still encodes what the player chose; this
+    // **This gate is load-bearing.** Nothing sets `SlotAssignment::lock_hint`
+    // outside the maze, but `lock_keys::lock_request` asks for a tan lock on
+    // every local lock under `some` — so without this, every sky lock in
+    // standard mode would turn tan, wearing a distinction that means nothing
+    // there. The key still encodes what the player chose; this
     // only decides what the run does with it.
     let hints = if options.world_maze { options.hints } else { crate::HintMode::Off };
 
@@ -620,6 +619,7 @@ fn randomize_inner(
         rom,
         &randomize::overworld_writer::lock_entries(&build),
         written.grids(rom),
+        written.lock_tiles(),
     );
 
     // Retire the 2-player Vs Challenge. Unconditional and order-free — it
@@ -669,7 +669,7 @@ fn randomize_inner(
     // run after `write_overworld` reads the final map tiles; the reorder must
     // run after the repack because it permutes the picture pointers.
     rom.set_tag("credits/world_maps");
-    randomize::credits::render_world_maps(rom, &mut rng);
+    randomize::credits::render_world_maps(rom, &mut rng, &written.lock_tiles().pairs());
     if let Some(progression) = &credits_progression {
         rom.set_tag("credits/world_order");
         let order = randomize::credits::order_from_progression(progression);
@@ -831,7 +831,7 @@ fn randomize_inner(
             rom,
             hammer_breaks_locks,
             hammer_breaks_bridges,
-            written.grids(rom),
+            &written.lock_tiles().pairs(),
         );
     }
 
