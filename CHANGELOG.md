@@ -107,6 +107,12 @@ deploys.
 
 ### Fixed
 
+- **A lock opens back into the path it was blocking.** Locks on sky paths
+  running up and down, island paths and bridge variants used to open into a
+  plain dirt path. A lock on an up-and-down sky path is also sky-coloured now,
+  rather than wearing the ground lock (#226).
+- **The ending montage draws World Maze hint locks as locks.** Numbered and
+  alternate-colour locks were drawn as trees on the credits mini-maps.
 - **World Maze, two players: each player stays in their own world, on their own
   tile.** Take a telepad and your partner no longer gets dragged along — hand
   the turn over and the map changes to wherever they were standing, with their

@@ -3,6 +3,10 @@
 use super::*;
 use crate::randomize::lock_keys;
 
+// Reason: each argument is a distinct input of the one stamp pass; `lock_tiles`
+// is the only state shared across worlds, and bundling it with `hints` would
+// invent a type whose only job is to carry two unrelated things.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn write_tile_grid<R: Rng>(
     rom: &mut Rom,
     built: &BuiltWorld,
@@ -10,6 +14,7 @@ pub(super) fn write_tile_grid<R: Rng>(
     data: &OverworldData,
     sprite_mask: &HashSet<(usize, usize)>,
     hints: crate::HintMode,
+    lock_tiles: &mut lock_keys::LockTiles,
     rng: &mut R,
 ) -> Grid {
     let pickup = data.pickup;
@@ -163,39 +168,22 @@ pub(super) fn write_tile_grid<R: Rng>(
     }
 
     // Stamp lock tiles. **Which byte is decided here, not by the builder.**
-    // A lock blocks by being absent from `Map_Object_Valid_*`, and all four
-    // lock bytes are — so the walk cannot tell them apart and the builder has
-    // no reason to care. The orientation exists so the lock looks right against
-    // the path it stands on, which is why it is derived from that path tile.
+    // A lock blocks by being absent from `Map_Object_Valid_*`, and every
+    // lock byte is — so the walk cannot tell them apart and the builder has
+    // no reason to care. The art and the reveal come from the path the lock stands on, so it
+    // looks right against that path and opens back into it.
     //
     // With hints on, the byte also says whether the key is in another world.
     // The *fact* is the model's (`LockAssignment::fort` names the world); the
-    // vocabulary is `lock_keys`', which owns the metatile art and the removable
-    // pairing that must agree with it.
+    // byte is `lock_keys`' to allocate, since it owns the metatile art, the
+    // removable pairing and the hammer rows that must agree with it. One
+    // allocator spans all eight worlds — see `LockTiles`.
     for lock in &built.locks {
         let under = grid.get(lock.pos.0, lock.pos.1);
-        let plain = rom_data::gap_tile_for(under);
         let away = lock.fort.world != wi;
         let shown = if away { lock_keys::shown_world(rom, lock.fort.world) } else { 0 };
-        grid.set(lock.pos.0, lock.pos.1, lock_keys::lock_tile(plain, away, shown, hints));
-    }
-
-    // **A local sky lock takes its own tile, and this is a sweep, not a
-    // per-lock branch.** Sky's alternate colour IS its plain tile, so a remote
-    // sky lock changes no byte — a rule keyed on the tile alone would sweep the
-    // remote ones up with the local ones (measured: 10 seeds in 30 had a sky
-    // lock and every one came back local). So the away positions are held out
-    // by name, and everything else wearing the sky lock takes the local tile.
-    if let Some((plain_sky, local)) = lock_keys::local_sky_tile(hints) {
-        let remote: HashSet<(usize, usize)> =
-            built.locks.iter().filter(|l| l.fort.world != wi).map(|l| l.pos).collect();
-        for r in 0..grid.rows() {
-            for c in 0..grid.cols {
-                if grid.get(r, c) == plain_sky && !remote.contains(&(r, c)) {
-                    grid.set(r, c, local);
-                }
-            }
-        }
+        let tile = lock_tiles.tile(lock_keys::lock_request(under, away, shown, hints));
+        grid.set(lock.pos.0, lock.pos.1, tile);
     }
 
     // Overwrite sprite-covered positions with connectivity-aware path nodes.

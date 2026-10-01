@@ -1247,14 +1247,15 @@ pub fn build(vanilla: &[u8], spec: &TestRomSpec) -> Result<TestRom, String> {
     //    works on a vanilla base too — testing what a hammer does to a lock
     //    shouldn't require randomizing the map first.
     if spec.hammer_breaks_locks || spec.hammer_breaks_bridges {
-        // Read the grids back: there is no overworld writer on this path, so
-        // the ROM is the record. See `world_persist::apply` above.
-        let grids = crate::randomize::rom_data::read_all_tile_grids(&rom);
+        // Read the allocated lock tiles back: there is no overworld writer on
+        // this path, so the ROM's removable table is the record. Empty on a
+        // vanilla base, which has only vanilla's locks.
+        let allocated = crate::randomize::lock_keys::allocated_pairs_on_rom(&rom);
         crate::randomize::qol::hammer_breaks_tiles(
             &mut rom,
             spec.hammer_breaks_locks,
             spec.hammer_breaks_bridges,
-            &grids,
+            &allocated,
         );
         let what = match (spec.hammer_breaks_locks, spec.hammer_breaks_bridges) {
             (true, true) => "locks + bridges",

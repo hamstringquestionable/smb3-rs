@@ -5918,6 +5918,37 @@ variant is a new row rather than a per-instance field.
   CHR quadrants `B6 B7 B8 B9`; `$54` and `$56` are pixel- *and* palette-identical
   and differ only in what they reveal. `$E4` differs only by palette page.
 
+### What locks actually stand on, and why the lock tiles are allocated per seed
+
+*(Measured 2026-09-30, #309.)* The tile under every lock the overworld writer
+stamped, over 200 seeds of each mode (3,400 locks per mode):
+
+| under the lock | standard | maze | page |
+|---|---|---|---|
+| `$45` / `$46` ground | 2,129 | 2,157 | 1 |
+| `$B3` bridge | 776 | 758 | 2 |
+| `$DB` sky vertical | 131 | 115 | 3 |
+| `$B7` `$AA` `$AC` `$AB` `$B0` `$B8` `$B9` `$BA` | 277 | 253 | 2 |
+| `$E6` hand trap path | 45 | 50 | 3 |
+| `$DA` sky horizontal | 42 | 67 | 3 |
+
+Vanilla's four obstacle rows can reveal only `$45`, `$46`, `$DA` and `$B3`, so
+about 13% of locks used to open into the wrong tile — a bridge or an island
+path became plain ground. `lock_keys::LockTiles` now allocates one byte per
+distinct `(path, colour, digit)` from page 1 `$6B`–`$7F` (tan) and page 3
+`$EC`–`$FE` (sky; `$FF` is a background tile), and each allocated byte reveals
+exactly the path it stands on. Allocation can never run out: a seed places at
+most 17 locks, and the smaller pool has 19 bytes.
+
+- **Page 2 has no free index for a lock**, so a lock on a page-2 path takes
+  the colour it asked for in page 1 or 3, and the revealed path draws in that
+  palette until the next map reload. `$80`/`$81` are the runtime completion
+  panels, and `$B6` is the island blank tile (`THEME_ISLAND`), not a leftover.
+- **A completable tile must never be revealed.** Opening a lock sets its cell's
+  completion bit, so a revealed tile in `Map_Completable_Tiles` or a page's M/L
+  window would come back as a Mario/Luigi panel on the next map load. `$E6` is
+  the one that occurs; its locks reveal the plain `$45` instead.
+
 ### Duplicated and dead entries
 
 - **`Map_ForcePoofTiles` (`$A9D5`) is byte-identical to `Map_Completable_Tiles`
