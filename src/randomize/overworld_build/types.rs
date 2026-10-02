@@ -93,7 +93,12 @@ pub enum LockHint {
     /// The lock is in World 8: this fortress opens the way to the castle.
     World8,
     /// The lock is in some other world.
-    Elsewhere,
+    ///
+    /// `marked` splits these into two families so a player holding an away
+    /// lock has half as many fortresses to try: a marked fortress opens a
+    /// marked lock, an unmarked one an unmarked lock. The maze alternates it;
+    /// only some-hints shows it (see `rom_data::TILE_FORTRESS_AWAY_MARKED`).
+    Elsewhere { marked: bool },
 }
 
 /// Stamp assigned slots onto a grid so `walk_map` sees them as nodes.

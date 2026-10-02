@@ -2527,8 +2527,13 @@ fn a_fortress_tile_says_where_its_lock_is() {
             relocated_checked += 1;
         }
 
+        // The away families alternate, so they can never differ by more than one.
+        let mut families = [0usize; 2];
         for (wi, built) in build.worlds.iter().enumerate() {
             for slot in built.slots.iter().filter(|s| s.kind == SlotKind::Fortress) {
+                if let LockHint::Elsewhere { marked } = slot.lock_hint {
+                    families[usize::from(marked)] += 1;
+                }
                 let fort = super::FortRef { world: wi, section: slot.section };
                 let Some(lock) = state.locks.iter().find(|l| l.fort == Some(fort)) else {
                     // A fortress that opens nothing has nothing to say.
@@ -2547,7 +2552,9 @@ fn a_fortress_tile_says_where_its_lock_is() {
                 } else if lock.world == W8_IDX {
                     (LockHint::World8, "its lock is in World 8", 2)
                 } else {
-                    (LockHint::Elsewhere, "its lock is in another world", 1)
+                    // Either family is a correct claim; the split is checked below.
+                    let marked = matches!(slot.lock_hint, LockHint::Elsewhere { marked: true });
+                    (LockHint::Elsewhere { marked }, "its lock is in another world", 1)
                 };
                 assert_eq!(
                     slot.lock_hint,
@@ -2562,6 +2569,12 @@ fn a_fortress_tile_says_where_its_lock_is() {
                 checked += 1;
             }
         }
+        assert!(
+            families[0].abs_diff(families[1]) <= 1,
+            "seed {seed}: away families split {} unmarked / {} marked — they alternate",
+            families[0],
+            families[1]
+        );
     }
     assert!(checked > 0, "no fortresses checked; the test is vacuous");
     assert!(

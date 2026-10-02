@@ -248,6 +248,17 @@ pub(crate) const TILE_FORTRESS: u8 = 0x67;
 /// `$E3`, the same as [`TILE_FORTRESS`]'s `$60`.
 pub(crate) const TILE_FORTRESS_AWAY: u8 = 0xEB;
 
+/// [`TILE_FORTRESS_AWAY`] with a nub in its lower-right corner: the other
+/// away family under some-hints (`LockHint::Elsewhere { marked: true }`). Its
+/// lock wears the same nub. `$EC` is the first byte past page 3's M/L window
+/// (`lock_keys::ML_RANGE_UPPER`), so it reloads through the removable table
+/// like `$6A` rather than flipping to a Mario/Luigi panel; `away_family` owns
+/// its art and its crumble.
+///
+/// Deliberately **not** in [`FORTRESS_TILES`]: that list is also the
+/// hints-off cosmetic pick, and a marked fortress must only ever mean one thing.
+pub(crate) const TILE_FORTRESS_AWAY_MARKED: u8 = 0xEC;
+
 /// Fortress whose lock is in World 8 — the ones that open the way to the
 /// castle. In neither tile registry, so it comes back wearing the completion
 /// marker rather than rubble; it still claims a completion bit.

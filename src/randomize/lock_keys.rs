@@ -96,6 +96,7 @@ use std::collections::HashMap;
 
 use crate::rom::Rom;
 
+use super::away_family;
 use super::completion_bits::{CompletionMap, HALF_LEN, PLANE_RESERVE};
 #[cfg(test)]
 use super::rom_data::NMI_SAFE_MAX;
@@ -243,6 +244,11 @@ pub(crate) const REMOVABLE_PAIRS: &[(u8, u8)] = &[
     // (`FORTRESS_TILES`), and [`ML_RANGE`]'s upper bound is what lets the row be
     // reached.
     (0x6A, 0x60), // large fortress    -> rubble
+    // The marked away fortress (`rom_data::TILE_FORTRESS_AWAY_MARKED`), the
+    // second away family under some-hints. Past page 3's M/L window for the
+    // same reason `$6A` is past page 1's, so this row is its whole reload path;
+    // `away_family` gives it the alt fortress's crumble on the clear itself.
+    (0xEC, 0xE3), // marked away fort  -> alt rubble
 ];
 
 // --- Lock tiles: allocated per seed --------------------------------------
@@ -263,7 +269,7 @@ pub(crate) const REMOVABLE_PAIRS: &[(u8, u8)] = &[
 ///
 /// **Exhaustion is impossible, not unlikely.** A seed places at most 17 locks
 /// and each makes at most one request that can allocate, against 21 indices
-/// in [`TAN_POOL`] and 19 in [`SKY_POOL`].
+/// in [`TAN_POOL`] and 18 in [`SKY_POOL`].
 ///
 /// **The reveal is the path itself.** A lock on an island path, a bridge variant
 /// or a vertical sky path opens into exactly that tile. The fixed tables could
@@ -287,6 +293,10 @@ pub(crate) struct LockRequest {
     pub colour: LockColour,
     /// The world number to show, as the player sees it (1-8).
     pub digit: Option<usize>,
+    /// The away-family nub ([`away_family::MARK`]) in the lower-right corner,
+    /// matching its fortress's. Never set together with `digit`: both claim
+    /// that corner, and only some-hints asks for the nub.
+    pub marked: bool,
 }
 
 /// Which page a lock draws in. Tan is page 1, `$54`/`$56`'s; sky is page 3,
@@ -325,9 +335,11 @@ struct Allocated {
 /// fortress, and nothing past it is defined. **Do not widen downward.**
 const TAN_POOL: std::ops::RangeInclusive<u8> = 0x6B..=0x7F;
 
-/// Page 3's undefined tail: `$EB` is the alt fortress, and `$FF` is a
-/// background tile. **Do not widen in either direction.**
-const SKY_POOL: std::ops::RangeInclusive<u8> = 0xEC..=0xFE;
+/// Page 3's undefined tail: `$EB` is the alt fortress, `$EC` its marked away
+/// family (`rom_data::TILE_FORTRESS_AWAY_MARKED`), and `$FF` is a background
+/// tile. **Do not widen in either direction.** 18 bytes, against at most 17
+/// locks.
+const SKY_POOL: std::ops::RangeInclusive<u8> = 0xED..=0xFE;
 
 /// Is this byte one the allocator may hand out?
 ///
@@ -359,10 +371,11 @@ impl LockTiles {
     ///
     /// # Panics
     ///
-    /// If a page runs out, which needs more than 19 distinct locks.
+    /// If a page runs out, which needs more than 18 distinct locks.
     pub(crate) fn tile(&mut self, req: LockRequest) -> u8 {
         let art = rom_data::gap_tile_for(req.path);
         let vanilla = req.digit.is_none()
+            && !req.marked
             && rom_data::path_for_gap_tile(art) == Some(req.path)
             && LockColour::of_tile(art) == req.colour;
         if vanilla {
@@ -395,7 +408,8 @@ impl LockTiles {
     }
 
     /// Compose each allocated tile's metatile: its vanilla obstacle's art,
-    /// with a digit in the lower-right quadrant when it carries one.
+    /// with a digit or the away-family nub in the lower-right quadrant when it
+    /// carries one.
     ///
     /// **The art is copied rather than written out**, so a path lock stays a
     /// padlock and a bridge gap stays a river with a number on it. The quadrant
@@ -407,6 +421,7 @@ impl LockTiles {
             for plane in 0..4 {
                 let pattern = match req.digit {
                     Some(world) if plane == 3 => HINT_DIGITS[world - 1],
+                    None if plane == 3 && req.marked => away_family::MARK,
                     _ => rom.read_byte(PRG012_FILE_BASE + plane * 256 + a.art as usize),
                 };
                 rom.write_byte(PRG012_FILE_BASE + plane * 256 + a.tile as usize, pattern);
@@ -421,11 +436,15 @@ impl LockTiles {
 /// is in another world, which outside the world maze never happens; `shown` is
 /// that world's number as the player sees it ([`shown_world`]).
 ///
-/// | Hints | Colour | Digit |
+/// | Hints | Colour | Corner |
 /// |---|---|---|
 /// | Off | the path's own | — |
-/// | Some | tan here, sky elsewhere | — |
-/// | Full | the path's own | the world, when elsewhere |
+/// | Some | tan here, sky elsewhere | the nub, when elsewhere and `marked` |
+/// | Full | the path's own | the world digit, when elsewhere |
+///
+/// `marked` is the away family of the lock's fortress
+/// (`LockHint::Elsewhere { marked }`). Only some-hints shows it: Full's digit
+/// already names the world, and owns the same corner.
 ///
 /// **The reveal is `under` itself, with one exception:** a path the reload
 /// would treat as completable. Opening a lock sets its cell's completion bit,
@@ -437,6 +456,7 @@ pub(crate) fn lock_request(
     under: u8,
     away: bool,
     shown: usize,
+    marked: bool,
     hints: crate::HintMode,
 ) -> LockRequest {
     let path = if super::overworld_build::is_completion_unsafe(under) {
@@ -450,7 +470,8 @@ pub(crate) fn lock_request(
         _ => LockColour::of_path(path),
     };
     let digit = (away && hints.numbers_locks()).then_some(shown);
-    LockRequest { path, colour, digit }
+    let marked = away && marked && hints == crate::HintMode::Partial;
+    LockRequest { path, colour, digit, marked }
 }
 
 /// The level panels' lower-right quadrants for worlds 1-8: the digit glyphs.
@@ -1016,16 +1037,18 @@ pub(crate) fn allocated_pairs_on_rom(rom: &Rom) -> Vec<(u8, u8)> {
 ///
 /// The bound is not a hope:
 ///
-/// * **Terrain: 6 rows.** Two rocks, three fortress variants, and the water gap
-///   — `$9D` is a vertical river segment and ordinary scenery, 45 cells on a
-///   water-heavy map, so its row is always spoken for whether or not any lock
-///   sits on a bridge.
+/// * **Terrain: 7 rows.** Two rocks, four fortress variants (the marked away
+///   fortress `$EC` is the fourth), and the water gap — `$9D` is a vertical
+///   river segment and ordinary scenery, 45 cells on a water-heavy map, so its
+///   row is always spoken for whether or not any lock sits on a bridge.
 /// * **Every lock contributes at most one row**, and a build places at most 17
 ///   locks. Locks that make the same request share a tile, and so a row.
 ///
-/// 6 + 17 = 23 against 24 slots. The assert is the guard if either term ever
-/// moves — `MAX_ENTRIES` permits 28 locks. It fails the build loudly, which is
-/// the right failure: a truncated table leaves a lock no fortress can open.
+/// 7 + 17 = 24 against 24 slots — **exactly full**, with no slack left. The
+/// assert is the guard if either term ever moves — `MAX_ENTRIES` permits 28
+/// locks. It fails the build loudly, which is the right failure: a truncated
+/// table leaves a lock no fortress can open. Growing past 24 means growing the
+/// PRG011 mirror, whose run ends at the bank's end (see [`REMOVABLE_COUNT`]).
 ///
 /// Reading presence off the finished grids rather than trusting placement means
 /// the table describes the map that shipped, not the map we intended.
@@ -1375,7 +1398,7 @@ mod asm_checks {
     // --- The allocator --------------------------------------------------
 
     fn req(path: u8, colour: LockColour, digit: Option<usize>) -> LockRequest {
-        LockRequest { path, colour, digit }
+        LockRequest { path, colour, digit, marked: false }
     }
 
     /// The pair the allocator recorded for `tile`.
@@ -1412,7 +1435,7 @@ mod asm_checks {
     #[test]
     fn a_sky_vertical_lock_reveals_sky() {
         let mut tiles = LockTiles::default();
-        let r = lock_request(0xDB, false, 0, crate::HintMode::Off);
+        let r = lock_request(0xDB, false, 0, false, crate::HintMode::Off);
         assert_eq!(r, req(0xDB, LockColour::Sky, None));
         let tile = tiles.tile(r);
         assert!(SKY_POOL.contains(&tile), "{tile:#04X} is not a sky tile");
@@ -1440,7 +1463,7 @@ mod asm_checks {
     #[test]
     fn a_completable_path_reveals_the_plain_path() {
         assert!(super::super::overworld_build::is_completion_unsafe(0xE6));
-        assert_eq!(lock_request(0xE6, false, 0, crate::HintMode::Off).path, 0x45);
+        assert_eq!(lock_request(0xE6, false, 0, false, crate::HintMode::Off).path, 0x45);
     }
 
     /// The mode table in [`lock_request`]'s doc comment, row by row.
@@ -1449,13 +1472,48 @@ mod asm_checks {
         use crate::HintMode::{Full, Off, Partial};
         let sky = LockColour::Sky;
         let tan = LockColour::Tan;
-        assert_eq!(lock_request(0xDA, false, 0, Off), req(0xDA, sky, None));
-        assert_eq!(lock_request(0xDA, false, 0, Partial), req(0xDA, tan, None));
-        assert_eq!(lock_request(0x45, true, 4, Partial), req(0x45, sky, None));
-        assert_eq!(lock_request(0xB3, true, 4, Partial), req(0xB3, sky, None));
-        assert_eq!(lock_request(0x45, true, 4, Full), req(0x45, tan, Some(4)));
-        assert_eq!(lock_request(0xDA, true, 4, Full), req(0xDA, sky, Some(4)));
-        assert_eq!(lock_request(0x45, false, 0, Full), req(0x45, tan, None));
+        assert_eq!(lock_request(0xDA, false, 0, false, Off), req(0xDA, sky, None));
+        assert_eq!(lock_request(0xDA, false, 0, false, Partial), req(0xDA, tan, None));
+        assert_eq!(lock_request(0x45, true, 4, false, Partial), req(0x45, sky, None));
+        assert_eq!(lock_request(0xB3, true, 4, false, Partial), req(0xB3, sky, None));
+        assert_eq!(lock_request(0x45, true, 4, false, Full), req(0x45, tan, Some(4)));
+        assert_eq!(lock_request(0xDA, true, 4, false, Full), req(0xDA, sky, Some(4)));
+        assert_eq!(lock_request(0x45, false, 0, false, Full), req(0x45, tan, None));
+
+        // The away family's nub: some-hints, away, and a marked fortress — all
+        // three, or nothing. Full's digit owns the corner, and a local lock
+        // has no family.
+        let nubbed = |path, colour| LockRequest { marked: true, ..req(path, colour, None) };
+        assert_eq!(lock_request(0x45, true, 4, true, Partial), nubbed(0x45, sky));
+        assert_eq!(lock_request(0xDA, true, 4, true, Partial), nubbed(0xDA, sky));
+        assert_eq!(lock_request(0x45, false, 0, true, Partial), req(0x45, tan, None));
+        assert_eq!(lock_request(0x45, true, 4, true, Full), req(0x45, tan, Some(4)));
+        assert_eq!(lock_request(0x45, true, 4, true, Off), req(0x45, tan, None));
+    }
+
+    /// **A nubbed lock is never answered by a vanilla tile, and never shares
+    /// one with its plain twin.** `$E4` is the plain away sky lock, so a marked
+    /// one on a sky path has to allocate; and the art keeps the padlock with
+    /// only the corner swapped.
+    #[test]
+    fn a_marked_lock_allocates_its_own_tile() {
+        let Some(mut rom) = vanilla() else {
+            eprintln!("SKIP: requires the ROM");
+            return;
+        };
+        let mut tiles = LockTiles::default();
+        let plain = tiles.tile(req(0xDA, LockColour::Sky, None));
+        let marked = tiles.tile(LockRequest { marked: true, ..req(0xDA, LockColour::Sky, None) });
+        assert_eq!(plain, 0xE4);
+        assert!(SKY_POOL.contains(&marked), "{marked:#04X}");
+        assert_eq!(reveal_of(&tiles, marked), 0xDA);
+
+        tiles.write_metatiles(&mut rom);
+        let plane = |p: usize, t: u8| rom.read_byte(PRG012_FILE_BASE + p * 256 + t as usize);
+        for p in 0..3 {
+            assert_eq!(plane(p, marked), plane(p, 0xE4), "plane {p} is the padlock's");
+        }
+        assert_eq!(plane(3, marked), away_family::MARK);
     }
 
     /// **Every request the writer can make obeys the rules a row has to.**

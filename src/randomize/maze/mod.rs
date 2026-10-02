@@ -1163,8 +1163,13 @@ pub(crate) fn generate<R: Rng>(
 ///   43% at K=7), because sealing a lock can strand an airship the wand count
 ///   needs.
 ///
-/// Consumes no RNG.
+/// Consumes no RNG — including the away-fortress family, which alternates in
+/// world-then-slot order rather than being drawn.
 pub(crate) fn stamp_into(build: &mut BuildResult, state: &GlobalState) {
+    // Flips on every `Elsewhere` fortress across all eight worlds, so the two
+    // families split as evenly as the count allows.
+    let mut next_marked = false;
+
     // The wand gate's masonry. `wand_gate::apply` installs the opener and its
     // hooks; the cell it stands on is a map tile like any other, and `W8`'s
     // builder reserved it (`WorldState::wand_gate_reserved`) so nothing else
@@ -1241,7 +1246,9 @@ pub(crate) fn stamp_into(build: &mut BuildResult, state: &GlobalState) {
             } else if lock.world == rom_data::W8_IDX {
                 LockHint::World8
             } else {
-                LockHint::Elsewhere
+                let marked = next_marked;
+                next_marked = !next_marked;
+                LockHint::Elsewhere { marked }
             };
         }
     }
