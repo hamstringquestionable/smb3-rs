@@ -621,6 +621,10 @@ fn randomize_inner(
         written.grids(rom),
         written.lock_tiles(),
     );
+    // The marked away fortress's art and crumble. A no-op unless some-hints
+    // stamped one, so every other mode's bytes are untouched.
+    rom.set_tag("away_family");
+    randomize::away_family::apply(rom, written.grids(rom));
 
     // Retire the 2-player Vs Challenge. Unconditional and order-free — it
     // splices three sites nothing else touches. See the module docs for why it

@@ -151,10 +151,10 @@ pub(crate) fn is_numbered_level(tile: u8) -> bool {
     (NUMBERED_TILE_LO..=NUMBERED_TILE_HI).contains(&tile)
 }
 
-/// A fortress tile (any of the three variants).
+/// A fortress tile (any of the four variants).
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn is_fortress(tile: u8) -> bool {
-    FORTRESS_TILES.contains(&tile)
+    FORTRESS_TILES.contains(&tile) || tile == super::TILE_FORTRESS_AWAY_MARKED
 }
 
 #[cfg(test)]
@@ -219,6 +219,7 @@ mod tests {
         for t in FORTRESS_TILES {
             assert!(is_fortress(t));
         }
+        assert!(is_fortress(super::super::TILE_FORTRESS_AWAY_MARKED));
         assert!(!is_fortress(0x45));
     }
 

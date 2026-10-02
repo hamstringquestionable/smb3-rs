@@ -34,6 +34,41 @@ hashes they describe are gone; the reasoning is not.
 
 ## Entries
 
+### 2026-10-02 — away fortress families on Some hints (feature/away-fort-families)
+
+**Intended: the marked away fortress takes `$EC`, so the sky lock pool starts
+one byte later.** Under some-hints every other away fortress becomes `$EC` and
+its lock wears a corner nub (`away_family.rs`). `$EC` was the first byte of
+`lock_keys::SKY_POOL`, which is now `$ED`–`$FE`. In standard mode, where the
+baseline runs, nothing is marked. The only change is that every allocated sky
+lock tile is renumbered up by one byte.
+
+**What moved.** 11 of the 20 seeds: 1, 2, 4, 9, 10, 11, 13, 14, 16, 18 and 20,
+the ones with an allocated sky lock.
+
+**How that was established.** Byte diff, `--patched-rom --no-palettes`, old tree
+against new, all 20 seeds in standard mode. Every changed byte falls in one of
+four lock-owned regions:
+
+- 11 grid cells, each going from `n` to `n + 1` within the old pool;
+- the metatile art at those indices (88 bytes);
+- `FS_MAP_REMOVABLE` (11 bytes);
+- `FS_LOCK_MIRROR` (11 bytes).
+
+No pointer table, lock entry, level, enemy or item byte moved.
+
+The world maze on Some was diffed the same way over seeds 1–10. Every changed
+byte is in those four regions, the 26-byte crumble pick at `PRG011_AA8D` (file
+`0x16A9D`), or the ending montage's redrawn maps (`credits::render_world_maps`,
+`0x32126`–`0x325E9`). The grid changes are the intended ones: 37 `$EB → $EC`
+fortresses, and locks renumbered or newly nubbed (three plain `$E4` sky locks
+became allocated nubbed tiles).
+
+`test_route_census` is not rerun because nothing the builder reads changed:
+`stamp_into`'s alternation draws no RNG, and `is_completion_unsafe` answers the
+same for every byte. `$EC` left the pool but joined `REMOVABLE_PAIRS`, so it is
+still an obstacle.
+
 ### 2026-09-30 — lock tiles are allocated per seed (#309, feature/lock-tile-allocator)
 
 **Intended: lock tile bytes move; no map, pointer or pipe byte does.** The

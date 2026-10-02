@@ -2,6 +2,9 @@ pub mod anchor_dedup;
 pub mod anchor_visuals;
 pub mod antechambers;
 pub mod autoscroll;
+/// Under some-hints, every other away fortress and the lock it opens share a
+/// corner nub, halving the fortresses a stuck player has to try.
+pub mod away_family;
 pub mod beta_tornado;
 pub mod big_q_rooms;
 pub mod bowser_castle;
