@@ -285,8 +285,8 @@ pub(super) fn koopalings(rom: &mut Rom, options: &Options, rng: &mut ChaCha8Rng)
         randomize::enemies::koopalings::fix_koopaling_softlock(rom);
         rom.set_tag("koopalings/collision_guard");
         randomize::enemies::koopalings::koopaling_collision_guard(rom);
-        rom.set_tag("koopalings/vram_clear");
-        randomize::enemies::koopalings::koopaling_vram_clear(rom);
+        rom.set_tag("koopalings/bowser_door_buffer_clear");
+        randomize::enemies::koopalings::bowser_door_buffer_clear(rom);
         rom.set_tag("koopalings/y_clamp");
         randomize::enemies::koopalings::koopaling_y_clamp(rom);
     }

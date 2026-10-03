@@ -65,33 +65,43 @@ pub(crate) fn koopaling_collision_guard(rom: &mut Rom) {
     rom.write_range(KOOPA_COLLISION_PATCH_SITE, &[0x20, lo, hi]); // JSR
 }
 
-/// Clear VRAM transfer buffer on Koopaling defeat.
+/// Empty the graphics buffer every frame of Bowser's final-door scene.
 ///
-/// Source: Fred's Koopaling fixes.
+/// Source: fcoughlin (Fred). His randomizer applies it; there is no IPS.
 ///
-/// The fixed-bank cleanup at $F513 only clears $0300/$0301 (PPU VRAM buffer
-/// header) when Level_ExitTo ($005E) == 0. But the Koopaling defeat routine
-/// sets $005E = 6 *before* cleanup runs, so the conditional clear is skipped.
-/// Stale VRAM write commands persist and get processed by NMI during the
-/// wand-drop/king-rescue transition, causing garbled tiles — especially when
-/// airships are shuffled to non-native worlds with different CHR banks.
+/// **Not a Koopaling patch** despite living here — it hooks Bowser's code.
+/// Code adds PPU write commands to `Graphics_Buffer` (`$0301+`, count in
+/// `Graphics_BufCnt` `$0300`) during a frame, and the NMI uploads ONE source,
+/// picked by `Graphics_Queue` (`$5E`): 0 uploads the buffer and empties it;
+/// non-zero uploads a fixed `Video_Upd_Table` entry instead and leaves the
+/// buffer neither sent nor emptied (PRG031 `$F513`).
 ///
-/// We hook the defeat finalization at $BFA8 (file 0x03FB8, 8 bytes) via
-/// JSR to a new routine that does the original work plus zeros $0300/$0301.
+/// `Bowser_DoorAppear` (state 5 of Bowser's state table) sets
+/// `Graphics_Queue = 6` on every frame the door to the Princess is shown, to
+/// cycle its colour. For that whole scene the buffer is never flushed, so
+/// anything queued into it would pile up — drawn as stale tiles on the next
+/// screen, or overrunning the 107-byte buffer. This empties it each frame.
 ///
-/// Patch site: file 0x03FB8 (CPU $BFA8), 8 bytes.
-const KOOPA_DEFEAT_PATCH_SITE: usize = 0x03FB8;
+/// **No vanilla trigger is known.** A survey of every `Graphics_BufCnt`
+/// writer found none that runs in Bowser's room during the door scene (a few
+/// PRG002/PRG008 callers were not traced). It is kept as a guard against a
+/// randomized object there doing so; 16 bytes, and the only writes it can
+/// discard are ones that were never going to be uploaded.
+///
+/// Patch site: the 8-byte tail of `Bowser_DoorAppear`, file 0x03FB8
+/// (CPU `$BFA8`), replaced by a JSR to the original tail plus the clear.
+const BOWSER_DOOR_PATCH_SITE: usize = 0x03FB8;
 
-pub(crate) fn koopaling_vram_clear(rom: &mut Rom) {
-    use crate::randomize::rom_data::{FS_KOOPA_VRAM_CLEAR, KOOPA_VRAM_CLEAR_CPU};
+pub(crate) fn bowser_door_buffer_clear(rom: &mut Rom) {
+    use crate::randomize::rom_data::{BOWSER_DOOR_BUFFER_CLEAR_CPU, FS_BOWSER_DOOR_BUFFER_CLEAR};
 
     // Subroutine (16 bytes):
-    //   LDA #$06       ; exit type = Koopaling wand
-    //   STA $005E      ; Level_ExitTo
-    //   LDX $CD        ; restore object slot index
+    //   LDA #$06       ; vanilla: Graphics_Queue = 6 (palette upload)
+    //   STA $005E      ; Graphics_Queue
+    //   LDX $CD        ; vanilla: restore SlotIndexBackup
     //   LDA #$00
-    //   STA $0300      ; clear VRAM buffer byte 0
-    //   STA $0301      ; clear VRAM buffer byte 1
+    //   STA $0300      ; Graphics_BufCnt = 0
+    //   STA $0301      ; Graphics_Buffer terminator
     //   RTS
     #[rustfmt::skip]
     let code: [u8; 16] = [
@@ -103,14 +113,14 @@ pub(crate) fn koopaling_vram_clear(rom: &mut Rom) {
         0x8D, 0x01, 0x03,   // STA $0301
         0x60,                // RTS
     ];
-    rom.write_range(FS_KOOPA_VRAM_CLEAR, &code);
+    rom.write_range(FS_BOWSER_DOOR_BUFFER_CLEAR, &code);
 
-    // Patch site: replace 8-byte defeat finalization with JSR + NOPs + RTS
-    let lo = (KOOPA_VRAM_CLEAR_CPU & 0xFF) as u8;
-    let hi = (KOOPA_VRAM_CLEAR_CPU >> 8) as u8;
+    // Patch site: replace the 8-byte routine tail with JSR + NOPs + RTS
+    let lo = (BOWSER_DOOR_BUFFER_CLEAR_CPU & 0xFF) as u8;
+    let hi = (BOWSER_DOOR_BUFFER_CLEAR_CPU >> 8) as u8;
     #[rustfmt::skip]
-    rom.write_range(KOOPA_DEFEAT_PATCH_SITE, &[
-        0x20, lo, hi,   // JSR vram_clear
+    rom.write_range(BOWSER_DOOR_PATCH_SITE, &[
+        0x20, lo, hi,   // JSR buffer_clear
         0xEA, 0xEA,     // NOP; NOP
         0xEA, 0xEA,     // NOP; NOP
         0x60,            // RTS
@@ -355,10 +365,38 @@ const KOOPA_HITS_CODE: [u8; 13] = [
 /// threshold, guaranteeing defeat.
 const KOOPA_FIRE_HANDOFF: usize = 0x03035;
 
+/// File offset of `LDA Koopaling_JumpYVelsBase,Y` in the jump-selection
+/// branch (CPU `$AFD1`, just after `LDY Objects_Var4,X`, the hit count).
+///
+/// Vanilla's table has three entries, one per hit count 0-2, because a
+/// Koopaling dies on its third stomp. With a random threshold of up to 5, the
+/// count reaches 3 and 4 while the fight is still on, and the read runs off
+/// the end into the next table: base `$63`, so the jump chance and jump
+/// velocity are then fetched from program code (a "jump" of +$78 in World 4).
+///
+/// Fred caps the index at 2 with a 12-byte routine. We repoint the operand at
+/// an extended copy of the table instead: same result, 6 bytes of data and no
+/// code.
+const KOOPA_JUMP_BASE_READ: usize = 0x02FE1;
+
+/// Vanilla `Koopaling_JumpYVelsBase` (`$AE82`): the row each hit count uses in
+/// `Koopaling_JumpChanceMask` / `Koopaling_JumpYVels`, before the world is
+/// added. The tests' oracle for the extended table below.
+#[cfg(test)]
+const KOOPA_JUMP_BASE_VANILLA: [u8; 3] = [0x00, 0x07, 0x0E];
+
+/// The table extended to hit counts 0-5. Counts past 2 reuse the last row,
+/// which is what Fred's cap does. Index 5 is margin: the count only reaches
+/// the threshold (at most 5) on the killing stomp, after which this branch no
+/// longer runs.
+const KOOPA_JUMP_BASE_EXTENDED: [u8; 6] = [0x00, 0x07, 0x0E, 0x0E, 0x0E, 0x0E];
+
 /// Returns the per-world stomp threshold table it wrote, so
 /// [`crate::randomize::cosmetic::king_quotes`] can have a king remark on it.
 pub(crate) fn randomize_koopaling_hits<R: Rng>(rom: &mut Rom, rng: &mut R) -> [u8; 7] {
-    use crate::randomize::rom_data::{FS_KOOPA_FIRE_PRESET, KOOPA_FIRE_PRESET_CPU};
+    use crate::randomize::rom_data::{
+        FS_KOOPA_FIRE_PRESET, FS_KOOPA_JUMP_BASE, KOOPA_FIRE_PRESET_CPU,
+    };
 
     // Write stomp threshold subroutine into free space
     rom.write_range(crate::randomize::rom_data::FS_KOOPA_HITS_SUB, &KOOPA_HITS_CODE);
@@ -403,7 +441,18 @@ pub(crate) fn randomize_koopaling_hits<R: Rng>(rom: &mut Rom, rng: &mut R) -> [u
     let hi = (KOOPA_FIRE_PRESET_CPU >> 8) as u8;
     rom.write_range(KOOPA_FIRE_HANDOFF, &[0x20, lo, hi, 0xEA]); // JSR + NOP
 
+    // Keep the jump-table read in bounds for hit counts past 2.
+    rom.write_range(FS_KOOPA_JUMP_BASE, &KOOPA_JUMP_BASE_EXTENDED);
+    rom.write_range(KOOPA_JUMP_BASE_READ, &jump_base_read());
+
     table
+}
+
+/// The rewritten jump-base read: same `LDA abs,Y`, pointed at the extended
+/// table.
+fn jump_base_read() -> [u8; 3] {
+    use crate::randomize::rom_data::KOOPA_JUMP_BASE_CPU;
+    [0xB9, KOOPA_JUMP_BASE_CPU as u8, (KOOPA_JUMP_BASE_CPU >> 8) as u8]
 }
 
 // Randomize per-fortress Boom-Boom stomp counts (1–5 hits each).
@@ -611,6 +660,13 @@ mod tests {
         let fire = rom.read_range(crate::randomize::rom_data::FS_KOOPA_FIRE_PRESET, 12);
         assert_eq!(fire[0], 0xAC); // LDY abs
         assert_eq!(fire[11], 0x60); // RTS
+
+        // Jump-base read repointed at the extended table
+        assert_eq!(rom.read_range(KOOPA_JUMP_BASE_READ, 3), &jump_base_read());
+        assert_eq!(
+            rom.read_range(crate::randomize::rom_data::FS_KOOPA_JUMP_BASE, 6),
+            &KOOPA_JUMP_BASE_EXTENDED
+        );
     }
 
     #[test]
@@ -725,5 +781,37 @@ mod asm_checks {
             .allocation(crate::randomize::rom_data::FS_KOOPA_HITS_SUB)
             .fragment()
             .assert_ok();
+    }
+
+    /// The extended jump-base table gives every hit count the row Fred's cap
+    /// would, `min(hits, 2)`, for every count a living Koopaling can hold.
+    #[test]
+    fn jump_base_matches_fred_cap() {
+        for hits in 0..KOOPA_JUMP_BASE_EXTENDED.len() {
+            assert_eq!(
+                KOOPA_JUMP_BASE_EXTENDED[hits],
+                KOOPA_JUMP_BASE_VANILLA[hits.min(2)],
+                "hit count {hits}"
+            );
+        }
+    }
+
+    /// The rewritten read is one whole instruction over one whole instruction,
+    /// and the vanilla table it replaces is the one this module describes.
+    #[test]
+    fn jump_base_read_is_well_formed() {
+        let read = jump_base_read();
+        let mut check = asm::check(&read).fragment();
+        let vanilla = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes").ok();
+        if let Some(v) = &vanilla {
+            assert_eq!(&v[KOOPA_JUMP_BASE_READ..KOOPA_JUMP_BASE_READ + 3], &[0xB9, 0x82, 0xAE]);
+            assert_eq!(&v[0x02E92..0x02E95], &KOOPA_JUMP_BASE_VANILLA, "$AE82 table");
+            let fs = crate::randomize::rom_data::FS_KOOPA_JUMP_BASE;
+            assert!(v[fs..fs + 6].iter().all(|&b| b == 0xFF), "jump-base gap is not filler");
+            check = check.hook(v, KOOPA_JUMP_BASE_READ, &read);
+        } else {
+            eprintln!("SKIP hook check: requires the ROM, which is not included in the repo");
+        }
+        check.assert_ok();
     }
 }
