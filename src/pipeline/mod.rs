@@ -1,5 +1,5 @@
-//! The pipeline: vanilla ROM in, randomized ROM out. [`randomize_inner`] is its
-//! table of contents and [`stages`] holds each step. The `Options` config and
+//! The pipeline: vanilla ROM in, randomized ROM out. `randomize_inner` is its
+//! table of contents and `stages` holds each step. The `Options` config and
 //! flag-key codec live in submodules.
 
 use rand::SeedableRng;
@@ -99,7 +99,19 @@ pub(crate) fn randomize_with_overworld_capture(
 /// stream, so moving a call changes every seed downstream of it. Two side
 /// streams keep subsystems from perturbing it: `item_rng` (see `ITEM_SALT`) for
 /// the item tables, and the `MAYBE_SALT` stream that [`stages::resolve`]
-/// consumes for the tri-state flags.
+/// consumes for the tri-state flags. Palettes draw from OS entropy instead, so
+/// they are deliberately *not* reproducible from the seed.
+///
+/// **Some options override others**, and each override sits in a different
+/// stage, so here they are in one place:
+/// - `world_maze` forces `world_order` on and pins `world_count` to 7
+///   ([`stages::world_order_and_shuffles`]), forces whistles out of the item
+///   pools ([`stages::resolve`]), and forces `no_game_over_penalty` on
+///   ([`stages::engine_patches`]).
+/// - Without `world_maze`, `hints` and `item_gates` are treated as off
+///   ([`stages::resolve`]).
+/// - `king_quotes` gates only its ROM writes; the quotes are always drawn, so
+///   toggling it moves no seed ([`stages::bosses_and_quotes`]).
 fn randomize_inner(
     rom: &mut Rom,
     seed: u64,

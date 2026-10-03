@@ -471,7 +471,7 @@ docs/                  # See docs/README.md for the index and each doc's status
   vision.md            # What the project is for, and what it refuses to be
   choice_first_charter.md # The overworld builder's design authority
   world_maze_design.md # The world maze
-  application_flow.md  # The pipeline, in execution order
+  (the pipeline order lives in src/pipeline/mod.rs, not in a doc)
 ```
 
 ## Overworld Builder Pipeline

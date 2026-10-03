@@ -1,3 +1,15 @@
+//! SMB3 randomizer: a vanilla ROM in, a randomized ROM or IPS patch out.
+//!
+//! Every entry point funnels through [`randomize_rom_with_patches`]:
+//!
+//! 1. [`Rom::from_bytes_lax`] validates the input (unless `skip_rom_validation`)
+//!    and converts a Rev 0 ROM to Rev 1.
+//! 2. Optional visual IPS patches are applied, *after* that conversion.
+//! 3. [`pipeline::randomize`] runs the randomizer. `pipeline/mod.rs` is the
+//!    table of contents for everything it does, in order.
+//! 4. [`generate_patch`] diffs the result against the bytes the user supplied
+//!    into an IPS patch; [`generate_patched_rom`] returns the whole ROM.
+
 pub mod ips;
 pub mod pipeline;
 pub mod randomize;
