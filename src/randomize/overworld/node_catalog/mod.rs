@@ -9,7 +9,7 @@
 
 use crate::rom::Rom;
 
-use super::rom_data::{self, BETA_LEVELS, HB_EXCLUDE_OBJ_PTRS, LevelEntry, Pos};
+use crate::randomize::rom_data::{self, BETA_LEVELS, HB_EXCLUDE_OBJ_PTRS, LevelEntry, Pos};
 
 mod classify;
 mod naming;
@@ -28,7 +28,7 @@ pub(super) type RawClassifiedEntry = (usize, NodeKind, Pos, u8, Option<LevelEntr
 
 /// Classification of a pointer table entry.
 #[derive(Clone, Debug)]
-pub(super) enum NodeKind {
+pub(crate) enum NodeKind {
     /// Numbered action level.
     Level,
     /// Fortress.
@@ -96,7 +96,7 @@ impl NodeKind {
 
 /// A single classified pointer table entry.
 #[derive(Clone, Debug)]
-pub(super) struct CatalogEntry {
+pub(crate) struct CatalogEntry {
     pub world_idx: usize,
     pub entry_idx: usize,
     pub kind: NodeKind,
@@ -136,12 +136,12 @@ pub(crate) struct EntryView {
 
 /// Complete catalog of all pointer table entries across all 8 worlds.
 pub(crate) struct NodeCatalog {
-    pub(super) entries: Vec<CatalogEntry>,
+    pub(crate) entries: Vec<CatalogEntry>,
     /// Per-world flag: when true, the Start and Airship entries' `grid_pos`
     /// have been swapped (Mario spawns at the airship coords, the airship/
     /// objective lives at the start coords). Index 7 (W8) is always false —
     /// Bowser's castle has no slot-1 airship sprite to move.
-    pub(super) start_airship_swapped: [bool; 8],
+    pub(crate) start_airship_swapped: [bool; 8],
 }
 
 impl NodeCatalog {

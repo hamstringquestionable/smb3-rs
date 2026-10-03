@@ -11,12 +11,12 @@ use std::collections::{HashMap, HashSet, VecDeque};
 #[cfg(test)]
 use crate::rom::Rom;
 
-use super::rom_data::{
+use crate::randomize::rom_data::{
     self, BACKGROUND_TILES, Grid, TILE_AIRSHIP, TILE_BOWSER, TeleportEdge, VALID_HORZ, VALID_VERT,
 };
 
 #[cfg(test)]
-use super::rom_data::Pos;
+use crate::randomize::rom_data::Pos;
 
 /// Movement directions: (delta_row, delta_col, is_horizontal).
 const DIRECTIONS: [(i8, i8, bool); 4] = [
@@ -313,7 +313,7 @@ fn walk_from(
 /// call dominated the lock pass's cost; this returns the identical node SET
 /// (BFS reachability is order-independent) with no per-call allocation beyond
 /// one bit-vector.
-pub(super) struct Reach {
+pub(crate) struct Reach {
     bits: Vec<u64>,
     cols: usize,
     count: usize,
@@ -338,7 +338,7 @@ impl Reach {
     }
 
     #[inline]
-    pub(super) fn contains(&self, (r, c): (usize, usize)) -> bool {
+    pub(crate) fn contains(&self, (r, c): (usize, usize)) -> bool {
         let i = r * self.cols + c;
         (self.bits[i >> 6] >> (i & 63)) & 1 == 1
     }
@@ -483,7 +483,7 @@ fn expand(
 /// Reachability-only counterpart of [`walk_map`]: same start resolution and
 /// canoe gating, returns the reachable-node bitset. Use wherever only `.nodes`
 /// is read.
-pub(super) fn walk_reachable(
+pub(crate) fn walk_reachable(
     grid: &Grid,
     pipe_pairs: &[TeleportEdge],
     start_pos: Option<(usize, usize)>,
@@ -504,13 +504,13 @@ pub(super) fn walk_reachable(
 ///
 /// That is the whole reason the builder no longer carries tile bytes. The
 /// orientation exists so the lock *looks* right against the path underneath,
-/// which is a rendering question, so `overworld_writer` answers it with
+/// which is a rendering question, so `overworld::writer` answers it with
 /// `rom_data::gap_tile_for` at stamp time. The builder says only *where* the
 /// locks are and which are shut.
 ///
 /// Cells are path cells — the intermediate square of a two-tile move — because
 /// that is where a lock stands.
-pub(super) fn walk_reachable_blocked(
+pub(crate) fn walk_reachable_blocked(
     grid: &Grid,
     pipe_pairs: &[TeleportEdge],
     start_pos: Option<(usize, usize)>,
@@ -586,8 +586,8 @@ pub(super) fn find_chokepoints(result: &WalkResult) -> HashSet<(usize, usize)> {
 
 #[cfg(test)]
 mod tests {
-    use super::rom_data;
     use super::*;
+    use crate::randomize::rom_data;
 
     /// **The one-walk canoe gate agrees with the two-walk version it replaced.**
     ///

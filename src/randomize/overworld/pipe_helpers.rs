@@ -2,11 +2,13 @@
 //!
 //! These helpers handle the mechanical ROM writes for moving pipe endpoints
 //! on the overworld map. The randomization logic (choosing WHERE pipes go)
-//! lives in `overworld_build.rs`; this module handles HOW to write those decisions.
+//! lives in `overworld::build`; this module handles HOW to write those decisions.
 
 use crate::rom::Rom;
 
-use super::rom_data::{self, PIPE_MAP_SCRL_XHI, PIPE_MAP_X, PIPE_MAP_XHI, PIPE_MAP_Y, WORLDS};
+use crate::randomize::rom_data::{
+    self, PIPE_MAP_SCRL_XHI, PIPE_MAP_X, PIPE_MAP_XHI, PIPE_MAP_Y, WORLDS,
+};
 
 // ---------------------------------------------------------------------------
 // Types
@@ -27,7 +29,7 @@ const INIT_INDEX_MASTER: usize = 0x193DA;
 
 /// Convert grid position to pipe destination table nibble values.
 /// Returns (screen_nib, col_nib, row_nib).
-pub(super) fn grid_pos_to_dest_nibbles(grid_row: usize, grid_col: usize) -> (u8, u8, u8) {
+pub(crate) fn grid_pos_to_dest_nibbles(grid_row: usize, grid_col: usize) -> (u8, u8, u8) {
     let row_nib = (grid_row + 2) as u8;
     let screen = (grid_col / 16) as u8;
     let col = (grid_col % 16) as u8;
@@ -51,7 +53,7 @@ pub(super) fn grid_pos_to_dest_nibbles(grid_row: usize, grid_col: usize) -> (u8,
 /// never be set for these worlds or it shifts the camera 128px right, cutting
 /// off half the visible screen. Vanilla confirms: no W5/W8 pipe scroll
 /// nibbles ever use the center flag.
-pub(super) fn scroll_nibble(screen: u8, col_in_screen: u8, discrete_screens: bool) -> u8 {
+pub(crate) fn scroll_nibble(screen: u8, col_in_screen: u8, discrete_screens: bool) -> u8 {
     if discrete_screens {
         return screen;
     }

@@ -102,11 +102,11 @@
 use crate::rom::Rom;
 
 use crate::randomize::maze::maze_state::{WANDS_TABLE, WANDS_TABLE_LEN};
+use crate::randomize::overworld::world_order::WORLD_INC_OFFSET;
 use crate::randomize::rom_data::{
     BRIDGE_TILE, FS_MAZE_WAND_COUNT, FS_MAZE_WAND_GATE, MAP_RELOAD_CPU, PRG012_FILE_BASE, W8_IDX,
     W8_WAND_GATE_POS, WORLD_NUM, prg030_file_to_cpu,
 };
-use crate::randomize::world_order::WORLD_INC_OFFSET;
 
 // --- Addresses ----------------------------------------------------------
 
@@ -706,7 +706,7 @@ mod tests {
 
         let mut correct = rom.clone();
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(7);
-        crate::randomize::world_order::randomize(&mut correct, &mut rng, 7);
+        crate::randomize::overworld::world_order::randomize(&mut correct, &mut rng, 7);
         let world_order_jmp: [u8; 3] =
             core::array::from_fn(|i| correct.read_byte(WORLD_INC_OFFSET + i));
         apply(&mut correct, K);
@@ -740,7 +740,7 @@ mod tests {
         apply(&mut wrong, K);
         let err = std::panic::catch_unwind(move || {
             let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(7);
-            crate::randomize::world_order::randomize(&mut wrong, &mut rng, 7);
+            crate::randomize::overworld::world_order::randomize(&mut wrong, &mut rng, 7);
         })
         .expect_err("world_order must refuse a site wand_gate has already patched");
 
@@ -1132,13 +1132,13 @@ mod chokepoint {
     use rand_chacha::ChaCha8Rng;
 
     use super::*;
-    use crate::randomize::map_walker::walk_reachable;
-    use crate::randomize::node_catalog::NodeCatalog;
-    use crate::randomize::overworld_build::{BuildFlags, OverworldData, build, stamp_slots};
-    use crate::randomize::overworld_helpers::find_target;
-    use crate::randomize::overworld_pickup::{PickupFlags, pick_up};
+    use crate::randomize::overworld::build::{BuildFlags, OverworldData, build, stamp_slots};
+    use crate::randomize::overworld::helpers::find_target;
+    use crate::randomize::overworld::map_walker::walk_reachable;
+    use crate::randomize::overworld::node_catalog::NodeCatalog;
+    use crate::randomize::overworld::pickup::{PickupFlags, pick_up};
     use crate::randomize::rom_data::WAND_GATE_TILE;
-    use crate::randomize::{qol, start_airship_swap};
+    use crate::randomize::{overworld::start_airship_swap, qol};
 
     /// One seed's World 8, over the same three flag arms the overworld and
     /// maze censuses use — the gate has to hold on every map the builder can
@@ -1274,7 +1274,7 @@ mod chokepoint {
     }
 
     /// The W8 bridge deal, both ways. Standard mode must reproduce the numbers
-    /// `overworld_build::tests::w8_bridges_out_census` prints on `beta/next`;
+    /// `crate::randomize::overworld::build::tests::w8_bridges_out_census` prints on `beta/next`;
     /// the maze arm is the new one, and what it answers is where the seed's
     /// gating span goes once the one nearest the goal is off the table.
     ///

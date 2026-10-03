@@ -52,7 +52,7 @@ use rand::seq::IndexedRandom;
 use crate::randomize::maze::item_keys::Key;
 use crate::randomize::maze::key_sites::{self, KeySite};
 use crate::randomize::maze::{Gate, GlobalState, KeySource};
-use crate::randomize::overworld_build::BuildResult;
+use crate::randomize::overworld::build::BuildResult;
 use crate::rom::Rom;
 
 /// What a run of [`place`] decided.

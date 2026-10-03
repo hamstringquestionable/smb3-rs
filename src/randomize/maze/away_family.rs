@@ -12,7 +12,7 @@
 //! RNG. The bytes are split three ways:
 //!
 //! * the fortress tile, [`rom_data::TILE_FORTRESS_AWAY_MARKED`] (`$EC`), stamped
-//!   by `overworld_writer::grid`, with its removable row in
+//!   by `crate::randomize::overworld::writer::grid`, with its removable row in
 //!   `lock_keys::REMOVABLE_PAIRS`;
 //! * the lock, allocated by `lock_keys::LockTiles` with `marked` set, wearing
 //!   [`MARK`] in the same corner;
@@ -109,7 +109,7 @@ const CRUMBLE_PICK_PATCHED: [u8; 26] = [
 /// other tile's outcome — `the_pick_matches_vanilla_for_every_other_tile` runs
 /// both versions over all 256.
 pub(crate) fn apply(rom: &mut Rom, grids: &[Grid]) {
-    let present = crate::randomize::lock_keys::tiles_on_map(grids);
+    let present = crate::randomize::overworld::lock_keys::tiles_on_map(grids);
     if !present[rom_data::TILE_FORTRESS_AWAY_MARKED as usize] {
         return;
     }
@@ -220,7 +220,7 @@ mod tests {
     use std::collections::HashMap;
 
     use super::*;
-    use crate::randomize::overworld_build::{FortRef, LockHint, SlotKind};
+    use crate::randomize::overworld::build::{FortRef, LockHint, SlotKind};
 
     const ROM_PATH: &str = "roms/Super Mario Bros. 3 (USA) (Rev 1).nes";
 
@@ -236,7 +236,7 @@ mod tests {
         bytes: &[u8],
         seed: u64,
         hints: crate::HintMode,
-    ) -> Option<(Rom, crate::randomize::overworld_build::BuildResult)> {
+    ) -> Option<(Rom, crate::randomize::overworld::build::BuildResult)> {
         let options = crate::Options {
             world_maze: true,
             hints,
@@ -308,7 +308,7 @@ mod tests {
                     pairs[usize::from(marked)] += 1;
                 }
             }
-            if crate::randomize::lock_keys::tiles_on_map(&grids)
+            if crate::randomize::overworld::lock_keys::tiles_on_map(&grids)
                 [rom_data::TILE_FORTRESS_AWAY_MARKED as usize]
             {
                 assert_eq!(lr(&rom, rom_data::TILE_FORTRESS_AWAY_MARKED), MARK);
@@ -340,7 +340,7 @@ mod tests {
                             let t = g.get(r, c);
                             assert_ne!(t, rom_data::TILE_FORTRESS_AWAY_MARKED, "{hints:?} {seed}");
                             assert!(
-                                !crate::randomize::lock_keys::is_pool_tile(t)
+                                !crate::randomize::overworld::lock_keys::is_pool_tile(t)
                                     || lr(&rom, t) != MARK,
                                 "{hints:?} seed {seed}: {t:#04X} wears the nub"
                             );

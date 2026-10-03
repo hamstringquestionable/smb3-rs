@@ -1614,8 +1614,8 @@ mod tests {
     #[test]
     fn the_king_names_the_world_1f_is_really_in() {
         use crate::pipeline::Options;
+        use crate::randomize::overworld::world_order::WORLD_INIT_OPERAND;
         use crate::randomize::rom_data;
-        use crate::randomize::world_order::WORLD_INIT_OPERAND;
 
         let Ok(bytes) = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes") else {
             eprintln!("SKIP: requires the ROM, which is not included in the repo");

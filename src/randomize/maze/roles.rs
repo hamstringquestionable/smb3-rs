@@ -11,10 +11,10 @@
 
 use std::collections::HashSet;
 
-use super::super::map_walker::{walk_reachable, walk_reachable_blocked};
-use super::super::overworld_build::{SlotKind, WorldState, stamp_slots};
 use super::super::rom_data::{self, Grid, Pos};
 use super::MazeLock;
+use crate::randomize::overworld::build::{SlotKind, WorldState, stamp_slots};
+use crate::randomize::overworld::map_walker::{walk_reachable, walk_reachable_blocked};
 
 /// What a pad is for. The role constrains where a pad TILE goes; which OTHER
 /// pad it is paired with is a separate decision (see

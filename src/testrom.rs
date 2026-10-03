@@ -13,9 +13,9 @@
 
 use crate::ips;
 use crate::randomize::big_q_rooms;
-use crate::randomize::node_catalog::{EntryView, NodeCatalog};
+use crate::randomize::overworld::node_catalog::{EntryView, NodeCatalog};
+use crate::randomize::overworld::world_order::WORLD_INIT_OPERAND;
 use crate::randomize::rom_data::{self, LevelEntry, WORLDS};
-use crate::randomize::world_order::WORLD_INIT_OPERAND;
 use crate::rom::Rom;
 use crate::{Options, randomize_rom};
 
@@ -1250,7 +1250,7 @@ pub fn build(vanilla: &[u8], spec: &TestRomSpec) -> Result<TestRom, String> {
         // Read the allocated lock tiles back: there is no overworld writer on
         // this path, so the ROM's removable table is the record. Empty on a
         // vanilla base, which has only vanilla's locks.
-        let allocated = crate::randomize::lock_keys::allocated_pairs_on_rom(&rom);
+        let allocated = crate::randomize::overworld::lock_keys::allocated_pairs_on_rom(&rom);
         crate::randomize::qol::hammer_breaks_tiles(
             &mut rom,
             spec.hammer_breaks_locks,

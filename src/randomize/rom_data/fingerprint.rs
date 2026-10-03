@@ -96,7 +96,9 @@ pub fn overworld_fingerprint(rom: &Rom) -> u64 {
 
     // 5. Which fortress opens which lock — position-keyed, so it describes the
     //    map rather than the routine that reads it.
-    h.eat(rom.read_range(FS_LOCK_ENTRIES, crate::randomize::lock_keys::ENTRIES_RESERVED));
+    h.eat(
+        rom.read_range(FS_LOCK_ENTRIES, crate::randomize::overworld::lock_keys::ENTRIES_RESERVED),
+    );
 
     h.0
 }

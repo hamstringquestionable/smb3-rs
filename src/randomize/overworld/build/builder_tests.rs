@@ -1,15 +1,15 @@
 //! Builder harness tests: the schedule contract, and the two measurement demos
 //! (vanilla ground truth, current-builder baseline). Table output prints with
-//! `cargo test overworld_build -- --nocapture`.
+//! `cargo test overworld::build -- --nocapture`.
 
 use super::*;
 
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 
-use super::super::overworld_pickup::{PickupFlags, PickupResult as Pickup, pick_up};
-use super::super::qol;
-use super::super::start_airship_swap;
+use crate::randomize::overworld::pickup::{PickupFlags, PickupResult as Pickup, pick_up};
+use crate::randomize::overworld::start_airship_swap;
+use crate::randomize::qol;
 
 fn load_rom() -> Option<Rom> {
     let bytes = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes").ok()?;
@@ -43,7 +43,7 @@ fn qol_variant(rom: &Rom, hammer_rocks: bool, eights_wild: bool) -> Rom {
 }
 
 /// One seed's realistic build input, mirroring the shipping census harness
-/// (`overworld_build::tests::census_build`): always-on QOL plus the seed's
+/// (`crate::randomize::overworld::build::tests::census_build`): always-on QOL plus the seed's
 /// map arm (50% base / 25% more-hammer-rocks / 25% 8s-are-wild by seed % 4),
 /// start↔airship swap rolled per world exactly as the real flag does (50/50
 /// inside `pick_swaps`, so swapped and unswapped worlds are covered in every
@@ -2316,7 +2316,7 @@ fn test_world_linearity_probe() {
 #[test]
 #[ignore]
 fn canoe_requirement_census() {
-    use super::super::map_walker::{walk_map, walk_map_without_canoe};
+    use crate::randomize::overworld::map_walker::{walk_map, walk_map_without_canoe};
 
     let Some(raw) = load_rom() else {
         eprintln!("SKIP: requires the ROM, which is not included in the repo");
@@ -2372,7 +2372,8 @@ fn canoe_requirement_census() {
                 worlds_with_canoe += 1;
                 per_world[wi].1 += 1;
 
-                let Some(target) = super::super::overworld_helpers::find_target(&built.grid, wi)
+                let Some(target) =
+                    crate::randomize::overworld::helpers::find_target(&built.grid, wi)
                 else {
                     continue;
                 };

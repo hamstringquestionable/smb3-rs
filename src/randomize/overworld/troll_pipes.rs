@@ -1,7 +1,7 @@
 use rand::Rng;
 use rand::seq::IndexedRandom;
 
-use super::overworld_build::{BuildResult, SlotKind};
+use crate::randomize::overworld::build::{BuildResult, SlotKind};
 
 /// Probability (in percent) that an eligible world actually gets its troll
 /// pipe stamped. Each world W2-W8 rolls independently, so on average about
@@ -60,29 +60,29 @@ mod tests {
     use rand::SeedableRng;
     use rand_chacha::ChaCha8Rng;
 
-    use crate::randomize::{node_catalog, overworld_build, overworld_pickup, troll_pipes};
+    use crate::randomize::overworld::{self, node_catalog, troll_pipes};
     use crate::rom::Rom;
 
     /// Run the catalog → pickup → build pipeline for `seed` and mark troll
     /// pipes, returning the finished build.
-    fn build_with_troll_pipes(rom: &Rom, seed: u64) -> overworld_build::BuildResult {
+    fn build_with_troll_pipes(rom: &Rom, seed: u64) -> overworld::build::BuildResult {
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
         let catalog = node_catalog::NodeCatalog::build(rom, false);
-        let pickup = overworld_pickup::pick_up(
+        let pickup = overworld::pickup::pick_up(
             rom,
             &catalog,
-            overworld_pickup::PickupFlags {
+            overworld::pickup::PickupFlags {
                 shuffle_spade_games: true,
                 shuffle_toad_houses: true,
                 ..Default::default()
             },
         );
-        let data = overworld_build::OverworldData { pickup: &pickup, catalog: &catalog };
-        let mut build = overworld_build::build(
+        let data = overworld::build::OverworldData { pickup: &pickup, catalog: &catalog };
+        let mut build = overworld::build::build(
             rom,
             &data,
             &mut rng,
-            overworld_build::BuildFlags { shuffle_toad_houses: true, ..Default::default() },
+            overworld::build::BuildFlags { shuffle_toad_houses: true, ..Default::default() },
         );
         troll_pipes::mark_troll_pipes(&mut build, &mut rng);
         build

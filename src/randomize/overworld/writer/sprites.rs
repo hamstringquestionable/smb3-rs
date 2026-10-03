@@ -66,7 +66,7 @@ fn plant_budget(rom: &Rom, built: &BuiltWorld, wi: usize, shuffle_hammer_bros: b
     } else {
         rom_data::read_hb_sprite_positions(rom, wi).len()
     };
-    eligible.saturating_sub(hb_used + super::super::overworld_build::RESERVED_DYNAMIC_SLOTS)
+    eligible.saturating_sub(hb_used + crate::randomize::overworld::build::RESERVED_DYNAMIC_SLOTS)
 }
 
 /// Decide where piranha plant sprites go (piranha shuffle).
@@ -165,7 +165,7 @@ pub(super) fn write_plant_sprites(rom: &mut Rom, plants: &[(usize, (usize, usize
             slot,
             row,
             col,
-            super::super::piranha_rooms::PLANT_SPRITE_ID,
+            crate::randomize::piranha_rooms::PLANT_SPRITE_ID,
         );
         rom.write_byte(rom_data::map_obj_reward_offset(wi, slot), 0);
     }

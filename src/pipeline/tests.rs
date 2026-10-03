@@ -1876,8 +1876,8 @@ fn the_wasm_json_entry_path_carries_the_maze() {
 /// capability had quietly gone away again.
 #[test]
 fn every_lock_is_keyed_to_a_fortress_slot() {
-    use crate::randomize::lock_keys;
-    use crate::randomize::overworld_build::SlotKind;
+    use crate::randomize::overworld::build::SlotKind;
+    use crate::randomize::overworld::lock_keys;
     use crate::randomize::rom_data::{self, FORTRESS_TILES};
 
     let Some(raw) = make_test_rom() else {
@@ -2022,7 +2022,7 @@ fn registry_used_figures_are_current() {
 /// all rather than the mode quietly emitting none.
 #[test]
 fn every_maze_lock_has_exactly_one_key() {
-    use crate::randomize::lock_keys;
+    use crate::randomize::overworld::lock_keys;
 
     let Some(raw) = make_test_rom() else {
         eprintln!("SKIP: requires the ROM, which is not included in the repo");
@@ -2075,7 +2075,7 @@ fn every_maze_lock_has_exactly_one_key() {
 /// K=7 against 81% at K=3).
 #[test]
 fn one_f_lands_on_a_lock_that_can_stay_shut() {
-    use crate::randomize::lock_keys;
+    use crate::randomize::overworld::lock_keys;
     use crate::randomize::rom_data::{self, FORTRESS_1F_OBJ_PTR, WORLDS};
 
     let Some(raw) = make_test_rom() else {
@@ -2172,7 +2172,7 @@ fn one_f_lands_on_a_lock_that_can_stay_shut() {
 /// ```
 #[test]
 fn one_f_lands_on_a_lock_that_can_stay_shut_in_the_maze() {
-    use crate::randomize::overworld_build::{FortRef, LockAssignment, SlotKind};
+    use crate::randomize::overworld::build::{FortRef, LockAssignment, SlotKind};
     use crate::randomize::rom_data::{self, FORTRESS_1F_OBJ_PTR, WORLDS};
 
     let Some(raw) = make_test_rom() else {
@@ -2298,7 +2298,7 @@ fn one_f_lands_on_a_lock_that_can_stay_shut_in_the_maze() {
 #[test]
 #[ignore]
 fn map_object_slot_budget() {
-    use crate::randomize::overworld_build::RESERVED_DYNAMIC_SLOTS;
+    use crate::randomize::overworld::build::RESERVED_DYNAMIC_SLOTS;
     use crate::randomize::rom_data::{self, MAP_OBJ_IDS_MASTER};
 
     let Some(raw) = make_test_rom() else {
@@ -2326,7 +2326,7 @@ fn map_object_slot_budget() {
         let (rom, build) =
             crate::randomize_rom_with_overworld_capture(raw.output_bytes(), seed, &opts, None)
                 .expect("maze seed should randomize");
-        let entries = crate::randomize::lock_keys::decode_entries(&rom);
+        let entries = crate::randomize::overworld::lock_keys::decode_entries(&rom);
 
         for wi in 0..8 {
             let used = (0..9)

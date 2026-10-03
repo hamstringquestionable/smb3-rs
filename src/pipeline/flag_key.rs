@@ -46,7 +46,7 @@ pub(super) const MAYBE_SALT: u64 = 0x4D41_5942_455F_5631; // "MAYBE_V1"
 /// items.
 ///
 /// Those rolls used to draw from the main stream late in the run. They were
-/// moved ahead of `overworld_pickup`, which reads the Hammer Bro reward table
+/// moved ahead of `overworld::pickup`, which reads the Hammer Bro reward table
 /// out of the ROM to build the pool the builder reattaches — so the rewards
 /// the builder distributes are now the randomized ones, decided once instead
 /// of rolled, stamped and rolled again. A substream is what makes that move

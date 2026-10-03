@@ -128,7 +128,7 @@ fn test_level_entry_presence() {
 /// Every catalogued fortress can be traced back to its Boom-Boom record.
 ///
 /// The catalog no longer *carries* the offset — the fortress-FX rework retired
-/// the ordinal that needed it — but `overworld_build::sources` still resolves
+/// the ordinal that needed it — but `crate::randomize::overworld::build::sources` still resolves
 /// one through the entry's `obj_ptr` to read vanilla's ordinals, and
 /// `lock_keys::apply` masks all 17. A fortress the pairing cannot name would
 /// leave a stale ordinal armed.

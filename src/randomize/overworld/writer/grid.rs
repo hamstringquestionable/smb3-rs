@@ -1,7 +1,7 @@
 //! Step 2 — stamp the per-world map tile grids.
 
 use super::*;
-use crate::randomize::lock_keys;
+use crate::randomize::overworld::lock_keys;
 
 // Reason: each argument is a distinct input of the one stamp pass; `lock_tiles`
 // is the only state shared across worlds, and bundling it with `hints` would
@@ -199,7 +199,7 @@ pub(super) fn write_tile_grid<R: Rng>(
     // since sprite positions are dynamic (not the vanilla fixed positions).
     for &pos in sprite_mask {
         let tile =
-            crate::randomize::overworld_pickup::blank_tile_from_neighbors(&grid, wi, pos.0, pos.1);
+            crate::randomize::overworld::pickup::blank_tile_from_neighbors(&grid, wi, pos.0, pos.1);
         grid.set(pos.0, pos.1, tile);
     }
 

@@ -10,14 +10,16 @@ use rand::seq::{IndexedRandom, SliceRandom};
 use crate::rom::Rom;
 use crate::{DejaVuMode, PiranhaMode};
 
-use super::lock_keys::{LockEntry, LockTiles};
-use super::node_catalog::NodeKind;
-use super::overworld_build::{
+use crate::randomize::overworld::build::{
     BuildResult, BuiltWorld, FortRef, LockHint, OverworldData, SlotKind, VANILLA_LEVEL_COUNT,
     bfs_ordered,
 };
-use super::pipe_helpers;
-use super::rom_data::{self, FORTRESS_1F_OBJ_PTR, Grid, TILE_BONUS_GAME, TILE_PIPE, WORLDS};
+use crate::randomize::overworld::lock_keys::{LockEntry, LockTiles};
+use crate::randomize::overworld::node_catalog::NodeKind;
+use crate::randomize::overworld::pipe_helpers;
+use crate::randomize::rom_data::{
+    self, FORTRESS_1F_OBJ_PTR, Grid, TILE_BONUS_GAME, TILE_PIPE, WORLDS,
+};
 
 mod assign;
 mod grid;
@@ -117,7 +119,11 @@ pub(crate) fn write_overworld<R: Rng>(
         // For swapped worlds, rewrite the Airship + Start entry coordinates
         // (the main writer pass leaves both untouched) before the resort so
         // the engine's runtime lookup finds the right entry per tile.
-        super::start_airship_swap::write_swapped_world_entries(rom, wi, data.catalog);
+        crate::randomize::overworld::start_airship_swap::write_swapped_world_entries(
+            rom,
+            wi,
+            data.catalog,
+        );
         pipe_helpers::resort_pointer_table(rom, wi);
         // Do not sync map object sprite positions: the overworld builder never
         // moves MapObject entries (W7 piranhas), so vanilla sprite positions are
@@ -143,7 +149,10 @@ pub(crate) fn write_overworld<R: Rng>(
     // Apply engine-side scaffolding for the per-world start ↔ airship swap.
     // No-op when the option was off (no worlds got flagged in pick_swaps).
     if data.catalog.start_airship_swapped.iter().any(|&b| b) {
-        super::start_airship_swap::write_engine_scaffolding(rom, data.catalog);
+        crate::randomize::overworld::start_airship_swap::write_engine_scaffolding(
+            rom,
+            data.catalog,
+        );
     }
 
     WrittenOverworld { grids, one_f_world: world_holding_1f(&assignments, data), lock_tiles }
@@ -177,7 +186,7 @@ fn world_holding_1f(assignments: &[WorldAssignments], data: &OverworldData) -> O
 /// A fact about the *build*, not about the writing, which is why it takes no
 /// `WrittenOverworld`: the pairing is decided before the writer runs, and in
 /// the world maze `maze::stamp_into` has already rewritten it — possibly across
-/// worlds. It is *input* to [`super::lock_keys::apply`], which owns every byte
+/// worlds. It is *input* to [`crate::randomize::overworld::lock_keys::apply`], which owns every byte
 /// the console reads; nothing here writes ROM.
 pub(crate) fn lock_entries(build: &BuildResult) -> Vec<LockEntry> {
     let mut out = Vec::new();
@@ -240,7 +249,7 @@ fn grids_agree_with_rom(grids: &[Grid], rom: &Rom) -> Result<(), String> {
 ///
 /// This is the writer's record of the ROM it produced, and it is the answer to
 /// "what does the finished map look like" for everything downstream. Nothing
-/// here writes ROM; the pairing is *input* to [`super::lock_keys::apply`],
+/// here writes ROM; the pairing is *input* to [`crate::randomize::overworld::lock_keys::apply`],
 /// which owns every byte the console reads.
 ///
 /// It was called `LockPairing` when locks were its only consumer.

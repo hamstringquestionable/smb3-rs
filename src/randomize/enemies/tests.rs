@@ -1057,7 +1057,7 @@ fn injectable_offsets(
     vanilla: &[u8],
     modes: &ClassModes,
 ) -> std::collections::HashSet<usize> {
-    use crate::randomize::node_catalog::{NodeCatalog, NodeKind};
+    use crate::randomize::overworld::node_catalog::{NodeCatalog, NodeKind};
     use crate::randomize::rom_data::enemy_ptr_to_file_offset;
     let mut set = std::collections::HashSet::new();
     let catalog = NodeCatalog::build(base, false);
@@ -1725,7 +1725,7 @@ fn test_cannons_wild_respects_slot5_pin() {
 /// level is never given a chaser it already has (the 2-Quicksand double).
 #[test]
 fn wild_injection_rework_guarantees() {
-    use crate::randomize::node_catalog::{NodeCatalog, NodeKind};
+    use crate::randomize::overworld::node_catalog::{NodeCatalog, NodeKind};
     const INJ: [u8; 2] = [0x83, 0xAF]; // Lakitu + Angry Sun (Boss Bass dropped)
 
     let Some(base) = load_reference_rom() else {
@@ -1858,7 +1858,7 @@ fn first_enemy_idx(obj_ptr: u16, data: &[u8]) -> Option<usize> {
 /// ordinary swap can put one here too. Compare two runs that differ only in
 /// the injection pool to isolate it.
 fn injected_chaser_counts(base: &Rom, opts: &Options, seeds: u64) -> [u32; 3] {
-    use crate::randomize::node_catalog::NodeCatalog;
+    use crate::randomize::overworld::node_catalog::NodeCatalog;
 
     let len = ENEMY_DATA_END - ENEMY_DATA_START;
     let vanilla = base.read_range(ENEMY_DATA_START, len).to_vec();
@@ -1996,7 +1996,7 @@ fn wild_injection_bass_survives_water_wild() {
 /// not always stuck at the (harder) low inherited height.
 #[test]
 fn wild_injected_lakitu_height_varies() {
-    use crate::randomize::node_catalog::NodeCatalog;
+    use crate::randomize::overworld::node_catalog::NodeCatalog;
     const LAKITU: u8 = 0x83;
 
     let Some(base) = load_reference_rom() else {
@@ -2048,7 +2048,7 @@ fn wild_injected_lakitu_height_varies() {
 /// Lakitu, and both must occur.
 #[test]
 fn wild_injection_favors_sun() {
-    use crate::randomize::node_catalog::NodeCatalog;
+    use crate::randomize::overworld::node_catalog::NodeCatalog;
 
     let Some(base) = load_reference_rom() else {
         eprintln!("reference ROM not present — skipping wild_injection_favors_sun");

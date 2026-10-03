@@ -1,6 +1,6 @@
 //! Step 0: per-world capacity budgeting and Hammer-Bro sprite distribution.
 
-use crate::randomize::lock_keys;
+use crate::randomize::overworld::lock_keys;
 
 use super::*;
 
@@ -350,7 +350,7 @@ pub(crate) fn prepare_capacities(
                 }
             }
         }
-        crate::randomize::start_airship_swap::swap_tiles_above(&mut grid, wi, catalog);
+        crate::randomize::overworld::start_airship_swap::swap_tiles_above(&mut grid, wi, catalog);
         patched_grids.push(grid);
     }
 

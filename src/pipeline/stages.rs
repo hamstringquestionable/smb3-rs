@@ -11,10 +11,10 @@ use rand_chacha::ChaCha8Rng;
 
 use super::*;
 use crate::randomize::maze::GlobalState;
-use crate::randomize::node_catalog::NodeCatalog;
-use crate::randomize::overworld_build::BuildResult;
-use crate::randomize::overworld_pickup::PickupResult;
-use crate::randomize::overworld_writer::WrittenOverworld;
+use crate::randomize::overworld::build::BuildResult;
+use crate::randomize::overworld::node_catalog::NodeCatalog;
+use crate::randomize::overworld::pickup::PickupResult;
+use crate::randomize::overworld::writer::WrittenOverworld;
 
 /// Everything settled from the seed and options before the first ROM write.
 pub(super) struct Resolved {
@@ -238,7 +238,7 @@ pub(super) fn world_order_and_shuffles(
     let world_count = if options.world_maze { 7 } else { options.world_count };
     let credits_progression = if options.world_order || options.world_maze {
         rom.set_tag("world_order");
-        Some(randomize::world_order::randomize(rom, rng, world_count))
+        Some(randomize::overworld::world_order::randomize(rom, rng, world_count))
     } else {
         None
     };
@@ -253,7 +253,7 @@ pub(super) fn world_order_and_shuffles(
     // patched data travels correctly to its new world.
     if options.shuffle_airships {
         rom.set_tag("levels/airships");
-        randomize::levels::randomize_airships(rom, rng);
+        randomize::overworld::airship_shuffle::randomize_airships(rom, rng);
     }
 
     // Antechamber shuffle touches only level data (entry headers + junction
@@ -313,7 +313,8 @@ pub(super) fn overworld_catalog(
     rng: &mut ChaCha8Rng,
 ) -> NodeCatalog {
     rom.set_tag("overworld/builder");
-    let mut catalog = randomize::node_catalog::NodeCatalog::build(rom, options.include_beta_stages);
+    let mut catalog =
+        randomize::overworld::node_catalog::NodeCatalog::build(rom, options.include_beta_stages);
     // Piranha shuffle: free the two W7 plant levels into the pool. The sprite
     // clear must precede the builder — capacity/eligibility reads sprite
     // state straight from the ROM.
@@ -323,7 +324,7 @@ pub(super) fn overworld_catalog(
         catalog.release_map_objects();
     }
     if options.swap_start_airship {
-        randomize::start_airship_swap::pick_swaps(&mut catalog, rng);
+        randomize::overworld::start_airship_swap::pick_swaps(&mut catalog, rng);
     }
     catalog
 }
@@ -337,7 +338,7 @@ pub(super) fn item_tables(
 ) {
     // These four tables — Hammer Bro rewards, Princess letter rewards, Toad
     // House treasures and the in-level chests — are rolled here rather than
-    // late in the run, because `overworld_pickup` below reads the Hammer Bro
+    // late in the run, because `overworld::pickup` below reads the Hammer Bro
     // reward table straight out of the ROM to build the pool the builder
     // reattaches to redistributed encounters. Rolled afterwards, as they were,
     // the same table got picked up, shuffled, stamped by the writer and then
@@ -411,21 +412,21 @@ pub(super) fn overworld_build(
     catalog: &NodeCatalog,
     rng: &mut ChaCha8Rng,
 ) -> (PickupResult, BuildResult) {
-    let pickup = randomize::overworld_pickup::pick_up(
+    let pickup = randomize::overworld::pickup::pick_up(
         rom,
         catalog,
-        randomize::overworld_pickup::PickupFlags {
+        randomize::overworld::pickup::PickupFlags {
             shuffle_spade_games: options.shuffle_spade_games,
             shuffle_toad_houses: options.shuffle_toad_houses,
             shuffle_hammer_bros: options.shuffle_hammer_bros,
         },
     );
-    let data = randomize::overworld_build::OverworldData { pickup: &pickup, catalog };
-    let mut build = randomize::overworld_build::build(
+    let data = randomize::overworld::build::OverworldData { pickup: &pickup, catalog };
+    let mut build = randomize::overworld::build::build(
         rom,
         &data,
         rng,
-        randomize::overworld_build::BuildFlags {
+        randomize::overworld::build::BuildFlags {
             shuffle_toad_houses: options.shuffle_toad_houses,
             eights_are_wild: run.eights_are_wild,
             shuffle_hammer_bros: options.shuffle_hammer_bros,
@@ -434,14 +435,14 @@ pub(super) fn overworld_build(
     );
     if options.hands_levels {
         rom.set_tag("hands_levels");
-        randomize::hands_levels::mark_hand_traps(&mut build, rng);
-        randomize::hands_levels::install_full_grab(rom);
+        randomize::overworld::hands_levels::mark_hand_traps(&mut build, rng);
+        randomize::overworld::hands_levels::install_full_grab(rom);
     }
     if run.troll_pipes {
         // No `set_tag` here: this only mutates `build`, and the ROM writes it
         // leads to happen later in the writer. Tagging it would label none of
         // its own bytes and leak the name onto everything the writer emits.
-        randomize::troll_pipes::mark_troll_pipes(&mut build, rng);
+        randomize::overworld::troll_pipes::mark_troll_pipes(&mut build, rng);
     }
     (pickup, build)
 }
@@ -492,7 +493,7 @@ pub(super) fn maze_model(
             // level on. The maze re-pairs forts and locks, which invalidates
             // the builder's answer, so it restores the invariant rather than
             // being told which slot to protect.
-            randomize::overworld_build::SECRET_EXIT_SLOTS_NEEDED,
+            randomize::overworld::build::SECRET_EXIT_SLOTS_NEEDED,
             rng,
         );
         randomize::maze::stamp_into(build, &state);
@@ -547,14 +548,14 @@ pub(super) fn write_overworld(
     catalog: &NodeCatalog,
     rng: &mut ChaCha8Rng,
 ) -> WrittenOverworld {
-    let data = randomize::overworld_build::OverworldData { pickup, catalog };
+    let data = randomize::overworld::build::OverworldData { pickup, catalog };
     rom.set_tag("overworld_writer");
-    randomize::overworld_writer::write_overworld(
+    randomize::overworld::writer::write_overworld(
         rom,
         build,
         &data,
         rng,
-        randomize::overworld_writer::WriteFlags {
+        randomize::overworld::writer::WriteFlags {
             shuffle_hammer_bros: options.shuffle_hammer_bros,
             piranha: options.piranha_shuffle,
             friendlier_levels: options.friendlier_levels,
@@ -644,9 +645,9 @@ pub(super) fn locks(rom: &mut Rom, build: &BuildResult, written: &WrittenOverwor
     rom.set_tag("lock_keys");
     // One source, both modes: `stamp_into` wrote the maze's pairing into the
     // build, so the writer's rows already carry it.
-    randomize::lock_keys::apply(
+    randomize::overworld::lock_keys::apply(
         rom,
-        &randomize::overworld_writer::lock_entries(build),
+        &randomize::overworld::writer::lock_entries(build),
         written.grids(rom),
         written.lock_tiles(),
     );
@@ -729,11 +730,11 @@ pub(super) fn after_the_map(
 
     // Patch double-digit level tiles (11–19) to show a "1" tens digit
     rom.set_tag("metatile/double_digit");
-    randomize::overworld_writer::patch_double_digit_metatiles(rom);
+    randomize::overworld::writer::patch_double_digit_metatiles(rom);
 
     // Freeze metatile 0x6A's CHR animation so it can serve as a static fortress tile.
     rom.set_tag("metatile/6a_freeze");
-    randomize::overworld_writer::patch_metatile_6a_freeze(rom);
+    randomize::overworld::writer::patch_metatile_6a_freeze(rom);
 }
 
 /// Stage 13: boss stomp counts, then the king quotes that remark on them.

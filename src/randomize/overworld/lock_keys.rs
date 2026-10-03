@@ -96,16 +96,16 @@ use std::collections::HashMap;
 
 use crate::rom::Rom;
 
+use crate::randomize::maze::away_family;
+use crate::randomize::maze::completion_bits::{CompletionMap, HALF_LEN, PLANE_RESERVE};
 #[cfg(test)]
-use super::rom_data::NMI_SAFE_MAX;
-use super::rom_data::{
+use crate::randomize::rom_data::NMI_SAFE_MAX;
+use crate::randomize::rom_data::{
     self, FS_COMPLETION_BASES, FS_FORTRESS_FX, FS_LOCK_ENTRIES, FS_LOCK_MIRROR, FS_MAP_REMOVABLE,
     FS_ML_RANGE, Grid, MAP_COMPLETE_BIT_CPU, MAP_COMPLETE_BITS, MAP_COMPLETIONS, PLAYER_CURRENT,
     PRG012_FILE_BASE, REMOVABLE_STRIDE, WORLD_NUM, prg_bank_file_to_cpu, prg010_file_to_cpu,
     prg011_file_to_cpu,
 };
-use crate::randomize::maze::away_family;
-use crate::randomize::maze::completion_bits::{CompletionMap, HALF_LEN, PLANE_RESERVE};
 
 // --- Siting -------------------------------------------------------------
 
@@ -459,7 +459,7 @@ pub(crate) fn lock_request(
     marked: bool,
     hints: crate::HintMode,
 ) -> LockRequest {
-    let path = if super::overworld_build::is_completion_unsafe(under) {
+    let path = if crate::randomize::overworld::build::is_completion_unsafe(under) {
         rom_data::path_for_gap_tile(rom_data::gap_tile_for(under)).expect("every gap tile inverts")
     } else {
         under
@@ -998,7 +998,8 @@ pub(crate) fn tiles_on_map(grids: &[Grid]) -> [bool; 256] {
 /// world order off, which cannot happen alongside a numbered lock today — and
 /// the vanilla identity is the right answer there.
 pub(crate) fn shown_world(rom: &Rom, internal: usize) -> usize {
-    let tile = rom.read_byte(super::world_order::DISPLAY_TABLE_OFFSET + internal);
+    let tile =
+        rom.read_byte(crate::randomize::overworld::world_order::DISPLAY_TABLE_OFFSET + internal);
     if (0xF1..=0xF8).contains(&tile) { (tile & 0x0F) as usize } else { internal + 1 }
 }
 
@@ -1196,7 +1197,7 @@ pub(crate) fn apply(rom: &mut Rom, entries: &[LockEntry], grids: &[Grid], tiles:
     assert_one_key_per_lock(entries);
 
     // **This module no longer writes a map tile.** The lock tiles, hint
-    // variants included, are stamped by `overworld_writer::grid` from
+    // variants included, are stamped by `crate::randomize::overworld::writer::grid` from
     // `WrittenOverworld::grids` — so `grids` is handed over rather than read
     // back off the ROM, and the ordering rule that used to sit here ("stamp
     // first, because `removable_rows` reads the map") is a signature now.
@@ -1462,7 +1463,7 @@ mod asm_checks {
     /// opened lock's completion bit would turn it into an M/L panel on reload.
     #[test]
     fn a_completable_path_reveals_the_plain_path() {
-        assert!(super::super::overworld_build::is_completion_unsafe(0xE6));
+        assert!(crate::randomize::overworld::build::is_completion_unsafe(0xE6));
         assert_eq!(lock_request(0xE6, false, 0, false, crate::HintMode::Off).path, 0x45);
     }
 
@@ -1528,7 +1529,7 @@ mod asm_checks {
             .iter()
             .chain(rom_data::VALID_VERT)
             .copied()
-            .filter(|&t| !super::super::overworld_build::is_completion_unsafe(t))
+            .filter(|&t| !crate::randomize::overworld::build::is_completion_unsafe(t))
             .collect();
         for &path in &paths {
             for colour in [LockColour::Tan, LockColour::Sky] {

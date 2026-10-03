@@ -52,7 +52,7 @@
 use crate::rom::Rom;
 
 use super::rom_data::{FS_POISON_HOOK, FS_POISON_MUSHROOM};
-use super::world_order::WORLD_INIT_OPERAND;
+use crate::randomize::overworld::world_order::WORLD_INIT_OPERAND;
 
 /// New object ID: unused group-0 slot $0A.
 const POISON_ID: usize = 0x0A;
@@ -124,7 +124,7 @@ const HOOK_LEN: usize = 31;
 /// 1-Up-spawn hook, and patch both block-spawn sites to call it. Only invoked
 /// when `--poison-mushrooms` is on.
 ///
-/// Must run after [`super::world_order`] so the seed-derived salt is read from
+/// Must run after [`crate::randomize::overworld::world_order`] so the seed-derived salt is read from
 /// its final value (the orchestrator guarantees this ordering).
 pub fn apply(rom: &mut Rom) {
     install_object(rom);

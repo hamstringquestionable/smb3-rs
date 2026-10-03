@@ -69,7 +69,7 @@
 //! The obvious version compares against `#$20` — `Map_Init` really does say
 //! "Set starting X position (forced to $20!)" and hardcodes screen 0. That is
 //! true of vanilla and **false of a randomized ROM**:
-//! [`crate::randomize::start_airship_swap`] replaces `Map_Init`'s scroll store with a
+//! [`crate::randomize::overworld::start_airship_swap`] replaces `Map_Init`'s scroll store with a
 //! helper that re-stamps `Map_Entered_X`/`Map_Entered_XHi` from its own
 //! per-world tables, so a swapped world starts wherever its airship was.
 //!
@@ -456,7 +456,7 @@ const MAP_GAMEOVER_CURSOR_Y: u16 = 0x7DCB;
 /// player home by a per-frame delta with a hardcoded column-2 skid test, so it
 /// cannot be retargeted — `start_airship_swap` learned that the expensive way
 /// and settled on stamping the answer at the finalize instead (see
-/// [`crate::randomize::start_airship_swap`]). This is the same lesson one step further
+/// [`crate::randomize::overworld::start_airship_swap`]). This is the same lesson one step further
 /// out: let the twirl play out in the world the player died in, then change
 /// worlds once it is over.
 ///
@@ -953,7 +953,7 @@ mod asm_checks {
             crate::pipeline::randomize(&mut rom, seed, &opts);
             assert_eq!(
                 rom.read_byte(FS_MAZE_GAMEOVER + GAMEOVER_WORLD_OFF),
-                rom.read_byte(crate::randomize::world_order::WORLD_INIT_OPERAND),
+                rom.read_byte(crate::randomize::overworld::world_order::WORLD_INIT_OPERAND),
                 "seed {seed}: game over returns to a different world than a new game starts in"
             );
             assert_eq!(

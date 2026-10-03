@@ -11,8 +11,8 @@
 
 use crate::rom::Rom;
 
-use super::node_catalog::{CatalogEntry, NodeCatalog, NodeKind};
-use super::rom_data::{self, FxSlot, Grid, VALID_BLANK_TILES, VALID_HORZ, VALID_VERT};
+use crate::randomize::overworld::node_catalog::{CatalogEntry, NodeCatalog, NodeKind};
+use crate::randomize::rom_data::{self, FxSlot, Grid, VALID_BLANK_TILES, VALID_HORZ, VALID_VERT};
 
 // ---------------------------------------------------------------------------
 // Output types

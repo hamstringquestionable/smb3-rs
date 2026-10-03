@@ -26,7 +26,7 @@
 
 use super::types::{BuiltWorld, SlotKind, stamp_slots};
 use super::*;
-use crate::randomize::map_walker::WalkResult;
+use crate::randomize::overworld::map_walker::WalkResult;
 
 use std::cmp::Reverse;
 use std::collections::BTreeSet;

@@ -60,7 +60,7 @@ pub(super) struct WorldAssignments {
     /// demoted to regular level tiles at tile-stamping time so the player
     /// sees a normal level icon rather than a pipe leading to a hand-trap.
     pub(super) demoted_troll_pipes: HashSet<(usize, usize)>,
-    /// Slots whose [`pin`](crate::randomize::overworld_build::SlotAssignment)
+    /// Slots whose [`pin`](crate::randomize::overworld::build::SlotAssignment)
     /// the deck could not satisfy, as `(position, (world_idx, entry_idx))`.
     ///
     /// Empty on every seed that pins nothing, which today is all of them. It

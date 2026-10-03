@@ -2,7 +2,8 @@ use super::capacity::{W8_HB_CAP, distribute_levels, prepare_capacities, redistri
 use super::*;
 
 use super::types::stamp_slots;
-use crate::randomize::map_walker::walk_map_blocked;
+use crate::randomize::overworld;
+use crate::randomize::overworld::map_walker::walk_map_blocked;
 use crate::rom::Rom;
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
@@ -45,17 +46,17 @@ fn apply_qol_for_overworld(rom: &Rom) -> Rom {
 /// (`randomize_inner` applies these before the builder reads the map).
 fn apply_qol_variant(rom: &Rom, hammer_rocks: bool, eights_wild: bool) -> Rom {
     let mut out = rom.clone();
-    super::super::qol::fix_w3_drawbridges(&mut out);
-    super::super::qol::remove_rocks(&mut out);
+    crate::randomize::qol::fix_w3_drawbridges(&mut out);
+    crate::randomize::qol::remove_rocks(&mut out);
     if hammer_rocks {
-        super::super::qol::make_hammer_rocks(&mut out);
+        crate::randomize::qol::make_hammer_rocks(&mut out);
     }
-    super::super::qol::apply_w1_shortcut(&mut out, hammer_rocks);
-    super::super::qol::apply_w8_bridges(&mut out);
+    crate::randomize::qol::apply_w1_shortcut(&mut out, hammer_rocks);
+    crate::randomize::qol::apply_w8_bridges(&mut out);
     if eights_wild {
-        super::super::qol::apply_w8_canoe_and_paths(&mut out);
+        crate::randomize::qol::apply_w8_canoe_and_paths(&mut out);
     }
-    super::super::qol::fix_big_q_block_rooms(&mut out);
+    crate::randomize::qol::fix_big_q_block_rooms(&mut out);
     out
 }
 
@@ -66,12 +67,12 @@ fn build_catalog_pickup(rom: &Rom, seed: u64) -> (NodeCatalog, PickupResult) {
     let mut catalog = NodeCatalog::build(rom, false);
     if std::env::var("SAS").is_ok() {
         let mut swap_rng = ChaCha8Rng::seed_from_u64(seed);
-        super::super::start_airship_swap::pick_swaps(&mut catalog, &mut swap_rng);
+        crate::randomize::overworld::start_airship_swap::pick_swaps(&mut catalog, &mut swap_rng);
     }
-    let pickup = super::super::overworld_pickup::pick_up(
+    let pickup = overworld::pickup::pick_up(
         rom,
         &catalog,
-        super::super::overworld_pickup::PickupFlags {
+        overworld::pickup::PickupFlags {
             shuffle_spade_games: true,
             shuffle_toad_houses: true,
             ..Default::default()
@@ -146,11 +147,11 @@ fn census_build(rom: &Rom, seed: u64) -> BuildResult {
     let mut rng = ChaCha8Rng::seed_from_u64(seed);
     let mut catalog = NodeCatalog::build(&rom, false);
     let mut swap_rng = ChaCha8Rng::seed_from_u64(seed);
-    super::super::start_airship_swap::pick_swaps(&mut catalog, &mut swap_rng);
-    let pickup = super::super::overworld_pickup::pick_up(
+    crate::randomize::overworld::start_airship_swap::pick_swaps(&mut catalog, &mut swap_rng);
+    let pickup = overworld::pickup::pick_up(
         &rom,
         &catalog,
-        super::super::overworld_pickup::PickupFlags {
+        overworld::pickup::PickupFlags {
             shuffle_spade_games: true,
             shuffle_toad_houses: true,
             ..Default::default()
@@ -329,12 +330,15 @@ fn all_world_targets_reachable() {
                     let mut catalog = NodeCatalog::build(rom, false);
                     let mut rng = ChaCha8Rng::seed_from_u64(seed);
                     if sas {
-                        super::super::start_airship_swap::pick_swaps(&mut catalog, &mut rng);
+                        crate::randomize::overworld::start_airship_swap::pick_swaps(
+                            &mut catalog,
+                            &mut rng,
+                        );
                     }
-                    let pickup = super::super::overworld_pickup::pick_up(
+                    let pickup = overworld::pickup::pick_up(
                         rom,
                         &catalog,
-                        super::super::overworld_pickup::PickupFlags {
+                        overworld::pickup::PickupFlags {
                             shuffle_spade_games: true,
                             shuffle_toad_houses: true,
                             shuffle_hammer_bros: hb,
@@ -499,10 +503,10 @@ fn hammer_bro_redistribution_invariants() {
     for seed in 0..32u64 {
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
         let catalog = NodeCatalog::build(&rom, false);
-        let pickup = super::super::overworld_pickup::pick_up(
+        let pickup = overworld::pickup::pick_up(
             &rom,
             &catalog,
-            super::super::overworld_pickup::PickupFlags {
+            overworld::pickup::PickupFlags {
                 shuffle_spade_games: true,
                 shuffle_toad_houses: true,
                 shuffle_hammer_bros: true,
@@ -1082,11 +1086,11 @@ fn test_sas_w3_fixed_pipe_keeps_target_reachable() {
     for seed in [123u64, 385, 515, 559, 629] {
         let mut catalog = NodeCatalog::build(&rom, false);
         let mut swap_rng = ChaCha8Rng::seed_from_u64(seed);
-        super::super::start_airship_swap::pick_swaps(&mut catalog, &mut swap_rng);
-        let pickup = super::super::overworld_pickup::pick_up(
+        crate::randomize::overworld::start_airship_swap::pick_swaps(&mut catalog, &mut swap_rng);
+        let pickup = overworld::pickup::pick_up(
             &rom,
             &catalog,
-            super::super::overworld_pickup::PickupFlags {
+            overworld::pickup::PickupFlags {
                 shuffle_spade_games: true,
                 shuffle_toad_houses: true,
                 ..Default::default()

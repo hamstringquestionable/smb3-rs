@@ -693,7 +693,7 @@ pub fn apply_macobra_patches(rom: &mut Rom) {
 
     // NOTE: MaCobra's "Bros don't stop on hands" (issue #14) used to live
     // here; it is subsumed by the overworld writer's march-veto trampoline
-    // (overworld_writer/march_veto.rs), which rejects hand-trap landings
+    // (overworld/writer/march_veto.rs), which rejects hand-trap landings
     // outright at Map_MarchValidateTravel's landing-zone check.
 
     // Hold-left airship-entry pit-death fix (MaCobra52). See notes above the

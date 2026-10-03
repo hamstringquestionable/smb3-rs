@@ -2,8 +2,8 @@ use rand::Rng;
 
 use crate::rom::Rom;
 
-use super::level_helpers;
-use super::rom_data::AIRSHIP_ENTRIES;
+use crate::randomize::overworld::level_helpers;
+use crate::randomize::rom_data::AIRSHIP_ENTRIES;
 
 /// Shuffle airships across worlds 1-7. Each world's airship map tile
 /// can load any of the 7 airship levels.

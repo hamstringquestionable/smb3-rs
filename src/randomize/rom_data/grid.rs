@@ -58,7 +58,7 @@ pub(crate) fn read_tile_grid(rom: &Rom, world_idx: usize) -> Grid {
 /// All eight worlds' tile grids, read off a finished ROM.
 ///
 /// **For callers that only have a ROM.** The randomizer pipeline does not use
-/// this: `overworld_writer::WrittenOverworld::grids` hands over the map the
+/// this: `crate::randomize::overworld::writer::WrittenOverworld::grids` hands over the map the
 /// writer just committed, which is the same bytes without the round trip, and
 /// without the unwritten "run after every grid write" rule that reading back
 /// implies. Only tests read a finished ROM's map now.

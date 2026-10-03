@@ -35,12 +35,12 @@ use rand::Rng;
 
 use std::collections::{HashMap, HashSet};
 
-use super::map_walker::walk_reachable_blocked;
-use super::overworld_build::{
-    BuildResult, FortRef, LockHint, SlotKind, WorldState, from_built, stamp_slots,
-};
 use super::rom_data::{self, Grid, Pos};
 use crate::randomize::maze::item_keys::Key;
+use crate::randomize::overworld::build::{
+    BuildResult, FortRef, LockHint, SlotKind, WorldState, from_built, stamp_slots,
+};
+use crate::randomize::overworld::map_walker::walk_reachable_blocked;
 use walk::{MazePos, MazeWorld, walk_maze};
 
 // --- The generator: a model pass over the builder's result, no ROM writes ---
@@ -846,7 +846,7 @@ impl GlobalState {
 // Reason: production reads only `Spheres::solvable`, for the fallback guard in
 // `generate`. Everything else is the spoiler log and the census surface, whose
 // only reader is the test harness — the same shape, and the same reason, as
-// `overworld_build::PhaseReport`.
+// `crate::randomize::overworld::build::PhaseReport`.
 #[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(crate) struct Sphere {
@@ -930,7 +930,7 @@ impl Spheres {
 // Reason: production reads only `spheres`, for the solvability guard in
 // `generate`; the rest is the census and spoiler surface and the test harness
 // is its only reader. Same shape, and the same reason, as
-// `overworld_build::PhaseReport`.
+// `crate::randomize::overworld::build::PhaseReport`.
 #[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(crate) struct GenReport {
@@ -1194,7 +1194,7 @@ pub(crate) fn generate<R: Rng>(
 /// a ROM patch laid over grids the writer had already committed, which is what
 /// made the ordering in `randomize_inner` load-bearing and forced later steps
 /// to read the cartridge back to discover what had happened. As model edits
-/// they are picked up by `overworld_writer::grid`, which starts from
+/// they are picked up by `crate::randomize::overworld::writer::grid`, which starts from
 /// `built.grid.clone()` and stamps on top, so one write pass emits the finished
 /// map and nothing has to re-derive it afterwards.
 ///

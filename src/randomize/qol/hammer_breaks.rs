@@ -285,7 +285,7 @@ mod tests {
         // has to know both. It knew only one family once already.
         for hints in [crate::HintMode::Full, crate::HintMode::Partial] {
             let rom = build(crate::Tri::On, crate::Tri::Off, hints);
-            let allocated = crate::randomize::lock_keys::allocated_pairs_on_rom(&rom);
+            let allocated = crate::randomize::overworld::lock_keys::allocated_pairs_on_rom(&rom);
             let water = |revealed: u8| revealed == rom_data::BRIDGE_TILE;
             assert!(
                 !allocated.is_empty(),

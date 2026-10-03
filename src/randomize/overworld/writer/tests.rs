@@ -1,6 +1,7 @@
 use super::*;
+use crate::randomize::overworld;
 use crate::randomize::{
-    map_walker, node_catalog, overworld_build, overworld_pickup, piranha_rooms, qol, troll_pipes,
+    overworld::map_walker, overworld::node_catalog, overworld::troll_pipes, piranha_rooms, qol,
 };
 use crate::rom::Rom;
 use rand::SeedableRng;
@@ -21,7 +22,7 @@ fn load_rom() -> Option<Rom> {
 /// the prepped one it places **17 every time**, which is what
 /// `redistribute_fortresses` deals.
 ///
-/// `overworld_build::tests::load_rom` has always done this; this module's
+/// `overworld::build::tests::load_rom` has always done this; this module's
 /// `load_rom` above never has. The fortress tests below use this one, because a
 /// census taken on a map the game does not produce is worth nothing. Fixing the
 /// rest of the module is a separate job — several tests here pin values
@@ -40,11 +41,11 @@ fn load_prepped_rom() -> Option<Rom> {
 fn standard_pickup(
     rom: &Rom,
     catalog: &node_catalog::NodeCatalog,
-) -> overworld_pickup::PickupResult {
-    overworld_pickup::pick_up(
+) -> overworld::pickup::PickupResult {
+    overworld::pickup::pick_up(
         rom,
         catalog,
-        overworld_pickup::PickupFlags {
+        overworld::pickup::PickupFlags {
             shuffle_spade_games: true,
             shuffle_toad_houses: true,
             ..Default::default()
@@ -53,8 +54,8 @@ fn standard_pickup(
 }
 
 /// Standard test build flags: toad houses shuffled.
-fn standard_build_flags() -> overworld_build::BuildFlags {
-    overworld_build::BuildFlags { shuffle_toad_houses: true, ..Default::default() }
+fn standard_build_flags() -> overworld::build::BuildFlags {
+    overworld::build::BuildFlags { shuffle_toad_houses: true, ..Default::default() }
 }
 
 #[test]
@@ -66,7 +67,7 @@ fn test_pool_assignment_exhaustive() {
     let catalog = node_catalog::NodeCatalog::build(&rom, false);
     let pickup = standard_pickup(&rom, &catalog);
     let mut rng = ChaCha8Rng::seed_from_u64(42);
-    let build = overworld_build::build(
+    let build = overworld::build::build(
         &rom,
         &OverworldData { pickup: &pickup, catalog: &catalog },
         &mut rng,
@@ -148,7 +149,7 @@ fn test_troll_pipes_never_assigned_hand_levels() {
 
     for seed in 0u64..32 {
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
-        let mut build = overworld_build::build(
+        let mut build = overworld::build::build(
             &rom,
             &OverworldData { pickup: &pickup, catalog: &catalog },
             &mut rng,
@@ -213,7 +214,7 @@ fn test_friendlier_levels_blocks_and_refills() {
 
         for seed in 0u64..16 {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
-            let build = overworld_build::build(
+            let build = overworld::build::build(
                 &rom,
                 &OverworldData { pickup: &pickup, catalog: &catalog },
                 &mut rng,
@@ -232,10 +233,10 @@ fn test_friendlier_levels_blocks_and_refills() {
 
             assert_eq!(
                 placed.len(),
-                overworld_build::VANILLA_LEVEL_COUNT,
+                overworld::build::VANILLA_LEVEL_COUNT,
                 "beta={beta} seed {seed}: dealt {} levels, expected {}",
                 placed.len(),
-                overworld_build::VANILLA_LEVEL_COUNT,
+                overworld::build::VANILLA_LEVEL_COUNT,
             );
 
             let mut seen: HashMap<usize, usize> = HashMap::new();
@@ -306,7 +307,7 @@ fn test_deja_vu_repeats_levels() {
 
             for seed in 0u64..16 {
                 let mut rng = ChaCha8Rng::seed_from_u64(seed);
-                let build = overworld_build::build(
+                let build = overworld::build::build(
                     &rom,
                     &OverworldData { pickup: &pickup, catalog: &catalog },
                     &mut rng,
@@ -325,7 +326,7 @@ fn test_deja_vu_repeats_levels() {
 
                 assert_eq!(
                     placed.len(),
-                    overworld_build::VANILLA_LEVEL_COUNT,
+                    overworld::build::VANILLA_LEVEL_COUNT,
                     "beta={beta} {mode:?} seed {seed}: dealt {} levels",
                     placed.len(),
                 );
@@ -377,7 +378,7 @@ fn test_deja_vu_repeats_levels() {
 /// The pool index of 1-F, the one fortress that holds a chest item.
 fn fort_1f_pool_idx(
     catalog: &node_catalog::NodeCatalog,
-    pickup: &overworld_pickup::PickupResult,
+    pickup: &overworld::pickup::PickupResult,
 ) -> usize {
     let found: Vec<usize> = pickup
         .pool
@@ -433,7 +434,7 @@ fn test_deja_vu_repeats_fortresses() {
 
             for seed in 0u64..16 {
                 let mut rng = ChaCha8Rng::seed_from_u64(seed);
-                let build = overworld_build::build(
+                let build = overworld::build::build(
                     &rom,
                     &OverworldData { pickup: &pickup, catalog: &catalog },
                     &mut rng,
@@ -445,7 +446,7 @@ fn test_deja_vu_repeats_fortresses() {
                     .map(|w| {
                         w.slots
                             .iter()
-                            .filter(|s| s.kind == overworld_build::SlotKind::Fortress)
+                            .filter(|s| s.kind == overworld::build::SlotKind::Fortress)
                             .count()
                     })
                     .sum();
@@ -533,7 +534,7 @@ fn test_deja_vu_repeats_fortresses() {
 /// fortress, so it never sits in the level pool.)
 fn level_pool_unique_items(
     catalog: &node_catalog::NodeCatalog,
-    pickup: &overworld_pickup::PickupResult,
+    pickup: &overworld::pickup::PickupResult,
 ) -> Vec<usize> {
     pickup
         .pool
@@ -577,7 +578,7 @@ fn test_friendlier_levels_blocks_forts() {
     let mut dupe_hist = [0usize; 3];
     for seed in 0u64..120 {
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
-        let build = overworld_build::build(
+        let build = overworld::build::build(
             &rom,
             &OverworldData { pickup: &pickup, catalog: &catalog },
             &mut rng,
@@ -587,7 +588,7 @@ fn test_friendlier_levels_blocks_forts() {
             .worlds
             .iter()
             .map(|w| {
-                w.slots.iter().filter(|s| s.kind == overworld_build::SlotKind::Fortress).count()
+                w.slots.iter().filter(|s| s.kind == overworld::build::SlotKind::Fortress).count()
             })
             .sum();
 
@@ -671,7 +672,7 @@ fn test_write_deterministic() {
     for pass in 0..2 {
         let target = if pass == 0 { &mut rom1 } else { &mut rom2 };
         let mut rng = ChaCha8Rng::seed_from_u64(42);
-        let build = overworld_build::build(
+        let build = overworld::build::build(
             &rom,
             &OverworldData { pickup: &pickup, catalog: &catalog },
             &mut rng,
@@ -698,7 +699,7 @@ fn test_w8_sprites_moved() {
     let catalog = node_catalog::NodeCatalog::build(&rom, false);
     let pickup = standard_pickup(&rom, &catalog);
     let mut rng = ChaCha8Rng::seed_from_u64(42);
-    let build = overworld_build::build(
+    let build = overworld::build::build(
         &rom,
         &OverworldData { pickup: &pickup, catalog: &catalog },
         &mut rng,
@@ -744,7 +745,7 @@ fn every_lock_is_paired_with_its_fortress() {
     let pickup = standard_pickup(&rom, &catalog);
     let mut rng = ChaCha8Rng::seed_from_u64(42);
     let data = OverworldData { pickup: &pickup, catalog: &catalog };
-    let build = overworld_build::build(&rom, &data, &mut rng, standard_build_flags());
+    let build = overworld::build::build(&rom, &data, &mut rng, standard_build_flags());
 
     let mut test_rom = rom.clone();
     let _ = write_overworld(&mut test_rom, &build, &data, &mut rng, WriteFlags::default());
@@ -767,7 +768,7 @@ fn every_lock_is_paired_with_its_fortress() {
             world
                 .slots
                 .iter()
-                .any(|s| s.pos == e.key_pos && s.kind == overworld_build::SlotKind::Fortress),
+                .any(|s| s.pos == e.key_pos && s.kind == overworld::build::SlotKind::Fortress),
             "W{} entry is keyed on ({},{}), which holds no fortress",
             e.key_world + 1,
             e.key_pos.0,
@@ -784,10 +785,10 @@ fn test_hammer_bro_redistribution_written() {
     };
     for seed in 0..16u64 {
         let catalog = node_catalog::NodeCatalog::build(&rom, false);
-        let pickup = overworld_pickup::pick_up(
+        let pickup = overworld::pickup::pick_up(
             &rom,
             &catalog,
-            overworld_pickup::PickupFlags {
+            overworld::pickup::PickupFlags {
                 shuffle_spade_games: true,
                 shuffle_toad_houses: true,
                 shuffle_hammer_bros: true,
@@ -795,11 +796,11 @@ fn test_hammer_bro_redistribution_written() {
         );
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
         let data = OverworldData { pickup: &pickup, catalog: &catalog };
-        let build = overworld_build::build(
+        let build = overworld::build::build(
             &rom,
             &data,
             &mut rng,
-            overworld_build::BuildFlags {
+            overworld::build::BuildFlags {
                 shuffle_toad_houses: true,
                 shuffle_hammer_bros: true,
                 ..Default::default()
@@ -875,10 +876,10 @@ fn row78_completion_bit_is_never_double_claimed() {
 
     for seed in 0..20u64 {
         let catalog = node_catalog::NodeCatalog::build(&rom, false);
-        let pickup = overworld_pickup::pick_up(
+        let pickup = overworld::pickup::pick_up(
             &rom,
             &catalog,
-            overworld_pickup::PickupFlags {
+            overworld::pickup::PickupFlags {
                 shuffle_spade_games: true,
                 shuffle_toad_houses: true,
                 shuffle_hammer_bros: true,
@@ -886,11 +887,11 @@ fn row78_completion_bit_is_never_double_claimed() {
         );
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
         let data = OverworldData { pickup: &pickup, catalog: &catalog };
-        let build = overworld_build::build(
+        let build = overworld::build::build(
             &rom,
             &data,
             &mut rng,
-            overworld_build::BuildFlags {
+            overworld::build::BuildFlags {
                 shuffle_toad_houses: true,
                 shuffle_hammer_bros: true,
                 ..Default::default()
@@ -915,8 +916,8 @@ fn row78_completion_bit_is_never_double_claimed() {
 
             for c in 0..grid.cols {
                 let row8 = grid.get(8, c);
-                if !overworld_build::is_completion_unsafe(grid.get(7, c))
-                    || !overworld_build::is_completion_unsafe(row8)
+                if !overworld::build::is_completion_unsafe(grid.get(7, c))
+                    || !overworld::build::is_completion_unsafe(row8)
                 {
                     // Either row 7 leaves the bit alone, or row 8 never wanted
                     // it (a Hammer Bro rides a plain path tile the completion
@@ -948,7 +949,7 @@ fn test_pointer_table_sorted() {
     let catalog = node_catalog::NodeCatalog::build(&rom, false);
     let pickup = standard_pickup(&rom, &catalog);
     let mut rng = ChaCha8Rng::seed_from_u64(42);
-    let build = overworld_build::build(
+    let build = overworld::build::build(
         &rom,
         &OverworldData { pickup: &pickup, catalog: &catalog },
         &mut rng,
@@ -1008,7 +1009,7 @@ fn test_no_uncovered_blank_nodes() {
 
     for seed in [42u64, 123, 999, 7777, 31337] {
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
-        let build = overworld_build::build(
+        let build = overworld::build::build(
             &rom,
             &OverworldData { pickup: &pickup, catalog: &catalog },
             &mut rng,
@@ -1079,7 +1080,7 @@ fn test_generate_rom() {
 
     for seed in [42u64, 123, 999] {
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
-        let build = overworld_build::build(
+        let build = overworld::build::build(
             &rom,
             &OverworldData { pickup: &pickup, catalog: &catalog },
             &mut rng,
@@ -1181,7 +1182,7 @@ fn test_piranha_shuffle_plants_written() {
                     })
                     .count();
                 assert!(
-                    empty >= overworld_build::RESERVED_DYNAMIC_SLOTS,
+                    empty >= overworld::build::RESERVED_DYNAMIC_SLOTS,
                     "{mode:?}: W{} has only {empty} empty map-object slots",
                     wi + 1,
                 );
@@ -1279,7 +1280,7 @@ fn test_troll_pipes_never_assigned_piranha_levels() {
 
     for seed in 0u64..32 {
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
-        let mut build = overworld_build::build(
+        let mut build = overworld::build::build(
             &prepped,
             &OverworldData { pickup: &pickup, catalog: &catalog },
             &mut rng,
@@ -1437,10 +1438,10 @@ fn test_march_veto_pipeline_writes_registry() {
     piranha_rooms::clear_vanilla_plants(&mut prepped);
     let mut catalog = node_catalog::NodeCatalog::build(&prepped, false);
     catalog.release_map_objects();
-    let pickup = overworld_pickup::pick_up(
+    let pickup = overworld::pickup::pick_up(
         &prepped,
         &catalog,
-        overworld_pickup::PickupFlags {
+        overworld::pickup::PickupFlags {
             shuffle_spade_games: true,
             shuffle_toad_houses: true,
             shuffle_hammer_bros: true,
@@ -1448,11 +1449,11 @@ fn test_march_veto_pipeline_writes_registry() {
     );
     let data = OverworldData { pickup: &pickup, catalog: &catalog };
     let mut rng = ChaCha8Rng::seed_from_u64(7);
-    let build = overworld_build::build(
+    let build = overworld::build::build(
         &prepped,
         &data,
         &mut rng,
-        overworld_build::BuildFlags {
+        overworld::build::BuildFlags {
             shuffle_toad_houses: true,
             shuffle_hammer_bros: true,
             ..Default::default()
@@ -1551,7 +1552,7 @@ fn grids_match_the_rom() {
         let mut out = rom.clone();
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
         let data = OverworldData { pickup: &pickup, catalog: &catalog };
-        let build = overworld_build::build(&rom, &data, &mut rng, standard_build_flags());
+        let build = overworld::build::build(&rom, &data, &mut rng, standard_build_flags());
         let written = write_overworld(&mut out, &build, &data, &mut rng, WriteFlags::default());
 
         if let Err(why) = grids_agree_with_rom(&written.grids, &out) {
@@ -1581,7 +1582,7 @@ fn grids_match_the_rom() {
 // These moved here when `fortress_fx.rs` was retired — the module was named for
 // a subsystem `lock_keys` replaced, and its last live function is now
 // `lock_entries` above. The tests stayed because they describe a ROM the
-// randomizer still *reads*: `overworld_pickup::open_fx_gaps` opens vanilla's
+// randomizer still *reads*: `overworld::pickup::open_fx_gaps` opens vanilla's
 // lock gaps out of these same bytes before placement.
 
 #[cfg(test)]
@@ -1783,7 +1784,7 @@ mod derivation {
 /// whole drain order.
 fn a_pooled_level_identity(
     catalog: &node_catalog::NodeCatalog,
-    pickup: &overworld_pickup::PickupResult,
+    pickup: &overworld::pickup::PickupResult,
 ) -> (usize, usize) {
     pickup
         .pool
@@ -1802,12 +1803,12 @@ fn a_pooled_level_identity(
 /// so a pin in an early world is satisfied from a full deck and proves
 /// nothing.
 fn pin_last_world_level_slot(
-    build: &mut overworld_build::BuildResult,
+    build: &mut overworld::build::BuildResult,
     pin: (usize, usize),
 ) -> Option<(usize, (usize, usize))> {
     for wi in (0..build.worlds.len()).rev() {
         if let Some(slot) =
-            build.worlds[wi].slots.iter_mut().find(|s| s.kind == overworld_build::SlotKind::Level)
+            build.worlds[wi].slots.iter_mut().find(|s| s.kind == overworld::build::SlotKind::Level)
         {
             slot.pin = Some(pin);
             return Some((wi, slot.pos));
@@ -1829,7 +1830,7 @@ fn a_pinned_level_lands_on_its_slot() {
     let catalog = node_catalog::NodeCatalog::build(&rom, false);
     let pickup = standard_pickup(&rom, &catalog);
     let mut rng = ChaCha8Rng::seed_from_u64(42);
-    let mut build = overworld_build::build(
+    let mut build = overworld::build::build(
         &rom,
         &OverworldData { pickup: &pickup, catalog: &catalog },
         &mut rng,
@@ -1878,7 +1879,7 @@ fn deja_vu_never_duplicates_a_pinned_level() {
     let catalog = node_catalog::NodeCatalog::build(&rom, false);
     let pickup = standard_pickup(&rom, &catalog);
 
-    let deal = |build: &overworld_build::BuildResult, seed: u64| {
+    let deal = |build: &overworld::build::BuildResult, seed: u64| {
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
         assign_pool(
             &rom,
@@ -1900,7 +1901,7 @@ fn deja_vu_never_duplicates_a_pinned_level() {
     };
 
     let mut rng = ChaCha8Rng::seed_from_u64(11);
-    let mut build = overworld_build::build(
+    let mut build = overworld::build::build(
         &rom,
         &OverworldData { pickup: &pickup, catalog: &catalog },
         &mut rng,
@@ -1939,7 +1940,7 @@ fn an_unsatisfiable_pin_is_reported() {
     let catalog = node_catalog::NodeCatalog::build(&rom, false);
     let pickup = standard_pickup(&rom, &catalog);
     let mut rng = ChaCha8Rng::seed_from_u64(7);
-    let mut build = overworld_build::build(
+    let mut build = overworld::build::build(
         &rom,
         &OverworldData { pickup: &pickup, catalog: &catalog },
         &mut rng,

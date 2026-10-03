@@ -81,12 +81,12 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
 /// internal analyzer tests (and the future WASM single-seed dump endpoint) to
 /// inspect the exact topology the player will see, while still consuming RNG
 /// in the same order as a real playthrough.
-#[allow(dead_code)] // consumed by overworld_build::tests::test_dump_required_progression.
+#[allow(dead_code)] // consumed by crate::randomize::overworld::build::tests::test_dump_required_progression.
 pub(crate) fn randomize_with_overworld_capture(
     rom: &mut Rom,
     seed: u64,
     options: &Options,
-    capture: &mut Option<randomize::overworld_build::BuildResult>,
+    capture: &mut Option<randomize::overworld::build::BuildResult>,
 ) {
     randomize_inner(rom, seed, options, Some(capture));
 }
@@ -104,7 +104,7 @@ fn randomize_inner(
     rom: &mut Rom,
     seed: u64,
     options: &Options,
-    overworld_capture: Option<&mut Option<randomize::overworld_build::BuildResult>>,
+    overworld_capture: Option<&mut Option<randomize::overworld::build::BuildResult>>,
 ) {
     let mut rng = ChaCha8Rng::seed_from_u64(seed);
     // Chest/Toad House/Hammer Bro/letter items draw from their own substream

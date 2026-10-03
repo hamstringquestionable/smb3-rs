@@ -141,7 +141,7 @@ pub(crate) fn recompute_safety_flags(state: &mut WorldState) {
 /// of them: the builder leaves this many behind ([`ensure_secret_exit_safe`]),
 /// the world maze restores that many after re-pairing
 /// (`maze::fill::keep_n_sealable`), and the writer consumes them
-/// (`overworld_writer::assign`). A deck that placed a second secret-exit level
+/// (`crate::randomize::overworld::writer::assign`). A deck that placed a second secret-exit level
 /// would raise this, and all three would follow.
 pub(crate) const SECRET_EXIT_SLOTS_NEEDED: usize = 1;
 

@@ -70,7 +70,7 @@ use crate::pipeline::FireFlowerMode;
 use crate::rom::Rom;
 
 use super::rom_data::{FIRE_FLOWER_SUB_CPU, FS_FIRE_FLOWER};
-use super::world_order::WORLD_INIT_OPERAND;
+use crate::randomize::overworld::world_order::WORLD_INIT_OPERAND;
 
 /// File offset of the suit-store inside `ObjHit_FireFlower` (PRG001). The 12
 /// bytes here are vanilla `BEQ +0x0A / LDA #$1F / STA $0555 / LDA #$03 /
@@ -96,7 +96,7 @@ const ROUTINE_LEN: u16 = 26;
 
 /// Install the Random Fire Flower patch. `Off` is a no-op.
 ///
-/// Must run after [`super::world_order`] so the starting-world salt is read from
+/// Must run after [`crate::randomize::overworld::world_order`] so the starting-world salt is read from
 /// its final value (the orchestrator guarantees this ordering).
 pub fn apply(rom: &mut Rom, mode: FireFlowerMode) {
     let pool: &[u8] = match mode {

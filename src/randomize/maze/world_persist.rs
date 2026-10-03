@@ -86,7 +86,7 @@
 use crate::rom::Rom;
 
 use crate::randomize::maze::completion_bits;
-use crate::randomize::pipe_helpers;
+use crate::randomize::overworld::pipe_helpers;
 #[cfg(test)]
 use crate::randomize::rom_data::NMI_SAFE_MAX;
 use crate::randomize::rom_data::{

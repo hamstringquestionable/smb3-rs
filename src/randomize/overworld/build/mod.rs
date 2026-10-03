@@ -95,11 +95,13 @@ use rand::seq::{IndexedRandom, SliceRandom};
 
 use crate::rom::Rom;
 
-use super::map_walker::{Reach, walk_map, walk_reachable, walk_reachable_blocked};
-use super::node_catalog::{NodeCatalog, NodeKind};
-use super::overworld_helpers::{LOCKABLE_TILES, find_target};
-use super::overworld_pickup::{PickupResult, blank_tile_for};
-use super::rom_data::{
+use crate::randomize::overworld::helpers::{LOCKABLE_TILES, find_target};
+use crate::randomize::overworld::map_walker::{
+    Reach, walk_map, walk_reachable, walk_reachable_blocked,
+};
+use crate::randomize::overworld::node_catalog::{NodeCatalog, NodeKind};
+use crate::randomize::overworld::pickup::{PickupResult, blank_tile_for};
+use crate::randomize::rom_data::{
     self, BACKGROUND_TILES, Grid, Pos, TILE_BONUS_GAME, TILE_FORTRESS, TILE_NODE, TILE_PIPE,
     TILE_TOAD_HOUSE, TeleportEdge,
 };

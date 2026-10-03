@@ -1,6 +1,6 @@
 //! Level helpers: shared write operations for level entry manipulation.
 //!
-//! Parallels `pipe_helpers.rs` and `overworld_helpers.rs`. Contains
+//! Parallels `pipe_helpers.rs` and `helpers.rs`. Contains
 //! mechanical ROM write operations used by multiple randomization modules.
 
 use rand::Rng;
@@ -8,7 +8,7 @@ use rand::seq::SliceRandom;
 
 use crate::rom::Rom;
 
-use super::rom_data::{self, LevelEntry, WORLDS};
+use crate::randomize::rom_data::{self, LevelEntry, WORLDS};
 
 /// Shuffle level entries among the given (world_idx, entry_idx) slots.
 ///

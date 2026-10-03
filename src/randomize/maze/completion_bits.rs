@@ -71,7 +71,7 @@ use crate::rom::Rom;
 
 use crate::randomize::maze::map_objects::{self, RESTORE_OBJECTS_CPU};
 use crate::randomize::maze::maze_state;
-use crate::randomize::overworld_build::is_completion_unsafe;
+use crate::randomize::overworld::build::is_completion_unsafe;
 #[cfg(test)]
 use crate::randomize::rom_data::{self};
 use crate::randomize::rom_data::{Grid, MAP_COMPLETE_BITS};
@@ -123,7 +123,7 @@ impl CompletionMap {
     /// The same, read back off a finished ROM.
     ///
     /// **Nothing in the pipeline calls this any more.** Every consumer of the
-    /// finished map is handed it — `overworld_writer` returns what it wrote,
+    /// finished map is handed it — `overworld::writer` returns what it wrote,
     /// and the last read-back went when `lock_keys` stopped stamping map tiles.
     /// What is left is tests and `testrom`, which patches a finished ROM with
     /// no writer in the path, so there the ROM genuinely is the record.
@@ -318,7 +318,7 @@ const BASES_CPU: u16 = prg010_file_to_cpu(FS_COMPLETION_BASES);
 /// The `JSR` is legal here for the same reason the `CMP` was: this routine lives
 /// in PRG010 but runs with PRG012 at `$A000`, and it already reads two PRG012
 /// tables at absolute addresses. The hook note above is what guarantees it.
-const ML_RANGE_CPU: u16 = crate::randomize::lock_keys::ML_RANGE_CPU;
+const ML_RANGE_CPU: u16 = crate::randomize::overworld::lock_keys::ML_RANGE_CPU;
 /// `Map_Removable_Tiles` — the two rocks, three locks, two fortress variants and
 /// the water gap.
 ///
@@ -410,7 +410,7 @@ const IS_COMPLETABLE: [u8; 39] = [
     0xF0, 0x1E,                             //  5: BEQ +30 -> yes
     0xCA,                                   //  7: DEX
     0x10, 0xF8,                             //  8: BPL -8
-    0xA2, (crate::randomize::lock_keys::REMOVABLE_COUNT - 1) as u8, // 10: LDX #(entries - 1)
+    0xA2, (crate::randomize::overworld::lock_keys::REMOVABLE_COUNT - 1) as u8, // 10: LDX #(entries - 1)
     0xDD, MAP_REMOVABLE_TILES as u8,
           (MAP_REMOVABLE_TILES >> 8) as u8,       // 12: CMP Map_Removable_Tiles,X     ; loop
     0xF0, 0x14,                             // 15: BEQ +20 -> yes
@@ -890,7 +890,7 @@ const NEW_GAME_INIT_CPU: u16 = (0xC000 + FS_NEW_GAME_INIT - 0x32010) as u16;
 /// which is why the replacement has to be three bytes and a `JSR` is the only
 /// thing that fits. `world_order` already overwrites those same three bytes
 /// with `NOP`s, so the two must not both run: see
-/// [`world_order::DEBUG_FLAG_STA_OFFSET`](crate::randomize::world_order::DEBUG_FLAG_STA_OFFSET)
+/// [`world_order::DEBUG_FLAG_STA_OFFSET`](crate::randomize::overworld::world_order::DEBUG_FLAG_STA_OFFSET)
 /// and [`apply`]'s ordering note.
 ///
 /// On entry `A` holds whatever the site loaded into `World_Num` — 0 in vanilla,
@@ -1029,7 +1029,7 @@ const WIPE_LEN: usize = 10;
 /// `STA Debug_Flag` in the title menu's game-start init — the three bytes
 /// [`NEW_GAME_INIT`]'s call replaces. Named from `world_order`, which patches
 /// the same site, rather than repeated here.
-const NEW_GAME_HOOK_OFFSET: usize = crate::randomize::world_order::DEBUG_FLAG_STA_OFFSET;
+const NEW_GAME_HOOK_OFFSET: usize = crate::randomize::overworld::world_order::DEBUG_FLAG_STA_OFFSET;
 /// Vanilla bytes there: `STA $0160`.
 #[cfg(test)]
 const NEW_GAME_HOOK_VANILLA: [u8; 3] = [0x8D, 0x60, 0x01];
@@ -1057,9 +1057,9 @@ const RELOAD_CALL_VANILLA: [u8; 3] = [0x20, 0x5D, 0xA4];
 /// stand in the ROM, so anything that still means to move a map tile has to
 /// have moved it already.
 ///
-/// **And in particular, run it after [`crate::randomize::world_order::randomize`].** Both
+/// **And in particular, run it after [`crate::randomize::overworld::world_order::randomize`].** Both
 /// write the three bytes at
-/// [`DEBUG_FLAG_STA_OFFSET`](crate::randomize::world_order::DEBUG_FLAG_STA_OFFSET):
+/// [`DEBUG_FLAG_STA_OFFSET`](crate::randomize::overworld::world_order::DEBUG_FLAG_STA_OFFSET):
 /// `world_order` `NOP`s them out because it patches the shared `LDA #$00`
 /// operand into a starting world and will not have that value land in
 /// `Debug_Flag`, and this writes the `JSR` to [`NEW_GAME_INIT`]. Last writer
@@ -1433,11 +1433,11 @@ mod tests {
         // silently come back short. Idempotent, so the randomized arms below are
         // unaffected.
         let mut owned = rom.clone();
-        let rows = crate::randomize::lock_keys::removable_rows(
+        let rows = crate::randomize::overworld::lock_keys::removable_rows(
             &rom_data::read_all_tile_grids(&owned),
-            &crate::randomize::lock_keys::allocated_pairs_on_rom(&owned),
+            &crate::randomize::overworld::lock_keys::allocated_pairs_on_rom(&owned),
         );
-        crate::randomize::lock_keys::relocate_removable_tables(&mut owned, &rows);
+        crate::randomize::overworld::lock_keys::relocate_removable_tables(&mut owned, &rows);
         let rom = &owned;
 
         let mut mem = Memory::new();
@@ -1498,9 +1498,9 @@ mod tests {
         // because the builder asks before anything is stamped, while the ROM
         // carries rows only for obstacles this map actually wears. The two
         // claims that matter are both directional.
-        let table: Vec<u8> = crate::randomize::lock_keys::removable_rows(
+        let table: Vec<u8> = crate::randomize::overworld::lock_keys::removable_rows(
             &rom_data::read_all_tile_grids(&rom),
-            &crate::randomize::lock_keys::allocated_pairs_on_rom(&rom),
+            &crate::randomize::overworld::lock_keys::allocated_pairs_on_rom(&rom),
         )
         .into_iter()
         .map(|(obstacle, _)| obstacle)
@@ -2330,7 +2330,8 @@ mod tests {
 
         // `INC World_Num`, as it stands in PRG030's airship-cleared path,
         // plus an `RTS` so the harness can call it.
-        let inc = rom.read_range(crate::randomize::world_order::WORLD_INC_OFFSET, 3).to_vec();
+        let inc =
+            rom.read_range(crate::randomize::overworld::world_order::WORLD_INC_OFFSET, 3).to_vec();
         assert_eq!(
             inc,
             [0xEE, WORLD_NUM as u8, (WORLD_NUM >> 8) as u8],

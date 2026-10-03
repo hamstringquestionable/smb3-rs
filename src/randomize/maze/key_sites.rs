@@ -52,7 +52,7 @@
 use crate::randomize::maze::GlobalState;
 use crate::randomize::maze::item_keys::Key;
 use crate::randomize::maze::walk::MazePos;
-use crate::randomize::overworld_build::BuildResult;
+use crate::randomize::overworld::build::BuildResult;
 use crate::rom::Rom;
 
 /// A spot a key can go, and the write that puts one there.
@@ -161,12 +161,12 @@ pub(crate) mod test_support {
 
     use super::*;
     use crate::randomize::maze::{self, IDENTITY_SPINE};
-    use crate::randomize::node_catalog::NodeCatalog;
-    use crate::randomize::overworld_build::{
+    use crate::randomize::overworld::build::{
         BuildFlags, OverworldData, SECRET_EXIT_SLOTS_NEEDED, build,
     };
-    use crate::randomize::overworld_pickup::{PickupFlags, pick_up};
-    use crate::randomize::{items, start_airship_swap};
+    use crate::randomize::overworld::node_catalog::NodeCatalog;
+    use crate::randomize::overworld::pickup::{PickupFlags, pick_up};
+    use crate::randomize::{items, overworld::start_airship_swap};
 
     pub(crate) fn load_rom() -> Option<Rom> {
         let data = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes").ok()?;

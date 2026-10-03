@@ -110,7 +110,9 @@ pub(crate) fn from_pickup(
     // vanilla start is the only approach path). Stamping happens here, on
     // the grid every phase builds on, so the non-blank $C8 also keeps
     // placement off that cell.
-    crate::randomize::start_airship_swap::swap_tiles_above(&mut grid, world_idx, catalog);
+    crate::randomize::overworld::start_airship_swap::swap_tiles_above(
+        &mut grid, world_idx, catalog,
+    );
     let start = rom_data::find_start(&grid);
     let target = find_target(&grid, world_idx);
     let fixed = fixed_positions_for_world(

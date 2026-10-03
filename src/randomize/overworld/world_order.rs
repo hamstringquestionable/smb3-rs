@@ -1,7 +1,7 @@
 use rand::Rng;
 use rand::seq::SliceRandom;
 
-use super::rom_data::{FS_WORLD_ORDER, WORLD_ORDER_CPU};
+use crate::randomize::rom_data::{FS_WORLD_ORDER, WORLD_ORDER_CPU};
 use crate::rom::Rom;
 
 /// File offset of the `INC World_Num; JMP $84A0` instruction (6 bytes).
@@ -16,7 +16,7 @@ pub(crate) const WORLD_INC_OFFSET: usize = 0x3D0A1;
 /// Original: `LDA #$00; STA $0727; STA $0160`. We patch the #$00 to the starting world
 /// and NOP out the `STA $0160` so the debug flag isn't set to the world number.
 ///
-/// Exposed so [`super::fire_flower`] can read the baked starting world (the
+/// Exposed so [`crate::randomize::fire_flower`] can read the baked starting world (the
 /// first world in the shuffled progression, or 0 when world order is off) and
 /// use it as a seed-derived salt. Reading it is only meaningful after this
 /// module has run, which the orchestrator guarantees (world order is applied
@@ -87,7 +87,7 @@ const VANILLA_SITES: [(usize, &[u8], &str); 2] = [
 /// Returns the shuffled progression as internal world numbers, in play order
 /// (first entry is the starting world, last is always 7/Dark Land). With
 /// `world_count` < 7 this is shorter than 8 (unvisited worlds are omitted).
-/// Callers such as [`super::credits`] use it to align the ending montage.
+/// Callers such as [`crate::randomize::credits`] use it to align the ending montage.
 ///
 /// **`world_count` 0 is the degenerate end of that range, not a special case.**
 /// The prefix is simply empty, so the progression is `[7]` alone: the player

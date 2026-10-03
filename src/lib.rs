@@ -133,13 +133,13 @@ pub(crate) fn randomize_rom_with_overworld_capture(
     seed: u64,
     options: &Options,
     visual_patch: Option<&[u8]>,
-) -> Result<(Rom, randomize::overworld_build::BuildResult), String> {
+) -> Result<(Rom, randomize::overworld::build::BuildResult), String> {
     let mut rom =
         Rom::from_bytes_lax(rom_data, options.skip_rom_validation).map_err(|e| e.to_string())?;
     if let Some(patch) = visual_patch {
         rom.apply_ips_patch(patch, "visual_patch")?;
     }
-    let mut capture: Option<randomize::overworld_build::BuildResult> = None;
+    let mut capture: Option<randomize::overworld::build::BuildResult> = None;
     pipeline::randomize_with_overworld_capture(&mut rom, seed, options, &mut capture);
     let build = capture.ok_or_else(|| "overworld capture not populated".to_string())?;
     Ok((rom, build))

@@ -7,7 +7,7 @@
 //!
 //! **It writes almost nothing itself.** The maze's map edits — pad tiles,
 //! uninstalled locks, the fortress hint tiles — are model edits made by
-//! [`super::stamp_into`] before `overworld_writer` runs, so they reach the ROM
+//! [`super::stamp_into`] before `overworld::writer` runs, so they reach the ROM
 //! in the writer's own single pass. What is left here is one metatile
 //! definition, which is not a grid edit and belongs to no world.
 //!

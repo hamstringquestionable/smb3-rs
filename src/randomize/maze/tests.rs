@@ -16,19 +16,20 @@ use rand_chacha::ChaCha8Rng;
 use super::graph::{Knobs, PAD_BUDGET};
 use super::{GenReport, GlobalState, IDENTITY_SPINE, MazeEdge};
 
-use crate::randomize::map_walker::walk_reachable;
 use crate::randomize::maze::item_keys::Key;
 use crate::randomize::maze::walk::{MazePos, MazeWorld, walk_maze};
-use crate::randomize::node_catalog::NodeCatalog;
+use crate::randomize::overworld;
 /// Every census and property test asks for the same secret-exit slot count the
 /// pipeline does — the writer needs one, so the maze must leave one.
-use crate::randomize::overworld_build::SECRET_EXIT_SLOTS_NEEDED as SEALABLE_NEEDED;
-use crate::randomize::overworld_build::{
+use crate::randomize::overworld::build::SECRET_EXIT_SLOTS_NEEDED as SEALABLE_NEEDED;
+use crate::randomize::overworld::build::{
     BuildFlags, BuildResult, OverworldData, SlotKind, build, stamp_slots,
 };
-use crate::randomize::overworld_pickup::{PickupFlags, pick_up};
+use crate::randomize::overworld::map_walker::walk_reachable;
+use crate::randomize::overworld::node_catalog::NodeCatalog;
+use crate::randomize::overworld::pickup::{PickupFlags, pick_up};
 use crate::randomize::rom_data::{self, Grid};
-use crate::randomize::{qol, start_airship_swap};
+use crate::randomize::{overworld::start_airship_swap, qol};
 use crate::rom::Rom;
 
 fn load_rom() -> Option<Rom> {
@@ -1323,7 +1324,7 @@ fn lock_key_rows_match_the_whole_assignment() {
             &mut rng,
         );
         super::stamp_into(&mut build, &state);
-        let rows = crate::randomize::overworld_writer::lock_entries(&build);
+        let rows = overworld::writer::lock_entries(&build);
 
         assert_eq!(
             rows.len(),
@@ -1560,8 +1561,8 @@ fn the_maze_holds_under_start_airship_swap() {
 /// algorithm was chosen on the difference.
 #[test]
 fn every_world_has_a_fortress_in_its_start_region() {
-    use crate::randomize::map_walker::walk_reachable;
-    use crate::randomize::overworld_build::{SlotKind, from_built, stamp_slots};
+    use crate::randomize::overworld::build::{SlotKind, from_built, stamp_slots};
+    use crate::randomize::overworld::map_walker::walk_reachable;
 
     let Some(raw) = load_rom() else { return };
     let seeds = census_seeds(8);
@@ -1604,7 +1605,7 @@ fn every_world_has_a_fortress_in_its_start_region() {
 /// broke it once by splicing the two halves together.
 #[test]
 fn fort_and_lock_are_one_to_one() {
-    use crate::randomize::overworld_build::SlotKind;
+    use crate::randomize::overworld::build::SlotKind;
 
     let Some(raw) = load_rom() else { return };
     for seed in 0..census_seeds(8) {
@@ -2138,7 +2139,7 @@ fn one_f_can_always_decline_its_lock() {
 /// assignment should degrade to a more open maze, never an unwinnable one.
 ///
 /// It was not true for as long as the maze ran after the writer:
-/// `overworld_writer::grid` stamps `gap_tile` for every lock in the builder's
+/// `overworld::writer::grid` stamps `gap_tile` for every lock in the builder's
 /// list, so the cell reached the ROM as a gate whatever the maze concluded, and
 /// a second pass had to paint over it. `stamp_into` drops the lock from the
 /// model instead, so the writer never stamps the gate at all — the fix is the
@@ -2171,7 +2172,7 @@ fn an_uninstalled_lock_becomes_open_path() {
     // The writer must not be handed a gate that nothing in the game can ever
     // open — and with the lock gone from the build, no key row names it either.
     super::stamp_into(&mut build, &state);
-    let keys = crate::randomize::overworld_writer::lock_entries(&build);
+    let keys = overworld::writer::lock_entries(&build);
     assert!(
         !keys.iter().any(|e| e.target_world == lock.world && e.target_pos == lock.pos),
         "an uninstalled lock emitted a key entry"
@@ -2394,7 +2395,7 @@ fn w8_bridge_keys() {
 /// `$67` in this world, `$EB` in another, `$6A` in World 8 (the ones that open
 /// the way to the castle). Own-world wins, then W8, then elsewhere.
 ///
-/// All three already exist and `overworld_writer::grid` picks among them at
+/// All three already exist and `overworld::writer::grid` picks among them at
 /// random, so the encoding is free; the question is whether the three buckets
 /// are populated enough to mean anything.
 ///
@@ -2465,7 +2466,7 @@ fn fort_tile_encoding_census() {
 /// fortress opening a World 8 lock reads `OwnWorld`.
 ///
 /// This asserts the *fact*, which is the maze's half. Which tile byte says it
-/// is the writer's half — `overworld_writer::grid` maps these onto
+/// is the writer's half — `overworld::writer::grid` maps these onto
 /// `rom_data::FORTRESS_TILES`, and picks among them at random when the player
 /// turned hints off.
 ///
@@ -2478,7 +2479,7 @@ fn fort_tile_encoding_census() {
 #[test]
 fn a_fortress_tile_says_where_its_lock_is() {
     use super::super::rom_data::W8_IDX;
-    use crate::randomize::overworld_build::LockHint;
+    use crate::randomize::overworld::build::LockHint;
 
     let Some(raw) = load_rom() else { return };
     let mut checked = 0usize;
@@ -2987,7 +2988,7 @@ fn relocation_decouples_lock_and_fort_counts() {
         // the world number on a `HintMode::Full` lock reads, so a key pointing
         // at the fortress's OLD world would mislabel the lock rather than
         // crash. Assert every key lands on a cell a fortress actually occupies.
-        for e in crate::randomize::overworld_writer::lock_entries(&build) {
+        for e in overworld::writer::lock_entries(&build) {
             assert!(
                 build.worlds[e.key_world]
                     .slots
@@ -3238,7 +3239,7 @@ fn valley_pad_census() {
 #[test]
 #[ignore]
 fn anchor_keyability_census() {
-    use crate::randomize::overworld_build::SlotKind;
+    use crate::randomize::overworld::build::SlotKind;
 
     let Some(raw) = load_rom() else { return };
     let seeds = census_seeds(100);

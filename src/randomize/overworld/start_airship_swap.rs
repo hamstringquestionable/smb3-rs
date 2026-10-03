@@ -24,9 +24,9 @@ use rand::Rng;
 
 use crate::rom::Rom;
 
-use super::node_catalog::{NodeCatalog, NodeKind};
-use super::pipe_helpers::grid_pos_to_dest_nibbles;
-use super::rom_data::{
+use crate::randomize::overworld::node_catalog::{NodeCatalog, NodeKind};
+use crate::randomize::overworld::pipe_helpers::grid_pos_to_dest_nibbles;
+use crate::randomize::rom_data::{
     self, AIRSHIP_OBJ_SLOT, FS_SAS_GAMEOVER_FINALIZE, FS_SAS_SCRH_TABLE, FS_SAS_SCRL_TABLE,
     FS_SAS_SEED_HELPER, FS_SAS_X_TABLE, FS_SAS_XHI_TABLE, GAMEOVER_FINALIZE_SITE, Grid,
     MAP_INIT_SCROLL_SITE, MAP_TILE_GRIDS, MAP_Y_STARTS_OFF, WORLDS,

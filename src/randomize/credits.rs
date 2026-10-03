@@ -28,7 +28,7 @@
 //! shown first reads "WORLD 1", the second "WORLD 2", and so on.
 //!
 //! This follows the project's "decide then write" split: the orchestrator
-//! decides `order` (from the [`super::world_order`] shuffle), this module
+//! decides `order` (from the [`crate::randomize::overworld::world_order`] shuffle), this module
 //! performs the mechanical ROM writes.
 
 use rand::Rng;
@@ -145,7 +145,7 @@ pub fn reorder_world_pictures(rom: &mut Rom, order: &[u8; 8]) {
 /// Build the full 8-world montage order from a play-order progression.
 ///
 /// `progression` is the world sequence the player actually traversed (from
-/// [`super::world_order::randomize`]); it may be shorter than 8 when fewer
+/// [`crate::randomize::overworld::world_order::randomize`]); it may be shorter than 8 when fewer
 /// worlds are enabled. Visited worlds come first in play order; any worlds not
 /// in the progression are appended in ascending order so the result is always
 /// a permutation of `0..=7` and every montage slot shows a real picture.
@@ -317,7 +317,7 @@ fn find_tile(grid: &Grid, tile: u8) -> Option<usize> {
 }
 
 /// The HANDTRAP overworld tile: the builder stamps it at a node slot in place of
-/// a level number (`overworld_writer`), so on the map it's a node sitting on a
+/// a level number (`overworld::writer`), so on the map it's a node sitting on a
 /// path. Its metatile ID is shared with a plain horizontal path variant (it's in
 /// `VALID_HORZ`), so a flat [`MINI_TILE_LUT`] entry would draw it as a bare
 /// horizontal path — instead we draw a node marker.

@@ -1,6 +1,6 @@
 use rand::Rng;
 
-use super::overworld_build::{BuildResult, SlotKind};
+use crate::randomize::overworld::build::{BuildResult, SlotKind};
 use crate::rom::Rom;
 
 /// Per-slot probability that a regular-level slot is converted into a hand trap.

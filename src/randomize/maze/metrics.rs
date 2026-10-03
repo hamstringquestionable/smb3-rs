@@ -19,9 +19,9 @@
 
 use std::collections::HashSet;
 
-use super::super::overworld_build::SlotKind;
 use super::walk::{MazePos, walk_maze, walk_maze_cost};
 use super::{FortRef, GlobalState};
+use crate::randomize::overworld::build::SlotKind;
 
 /// A play-through's price, in content beaten.
 #[derive(Clone, Debug, Default)]

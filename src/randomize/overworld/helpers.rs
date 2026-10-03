@@ -3,7 +3,7 @@
 //! These are stateless helpers used by the overworld builder pipeline for tile
 //! classification, gap placement, and FX pattern lookup.
 
-use super::rom_data::{Grid, TILE_AIRSHIP, TILE_BOWSER};
+use crate::randomize::rom_data::{Grid, TILE_AIRSHIP, TILE_BOWSER};
 
 /// All path tiles eligible for lock/water-gap placement.
 /// Locks (0x54, 0x56, 0xE4) are visual variants — all block the path equally.
@@ -47,7 +47,7 @@ pub(super) const LOCKABLE_TILES: &[u8] = &[
 ];
 
 /// Find the airship or Bowser's castle position on the grid.
-pub(super) fn find_target(grid: &Grid, world_idx: usize) -> Option<(usize, usize)> {
+pub(crate) fn find_target(grid: &Grid, world_idx: usize) -> Option<(usize, usize)> {
     let target_tile = if world_idx == 7 { TILE_BOWSER } else { TILE_AIRSHIP };
     for r in 0..grid.rows() {
         for c in 0..grid.cols {
