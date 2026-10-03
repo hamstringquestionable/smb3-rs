@@ -4,34 +4,41 @@ use crate::rom::Rom;
 
 use crate::randomize::rom_data::{KOOPA_HITS_SUB_CPU, KOOPA_HITS_TABLE_CPU};
 
-/// Fix Koopaling softlock when airships are shuffled across worlds.
+/// Fix a Koopaling softlock on the fireball/hammer defeat path.
 ///
 /// Original IPS: "SMB3 - Koopaling Softlock Fix.ips"
-/// Single byte in a PRG001 object init table ($A176) controls Koopaling
-/// behavior state. Vanilla value 0x05 can softlock when a Koopaling loads
-/// in a non-native world (airship shuffle). Changing to 0x09 prevents it.
 ///
-/// Applied when either `shuffle_airships` or `hammer_vulnerable_koopalings`
-/// is enabled (the combined IPS also writes this byte).
+/// The byte is the Koopaling's entry in `ObjectGroup00_KillAction` (`$A176`):
+/// what an object does while in `OBJSTATE_KILLED`. Fireballs, and hammers
+/// once [`hammer_vulnerable_koopalings`] allows them, lower
+/// `Objects_HitCount` and set that state when it reaches 0 (PRG007
+/// `$A6DD`). The Koopaling's normal AI then sees the count at 0 and starts
+/// the real defeat (`Koopaling_DieByFire`). Vanilla's `KILLACT_NORMALANDKILLED`
+/// (5) runs that AI *and* the death fall at the same time; Fred's
+/// `KILLACT_NORMALSTATE` (9) runs the AI only. How 5 softlocks was not traced.
+///
+/// Unrelated to which world the Koopaling is in, despite being gated with
+/// the airship shuffle: it is applied when `shuffle_airships`,
+/// `hammer_vulnerable_koopalings` or `random_koopalings` is on.
 const KOOPALING_SOFTLOCK_OFFSET: usize = 0x02186;
 
 pub(crate) fn fix_koopaling_softlock(rom: &mut Rom) {
     rom.write_byte(KOOPALING_SOFTLOCK_OFFSET, 0x09);
 }
 
-/// Guard Koopaling collision bitmap during invulnerability frames.
+/// Don't hurt the player on a Koopaling it has just been stomped.
 ///
-/// Source: Fred's Koopaling fixes.
+/// Source: fcoughlin (Fred), the Koopaling half of
+/// `patches/SMB3 - Koopaling & Cheep Cheep hitbox fix 3.ips`. Fred's routine
+/// branches back to an RTS already in the bank; ours carries its own.
 ///
-/// After a stomp (but before defeat), Objects_Timer2 ($0520,X) is set to ~$80.
-/// The vanilla code at CPU $B15D unconditionally jumps to the collision bitmap
-/// update ($D9D3), registering the Koopaling as hittable even during
-/// invulnerability. This can cause phantom double-stomps — especially impactful
-/// with randomized hit counts where a race-condition skip is more noticeable.
-///
-/// We change `JMP $D9D3` (3 bytes at file 0x0316D) to `JSR guard_routine`.
-/// The guard checks Objects_Timer2 >= $70; if so, RTS skips the collision
-/// update. Otherwise PLA;PLA;JMP $D9D3 restores vanilla behavior.
+/// When the player touches the Koopaling, vanilla (`PRG001_B158`) checks
+/// whether the player is above it: if so it bounces them (`PRG001_B160`),
+/// otherwise `JMP Player_GetHurt` (`$D9D3`) at `$B15D`. A stomp sets
+/// `Objects_Timer2` to `$80`, so for the ~16 frames until it falls below `$70`
+/// the guard turns that hurt into the bounce: its RTS returns to `$B160`,
+/// whose own `Timer2` check then skips counting a hit. A fairness fix for
+/// being hurt just after a stomp; it does not touch the hit count.
 ///
 /// Patch site: file 0x0316D (CPU $B15D), 3 bytes.
 const KOOPA_COLLISION_PATCH_SITE: usize = 0x0316D;
@@ -45,8 +52,8 @@ pub(crate) fn koopaling_collision_guard(rom: &mut Rom) {
     //   BCS +5         ; timer >= $70 → skip (RTS)
     //   PLA            ; pop JSR return address
     //   PLA
-    //   JMP $D9D3      ; do vanilla collision bitmap update
-    //   RTS            ; skip path
+    //   JMP $D9D3      ; Player_GetHurt, as vanilla
+    //   RTS            ; skip path: back to the bounce at $B160
     #[rustfmt::skip]
     let code: [u8; 13] = [
         0xBD, 0x20, 0x05,   // LDA $0520,X
@@ -127,19 +134,28 @@ pub(crate) fn bowser_door_buffer_clear(rom: &mut Rom) {
     ]);
 }
 
-/// Clamp Koopaling Y position to screen bounds ($08–$E7).
+/// Clamp the in-hand wand's sprite Y to `$08`–`$E8`.
 ///
-/// Source: Fred's Koopaling fixes.
+/// Source: fcoughlin (Fred). His randomizer applies it at this same address;
+/// there is no IPS.
 ///
-/// Koopalings like Lemmy/Wendy bounce via velocity table deltas. In non-native
-/// boss rooms (airship shuffle), the floor height may differ, causing the
-/// accumulated Y to wrap around 0/255 — the Koopaling teleports off-screen
-/// and becomes unhittable (softlock).
+/// **This moves the wand's drawn position, not the Koopaling.** The hook is
+/// inside `Draw_KoopalingWand`, after it has temporarily added the wand offset
+/// (`Koopaling_OffYLo`, -5..+15) to `Objects_Y` and pushed the real position;
+/// the routine restores it with `PLA / STA Objects_Y,X` when it is done. It
+/// only acts when the Koopaling is at the very top or bottom of the screen,
+/// and only on frames 0-3 (walking, firing), the frames the wand is drawn.
 ///
-/// Hooks the movement handler at $B3F4 (file 0x03404) by replacing
-/// `LDA $0679,X` with `JSR clamp_routine`. The displaced instruction
-/// executes inside the subroutine before RTS, so the caller sees the
-/// same accumulator value.
+/// Why Fred added it is not recorded. The out-of-bounds jump table fixed in
+/// [`randomize_koopaling_hits`] could throw a Koopaling to the top of the
+/// screen, where the wand would wrap to the bottom; that is a guess. Kept
+/// because Koopaling softlocks were common before these patches and nobody
+/// recorded which one fixed what.
+///
+/// Hooks `$B3F4` (file 0x03404) by replacing `LDA Objects_FlipBits,X`
+/// (`$0679`) with `JSR clamp_routine`. The displaced instruction executes
+/// inside the subroutine before RTS, so the caller sees the same accumulator
+/// value.
 ///
 /// Patch site: file 0x03404 (CPU $B3F4), 3 bytes.
 const KOOPA_Y_CLAMP_PATCH_SITE: usize = 0x03404;

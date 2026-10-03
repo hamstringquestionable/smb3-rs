@@ -421,7 +421,7 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
     ),
     // PRG001 (file 0x02010, CPU $A000–$BFFF)
     fs(0x0382A, 23, &["koopalings"], "koopa_hits: subroutine + defeat JMP + threshold table"),
-    fs(0x03841, 13, &["koopalings"], "koopa_collision_guard: skip collision bitmap during invuln"),
+    fs(0x03841, 13, &["koopalings"], "koopa_collision_guard: no hurt just after a stomp"),
     fs(0x0384E, 16, &["koopalings"], "bowser_door_buffer_clear: empty graphics buffer at the door"),
     fs(
         0x0385E,
@@ -429,7 +429,7 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
         &["koopalings"],
         "koopa_fire_preset: set stomp counter from threshold table for fireball defeat",
     ),
-    fs(0x03FD0, 22, &["koopalings"], "koopa_y_clamp: clamp Koopaling Y position to screen"),
+    fs(0x03FD0, 22, &["koopalings"], "koopa_y_clamp: clamp the wand sprite's Y to screen"),
     fs(0x03FE6, 36, &["fire_flower"], "position-hash suit routine + pool table"),
     fs(0x0400A, 6, &["koopalings"], "koopa_jump_base: Koopaling_JumpYVelsBase for hit counts 0-5"),
     fs(
@@ -984,8 +984,8 @@ pub(crate) const KOOPA_HITS_SUB_CPU: u16 = 0xB81A;
 /// CPU address of the threshold table: $A000 + (0x0383A - 0x02010) = $B82A
 pub(crate) const KOOPA_HITS_TABLE_CPU: u16 = 0xB82A;
 
-// Koopaling collision guard — skip collision bitmap update during invulnerability.
-// Source: Fred's Koopaling fixes.
+// Koopaling collision guard — bounce instead of Player_GetHurt for ~16 frames
+// after a stomp. Source: Fred. See `koopalings::koopaling_collision_guard`.
 pub(crate) const FS_KOOPA_COLLISION_GUARD: usize = 0x03841; // 13 bytes
 
 pub(crate) const KOOPA_COLLISION_GUARD_CPU: u16 = 0xB831; // $A000 + (0x03841 - 0x02010)
@@ -997,8 +997,9 @@ pub(crate) const FS_BOWSER_DOOR_BUFFER_CLEAR: usize = 0x0384E; // 16 bytes
 
 pub(crate) const BOWSER_DOOR_BUFFER_CLEAR_CPU: u16 = 0xB83E; // $A000 + (0x0384E - 0x02010)
 
-// Koopaling Y-position clamp — keep bouncing Koopalings on screen in non-native rooms.
-// Source: Fred's Koopaling fixes.
+// Koopaling wand Y clamp — pins the in-hand wand sprite's Y to the screen
+// (the Koopaling's own Y is restored after). Source: Fred.
+// See `koopalings::koopaling_y_clamp`.
 pub(crate) const FS_KOOPA_Y_CLAMP: usize = 0x03FD0; // 22 bytes
 
 pub(crate) const KOOPA_Y_CLAMP_CPU: u16 = 0xBFC0; // $A000 + (0x03FD0 - 0x02010)
