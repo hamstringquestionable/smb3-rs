@@ -2584,7 +2584,7 @@ def resolve_level_name(rom, query):
         # Number fortresses if multiple. Order by pointer-table entry index,
         # as the Rust NodeCatalog does (node_catalog/naming.rs) — not by
         # (row, col), which puts a later-screen fort on a higher row first
-        # and swaps vanilla 3F1/3F2, 4F1/4F2 and 8F1/8F2.
+        # and swaps vanilla 3F1/3F2 and 4F1/4F2.
         fort_entries = [(n, e, p, t) for n, e, p, t in world_entries
                         if n.endswith("F") and len(n) <= 2]
         if len(fort_entries) > 1:
