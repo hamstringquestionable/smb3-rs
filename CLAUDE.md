@@ -505,7 +505,7 @@ The overworld builder is the core randomization system, implemented as a four-ph
 3. **Build** (`overworld/build/`) — the choice-first builder: per world, knob-free uniform placement phases (connectivity pipes bridge islands → levels → forts → locks) followed by a diagnosis-driven shaping loop (lock re-place, gated shortcut, fort+lock move, level move, pipe move) that guarantees a minimum cheapest-route cost (`C1_FLOOR`) and seeks ≥2 routes in the choice band; a world finishing below the floor redeals its pipe web. Cross-world passes handle secret-exit safety, hammer-bro fill, toad-house/spade promotion. Hard invariants: order-free completability fixpoint, row 7/8 completion-bit rule
 4. **Write** (`overworld/writer/`) — single-pass ROM write: updates pointer tables, FX table, pipe destination tables, map tiles, and hammer bro sprite assignments
 
-When the overworld builder is active, the old `levels.rs` intra-world shuffle and airship shuffle are bypassed since the builder handles them.
+The airship shuffle (`overworld/airship_shuffle.rs`) runs before the catalog, at stage 3, and is not bypassed: the builder carries each airship entry's shuffled data along when it re-sorts the pointer table.
 
 ## Tooling
 
