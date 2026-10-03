@@ -421,16 +421,17 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
     ),
     // PRG001 (file 0x02010, CPU $A000–$BFFF)
     fs(0x0382A, 23, &["koopalings"], "koopa_hits: subroutine + defeat JMP + threshold table"),
-    fs(0x03841, 13, &["koopalings"], "koopa_collision_guard: skip collision bitmap during invuln"),
-    fs(0x0384E, 16, &["koopalings"], "koopa_vram_clear: clear VRAM buffer on defeat"),
+    fs(0x03841, 13, &["koopalings"], "koopa_collision_guard: no hurt just after a stomp"),
+    fs(0x0384E, 16, &["koopalings"], "bowser_door_buffer_clear: empty graphics buffer at the door"),
     fs(
         0x0385E,
         12,
         &["koopalings"],
         "koopa_fire_preset: set stomp counter from threshold table for fireball defeat",
     ),
-    fs(0x03FD0, 22, &["koopalings"], "koopa_y_clamp: clamp Koopaling Y position to screen"),
+    fs(0x03FD0, 22, &["koopalings"], "koopa_x_clamp: keep the Koopaling's X on screen"),
     fs(0x03FE6, 36, &["fire_flower"], "position-hash suit routine + pool table"),
+    fs(0x0400A, 6, &["koopalings"], "koopa_jump_base: Koopaling_JumpYVelsBase for hit counts 0-5"),
     fs(
         0x02713,
         17,
@@ -983,35 +984,44 @@ pub(crate) const KOOPA_HITS_SUB_CPU: u16 = 0xB81A;
 /// CPU address of the threshold table: $A000 + (0x0383A - 0x02010) = $B82A
 pub(crate) const KOOPA_HITS_TABLE_CPU: u16 = 0xB82A;
 
-// Koopaling collision guard — skip collision bitmap update during invulnerability.
-// Source: Fred's Koopaling fixes.
+// Koopaling collision guard — bounce instead of Player_GetHurt for ~16 frames
+// after a stomp. Source: Fred. See `koopalings::koopaling_collision_guard`.
 pub(crate) const FS_KOOPA_COLLISION_GUARD: usize = 0x03841; // 13 bytes
 
 pub(crate) const KOOPA_COLLISION_GUARD_CPU: u16 = 0xB831; // $A000 + (0x03841 - 0x02010)
 
-// Koopaling defeat VRAM buffer clear — zero $0300/$0301 on defeat to prevent
-// stale PPU writes during wand/king transition in non-native worlds.
-// Source: Fred's Koopaling fixes.
-pub(crate) const FS_KOOPA_VRAM_CLEAR: usize = 0x0384E; // 16 bytes
+// Bowser final-door graphics-buffer clear — empty $0300/$0301 each frame of the
+// door scene, where Graphics_Queue = 6 keeps the buffer from being flushed.
+// Source: Fred. See `koopalings::bowser_door_buffer_clear`.
+pub(crate) const FS_BOWSER_DOOR_BUFFER_CLEAR: usize = 0x0384E; // 16 bytes
 
-pub(crate) const KOOPA_VRAM_CLEAR_CPU: u16 = 0xB83E; // $A000 + (0x0384E - 0x02010)
+pub(crate) const BOWSER_DOOR_BUFFER_CLEAR_CPU: u16 = 0xB83E; // $A000 + (0x0384E - 0x02010)
 
-// Koopaling Y-position clamp — keep bouncing Koopalings on screen in non-native rooms.
-// Source: Fred's Koopaling fixes.
-pub(crate) const FS_KOOPA_Y_CLAMP: usize = 0x03FD0; // 22 bytes
+// Koopaling X clamp — keeps the Koopaling's X inside $08-$E7 on frames 0-3
+// ($91 is Objects_X; ported as a "Y clamp"). Source: Fred.
+// See `koopalings::koopaling_x_clamp`.
+pub(crate) const FS_KOOPA_X_CLAMP: usize = 0x03FD0; // 22 bytes
 
-pub(crate) const KOOPA_Y_CLAMP_CPU: u16 = 0xBFC0; // $A000 + (0x03FD0 - 0x02010)
+pub(crate) const KOOPA_X_CLAMP_CPU: u16 = 0xBFC0; // $A000 + (0x03FD0 - 0x02010)
 
 // Random Fire Flower (issue #22) — injected routine that derives the granted
 // power state from a seed-derived salt (the shuffled starting world) + the
 // current World_Num + the level layout pointer + the flower's screen number,
 // instead of the vanilla hardcoded Fire. Sits in the PRG001 bank-end gap right
-// after koopa_y_clamp (which ends at 0x3FE6). Up to 36 bytes: 26-byte routine +
+// after koopa_x_clamp (which ends at 0x3FE6). Up to 36 bytes: 26-byte routine +
 // a 4- or 6-byte pool table. ObjHit_FireFlower runs with PRG001 banked at
 // $A000, so the JSR from the hook is bank-local.
 pub(crate) const FS_FIRE_FLOWER: usize = 0x03FE6;
 
 pub(crate) const FIRE_FLOWER_SUB_CPU: u16 = 0xBFD6; // $A000 + (0x03FE6 - 0x02010)
+
+// Koopaling jump-base table, extended from vanilla's 3 entries (hit counts
+// 0-2) to 6 so a Koopaling taking more than 3 stomps stays in bounds. Data
+// only; the last 6 bytes of PRG001, after FS_FIRE_FLOWER's reservation.
+// `prg001.asm` ends "Rest of ROM bank was empty". 6 reserved, 6 used.
+pub(crate) const FS_KOOPA_JUMP_BASE: usize = 0x0400A;
+
+pub(crate) const KOOPA_JUMP_BASE_CPU: u16 = 0xBFFA; // $A000 + (0x0400A - 0x02010)
 
 // Poison Mushroom object (ID $0A) — Init + Hit override stubs written over the
 // dead vanilla Obj0A handler region ($A703-$A77D, never spawned by any level or
@@ -1546,9 +1556,10 @@ mod free_space_tests {
             (FS_MARCH_VETO, "FS_MARCH_VETO"),
             (FS_KOOPA_HITS_SUB, "FS_KOOPA_HITS_SUB"),
             (FS_KOOPA_COLLISION_GUARD, "FS_KOOPA_COLLISION_GUARD"),
-            (FS_KOOPA_VRAM_CLEAR, "FS_KOOPA_VRAM_CLEAR"),
+            (FS_BOWSER_DOOR_BUFFER_CLEAR, "FS_BOWSER_DOOR_BUFFER_CLEAR"),
+            (FS_KOOPA_JUMP_BASE, "FS_KOOPA_JUMP_BASE"),
             (FS_KOOPA_FIRE_PRESET, "FS_KOOPA_FIRE_PRESET"),
-            (FS_KOOPA_Y_CLAMP, "FS_KOOPA_Y_CLAMP"),
+            (FS_KOOPA_X_CLAMP, "FS_KOOPA_X_CLAMP"),
             (FS_FIRE_FLOWER, "FS_FIRE_FLOWER"),
             (FS_POISON_MUSHROOM, "FS_POISON_MUSHROOM"),
             (FS_POISON_HOOK, "FS_POISON_HOOK"),

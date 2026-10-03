@@ -250,7 +250,7 @@ No defects. Worth re-running after any pass is reordered, since three of the
 four groups are ordering-dependent by construction.
 
 **Known limit of `find_collisions`:** it compares only the *top-level* tag, so
-passes within one family (`koopalings/y_clamp` vs `koopalings/random_hits`) are
+passes within one family (`koopalings/x_clamp` vs `koopalings/random_hits`) are
 mutually invisible to it. Fine for finding cross-module clobbering, useless for
 intra-module — query full tags via `writes_in_range` for that.
 

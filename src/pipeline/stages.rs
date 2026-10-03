@@ -273,10 +273,10 @@ pub(super) fn world_order_and_shuffles(
 
 /// Stage 4: Koopaling stability patches and identity remap.
 pub(super) fn koopalings(rom: &mut Rom, options: &Options, rng: &mut ChaCha8Rng) {
-    // Koopaling stability patches — needed whenever Koopalings may load in a
-    // non-native world (airship shuffle, identity remap) or when the hammer
-    // vulnerability patch is applied. Covers the softlock fix plus Fred's
-    // three guards (phantom double-stomps, stale VRAM writes, Y wraparound).
+    // Koopaling stability patches, all from Fred: the fireball/hammer defeat
+    // softlock fix, no hurt just after a stomp, the Koopaling X clamp, and a
+    // graphics-buffer clear in Bowser's door scene. None depends on which
+    // world a Koopaling is in; the gate is historical. See each function.
     let koopalings_may_travel = options.shuffle_airships
         || options.hammer_vulnerable_koopalings
         || options.random_koopalings;
@@ -285,10 +285,10 @@ pub(super) fn koopalings(rom: &mut Rom, options: &Options, rng: &mut ChaCha8Rng)
         randomize::enemies::koopalings::fix_koopaling_softlock(rom);
         rom.set_tag("koopalings/collision_guard");
         randomize::enemies::koopalings::koopaling_collision_guard(rom);
-        rom.set_tag("koopalings/vram_clear");
-        randomize::enemies::koopalings::koopaling_vram_clear(rom);
-        rom.set_tag("koopalings/y_clamp");
-        randomize::enemies::koopalings::koopaling_y_clamp(rom);
+        rom.set_tag("koopalings/bowser_door_buffer_clear");
+        randomize::enemies::koopalings::bowser_door_buffer_clear(rom);
+        rom.set_tag("koopalings/x_clamp");
+        randomize::enemies::koopalings::koopaling_x_clamp(rom);
     }
 
     // Make Koopalings vulnerable to thrown hammers (PRG000 $8302).

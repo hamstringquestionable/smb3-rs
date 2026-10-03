@@ -114,6 +114,11 @@ deploys.
 
 ### Fixed
 
+- **Koopalings jump normally after their third stomp.** With Random Koopaling
+  Stomps, a Koopaling that needed four or five stomps read its jump height and
+  how often it jumps from the wrong part of the ROM after the third one, so it
+  jumped far too often and sometimes "jumped" straight down. It now keeps its
+  third-stomp jumps (Fred's fix).
 - **A lock opens back into the path it was blocking.** Locks on sky paths
   running up and down, island paths and bridge variants used to open into a
   plain dirt path. A lock on an up-and-down sky path is also sky-coloured now,

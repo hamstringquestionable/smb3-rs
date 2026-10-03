@@ -531,7 +531,7 @@ impl Rom {
     /// report not worth reading.
     ///
     /// Note this compares only the *top-level* tag, so passes within one family
-    /// (`koopalings/y_clamp` against `koopalings/random_hits`) are invisible to
+    /// (`koopalings/x_clamp` against `koopalings/random_hits`) are invisible to
     /// each other here. Query full tags with [`writes_in_range`](Self::writes_in_range)
     /// for that.
     pub fn find_collisions(&self) -> Vec<(usize, String, String)> {
