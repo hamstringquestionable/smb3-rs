@@ -27,7 +27,7 @@
 
 use crate::rom::Rom;
 
-use super::rom_data::{FS_STOMP_RISE, STOMP_RISE_CPU};
+use crate::randomize::rom_data::{FS_STOMP_RISE, STOMP_RISE_CPU};
 
 /// Operand of `CMP #$08` at CPU $D8E1, inside `Object_HitTestRespond`.
 ///

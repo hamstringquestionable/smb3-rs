@@ -282,25 +282,25 @@ pub(super) fn koopalings(rom: &mut Rom, options: &Options, rng: &mut ChaCha8Rng)
         || options.random_koopalings;
     if koopalings_may_travel {
         rom.set_tag("koopalings/fix_softlock");
-        randomize::koopalings::fix_koopaling_softlock(rom);
+        randomize::enemies::koopalings::fix_koopaling_softlock(rom);
         rom.set_tag("koopalings/collision_guard");
-        randomize::koopalings::koopaling_collision_guard(rom);
+        randomize::enemies::koopalings::koopaling_collision_guard(rom);
         rom.set_tag("koopalings/vram_clear");
-        randomize::koopalings::koopaling_vram_clear(rom);
+        randomize::enemies::koopalings::koopaling_vram_clear(rom);
         rom.set_tag("koopalings/y_clamp");
-        randomize::koopalings::koopaling_y_clamp(rom);
+        randomize::enemies::koopalings::koopaling_y_clamp(rom);
     }
 
     // Make Koopalings vulnerable to thrown hammers (PRG000 $8302).
     if options.hammer_vulnerable_koopalings {
         rom.set_tag("koopalings/hammer_vulnerable");
-        randomize::koopalings::hammer_vulnerable_koopalings(rom);
+        randomize::enemies::koopalings::hammer_vulnerable_koopalings(rom);
     }
 
     // Random Koopaling identity remap (Fred's Map_Unused7EEA hijack).
     if options.random_koopalings {
         rom.set_tag("koopalings/random_identity");
-        randomize::koopalings::random_koopalings(rom, rng);
+        randomize::enemies::koopalings::random_koopalings(rom, rng);
     }
 }
 
@@ -753,7 +753,7 @@ pub(super) fn bosses_and_quotes(
     // nothing else.
     let koopaling_hits = if options.koopaling_hits {
         rom.set_tag("koopalings/random_hits");
-        randomize::koopalings::randomize_koopaling_hits(rom, rng)
+        randomize::enemies::koopalings::randomize_koopaling_hits(rom, rng)
     } else {
         // Vanilla is three stomps for every Koopaling, which is a real fact
         // about the ROM the player is about to play, not a placeholder.
@@ -762,7 +762,7 @@ pub(super) fn bosses_and_quotes(
 
     if options.boomboom_hits {
         rom.set_tag("boomboom/random_hits");
-        randomize::koopalings::randomize_boomboom_hits(rom, rng);
+        randomize::enemies::koopalings::randomize_boomboom_hits(rom, rng);
     }
 
     // Randomize king quotes. Always called, even when the option is off: the
@@ -810,7 +810,7 @@ pub(super) fn engine_patches(
     // Skip the wand falling cutscene after defeating a Koopaling.
     if options.skip_wand_cutscene {
         rom.set_tag("koopalings/skip_wand_cutscene");
-        randomize::koopalings::skip_wand_cutscene(rom);
+        randomize::enemies::koopalings::skip_wand_cutscene(rom);
     }
 
     // Remove N-card (N-Spade) panels from the overworld map.
@@ -872,7 +872,7 @@ pub(super) fn engine_patches(
     // damage. Always applied: it only widens outcomes vanilla already got
     // wrong, so there is nothing to opt out of.
     rom.set_tag("stomp_fairness");
-    randomize::stomp_fairness::apply(rom);
+    randomize::enemies::stomp_fairness::apply(rom);
 
     // One unit on the level clock is 41 frames in vanilla (~0.68 s), so the
     // displayed time runs ~47% fast. Always applied: the divider is simply the
@@ -884,7 +884,7 @@ pub(super) fn engine_patches(
     // Adjust Bowser and Koopaling hitboxes.
     if options.adjust_boss_hitboxes {
         rom.set_tag("koopalings/adjust_boss_hitboxes");
-        randomize::koopalings::adjust_boss_hitboxes(rom);
+        randomize::enemies::koopalings::adjust_boss_hitboxes(rom);
     }
 
     // Hammer breaks tiles on the overworld map (locks, bridges, or both).
@@ -913,7 +913,7 @@ pub(super) fn engine_patches(
     // Bloopers and Cheeps can be stomped from dry land.
     if options.water_stomp {
         rom.set_tag("water_stomp");
-        randomize::water_stomp::apply(rom);
+        randomize::enemies::water_stomp::apply(rom);
     }
 
     // "Limit Bro Movement" — gate the wandering Hammer Bros' overworld roaming.

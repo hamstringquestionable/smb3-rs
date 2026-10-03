@@ -1049,7 +1049,7 @@ pub fn build(vanilla: &[u8], spec: &TestRomSpec) -> Result<TestRom, String> {
     if spec.always_on_patches {
         if matches!(spec.base, Base::Vanilla) {
             rom.set_tag("stomp_fairness");
-            crate::randomize::stomp_fairness::apply(&mut rom);
+            crate::randomize::enemies::stomp_fairness::apply(&mut rom);
             rom.set_tag("qol/real_time_clock");
             crate::randomize::qol::apply_real_time_clock(&mut rom);
             rom.set_tag("qol/desert_bro_arena");
@@ -1267,7 +1267,7 @@ pub fn build(vanilla: &[u8], spec: &TestRomSpec) -> Result<TestRom, String> {
 
     if spec.water_stomp {
         rom.set_tag("water_stomp");
-        crate::randomize::water_stomp::apply(&mut rom);
+        crate::randomize::enemies::water_stomp::apply(&mut rom);
         report.push("water stomp: bloopers + cheeps stompable on land".to_string());
     }
 

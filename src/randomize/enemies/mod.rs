@@ -12,7 +12,7 @@ use rand::Rng;
 use rand::seq::IndexedRandom;
 
 use crate::pipeline::{EnemyMode, HazardLimit, Options, WildChaser};
-use crate::randomize::enemy_protections::{
+use crate::randomize::enemies::protections::{
     EntryProtection, WalkerSegmentRule, entry_protection_at, rewrites_hammer_bro,
     walker_segment_rule_at,
 };
@@ -29,6 +29,14 @@ mod picking;
 mod segments;
 mod sprite_bank;
 mod tables;
+
+/// Which entries the swap pass must leave alone, and why.
+pub mod protections;
+
+// --- Enemy and boss behaviour patches, applied outside the swap pass ---
+pub mod koopalings;
+pub mod stomp_fairness;
+pub mod water_stomp;
 
 use class_modes::*;
 use injection::*;

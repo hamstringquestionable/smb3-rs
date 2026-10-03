@@ -2,7 +2,7 @@ use rand::Rng;
 
 use crate::rom::Rom;
 
-use super::rom_data::{KOOPA_HITS_SUB_CPU, KOOPA_HITS_TABLE_CPU};
+use crate::randomize::rom_data::{KOOPA_HITS_SUB_CPU, KOOPA_HITS_TABLE_CPU};
 
 /// Fix Koopaling softlock when airships are shuffled across worlds.
 ///
@@ -37,7 +37,7 @@ pub fn fix_koopaling_softlock(rom: &mut Rom) {
 const KOOPA_COLLISION_PATCH_SITE: usize = 0x0316D;
 
 pub fn koopaling_collision_guard(rom: &mut Rom) {
-    use super::rom_data::{FS_KOOPA_COLLISION_GUARD, KOOPA_COLLISION_GUARD_CPU};
+    use crate::randomize::rom_data::{FS_KOOPA_COLLISION_GUARD, KOOPA_COLLISION_GUARD_CPU};
 
     // Subroutine (13 bytes):
     //   LDA $0520,X    ; Objects_Timer2
@@ -83,7 +83,7 @@ pub fn koopaling_collision_guard(rom: &mut Rom) {
 const KOOPA_DEFEAT_PATCH_SITE: usize = 0x03FB8;
 
 pub fn koopaling_vram_clear(rom: &mut Rom) {
-    use super::rom_data::{FS_KOOPA_VRAM_CLEAR, KOOPA_VRAM_CLEAR_CPU};
+    use crate::randomize::rom_data::{FS_KOOPA_VRAM_CLEAR, KOOPA_VRAM_CLEAR_CPU};
 
     // Subroutine (16 bytes):
     //   LDA #$06       ; exit type = Koopaling wand
@@ -135,7 +135,7 @@ pub fn koopaling_vram_clear(rom: &mut Rom) {
 const KOOPA_Y_CLAMP_PATCH_SITE: usize = 0x03404;
 
 pub fn koopaling_y_clamp(rom: &mut Rom) {
-    use super::rom_data::{FS_KOOPA_Y_CLAMP, KOOPA_Y_CLAMP_CPU};
+    use crate::randomize::rom_data::{FS_KOOPA_Y_CLAMP, KOOPA_Y_CLAMP_CPU};
 
     // Subroutine (22 bytes):
     //   LDA $91,X      ; Objects_Y
@@ -356,15 +356,15 @@ const KOOPA_HITS_CODE: [u8; 13] = [
 const KOOPA_FIRE_HANDOFF: usize = 0x03035;
 
 /// Returns the per-world stomp threshold table it wrote, so
-/// [`super::king_quotes`] can have a king remark on it.
+/// [`crate::randomize::king_quotes`] can have a king remark on it.
 pub fn randomize_koopaling_hits<R: Rng>(rom: &mut Rom, rng: &mut R) -> [u8; 7] {
-    use super::rom_data::{FS_KOOPA_FIRE_PRESET, KOOPA_FIRE_PRESET_CPU};
+    use crate::randomize::rom_data::{FS_KOOPA_FIRE_PRESET, KOOPA_FIRE_PRESET_CPU};
 
     // Write stomp threshold subroutine into free space
-    rom.write_range(super::rom_data::FS_KOOPA_HITS_SUB, &KOOPA_HITS_CODE);
+    rom.write_range(crate::randomize::rom_data::FS_KOOPA_HITS_SUB, &KOOPA_HITS_CODE);
 
     // Write JMP defeat right after the subroutine (at sub + 13)
-    let defeat_jmp_offset = super::rom_data::FS_KOOPA_HITS_SUB + 13;
+    let defeat_jmp_offset = crate::randomize::rom_data::FS_KOOPA_HITS_SUB + 13;
     rom.write_range(
         defeat_jmp_offset,
         &[0x4C, KOOPA_DEFEAT_CPU as u8, (KOOPA_DEFEAT_CPU >> 8) as u8],
@@ -372,7 +372,7 @@ pub fn randomize_koopaling_hits<R: Rng>(rom: &mut Rom, rng: &mut R) -> [u8; 7] {
 
     // Build per-world threshold table: worlds 0–6 get random 1–5
     let table: [u8; 7] = std::array::from_fn(|_| rng.random_range(1..=5));
-    rom.write_range(super::rom_data::FS_KOOPA_HITS_TABLE, &table);
+    rom.write_range(crate::randomize::rom_data::FS_KOOPA_HITS_TABLE, &table);
 
     // Patch stomp call site: replace LDA $7F,X; CMP #$03 (3 bytes) with JMP subroutine
     rom.write_range(
@@ -448,7 +448,7 @@ const BOOMBOOM_SURVIVE_CPU: u16 = 0xAE70;
 const BOOMBOOM_DEATH_CPU: u16 = 0xAE82;
 
 pub fn randomize_boomboom_hits<R: Rng>(rom: &mut Rom, rng: &mut R) {
-    use super::rom_data::{
+    use crate::randomize::rom_data::{
         BOOMBOOM_HITS_SUB_CPU, BOOMBOOM_HITS_TABLE_CPU, FS_BOOMBOOM_HITS_SUB,
         FS_BOOMBOOM_HITS_TABLE,
     };

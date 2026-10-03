@@ -142,7 +142,7 @@ pub const ENEMY_DATA_END: usize = 0x0E00D;
 
 /// `OBJ_TREASUREBOXAPPEAR`. A segment containing this is a `Level_Event = 7`
 /// room: its exit only appears once the room is cleared. See
-/// `enemy_protections::rewrites_hammer_bro`.
+/// `crate::randomize::enemies::protections::rewrites_hammer_bro`.
 pub(crate) const TREASURE_BOX_APPEAR: u8 = 0xBA;
 
 /// `OBJ_HAMMERBRO`.

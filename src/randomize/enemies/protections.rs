@@ -14,7 +14,7 @@
 //! derived helpers (`entry_protection_at`, `walker_segment_rule_at`)
 //! — never the table directly.
 
-use super::rom_data::{HAMMER_BRO_OBJ_PTRS, enemy_ptr_to_file_offset};
+use crate::randomize::rom_data::{HAMMER_BRO_OBJ_PTRS, enemy_ptr_to_file_offset};
 
 /// One logical level or sub-area with protections that affect enemy
 /// randomization.
