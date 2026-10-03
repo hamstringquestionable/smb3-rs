@@ -74,7 +74,7 @@
 //! | return from level | `$91AC` | `JSR Map_Reload_with_Completions` | the reload call itself |
 //!
 //! The init path's own `JSR Map_Reload_with_Completions` at `$85BB` is
-//! [`super::completion_bits`]'s hook, so this module takes the instruction
+//! [`crate::randomize::maze::completion_bits`]'s hook, so this module takes the instruction
 //! after it instead of fighting over the same three bytes.
 //!
 //! The table is marked at `world_order::WORLD_INC_OFFSET`, vanilla's
@@ -101,12 +101,12 @@
 
 use crate::rom::Rom;
 
-use super::maze_state::{WANDS_TABLE, WANDS_TABLE_LEN};
-use super::rom_data::{
+use crate::randomize::maze::maze_state::{WANDS_TABLE, WANDS_TABLE_LEN};
+use crate::randomize::rom_data::{
     BRIDGE_TILE, FS_MAZE_WAND_COUNT, FS_MAZE_WAND_GATE, MAP_RELOAD_CPU, PRG012_FILE_BASE, W8_IDX,
     W8_WAND_GATE_POS, WORLD_NUM, prg030_file_to_cpu,
 };
-use super::world_order::WORLD_INC_OFFSET;
+use crate::randomize::world_order::WORLD_INC_OFFSET;
 
 // --- Addresses ----------------------------------------------------------
 
@@ -219,7 +219,7 @@ fn wand_gate_routine(wands_required: u8) -> [u8; 37] {
 
 /// `JSR Map_Reload_with_Completions` on the return-from-level path, CPU
 /// `$91AC`. Not the init path's call at `$85BB` — that one is
-/// [`super::completion_bits`]'.
+/// [`crate::randomize::maze::completion_bits`]'.
 const RELOAD_FROM_LEVEL_OFFSET: usize = 0x3D1BC;
 
 /// `JSR Fill_Tile_AttrTable_ByTileset` in `PRG030_84A0`, CPU `$85BE` — the

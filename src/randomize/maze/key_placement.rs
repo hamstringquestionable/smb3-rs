@@ -49,10 +49,10 @@ use std::collections::HashSet;
 use rand::Rng;
 use rand::seq::IndexedRandom;
 
-use super::item_keys::Key;
-use super::key_sites::{self, KeySite};
-use super::maze::{Gate, GlobalState, KeySource};
-use super::overworld_build::BuildResult;
+use crate::randomize::maze::item_keys::Key;
+use crate::randomize::maze::key_sites::{self, KeySite};
+use crate::randomize::maze::{Gate, GlobalState, KeySource};
+use crate::randomize::overworld_build::BuildResult;
 use crate::rom::Rom;
 
 /// What a run of [`place`] decided.
@@ -242,8 +242,8 @@ mod tests {
     use rand_chacha::ChaCha8Rng;
 
     use super::*;
-    use crate::randomize::key_sites::test_support::{load_rom, one_maze};
     use crate::randomize::maze::GateTarget;
+    use crate::randomize::maze::key_sites::test_support::{load_rom, one_maze};
 
     /// The first seed in `0..60` whose maze genuinely needs the boat, with
     /// every canoe already gated on the Anchor.
@@ -274,7 +274,7 @@ mod tests {
         let Some((mut rom, mut build, mut state)) = a_boat_required_seed() else { return };
         let (_, before) = state.spheres_and_reach();
 
-        let sites = crate::randomize::key_sites::sites(&rom, &build, &state);
+        let sites = crate::randomize::maze::key_sites::sites(&rom, &build, &state);
         let mut rng = ChaCha8Rng::seed_from_u64(7);
         let out = place(&mut rom, &mut build, &mut state, sites, &mut rng);
 
@@ -298,7 +298,7 @@ mod tests {
         let (_, before) = state.spheres_and_reach();
 
         let anchor = Key::Anchor.item_byte();
-        let sites: Vec<KeySite> = crate::randomize::key_sites::sites(&rom, &build, &state)
+        let sites: Vec<KeySite> = crate::randomize::maze::key_sites::sites(&rom, &build, &state)
             .into_iter()
             .filter(|s| s.current_item(&rom, &build) != anchor)
             .collect();
@@ -349,7 +349,7 @@ mod tests {
         // A sink holding something other than an Anchor, so the decoy has to
         // be *drawn* to be used rather than merely credited.
         let anchor = Key::Anchor.item_byte();
-        let real = *crate::randomize::key_sites::sites(&rom, &build, &state)
+        let real = *crate::randomize::maze::key_sites::sites(&rom, &build, &state)
             .iter()
             .find(|s| s.current_item(&rom, &build) != anchor)
             .expect("some site holds no Anchor");
@@ -411,10 +411,11 @@ mod tests {
             }
 
             let anchor = Key::Anchor.item_byte();
-            let sites: Vec<KeySite> = crate::randomize::key_sites::sites(&rom, &build, &state)
-                .into_iter()
-                .filter(|s| s.current_item(&rom, &build) != anchor)
-                .collect();
+            let sites: Vec<KeySite> =
+                crate::randomize::maze::key_sites::sites(&rom, &build, &state)
+                    .into_iter()
+                    .filter(|s| s.current_item(&rom, &build) != anchor)
+                    .collect();
             let mut rng = ChaCha8Rng::seed_from_u64(7);
             let out = place(&mut rom, &mut build, &mut state, sites, &mut rng);
 
@@ -458,7 +459,7 @@ mod tests {
                 continue; // the generator's business, not this pass's
             }
             state.gate_every_canoe(Key::Anchor);
-            let sites = crate::randomize::key_sites::sites(&rom, &build, &state);
+            let sites = crate::randomize::maze::key_sites::sites(&rom, &build, &state);
             let mut rng = ChaCha8Rng::seed_from_u64(seed ^ 0xA9C4_0E5E);
             let out = place(&mut rom, &mut build, &mut state, sites, &mut rng);
             gated_seeds += 1;
@@ -493,7 +494,7 @@ mod tests {
                 continue;
             }
             state.gate_every_canoe(Key::Anchor);
-            let sites = crate::randomize::key_sites::sites(&rom, &build, &state);
+            let sites = crate::randomize::maze::key_sites::sites(&rom, &build, &state);
             let anchor = Key::Anchor.item_byte();
             if !sites.iter().any(|s| s.current_item(&rom, &build) == anchor) {
                 continue; // this seed has nothing to inherit

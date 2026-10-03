@@ -35,14 +35,15 @@ use rand::Rng;
 
 use std::collections::{HashMap, HashSet};
 
-use super::item_keys::Key;
 use super::map_walker::walk_reachable_blocked;
 use super::overworld_build::{
     BuildResult, FortRef, LockHint, SlotKind, WorldState, from_built, stamp_slots,
 };
 use super::rom_data::{self, Grid, Pos};
+use crate::randomize::maze::item_keys::Key;
 use walk::{MazePos, MazeWorld, walk_maze};
 
+// --- The generator: a model pass over the builder's result, no ROM writes ---
 pub(crate) mod fill;
 pub(crate) mod graph;
 /// How long a generated maze is, in levels.
@@ -58,6 +59,54 @@ pub(crate) mod roles;
 mod tests;
 pub(crate) mod walk;
 pub(crate) mod writer;
+
+// --- The ROM side: engine patches the mode installs after the writer ---
+/// World-maze phase 1: the packed per-world completion-bit storage the
+/// two-world swap in [`world_persist`] has to become. Reached on both targets:
+/// `randomize_inner` applies it whenever `world_maze` is set, and the web app
+/// offers that option.
+pub mod completion_bits;
+/// World-maze: map objects a world has already lost stay lost. `Map_Init`
+/// rebuilds all nine of a world's object slots from ROM on every entry, so
+/// without this a beaten Hammer Bro is standing there again when you come back.
+pub mod map_objects;
+/// The world maze's state map, in the cartridge WRAM SMB3 already carries —
+/// the one place its SRAM addresses are decided. Not battery-backed: nothing
+/// sets the iNES battery bit, so this survives a reset, not a power-off.
+pub mod maze_state;
+/// Two players, two worlds: in the maze each player keeps the world they are
+/// standing in, and the turn hand-over carries the map with it. One-player mode
+/// never reaches the new path. Its SRAM byte pair is [`maze_state`]'s.
+pub mod player_worlds;
+/// The world maze's goal gate: a wall on World 8's bridge that stands until
+/// the player holds K of the seven wands, plus the counter that the wands are
+/// counted in. See `docs/world_maze_design.md`, "The wand gate".
+pub mod wand_gate;
+pub mod wand_readout;
+/// World-maze persistence: a world you leave is the world you come back to.
+/// Applied by `randomize_inner` on both targets whenever `world_maze` is set —
+/// it was `testrom`-only while the mode was still a POC.
+pub mod world_persist;
+/// World-maze fast travel: the warp whistle hops between worlds the player has
+/// already stood on the start tile of. Its SRAM map is [`maze_state`]'s.
+pub mod world_travel;
+
+// --- Item gates: keys, where they go, and the canoe gate they open ---
+/// Don't hand the player a second Anchor when it is a permanent key.
+pub mod anchor_dedup;
+/// The canoe as a lock and the Anchor as its key: boats park out of reach and
+/// only an anchor used from the inventory, while standing on a dock, calls one
+/// alongside. World-maze only — in a fixed world order the key would have to
+/// sit in front of its own lock.
+pub mod canoe_gate;
+pub mod item_keys;
+pub mod key_placement;
+pub mod key_sites;
+
+// --- Hints ---
+/// Under some-hints, every other away fortress and the lock it opens share a
+/// corner nub, halving the fortresses a stuck player has to try.
+pub mod away_family;
 
 /// A directed edge the engine can traverse repeatedly.
 #[derive(Clone, Copy, Debug)]

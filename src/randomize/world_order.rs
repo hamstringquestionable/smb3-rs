@@ -8,7 +8,7 @@ use crate::rom::Rom;
 /// Original bytes: EE 27 07 4C A0 84
 ///
 /// Exposed because it is vanilla's airship-cleared world transition, and
-/// [`super::completion_bits`] tests its persistence hooks against the engine's
+/// [`crate::randomize::maze::completion_bits`] tests its persistence hooks against the engine's
 /// own bytes rather than a transcription of them.
 pub(crate) const WORLD_INC_OFFSET: usize = 0x3D0A1;
 
@@ -28,7 +28,7 @@ pub(crate) const WORLD_INIT_OPERAND: usize = 0x30CC3;
 /// set the debug flag to the starting world number.  The reset handler
 /// clears $0160 to zero on power-on, so it's safe to skip this write.
 ///
-/// **Shared with [`super::completion_bits`]**, which puts a three-byte `JSR`
+/// **Shared with [`crate::randomize::maze::completion_bits`]**, which puts a three-byte `JSR`
 /// here instead — the world maze's new-game signal, and the only three-byte
 /// instruction that fits (the `RTS` at `+3` is the live branch target
 /// `PRG024_ACBA`). The two writes collide by construction, so the ordering is

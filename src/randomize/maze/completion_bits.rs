@@ -53,7 +53,7 @@
 //! survives a game over, `Map_Reload_with_Completions` applies it as a second
 //! pass over the same four screens, and the game-over merge at `PRG030_9314`
 //! ANDs the two. Banking one and dropping the other is what made a World 1
-//! fortress light a tile in World 2 (see [`super::world_persist`]). Each plane
+//! fortress light a tile in World 2 (see [`crate::randomize::maze::world_persist`]). Each plane
 //! is stored separately and byte-aligned per world: all eight Mario planes
 //! first, then all eight mirror planes at a fixed offset.
 //!
@@ -69,12 +69,12 @@
 
 use crate::rom::Rom;
 
-use super::map_objects::{self, RESTORE_OBJECTS_CPU};
-use super::maze_state;
-use super::overworld_build::is_completion_unsafe;
+use crate::randomize::maze::map_objects::{self, RESTORE_OBJECTS_CPU};
+use crate::randomize::maze::maze_state;
+use crate::randomize::overworld_build::is_completion_unsafe;
 #[cfg(test)]
-use super::rom_data::{self};
-use super::rom_data::{Grid, MAP_COMPLETE_BITS};
+use crate::randomize::rom_data::{self};
+use crate::randomize::rom_data::{Grid, MAP_COMPLETE_BITS};
 
 /// One `Map_Completions` half — 64 columns, one byte of row-bits each.
 pub(crate) const HALF_LEN: usize = 64;
@@ -277,8 +277,8 @@ fn popcount(mask: &[u8]) -> usize {
 // *and* PRG010 (still at `$C000`, holding this code) are all reachable at once.
 
 #[cfg(test)]
-use super::rom_data::NMI_SAFE_MAX;
-use super::rom_data::{
+use crate::randomize::rom_data::NMI_SAFE_MAX;
+use crate::randomize::rom_data::{
     FS_COMPLETION_BASES, FS_IS_COMPLETABLE, FS_MAP_REMOVABLE, FS_MASK_BUILD, FS_NEW_GAME_INIT,
     FS_PACK_PLANE, FS_PACK_WORLD, FS_SWAP_AT_RELOAD, FS_UNPACK_PLANE, FS_UNPACK_WORLD,
     FS_WIPE_REPLACEMENT, FS_WORLD_COLS, MAP_RELOAD_CPU, WORLD_NUM, prg_bank_file_to_cpu,
@@ -318,7 +318,7 @@ const BASES_CPU: u16 = prg010_file_to_cpu(FS_COMPLETION_BASES);
 /// The `JSR` is legal here for the same reason the `CMP` was: this routine lives
 /// in PRG010 but runs with PRG012 at `$A000`, and it already reads two PRG012
 /// tables at absolute addresses. The hook note above is what guarantees it.
-const ML_RANGE_CPU: u16 = super::lock_keys::ML_RANGE_CPU;
+const ML_RANGE_CPU: u16 = crate::randomize::lock_keys::ML_RANGE_CPU;
 /// `Map_Removable_Tiles` — the two rocks, three locks, two fortress variants and
 /// the water gap.
 ///
@@ -410,7 +410,7 @@ const IS_COMPLETABLE: [u8; 39] = [
     0xF0, 0x1E,                             //  5: BEQ +30 -> yes
     0xCA,                                   //  7: DEX
     0x10, 0xF8,                             //  8: BPL -8
-    0xA2, (super::lock_keys::REMOVABLE_COUNT - 1) as u8, // 10: LDX #(entries - 1)
+    0xA2, (crate::randomize::lock_keys::REMOVABLE_COUNT - 1) as u8, // 10: LDX #(entries - 1)
     0xDD, MAP_REMOVABLE_TILES as u8,
           (MAP_REMOVABLE_TILES >> 8) as u8,       // 12: CMP Map_Removable_Tiles,X     ; loop
     0xF0, 0x14,                             // 15: BEQ +20 -> yes
@@ -779,7 +779,7 @@ const UNPACK_WORLD: [u8; 33] = xfer_world!(UNPACK_PLANE_CPU);
 /// PRG011 for `Map_Init`'s benefit. The restore is a tail `JMP` into
 /// `PRGROM_Change_A000`, which returns for us.
 ///
-/// **The `JSR` in front is [`super::map_objects`]' restore, and it is outside
+/// **The `JSR` in front is [`crate::randomize::maze::map_objects`]' restore, and it is outside
 /// the compare on purpose.** Map objects are not map cells: `Map_Init` rebuilds
 /// all nine of a world's object slots from ROM thirty-two bytes before this
 /// runs, so the question that routine answers is not "did the world change" but
@@ -791,7 +791,7 @@ const UNPACK_WORLD: [u8; 33] = xfer_world!(UNPACK_PLANE_CPU);
 /// transition; the object store is written at the moment of defeat and never
 /// packed, so it has no transition to define.
 ///
-/// **[`super::player_worlds`]' table is deliberately *not* stamped here**, and
+/// **[`crate::randomize::maze::player_worlds`]' table is deliberately *not* stamped here**, and
 /// it briefly was. This arm is the tidiest definition of "the live player's
 /// world is changing", but it is a redundant second writer: every path that
 /// reaches here ran `Map_Init` twenty bytes earlier, and that is where
@@ -823,7 +823,7 @@ const WIPE_REPLACEMENT: [u8; 34] = [
     0x60,                                           // 33: RTS   ; leave it alone
 ];
 
-/// The wipe replacement's bytes, for [`super::map_objects`]' check that the
+/// The wipe replacement's bytes, for [`crate::randomize::maze::map_objects`]' check that the
 /// restore is still called from the front of it. Exposed as a function rather
 /// than a `pub` constant so the array stays this module's to reshape.
 #[cfg(test)]
@@ -890,7 +890,7 @@ const NEW_GAME_INIT_CPU: u16 = (0xC000 + FS_NEW_GAME_INIT - 0x32010) as u16;
 /// which is why the replacement has to be three bytes and a `JSR` is the only
 /// thing that fits. `world_order` already overwrites those same three bytes
 /// with `NOP`s, so the two must not both run: see
-/// [`world_order::DEBUG_FLAG_STA_OFFSET`](super::world_order::DEBUG_FLAG_STA_OFFSET)
+/// [`world_order::DEBUG_FLAG_STA_OFFSET`](crate::randomize::world_order::DEBUG_FLAG_STA_OFFSET)
 /// and [`apply`]'s ordering note.
 ///
 /// On entry `A` holds whatever the site loaded into `World_Num` — 0 in vanilla,
@@ -912,7 +912,7 @@ const NEW_GAME_INIT_CPU: u16 = (0xC000 + FS_NEW_GAME_INIT - 0x32010) as u16;
 ///   rather than argued away — `A` is already zero for the loops, so it is
 ///   three bytes.
 ///
-/// * the maze's own SRAM — [`maze_state`](super::maze_state)'s whole
+/// * the maze's own SRAM — [`maze_state`](crate::randomize::maze::maze_state)'s whole
 ///   `$7AC1..` run: the visited table the whistle cycles, the wand counter the
 ///   goal gate compares against, and the map-object store. That module's header
 ///   has always said the new-game signal is what clears it, and until the
@@ -934,7 +934,7 @@ const NEW_GAME_INIT_CPU: u16 = (0xC000 + FS_NEW_GAME_INIT - 0x32010) as u16;
 ///   is where it used to sit (slot 3). With fewer than three starting items —
 ///   the default is none — slot 0 was empty, and the whistle the mode depends
 ///   on could never be reached. It takes slot 0 now and
-///   [`write_starting_items`](super::qol::write_starting_items) is told to
+///   [`write_starting_items`](crate::randomize::qol::write_starting_items) is told to
 ///   begin at slot 1, so the four writes stay contiguous either way.
 ///
 ///   It lands here rather than in that trampoline because the trampoline is
@@ -952,7 +952,7 @@ const NEW_GAME_INIT_CPU: u16 = (0xC000 + FS_NEW_GAME_INIT - 0x32010) as u16;
 ///   unconditional rather than gated on `Total_Players`: in one-player mode
 ///   Luigi's array is never read, so the gate would cost bytes to buy nothing.
 ///
-/// * both entries of [`super::player_worlds`]' table, seeded with the starting
+/// * both entries of [`crate::randomize::maze::player_worlds`]' table, seeded with the starting
 ///   world. `world_order` can start a game in any world, so zeroed bytes would
 ///   tell the second player they began in World 1 and their first hand-over
 ///   would haul them there. This is the one write here that has to come
@@ -1002,7 +1002,7 @@ const NEW_GAME_INIT: [u8; 55] = [
     0x8D, maze_state::HANDOVER as u8,
           (maze_state::HANDOVER >> 8) as u8,        // 43: STA HANDOVER  ; "a new game"
 
-    0xA9, super::items::WARP_WHISTLE,               // 46: LDA #$0C
+    0xA9, crate::randomize::items::WARP_WHISTLE,               // 46: LDA #$0C
     0x8D, INVENTORY_WHISTLE_SLOT as u8,
           (INVENTORY_WHISTLE_SLOT >> 8) as u8,      // 48: STA Inventory_Items
     0x8D, INVENTORY_WHISTLE_SLOT_2 as u8,
@@ -1029,7 +1029,7 @@ const WIPE_LEN: usize = 10;
 /// `STA Debug_Flag` in the title menu's game-start init — the three bytes
 /// [`NEW_GAME_INIT`]'s call replaces. Named from `world_order`, which patches
 /// the same site, rather than repeated here.
-const NEW_GAME_HOOK_OFFSET: usize = super::world_order::DEBUG_FLAG_STA_OFFSET;
+const NEW_GAME_HOOK_OFFSET: usize = crate::randomize::world_order::DEBUG_FLAG_STA_OFFSET;
 /// Vanilla bytes there: `STA $0160`.
 #[cfg(test)]
 const NEW_GAME_HOOK_VANILLA: [u8; 3] = [0x8D, 0x60, 0x01];
@@ -1057,9 +1057,9 @@ const RELOAD_CALL_VANILLA: [u8; 3] = [0x20, 0x5D, 0xA4];
 /// stand in the ROM, so anything that still means to move a map tile has to
 /// have moved it already.
 ///
-/// **And in particular, run it after [`super::world_order::randomize`].** Both
+/// **And in particular, run it after [`crate::randomize::world_order::randomize`].** Both
 /// write the three bytes at
-/// [`DEBUG_FLAG_STA_OFFSET`](super::world_order::DEBUG_FLAG_STA_OFFSET):
+/// [`DEBUG_FLAG_STA_OFFSET`](crate::randomize::world_order::DEBUG_FLAG_STA_OFFSET):
 /// `world_order` `NOP`s them out because it patches the shared `LDA #$00`
 /// operand into a starting world and will not have that value land in
 /// `Debug_Flag`, and this writes the `JSR` to [`NEW_GAME_INIT`]. Last writer
@@ -1433,11 +1433,11 @@ mod tests {
         // silently come back short. Idempotent, so the randomized arms below are
         // unaffected.
         let mut owned = rom.clone();
-        let rows = super::super::lock_keys::removable_rows(
+        let rows = crate::randomize::lock_keys::removable_rows(
             &rom_data::read_all_tile_grids(&owned),
-            &super::super::lock_keys::allocated_pairs_on_rom(&owned),
+            &crate::randomize::lock_keys::allocated_pairs_on_rom(&owned),
         );
-        super::super::lock_keys::relocate_removable_tables(&mut owned, &rows);
+        crate::randomize::lock_keys::relocate_removable_tables(&mut owned, &rows);
         let rom = &owned;
 
         let mut mem = Memory::new();
@@ -1498,9 +1498,9 @@ mod tests {
         // because the builder asks before anything is stamped, while the ROM
         // carries rows only for obstacles this map actually wears. The two
         // claims that matter are both directional.
-        let table: Vec<u8> = super::super::lock_keys::removable_rows(
+        let table: Vec<u8> = crate::randomize::lock_keys::removable_rows(
             &rom_data::read_all_tile_grids(&rom),
-            &super::super::lock_keys::allocated_pairs_on_rom(&rom),
+            &crate::randomize::lock_keys::allocated_pairs_on_rom(&rom),
         )
         .into_iter()
         .map(|(obstacle, _)| obstacle)
@@ -2172,7 +2172,7 @@ mod tests {
     /// SRAM runs and nothing in the build would notice a collision.
     #[test]
     fn sram_allocations_do_not_overlap() {
-        use crate::randomize::maze_state;
+        use crate::randomize::maze::maze_state;
 
         let mut used: Vec<(u16, u16, &str)> = vec![
             (PACKED, PACKED + PACKED_LEN as u16, "packed planes"),
@@ -2330,7 +2330,7 @@ mod tests {
 
         // `INC World_Num`, as it stands in PRG030's airship-cleared path,
         // plus an `RTS` so the harness can call it.
-        let inc = rom.read_range(super::super::world_order::WORLD_INC_OFFSET, 3).to_vec();
+        let inc = rom.read_range(crate::randomize::world_order::WORLD_INC_OFFSET, 3).to_vec();
         assert_eq!(
             inc,
             [0xEE, WORLD_NUM as u8, (WORLD_NUM >> 8) as u8],

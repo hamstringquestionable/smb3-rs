@@ -521,8 +521,8 @@ pub(super) fn maze_model(
         let mut state = state;
         if run.item_gates {
             state.install_item_gates();
-            let sites = randomize::key_sites::sites(rom, build, &state);
-            randomize::key_placement::place(rom, build, &mut state, sites, rng);
+            let sites = randomize::maze::key_sites::sites(rom, build, &state);
+            randomize::maze::key_placement::place(rom, build, &mut state, sites, rng);
         }
         // Per-target, because the ROM side cannot be generic — each target is a
         // different patch. The irrefutable `let` is the enforcement: add a
@@ -591,13 +591,13 @@ pub(super) fn maze_rom(
         rom.set_tag("world_maze");
         randomize::maze::writer::install_pad_metatile(rom, &state);
         rom.set_tag("wand_gate");
-        randomize::wand_gate::apply(rom, wands);
+        randomize::maze::wand_gate::apply(rom, wands);
         // After wand_gate: it installs the marker that fills WANDS_TABLE, and
         // the readout counts what that marker records.
         rom.set_tag("wand_readout");
-        randomize::wand_readout::apply(rom, wands);
+        randomize::maze::wand_readout::apply(rom, wands);
         rom.set_tag("world_persist");
-        randomize::world_persist::apply(
+        randomize::maze::world_persist::apply(
             rom,
             &randomize::maze::writer::telepad_specs(&state),
             written.grids(rom),
@@ -609,11 +609,11 @@ pub(super) fn maze_rom(
         // After world_persist: `completion_bits` (which it calls) owns the two
         // `$84A0` hooks that keep the per-player world table true.
         rom.set_tag("player_worlds");
-        randomize::player_worlds::apply(rom);
+        randomize::maze::player_worlds::apply(rom);
         rom.set_tag("world_travel");
         // The whistle cycles the worlds in the order the player numbers them,
         // which is `world_order`'s spine and not the internal index.
-        randomize::world_travel::apply(
+        randomize::maze::world_travel::apply(
             rom,
             written.grids(rom),
             credits_progression.expect("world_maze forces world_order on"),
@@ -653,7 +653,7 @@ pub(super) fn locks(rom: &mut Rom, build: &BuildResult, written: &WrittenOverwor
     // The marked away fortress's art and crumble. A no-op unless some-hints
     // stamped one, so every other mode's bytes are untouched.
     rom.set_tag("away_family");
-    randomize::away_family::apply(rom, written.grids(rom));
+    randomize::maze::away_family::apply(rom, written.grids(rom));
 
     // Retire the 2-player Vs Challenge. Unconditional and order-free — it
     // splices three sites nothing else touches. See the module docs for why it
@@ -854,12 +854,12 @@ pub(super) fn engine_patches(
     match canoe_gated {
         Some(gated) => {
             rom.set_tag("world_maze");
-            randomize::canoe_gate::apply(rom, &gated);
+            randomize::maze::canoe_gate::apply(rom, &gated);
             // The Anchor is permanent here, so a second one is dead weight.
             // Only alongside the gate: outside it the Anchor is
             // `mystery_anchor`'s power-up and IS consumed, so duplicates are
             // worth having.
-            randomize::anchor_dedup::apply(rom, randomize::items::toad_house_substitute(rng));
+            randomize::maze::anchor_dedup::apply(rom, randomize::items::toad_house_substitute(rng));
         }
         None => {
             rom.set_tag("qol/canoe_summon");

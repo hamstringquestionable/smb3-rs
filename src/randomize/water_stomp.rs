@@ -58,7 +58,7 @@ mod tests {
     /// keeps it. Skips where the ROM is absent.
     #[test]
     fn clears_only_the_stomp_bit() {
-        let Some(mut rom) = crate::randomize::key_sites::test_support::load_rom() else {
+        let Some(mut rom) = crate::randomize::maze::key_sites::test_support::load_rom() else {
             return;
         };
         let before: Vec<u8> = IDS.iter().map(|&id| rom.read_byte(attr3_offset(id))).collect();

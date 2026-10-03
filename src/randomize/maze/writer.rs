@@ -18,8 +18,8 @@
 use crate::rom::Rom;
 
 use super::super::rom_data::{PRG012_FILE_BASE, TELEPAD_QUADRANTS, TILE_TELEPAD};
-use super::super::world_persist::Telepad;
 use super::GlobalState;
+use crate::randomize::maze::world_persist::Telepad;
 
 /// Every pad, as the spec `world_persist::apply` takes.
 ///

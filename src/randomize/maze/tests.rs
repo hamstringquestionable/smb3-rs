@@ -16,8 +16,8 @@ use rand_chacha::ChaCha8Rng;
 use super::graph::{Knobs, PAD_BUDGET};
 use super::{GenReport, GlobalState, IDENTITY_SPINE, MazeEdge};
 
-use crate::randomize::item_keys::Key;
 use crate::randomize::map_walker::walk_reachable;
+use crate::randomize::maze::item_keys::Key;
 use crate::randomize::maze::walk::{MazePos, MazeWorld, walk_maze};
 use crate::randomize::node_catalog::NodeCatalog;
 /// Every census and property test asks for the same secret-exit slot count the
@@ -843,8 +843,8 @@ fn stamping_pads_writes_no_chr() {
 #[test]
 fn no_pad_shares_a_tile_with_a_card_game() {
     use crate::pipeline::{Options, randomize};
+    use crate::randomize::maze::world_persist::{PAD_TABLE_OFF, PORTAL_MAX};
     use crate::randomize::rom_data::{self, TILE_BONUS_GAME, TILE_TELEPAD};
-    use crate::randomize::world_persist::{PAD_TABLE_OFF, PORTAL_MAX};
 
     let Some(raw) = load_rom() else { return };
     let mut total_pads = 0usize;
@@ -1207,7 +1207,7 @@ fn a_generated_maze_writes_only_pad_tiles_and_free_space() {
         let mut after = rom.clone();
         super::writer::install_pad_metatile(&mut after, &state);
         let grids = crate::randomize::rom_data::read_all_tile_grids(&after);
-        crate::randomize::world_persist::apply(
+        crate::randomize::maze::world_persist::apply(
             &mut after,
             &super::writer::telepad_specs(&state),
             &grids,
@@ -1400,7 +1400,7 @@ fn lock_key_rows_match_the_whole_assignment() {
 /// is an assert and not a census.
 #[test]
 fn the_pads_still_fit_the_packed_store() {
-    use crate::randomize::completion_bits::{CompletionMap, PLANE_RESERVE};
+    use crate::randomize::maze::completion_bits::{CompletionMap, PLANE_RESERVE};
 
     let Some(raw) = load_rom() else { return };
     let mut worst = 0usize;

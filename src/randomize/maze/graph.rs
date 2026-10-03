@@ -48,7 +48,7 @@ use super::{GlobalState, MazeEdge};
 
 /// Global cap on telepads. Each pad TILE owns one arrival row, and there are
 /// `PORTAL_MAX` rows; a pair is two tiles, so this is **eight pairs**.
-pub(crate) const PAD_BUDGET: usize = super::super::world_persist::PORTAL_MAX;
+pub(crate) const PAD_BUDGET: usize = crate::randomize::maze::world_persist::PORTAL_MAX;
 
 /// Hard cap on pads in one world. Above this a world stops being a place and
 /// starts being a switchboard.

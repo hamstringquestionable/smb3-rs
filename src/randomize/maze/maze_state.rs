@@ -84,7 +84,7 @@ pub(crate) const MAP_OBJ_DEAD_LEN: usize = 9;
 ///
 /// `World_Num` is a single global byte, so this is the only thing the maze adds
 /// to make the two players independent; everything positional already is. See
-/// [`super::player_worlds`] for what reads it and what keeps it true.
+/// [`crate::randomize::maze::player_worlds`] for what reads it and what keeps it true.
 ///
 /// Indexed by `Player_Current` straight off the register vanilla already
 /// loaded, which is what makes both readers three bytes each. Two entries
@@ -93,7 +93,7 @@ pub(crate) const PLAYER_WORLD: u16 = MAP_OBJ_DEAD + MAP_OBJ_DEAD_LEN as u16;
 pub(crate) const PLAYER_WORLD_LEN: usize = 2;
 
 /// Which of three situations `Map_Init` is in, and so **which players it may
-/// reposition**. See [`super::player_worlds`] for the routines that read it.
+/// reposition**. See [`crate::randomize::maze::player_worlds`] for the routines that read it.
 ///
 /// | value | meaning | `Map_Init` resets |
 /// |---|---|---|
@@ -116,7 +116,7 @@ pub(crate) const MAZE_STATE_NEXT: u16 = HANDOVER + 1;
 
 /// Every byte the maze owns, as one contiguous run.
 ///
-/// The new-game signal in [`super::completion_bits`] zeroes exactly this range,
+/// The new-game signal in [`crate::randomize::maze::completion_bits`] zeroes exactly this range,
 /// which is what this module's header promises and what nothing did until the
 /// map-object store landed. A run rather than a list, so a future allocation is
 /// cleared by having been declared above and by nothing else.

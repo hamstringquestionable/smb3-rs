@@ -9,7 +9,7 @@
 //! test compares three coordinate bytes — `World_Map_XHi`, `World_Map_Y`,
 //! `World_Map_X` — and nothing else. In vanilla, equal coordinates meant
 //! literally the same tile, because both players were always on the same map.
-//! Under [`super::player_worlds`] two players in *different* worlds whose
+//! Under [`crate::randomize::maze::player_worlds`] two players in *different* worlds whose
 //! coordinates coincide start a Vs battle out of nowhere. `World_Map_Y` has only
 //! nine distinct values and there are sixteen columns to a screen, so the
 //! coincidence is uncommon rather than rare — and likeliest on the tiles both
@@ -107,7 +107,7 @@ use super::rom_data::prg030_file_to_cpu;
 /// Everything from here to `$CEA6` is the dead-partner check, the three
 /// coordinate compares and the flag store; the jump that replaces it makes all
 /// of that unreachable. `$CEA7` itself stays live: `PRG010_CEBF` branches to it
-/// on a special-tile match, and [`super::world_persist`]'s telepad hook sits
+/// on a special-tile match, and [`crate::randomize::maze::world_persist`]'s telepad hook sits
 /// there.
 const COLLISION_TEST_OFFSET: usize = 0x14E97;
 

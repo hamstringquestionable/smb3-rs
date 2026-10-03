@@ -25,7 +25,7 @@ pub fn set_starting_lives(rom: &mut Rom, lives: u8) {
 ///
 /// `first_slot` is where those items start. It is 0 normally and **1 in the
 /// world maze**, which claims slot 0 for its permanent whistle in
-/// [`completion_bits`](crate::randomize::completion_bits)' new-game init.
+/// [`completion_bits`](crate::randomize::maze::completion_bits)' new-game init.
 /// The inventory is a compacted list — the engine's own panel refuses to open
 /// for use at all when slot 0 is empty, and using an item memmoves the tail
 /// down over it — so the two writers must be contiguous from slot 0, never

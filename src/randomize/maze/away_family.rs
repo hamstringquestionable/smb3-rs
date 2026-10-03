@@ -26,7 +26,7 @@
 //! No `$EC` is then stamped, [`apply`] writes nothing, and every lock asks for
 //! what it did before. The remaining code is inert.
 
-use super::rom_data::{self, Grid, PRG012_FILE_BASE, prg_bank_cpu_to_file};
+use crate::randomize::rom_data::{self, Grid, PRG012_FILE_BASE, prg_bank_cpu_to_file};
 use crate::rom::Rom;
 
 /// The nub both halves of a marked pair wear in their lower-right quadrant:
@@ -109,7 +109,7 @@ const CRUMBLE_PICK_PATCHED: [u8; 26] = [
 /// other tile's outcome — `the_pick_matches_vanilla_for_every_other_tile` runs
 /// both versions over all 256.
 pub(crate) fn apply(rom: &mut Rom, grids: &[Grid]) {
-    let present = super::lock_keys::tiles_on_map(grids);
+    let present = crate::randomize::lock_keys::tiles_on_map(grids);
     if !present[rom_data::TILE_FORTRESS_AWAY_MARKED as usize] {
         return;
     }
@@ -308,7 +308,7 @@ mod tests {
                     pairs[usize::from(marked)] += 1;
                 }
             }
-            if super::super::lock_keys::tiles_on_map(&grids)
+            if crate::randomize::lock_keys::tiles_on_map(&grids)
                 [rom_data::TILE_FORTRESS_AWAY_MARKED as usize]
             {
                 assert_eq!(lr(&rom, rom_data::TILE_FORTRESS_AWAY_MARKED), MARK);
@@ -340,7 +340,8 @@ mod tests {
                             let t = g.get(r, c);
                             assert_ne!(t, rom_data::TILE_FORTRESS_AWAY_MARKED, "{hints:?} {seed}");
                             assert!(
-                                !super::super::lock_keys::is_pool_tile(t) || lr(&rom, t) != MARK,
+                                !crate::randomize::lock_keys::is_pool_tile(t)
+                                    || lr(&rom, t) != MARK,
                                 "{hints:?} seed {seed}: {t:#04X} wears the nub"
                             );
                         }

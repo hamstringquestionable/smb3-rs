@@ -2,7 +2,7 @@
 //!
 //! # The question it answers
 //!
-//! The wand gate ([`super::wand_gate`]) is a wall on World 8's bridge that
+//! The wand gate ([`crate::randomize::maze::wand_gate`]) is a wall on World 8's bridge that
 //! stands until the player holds K of the seven wands. Nothing in the game says
 //! how many they have. The failure that produces is specific and expensive:
 //! the player pad-hops to World 8, finds the wall, and has to go back out
@@ -83,7 +83,7 @@
 //! `StatusBar_Fill_Time` has **exactly one caller** in the whole ROM, the last
 //! of the five fills in `StatusBar_UpdateValues`. That makes a three-for-three
 //! `JSR` swap total: there is no second path into the routine that could
-//! bypass us. [`super::rom_data`]'s `map_status_bar_offsets_match_real_rom`
+//! bypass us. [`crate::randomize::rom_data`]'s `map_status_bar_offsets_match_real_rom`
 //! asserts the single-caller property rather than trusting it.
 //!
 //! The replacement branches on `Level_Tileset` itself and tail-jumps to the
@@ -96,7 +96,7 @@
 //!
 //! # Ordering
 //!
-//! After [`super::wand_gate::apply`]. Both read the same K and the same
+//! After [`crate::randomize::maze::wand_gate::apply`]. Both read the same K and the same
 //! [`WANDS_TABLE`], and `wand_gate` is what installs the marker that fills that
 //! table in the first place; a readout without it would count zero forever.
 //!
@@ -104,13 +104,13 @@
 
 use crate::rom::Rom;
 
-use super::maze_state::WANDS_TABLE;
-use super::rom_data::{
+use crate::randomize::maze::maze_state::WANDS_TABLE;
+use crate::randomize::maze::wand_gate::MAX_WANDS;
+use crate::randomize::rom_data::{
     FLIP_FILL_SCORE_CALL, FS_WAND_READOUT, FS_WAND_READOUT_FLIP, GRAPHICS_BUFFER, LEVEL_TILESET,
     PRG026_FILE_BASE, STATUS_BAR_FILL_SCORE_CPU, STATUS_BAR_FILL_TIME_CALL,
     STATUS_BAR_FILL_TIME_CPU, STATUS_BAR_TIME, STATUS_GLYPH_DIGIT0, STATUS_GLYPH_SLASH, TEMP_VAR9,
 };
-use super::wand_gate::MAX_WANDS;
 
 /// Where [`wand_readout_routine`]'s output is assembled to run. `$B520`.
 const WAND_READOUT_CPU: u16 = (0xA000 + (FS_WAND_READOUT - PRG026_FILE_BASE)) as u16;
@@ -198,7 +198,7 @@ fn flip_carry_routine() -> [u8; 20] {
 /// Install the readout. K = 0 writes nothing.
 ///
 /// See the module docs for the ordering rule: this must run after
-/// [`super::wand_gate::apply`], which installs the marker that fills
+/// [`crate::randomize::maze::wand_gate::apply`], which installs the marker that fills
 /// [`WANDS_TABLE`].
 pub(crate) fn apply(rom: &mut Rom, wands_required: u8) {
     if wands_required == 0 {

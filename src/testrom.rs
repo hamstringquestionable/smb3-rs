@@ -434,7 +434,7 @@ pub struct TestRomSpec {
     /// — pack the world being left, expand the one being entered — instead of
     /// wiping `Map_Completions`. Beat a level, leave the world by any route the
     /// game offers, come back: it should still be beaten. Use `--telepad` to
-    /// have a way of leaving. See `randomize::world_persist`.
+    /// have a way of leaving. See `randomize::maze::world_persist`.
     pub world_persist: bool,
     /// **World-maze POC.** Telepads, as `(world A, world B)` pairs, both
     /// 1-based. A pad in each world; stepping on one teleports straight to the
@@ -946,8 +946,8 @@ fn apply_movement(
 fn resolve_telepads(
     rom: &Rom,
     specs: &[(u8, u8)],
-) -> Result<Vec<crate::randomize::world_persist::Telepad>, String> {
-    use crate::randomize::world_persist::{PORTAL_MAX, Telepad};
+) -> Result<Vec<crate::randomize::maze::world_persist::Telepad>, String> {
+    use crate::randomize::maze::world_persist::{PORTAL_MAX, Telepad};
     if specs.is_empty() {
         return Ok(Vec::new());
     }
@@ -1008,7 +1008,7 @@ fn resolve_telepads(
 /// enters the card game instead. That is the bug the randomizer's own stamp
 /// exists for, and a playtest ROM has to reproduce the shipping tile rather
 /// than an older one.
-fn stamp_telepad_tiles(rom: &mut Rom, telepads: &[crate::randomize::world_persist::Telepad]) {
+fn stamp_telepad_tiles(rom: &mut Rom, telepads: &[crate::randomize::maze::world_persist::Telepad]) {
     use crate::randomize::rom_data::{
         PRG012_FILE_BASE, TELEPAD_QUADRANTS, TILE_TELEPAD, map_tile_offset,
     };
@@ -1235,10 +1235,10 @@ pub fn build(vanilla: &[u8], spec: &TestRomSpec) -> Result<TestRom, String> {
     //     time — two tiles out, past the water — so the flag defers to it and
     //     says so.
     if spec.canoe_gate {
-        if crate::randomize::canoe_gate::is_installed(&rom) {
+        if crate::randomize::maze::canoe_gate::is_installed(&rom) {
             report.push("canoe gate: already installed by the seed's own flags".to_string());
         } else {
-            crate::randomize::canoe_gate::apply(&mut rom, &[true; 8]);
+            crate::randomize::maze::canoe_gate::apply(&mut rom, &[true; 8]);
             report.push("canoe gate: boats offshore, anchor summons".to_string());
         }
     }
@@ -1297,7 +1297,7 @@ pub fn build(vanilla: &[u8], spec: &TestRomSpec) -> Result<TestRom, String> {
         // so slot 0 is the dock tile's token. (Nothing on this path writes the
         // wand table either, so the tail would never fire — `false` is just the
         // honest value.)
-        crate::randomize::world_persist::apply(&mut rom, &telepads, &grids, false);
+        crate::randomize::maze::world_persist::apply(&mut rom, &telepads, &grids, false);
         for pad in &telepads {
             report.push(format!(
                 "telepad: W{} row {} col {}  ->  W{} row {} col {}",
@@ -1478,7 +1478,8 @@ mod tests {
         )
         .expect("build");
         let rom = Rom::from_bytes_lax(&built.bytes, true).expect("parse");
-        let want = crate::randomize::completion_bits::CompletionMap::from_rom(&rom).base_table();
+        let want =
+            crate::randomize::maze::completion_bits::CompletionMap::from_rom(&rom).base_table();
         let got: Vec<u8> = (0..9)
             .map(|i| rom.read_byte(crate::randomize::rom_data::FS_COMPLETION_BASES + i))
             .collect();
@@ -1804,7 +1805,7 @@ mod tests {
             let rom = build(&van, &TestRomSpec { telepads: vec![(3, world)], ..spec() })
                 .expect("build with a telepad pair");
             let table = crate::randomize::rom_data::FS_PORTAL_ARRIVAL
-                + crate::randomize::world_persist::PORTAL_TABLE_OFF;
+                + crate::randomize::maze::world_persist::PORTAL_TABLE_OFF;
             // A pair is two arrivals: id 0 leaves W3, id 1 comes back.
             assert_eq!(
                 rom.bytes[table],
@@ -1830,7 +1831,7 @@ mod tests {
         // Decoded through `world_persist`, which owns the key layout, so a
         // change to the row shape cannot leave this quietly reading the old one.
         let out = Rom::from_bytes_lax(&built.bytes, true).unwrap();
-        let pads = crate::randomize::world_persist::decode_pad_rows(&out);
+        let pads = crate::randomize::maze::world_persist::decode_pad_rows(&out);
         assert_eq!(pads.len(), 4, "two pairs is four pad rows");
         // Rows 0 and 2 are W3's two pads; their cells must differ, or both
         // pairs claimed the same tile.

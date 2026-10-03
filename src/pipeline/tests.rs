@@ -1657,8 +1657,8 @@ fn resolve_concrete_passthrough() {
 /// pad tile there.
 #[test]
 fn a_maze_rom_puts_a_pad_tile_under_every_arrival_key() {
+    use crate::randomize::maze::world_persist::{PAD_TABLE_OFF, PORTAL_MAX};
     use crate::randomize::rom_data::{self, TILE_TELEPAD};
-    use crate::randomize::world_persist::{PAD_TABLE_OFF, PORTAL_MAX};
 
     let Some(rom) = make_test_rom() else {
         eprintln!("SKIP: requires the ROM, which is not included in the repo");
@@ -1781,7 +1781,7 @@ fn a_maze_player_starts_with_a_permanent_whistle() {
 
         // And blowing it must not take it away.
         assert_eq!(
-            rom.read_range(crate::randomize::world_travel::WHISTLE_CONSUME_OFFSET, 3),
+            rom.read_range(crate::randomize::maze::world_travel::WHISTLE_CONSUME_OFFSET, 3),
             [0xEA, 0xEA, 0xEA],
             "[{label}] the whistle is still consumed on use"
         );
@@ -1798,7 +1798,7 @@ fn a_maze_player_starts_with_a_permanent_whistle() {
         &Options { world_maze: false, starting_items: vec![0x01, 0x02, 0x03], ..audit_options() },
     );
     assert_ne!(
-        plain.read_range(crate::randomize::world_travel::WHISTLE_CONSUME_OFFSET, 3),
+        plain.read_range(crate::randomize::maze::world_travel::WHISTLE_CONSUME_OFFSET, 3),
         [0xEA, 0xEA, 0xEA],
         "the whistle-keeping patch leaked into a non-maze seed"
     );
@@ -2526,7 +2526,7 @@ fn item_gates_only_install_when_the_option_is_on() {
     for maze in [false, true] {
         let rom = build(maze, false);
         assert!(
-            !crate::randomize::canoe_gate::is_installed(&rom),
+            !crate::randomize::maze::canoe_gate::is_installed(&rom),
             "maze={maze}, gate off: the Anchor calls a boat instead of granting a power-up"
         );
         assert!(
@@ -2546,7 +2546,7 @@ fn item_gates_only_install_when_the_option_is_on() {
     // And the on arm, so the assertions above are known to be able to fail.
     let gated = build(true, true);
     assert!(
-        crate::randomize::canoe_gate::is_installed(&gated),
+        crate::randomize::maze::canoe_gate::is_installed(&gated),
         "gate on: the Anchor is still the mystery power-up"
     );
     assert!(
@@ -2563,7 +2563,7 @@ fn item_gates_only_install_when_the_option_is_on() {
     // to sit in front of its own lock.
     let no_maze = build(false, true);
     assert!(
-        !crate::randomize::canoe_gate::is_installed(&no_maze),
+        !crate::randomize::maze::canoe_gate::is_installed(&no_maze),
         "gate asked for outside the maze, and installed anyway"
     );
 }

@@ -69,7 +69,7 @@
 //! * **home** — the target is in the world the player is standing in. Resolve
 //!   the cell and animate it.
 //! * **away** — the target is in another world. Set the bit in
-//!   [`super::completion_bits`]' packed store and stop; nobody is there to see
+//!   [`crate::randomize::maze::completion_bits`]' packed store and stop; nobody is there to see
 //!   it, and the flash and poof would be drawn at a position that entry does not
 //!   carry.
 //!
@@ -96,8 +96,6 @@ use std::collections::HashMap;
 
 use crate::rom::Rom;
 
-use super::away_family;
-use super::completion_bits::{CompletionMap, HALF_LEN, PLANE_RESERVE};
 #[cfg(test)]
 use super::rom_data::NMI_SAFE_MAX;
 use super::rom_data::{
@@ -106,6 +104,8 @@ use super::rom_data::{
     PRG012_FILE_BASE, REMOVABLE_STRIDE, WORLD_NUM, prg_bank_file_to_cpu, prg010_file_to_cpu,
     prg011_file_to_cpu,
 };
+use crate::randomize::maze::away_family;
+use crate::randomize::maze::completion_bits::{CompletionMap, HALF_LEN, PLANE_RESERVE};
 
 // --- Siting -------------------------------------------------------------
 
@@ -165,7 +165,7 @@ const ENTRY_LEN: usize = 4;
 
 // --- Engine symbols the routine names -----------------------------------
 
-/// Base of [`super::completion_bits`]' packed store.
+/// Base of [`crate::randomize::maze::completion_bits`]' packed store.
 ///
 /// Private over there, so it is restated here and pinned by
 /// `the_packed_base_matches_completion_bits`, which reads the address back out
@@ -1178,7 +1178,7 @@ fn assert_one_key_per_lock(entries: &[LockEntry]) {
 /// the jump-table repoint and the entry table.
 ///
 /// Call it **after** the overworld writer has laid down the final map grids and
-/// with the same ROM state [`super::completion_bits::apply`] sees — the packed
+/// with the same ROM state [`crate::randomize::maze::completion_bits::apply`] sees — the packed
 /// layout is derived from those grids, so a table built against a different
 /// version of them names the wrong bits.
 ///
@@ -1319,7 +1319,7 @@ mod asm_checks {
     use mos6502::memory::{Bus, Memory};
 
     use super::*;
-    use crate::randomize::completion_bits;
+    use crate::randomize::maze::completion_bits;
     use crate::randomize::rom_data::{self, FS_PACK_PLANE, FS_UNPACK_PLANE, asm};
 
     const ROM_PATH: &str = "roms/Super Mario Bros. 3 (USA) (Rev 1).nes";

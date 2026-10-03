@@ -52,7 +52,7 @@
 //! `Map_GetTile` (PRG010, CPU `$D1FE`) derives its row one short: it does
 //! `SBC #16 / AND #$F0` but only adds `$100` to the screen base while the grid
 //! actually starts at `+$110`. That cost a playtest already — see
-//! [`super::world_persist`]'s note on the pad key, where every pad quietly
+//! [`crate::randomize::maze::world_persist`]'s note on the pad key, where every pad quietly
 //! entered its spade game instead of teleporting.
 //!
 //! The compare below needs no row arithmetic at all. It asks two questions
@@ -69,7 +69,7 @@
 //! The obvious version compares against `#$20` — `Map_Init` really does say
 //! "Set starting X position (forced to $20!)" and hardcodes screen 0. That is
 //! true of vanilla and **false of a randomized ROM**:
-//! [`super::start_airship_swap`] replaces `Map_Init`'s scroll store with a
+//! [`crate::randomize::start_airship_swap`] replaces `Map_Init`'s scroll store with a
 //! helper that re-stamps `Map_Entered_X`/`Map_Entered_XHi` from its own
 //! per-world tables, so a swapped world starts wherever its airship was.
 //!
@@ -103,10 +103,10 @@
 
 use crate::rom::Rom;
 
-use super::maze_state::{VISITED_TABLE, VISITED_TABLE_LEN};
+use crate::randomize::maze::maze_state::{VISITED_TABLE, VISITED_TABLE_LEN};
 #[cfg(test)]
-use super::rom_data::NMI_SAFE_MAX;
-use super::rom_data::{
+use crate::randomize::rom_data::NMI_SAFE_MAX;
+use crate::randomize::rom_data::{
     FS_MAZE_GAMEOVER, FS_MAZE_TRAVEL, FS_MAZE_VISITED, Grid, MAP_Y_STARTS_OFF, PLAYER_CURRENT,
     WORLD_MAP_INIT_CPU, WORLD_MAP_X, WORLD_MAP_XHI, WORLD_MAP_Y, WORLD_NUM, find_start,
     prg010_file_to_cpu, prg011_file_to_cpu, prg030_file_to_cpu,
@@ -456,7 +456,7 @@ const MAP_GAMEOVER_CURSOR_Y: u16 = 0x7DCB;
 /// player home by a per-frame delta with a hardcoded column-2 skid test, so it
 /// cannot be retargeted — `start_airship_swap` learned that the expensive way
 /// and settled on stamping the answer at the finalize instead (see
-/// [`super::start_airship_swap`]). This is the same lesson one step further
+/// [`crate::randomize::start_airship_swap`]). This is the same lesson one step further
 /// out: let the twirl play out in the world the player died in, then change
 /// worlds once it is over.
 ///

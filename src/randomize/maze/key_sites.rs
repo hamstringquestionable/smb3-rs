@@ -49,10 +49,10 @@
 //! without ever opening its chest. Extra keys dealt into chests are a kindness
 //! the model must not lean on.
 
-use super::item_keys::Key;
-use super::maze::GlobalState;
-use super::maze::walk::MazePos;
-use super::overworld_build::BuildResult;
+use crate::randomize::maze::GlobalState;
+use crate::randomize::maze::item_keys::Key;
+use crate::randomize::maze::walk::MazePos;
+use crate::randomize::overworld_build::BuildResult;
 use crate::rom::Rom;
 
 /// A spot a key can go, and the write that puts one there.
@@ -87,7 +87,7 @@ impl KeySite {
                 .iter()
                 .find(|w| w.world_idx == world)
                 .map_or(0, |w| w.hb_sprites[idx].reward),
-            Sink::Letter { world } => super::items::princess_reward(rom, world),
+            Sink::Letter { world } => crate::randomize::items::princess_reward(rom, world),
         }
     }
 }
@@ -118,7 +118,7 @@ pub(crate) fn sites(rom: &Rom, build: &BuildResult, state: &GlobalState) -> Vec<
         // A world whose letter is `$00` grants nothing in vanilla, and
         // `items::randomize` leaves those alone on purpose. Writing a key
         // there would invent a reward the game never had, so it is not a site.
-        if super::items::princess_reward(rom, w.world_idx) == 0 {
+        if crate::randomize::items::princess_reward(rom, w.world_idx) == 0 {
             continue;
         }
         out.push(KeySite { pos: (w.world_idx, pos), sink: Sink::Letter { world: w.world_idx } });
@@ -146,7 +146,9 @@ pub(crate) fn grant(rom: &mut Rom, build: &mut BuildResult, site: &KeySite, key:
                 .expect("a site names a world of this build");
             w.hb_sprites[idx].reward = key.item_byte();
         }
-        Sink::Letter { world } => super::items::set_princess_reward(rom, world, key.item_byte()),
+        Sink::Letter { world } => {
+            crate::randomize::items::set_princess_reward(rom, world, key.item_byte())
+        }
     }
 }
 

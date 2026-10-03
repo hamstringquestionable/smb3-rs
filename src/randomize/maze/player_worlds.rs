@@ -19,7 +19,7 @@
 //!
 //! **It stays one shared maze, not two games.** Completions are packed per
 //! *world* (both halves of `Map_Completions`, see
-//! [`super::completion_bits`]), so a fortress one player clears is cleared for
+//! [`crate::randomize::maze::completion_bits`]), so a fortress one player clears is cleared for
 //! the other when they arrive. The wand table, the visited table and the map
 //! objects are all per-world too. What is per-player is only *where you are*.
 //!
@@ -54,7 +54,7 @@
 //!
 //! In the maze each player owns their world, so nothing either player does may
 //! move the other. Three situations, distinguished by
-//! [`HANDOVER`](super::maze_state::HANDOVER):
+//! [`HANDOVER`](crate::randomize::maze::maze_state::HANDOVER):
 //!
 //! | situation | who is repositioned | why |
 //! |---|---|---|
@@ -177,8 +177,8 @@
 
 use crate::rom::Rom;
 
-use super::maze_state::{HANDOVER, PLAYER_WORLD};
-use super::rom_data::{
+use crate::randomize::maze::maze_state::{HANDOVER, PLAYER_WORLD};
+use crate::randomize::rom_data::{
     FS_CAMERA_KEEP, FS_LOOP_TAIL, FS_MAP_INIT_GATE, FS_MARKER_GATE, FS_TURN_SWAP, PLAYER_CURRENT,
     WORLD_NUM, prg_bank_file_to_cpu, prg010_file_to_cpu, prg030_file_to_cpu,
 };
@@ -731,7 +731,7 @@ mod asm_checks {
     #[test]
     fn the_table_has_exactly_one_byte_per_player() {
         assert_eq!(
-            crate::randomize::maze_state::PLAYER_WORLD_LEN,
+            crate::randomize::maze::maze_state::PLAYER_WORLD_LEN,
             2,
             "PLAYER_WORLD is indexed by Player_Current, which is 0 or 1",
         );

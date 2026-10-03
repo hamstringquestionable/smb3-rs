@@ -5,7 +5,7 @@
 //! A wandering Hammer Bro was beaten in World 1, the player left for another
 //! world and came back — and the Hammer Bro was standing there again.
 //!
-//! [`super::completion_bits`] persists `Map_Completions`, which covers every
+//! [`crate::randomize::maze::completion_bits`] persists `Map_Completions`, which covers every
 //! cell the *map grid* can mark: cleared levels, busted locks, smashed rocks,
 //! bridged gaps. Map objects are not map cells. They are nine parallel-array
 //! slots that `Map_Init` (PRG011, `$A1D8`) **reloads from ROM on every world
@@ -84,7 +84,7 @@
 //! and no other, which is precisely the set of entries that reach `$84CD` —
 //! `PRG030_84D7`, the turn-end re-init the map loop jumps to on every level
 //! entry and return, skips both. So the restore is chained onto the front of
-//! [`super::completion_bits::WIPE_REPLACEMENT`], three bytes, reusing a hook
+//! [`crate::randomize::maze::completion_bits::WIPE_REPLACEMENT`], three bytes, reusing a hook
 //! rather than inventing one.
 //!
 //! **It is deliberately *not* behind that routine's `World_Num != LIVE_WORLD`
@@ -114,7 +114,7 @@
 //! still calling for help.
 //!
 //! So the restore clears slot 0 in any world whose airship has been cleared,
-//! which [`super::wand_gate`]'s `WANDS_TABLE` already records — the same byte
+//! which [`crate::randomize::maze::wand_gate`]'s `WANDS_TABLE` already records — the same byte
 //! that says the world's wand is held. Ten bytes on the tail of the restore,
 //! reusing its live `X` (`World_Num`) and reaching the same `RTS`.
 //!
@@ -229,10 +229,10 @@
 
 use crate::rom::Rom;
 
-use super::maze_state::{MAP_OBJ_DEAD, MAP_OBJ_DEAD_LEN, WANDS_TABLE};
+use crate::randomize::maze::maze_state::{MAP_OBJ_DEAD, MAP_OBJ_DEAD_LEN, WANDS_TABLE};
 #[cfg(test)]
-use super::rom_data::NMI_SAFE_MAX;
-use super::rom_data::{
+use crate::randomize::rom_data::NMI_SAFE_MAX;
+use crate::randomize::rom_data::{
     FS_MAZE_OBJ_MARK, FS_MAZE_OBJ_RESTORE, MAP_COMPLETE_BIT_CPU, WORLD_NUM, prg011_file_to_cpu,
 };
 
@@ -310,7 +310,7 @@ const MARK_DEAD: [u8; 22] = [
 ///
 /// 36 reserved, 34 used.
 ///
-/// Called from the front of [`super::completion_bits::WIPE_REPLACEMENT`], so
+/// Called from the front of [`crate::randomize::maze::completion_bits::WIPE_REPLACEMENT`], so
 /// `Map_Init` has just refilled all nine slots out of ROM and `World_Num` names
 /// the world being drawn.
 ///
@@ -421,7 +421,7 @@ fn restore_objects(retire_help_bubble: bool) -> Vec<u8> {
 /// airship, so it is left standing. See the module docs.
 ///
 /// The restore's *call* is not here: it is the first three bytes of
-/// [`super::completion_bits::WIPE_REPLACEMENT`], because that is the routine
+/// [`crate::randomize::maze::completion_bits::WIPE_REPLACEMENT`], because that is the routine
 /// that owns the `$84CD` hook. `the_wipe_replacement_calls_the_restore` is what
 /// keeps the two ends together.
 pub(crate) fn apply(rom: &mut Rom, retire_help_bubble: bool) {
@@ -440,7 +440,7 @@ mod tests {
     use mos6502::instruction::Ricoh2a03;
     use mos6502::memory::{Bus, Memory};
 
-    use crate::randomize::completion_bits;
+    use crate::randomize::maze::completion_bits;
     use crate::randomize::rom_data::{self, MAP_COMPLETE_BITS, asm};
 
     const ROM_PATH: &str = "roms/Super Mario Bros. 3 (USA) (Rev 1).nes";

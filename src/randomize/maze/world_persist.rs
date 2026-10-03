@@ -85,11 +85,11 @@
 
 use crate::rom::Rom;
 
-use super::completion_bits;
-use super::pipe_helpers;
+use crate::randomize::maze::completion_bits;
+use crate::randomize::pipe_helpers;
 #[cfg(test)]
-use super::rom_data::NMI_SAFE_MAX;
-use super::rom_data::{
+use crate::randomize::rom_data::NMI_SAFE_MAX;
+use crate::randomize::rom_data::{
     FS_PAD_BOX_DONE, FS_PAD_ENTER, FS_PORTAL_ARRIVAL, FS_RESTORE_ARRIVAL, Grid, PLAYER_CURRENT,
     TILE_TELEPAD, WORLD_MAP_INIT_CPU, WORLD_MAP_TILE, WORLD_MAP_X, WORLD_MAP_XHI, WORLD_MAP_Y,
     WORLD_NUM, prg010_file_to_cpu, prg011_file_to_cpu,
@@ -173,7 +173,7 @@ const WIPE_LEN: usize = 10;
 /// planted his arrival coordinates in Mario's backup instead. Indexing costs
 /// three bytes for the one `LDX`: `STA abs,X` is the same width as `STA abs`,
 /// and with one player `X` is 0, which is the address it used to hardcode.
-/// [`super::player_worlds`] is what made this reachable — before it, both
+/// [`crate::randomize::maze::player_worlds`] is what made this reachable — before it, both
 /// players were always in the same world.
 #[rustfmt::skip]
 const RESTORE_ARRIVAL: [u8; 59] = [
@@ -315,7 +315,7 @@ const MAP_INIT_CPU: u16 = 0xA1D8;
 /// So `PAD_ENTER` stores `id + 1` into the flag, and the flag is now both "a
 /// portal aimed you somewhere" and which one. `id + 1` is 1..=16 and can never
 /// be zero, so every `BEQ`/`BNE` on the flag stays a correct boolean test —
-/// the same reuse [`super::world_travel`]'s `MARK_VISITED` makes of
+/// the same reuse [`crate::randomize::maze::world_travel`]'s `MARK_VISITED` makes of
 /// `Map_Y_Starts`. Decoding costs `TAX / DEX` against an `A` that is already
 /// loaded, which is five bytes *less* than the `LDX Player_Current / LDA
 /// Map_Entered_XHi,X / TAX` it replaces.

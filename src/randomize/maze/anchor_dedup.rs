@@ -1,7 +1,7 @@
 //! Don't hand the player an Anchor they already have.
 //!
 //! In World Maze the Anchor is the canoe key and is **never consumed** — see
-//! [`canoe_gate`](super::canoe_gate). One is all anyone needs, so every later
+//! [`canoe_gate`](crate::randomize::maze::canoe_gate). One is all anyone needs, so every later
 //! Anchor is dead weight in the inventory. Four sources deal them (Hammer Bro
 //! rewards, in-level chests, Toad Houses, Princess letters), and with the maze
 //! pool adding houses a long run can collect a fistful.
@@ -52,7 +52,9 @@
 //! This is installed only alongside the canoe gate, where the Anchor is
 //! permanent.
 
-use super::rom_data::{FS_ANCHOR_GET_GLUE, FS_ANCHOR_HAS, FS_ANCHOR_HOUSE, FS_ANCHOR_LETTER};
+use crate::randomize::rom_data::{
+    FS_ANCHOR_GET_GLUE, FS_ANCHOR_HAS, FS_ANCHOR_HOUSE, FS_ANCHOR_LETTER,
+};
 use crate::rom::Rom;
 
 /// Global Item ID of the Anchor.
@@ -156,7 +158,7 @@ const GET_GLUE: [u8; 18] = [
 /// came out as garbage while correctly granting nothing.
 ///
 /// So a real power-up it is — rolled once per seed by
-/// [`items::toad_house_substitute`](super::items::toad_house_substitute), from
+/// [`items::toad_house_substitute`](crate::randomize::items::toad_house_substitute), from
 /// a pool that holds no Anchor. The player opens the box, sees a real item and
 /// gets it; they just do not get a second Anchor.
 #[rustfmt::skip]
