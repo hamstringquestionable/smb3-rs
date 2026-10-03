@@ -194,7 +194,7 @@ const PIPE_SQUISH_FIX_BYTES: [u8; 9] = [
 
 // ---------------------------------------------------------------------------
 // MaCobra patches — opt-in features
-// Each apply_* below is gated by an individual option in randomizer.rs;
+// Each apply_* below is gated by an individual option in pipeline/stages.rs;
 // none of these ship unless the corresponding flag is enabled.
 // ---------------------------------------------------------------------------
 
@@ -515,7 +515,7 @@ pub fn apply_fireball_hearts(rom: &mut Rom) {
 
 // Poison Mushrooms: the `--poison-mushrooms` flag no longer uses MaCobra52's
 // all-1UPs-poison recolor. It now installs the per-block poison trap in
-// `randomize::poison_mushroom` (each 1-Up block hands out a real 1-Up or a
+// `randomize::items::poison_mushroom` (each 1-Up block hands out a real 1-Up or a
 // purple poison mushroom by a seed-salted position hash). The old recolor was
 // removed when the flag was repurposed.
 
@@ -693,7 +693,7 @@ pub fn apply_macobra_patches(rom: &mut Rom) {
 
     // NOTE: MaCobra's "Bros don't stop on hands" (issue #14) used to live
     // here; it is subsumed by the overworld writer's march-veto trampoline
-    // (overworld_writer/march_veto.rs), which rejects hand-trap landings
+    // (overworld/writer/march_veto.rs), which rejects hand-trap landings
     // outright at Map_MarchValidateTravel's landing-zone check.
 
     // Hold-left airship-entry pit-death fix (MaCobra52). See notes above the

@@ -31,7 +31,7 @@ OUT_DIR = "web/assets/visual-previews"
 CHR_BASE = 0x40010
 
 # Player sprite palette: [bg mirror, body, highlight, outline] for
-# Small/Big/Raccoon Mario (mirrors PALETTE_RANGES[0] in src/randomize/palettes.rs).
+# Small/Big/Raccoon Mario (mirrors PALETTE_RANGES[0] in src/randomize/cosmetic/palettes.rs).
 MARIO_PALETTE = 0x10539
 
 # PRG029 ($C000-$DFFF) holds the player frame tables (Southbird disasm):

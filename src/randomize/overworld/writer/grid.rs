@@ -1,0 +1,218 @@
+//! Step 2 — stamp the per-world map tile grids.
+
+use super::*;
+use crate::randomize::overworld::lock_keys;
+
+// Reason: each argument is a distinct input of the one stamp pass; `lock_tiles`
+// is the only state shared across worlds, and bundling it with `hints` would
+// invent a type whose only job is to carry two unrelated things.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn write_tile_grid<R: Rng>(
+    rom: &mut Rom,
+    built: &BuiltWorld,
+    wa: &WorldAssignments,
+    data: &OverworldData,
+    sprite_mask: &HashSet<(usize, usize)>,
+    hints: crate::HintMode,
+    marked_forts: &HashSet<FortRef>,
+    lock_tiles: &mut lock_keys::LockTiles,
+    rng: &mut R,
+) -> Grid {
+    let pickup = data.pickup;
+    let catalog = data.catalog;
+    let wi = built.world_idx;
+    let mut grid = built.grid.clone();
+
+    // Stamp fortress tiles. All three of `rom_data::FORTRESS_TILES` render a
+    // fortress, so the choice is free — it is cosmetic variety unless the
+    // player asked for map hints, in which case the tile says where the lock
+    // this fortress opens is. The maze supplies that fact as a `LockHint`; the
+    // byte, and whether to honour it, are decided here.
+    //
+    // A world-8 army sprite sits on some fortress cells, and the sprite pass
+    // below blanks those, so a hint there is silently dropped. That is correct:
+    // the sprite is the visual and there is nowhere to say it.
+    for a in &wa.fortress {
+        // **Draw first, every time, and only then decide whether to use it.**
+        // The cosmetic pick and the hinted pick must consume the same RNG or
+        // turning hints on moves every later draw — the map itself would change,
+        // not just the colour of a fortress. Hints are a display option and must
+        // not be able to move the seed.
+        let cosmetic = rom_data::FORTRESS_TILES[rng.random_range(..rom_data::FORTRESS_TILES.len())];
+        let hint = if hints.hints_at_all() {
+            built
+                .slots
+                .iter()
+                .find(|s| s.kind == SlotKind::Fortress && s.pos == a.pos)
+                .map_or(LockHint::Unhinted, |s| s.lock_hint)
+        } else {
+            LockHint::Unhinted
+        };
+        let tile = match hint {
+            LockHint::OwnWorld => rom_data::TILE_FORTRESS,
+            LockHint::World8 => rom_data::TILE_FORTRESS_W8,
+            // The second away family is a some-hints display only; see
+            // `away_family`. Full names the world on the lock instead.
+            LockHint::Elsewhere { marked: true } if hints == crate::HintMode::Partial => {
+                rom_data::TILE_FORTRESS_AWAY_MARKED
+            }
+            LockHint::Elsewhere { .. } => rom_data::TILE_FORTRESS_AWAY,
+            LockHint::Unhinted => cosmetic,
+        };
+        grid.set(a.pos.0, a.pos.1, tile);
+    }
+
+    // Stamp pipe tiles (handle spiral castle $5F).
+    for pa in &wa.pipes {
+        let tile_a = catalog.entries[pickup.pool[pa.pool_idx_a].catalog_idx].tile;
+        let tile_b = catalog.entries[pickup.pool[pa.pool_idx_b].catalog_idx].tile;
+        grid.set(pa.pos_a.0, pa.pos_a.1, if tile_a == 0x5F { 0x5F } else { TILE_PIPE });
+        grid.set(pa.pos_b.0, pa.pos_b.1, if tile_b == 0x5F { 0x5F } else { TILE_PIPE });
+    }
+
+    // Stamp airship tile.
+    if let Some(a) = &wa.airship {
+        let tile = catalog.entries[pickup.pool[a.pool_idx].catalog_idx].tile;
+        grid.set(a.pos.0, a.pos.1, tile);
+    }
+
+    // Stamp bowser tile.
+    if let Some(a) = &wa.bowser {
+        let tile = catalog.entries[pickup.pool[a.pool_idx].catalog_idx].tile;
+        grid.set(a.pos.0, a.pos.1, tile);
+    }
+
+    // Stamp bonus game (spade) tiles.
+    for a in &wa.bonus {
+        grid.set(a.pos.0, a.pos.1, TILE_BONUS_GAME);
+    }
+
+    // Stamp toad house tiles. 0x50 and 0xE0 each carry their own embedded
+    // background, and only in W5 do the two pages have different background
+    // graphics — page 0 matches 0x50, page 1 matches 0xE0 — so the byte
+    // choice has to follow position there. In every other world both
+    // variants render against the same world background, so the visual is
+    // identical either way and we just preserve the entry's vanilla tile.
+    for a in &wa.toad {
+        let tile = if wi == 4 {
+            if a.pos.1 >= 16 { 0xE0 } else { 0x50 }
+        } else {
+            catalog.entries[pickup.pool[a.pool_idx].catalog_idx].tile
+        };
+        grid.set(a.pos.0, a.pos.1, tile);
+    }
+
+    // Stamp level tiles in BFS order from start.
+    let level_pos_set: HashMap<(usize, usize), usize> =
+        wa.level.iter().enumerate().map(|(i, a)| (a.pos, i)).collect();
+
+    let start_pos = rom_data::find_start(&grid);
+    let bfs = bfs_ordered(&grid, &built.pipe_pairs, start_pos, built.world_idx);
+
+    // Level tile sequence: $03-$0B = levels 1-9 (vanilla numbered tiles),
+    // $0C-$15 = levels 10-19 (double-digit tiles with custom "1" tens digit
+    // patched by patch_double_digit_metatiles). $69 (pyramid) is a level-20+
+    // fallback with no valid display.
+    const LEVEL_TILES: [u8; 20] = [
+        0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11,
+        0x12, 0x13, 0x14, 0x15, 0x69,
+    ];
+
+    // 0xE6 (HANDTRAP) — visible hand-trap tile. Stamped instead of a level
+    // number when the build has flagged this slot as a hand trap. Vanilla's
+    // post-arrival CMP at $CF15 fires the grab dispatch (forced 100% by
+    // hands_levels::install_full_grab); the slot's level pointer entry is
+    // unchanged so the player drops into the underlying level.
+    const TILE_HAND_TRAP: u8 = 0xE6;
+    // 0xBC (PIPE) — visible pipe tile. Stamped instead of a level number
+    // when the build has flagged this slot as a troll pipe. Pressing A on
+    // the pipe matches Map_EnterSpecialTiles and falls through to the same
+    // Map_Operation = $10 "enter level" path used by level number tiles, so
+    // the slot's level pointer entry loads as a regular level.
+    const TILE_TROLL_PIPE: u8 = 0xBC;
+    let hand_trap_positions: HashSet<(usize, usize)> =
+        built.slots.iter().filter(|s| s.is_hand_trap).map(|s| s.pos).collect();
+    let troll_pipe_positions: HashSet<(usize, usize)> = built
+        .slots
+        .iter()
+        .filter(|s| s.is_troll_pipe)
+        .map(|s| s.pos)
+        .filter(|pos| !wa.demoted_troll_pipes.contains(pos))
+        .collect();
+
+    let mut level_idx: usize = 0;
+    let mut assigned: Vec<bool> = vec![false; wa.level.len()];
+
+    let mut pick_level_tile = |pos: (usize, usize)| -> u8 {
+        if hand_trap_positions.contains(&pos) {
+            TILE_HAND_TRAP
+        } else if troll_pipe_positions.contains(&pos) {
+            TILE_TROLL_PIPE
+        } else {
+            let t = LEVEL_TILES[level_idx.min(LEVEL_TILES.len() - 1)];
+            level_idx += 1;
+            t
+        }
+    };
+
+    for &(pos, _dist) in &bfs {
+        if let Some(&la_idx) = level_pos_set.get(&pos)
+            && !assigned[la_idx]
+        {
+            let tile = pick_level_tile(pos);
+            grid.set(pos.0, pos.1, tile);
+            assigned[la_idx] = true;
+        }
+    }
+
+    // Any level slots not reached by BFS (safety fallback).
+    for (i, a) in wa.level.iter().enumerate() {
+        if !assigned[i] {
+            let tile = pick_level_tile(a.pos);
+            grid.set(a.pos.0, a.pos.1, tile);
+        }
+    }
+
+    // Stamp lock tiles. **Which byte is decided here, not by the builder.**
+    // A lock blocks by being absent from `Map_Object_Valid_*`, and every
+    // lock byte is — so the walk cannot tell them apart and the builder has
+    // no reason to care. The art and the reveal come from the path the lock stands on, so it
+    // looks right against that path and opens back into it.
+    //
+    // With hints on, the byte also says whether the key is in another world.
+    // The *fact* is the model's (`LockAssignment::fort` names the world); the
+    // byte is `lock_keys`' to allocate, since it owns the metatile art, the
+    // removable pairing and the hammer rows that must agree with it. One
+    // allocator spans all eight worlds — see `LockTiles`.
+    for lock in &built.locks {
+        let under = grid.get(lock.pos.0, lock.pos.1);
+        let away = lock.fort.world != wi;
+        let shown = if away { lock_keys::shown_world(rom, lock.fort.world) } else { 0 };
+        let marked = marked_forts.contains(&lock.fort);
+        let tile = lock_tiles.tile(lock_keys::lock_request(under, away, shown, marked, hints));
+        grid.set(lock.pos.0, lock.pos.1, tile);
+    }
+
+    // Overwrite sprite-covered positions with connectivity-aware path nodes.
+    // W8 army sprites float on top of the grid; the underlying tile must be
+    // a plain path node, not a fortress/level tile. Skip BLANK_TILE_OVERRIDES
+    // since sprite positions are dynamic (not the vanilla fixed positions).
+    for &pos in sprite_mask {
+        let tile =
+            crate::randomize::overworld::pickup::blank_tile_from_neighbors(&grid, wi, pos.0, pos.1);
+        grid.set(pos.0, pos.1, tile);
+    }
+
+    // Write grid to ROM.
+    for r in 0..grid.rows() {
+        for c in 0..grid.cols {
+            let offset = rom_data::map_tile_offset(wi, r, c);
+            rom.write_byte(offset, grid.get(r, c));
+        }
+    }
+
+    // **And hand it back.** This is the finished map for this world, and it was
+    // built here and thrown away — so everything downstream that needed it read
+    // it back off the ROM a cell at a time. See `WrittenOverworld::grids`.
+    grid
+}

@@ -18,7 +18,7 @@ wasm-pack build --target web --out-dir pkg   # WASM module -> pkg/
 
 ## Lint Policy
 
-This project is **lint-clean**: `cargo clippy --all-targets` must produce zero warnings. CI (`.github/workflows/ci.yml`) enforces this with three gates, in this order — `cargo fmt --check`, then clippy on the native target, then clippy on wasm32. Each converts a warning into a build failure.
+This project is **lint-clean**: `cargo clippy --all-targets` must produce zero warnings. CI (`.github/workflows/ci.yml`) enforces this with four gates, in this order — `cargo fmt --check`, then clippy on the native target, then clippy on wasm32, then rustdoc. Each converts a warning into a build failure.
 
 Before committing:
 
@@ -26,6 +26,7 @@ Before committing:
 cargo fmt --check            # the repo IS rustfmt-formatted; CI checks this FIRST
 cargo clippy --all-targets   # must show no warnings
 cargo clippy --lib --target wasm32-unknown-unknown   # CI's second pass
+RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --document-private-items  # doc links
 cargo test                   # must pass
 ```
 
@@ -50,7 +51,7 @@ CENSUS_SEEDS=1000 cargo test --release --lib test_route_census -- --ignored --no
 A stranding bug that only shows on a rare pipe layout will pass at 20 seeds and
 fail a player. The measured baselines these should be compared against are in
 `docs/choice_first_charter.md`; `CENSUS_SEEDS` / `CENSUS_SLACK` drive every
-census in `overworld_build`.
+census in `overworld::build`.
 
 When clippy flags new code:
 
@@ -58,6 +59,16 @@ When clippy flags new code:
 2. **Judgment-call lints** (`too_many_arguments`, `type_complexity`): consider whether the suggested refactor reveals a real concept. If yes, do the refactor. If no, add `#[allow(clippy::<lint_name>)]` immediately above the item, prefixed with a `// Reason: ...` comment explaining the decision.
 
 Never silence a lint by deleting the warning text or globally disabling — the goal is "every warning was considered," not "no warnings emitted."
+
+**The one crate-wide exception is `rustdoc::private_intra_doc_links`**, allowed
+in `lib.rs` with its reason. It guards published API docs, where private pages
+do not exist; these docs are read with `--document-private-items`, where a link
+to a `pub(crate)` item works. Every other rustdoc lint is fatal. The usual
+rustdoc fixes: point a moved item's link at its new path; make a link to a
+`#[cfg(test)]` item a plain code span (doc builds never compile it); wrap
+bracketed prose like `W3[41]` or `<site>` in backticks; and keep `///` off a
+`pub mod x;` line whose file has `//!` docs — rustdoc merges the two and
+resolves the file's own links from the parent's scope. Use `//` there.
 
 ## Seeds Are Stable Within A Version, Never Across
 
@@ -371,15 +382,15 @@ a test needs, add the flag — don't work around it.
 
 Randomization modules follow a **decide then write** pattern. Each feature area has two layers:
 
-1. **Randomization modules** (`overworld_build/`, `levels.rs`, etc.) — contain the algorithms that decide *what* to change (BFS placement, shuffle logic, constraint solving). They consume RNG and produce descriptions of changes (new positions, new assignments, etc.).
+1. **Randomization modules** (`overworld/build/`, `overworld/airship_shuffle.rs`, etc.) — contain the algorithms that decide *what* to change (BFS placement, shuffle logic, constraint solving). They consume RNG and produce descriptions of changes (new positions, new assignments, etc.).
 
-2. **Helper modules** (`pipe_helpers.rs`, `overworld_helpers.rs`, `level_helpers.rs`) — contain the mechanical ROM write operations that execute those decisions. These are pure functions that take explicit inputs (positions, indices, tile values) and write to the ROM. They have no randomization logic or decision-making.
+2. **Helper modules** (`overworld/pipe_helpers.rs`, `overworld/helpers.rs`, `overworld/level_helpers.rs`) — contain the mechanical ROM write operations that execute those decisions. These are pure functions that take explicit inputs (positions, indices, tile values) and write to the ROM. They have no randomization logic or decision-making.
 
 **Why this matters:** Multiple randomization modules may need to perform the same ROM operations (e.g., swapping pointer table entries, updating pipe destination tables, re-sorting the pointer table). Centralizing these writes in helper modules avoids duplication and ensures consistent behavior. When adding new randomization features, check the helper modules first — the write operation you need may already exist.
 
-**Current helpers:**
+**Current helpers** (all in `randomize/overworld/`):
 - `pipe_helpers.rs` — entry position swaps, pipe destination table writes, pointer table re-sorting
-- `overworld_helpers.rs` — lockable tiles, FX patterns, gap tiles, target finding
+- `helpers.rs` — lockable tiles, FX patterns, gap tiles, target finding
 - `level_helpers.rs` — shared `shuffle_entries()` for level entry shuffling
 
 ## Project Structure
@@ -390,8 +401,10 @@ src/
   main.rs              # CLI (clap): file I/O, arg parsing, --free-space, --write-log
   rom.rs               # iNES header parsing, ROM validation, Rom struct
   ips.rs               # IPS patch builder (build_ips_patch) and applier (apply_ips_patch)
-  randomizer/          # Orchestration
-    mod.rs             #   randomize_inner(): calls every randomize module, in order
+  pipeline/            # Orchestration: vanilla ROM in, randomized ROM out
+    mod.rs             #   randomize_inner(): the table of contents — 18 stage
+                       #   calls, in order. Start here to find where anything runs.
+    stages.rs          #   each stage's body; calls the randomize modules
     options.rs         #   the Options struct — one field per player-facing choice
     flag_key.rs        #   Options <-> the shareable flag key
   testrom.rs           # Playtest ROM builder (native-only) — see below
@@ -399,49 +412,46 @@ src/
   bin/flagstats.rs     # `flagstats`: decode the flag keys GoatCounter recorded into
                        #   a per-option census (needs GOATCOUNTER_TOKEN)
   wasm.rs              # wasm-bindgen glue (only compiled for wasm32)
-  randomize/
-    mod.rs             # THE LIVING MODULE INDEX — 46 modules, several documented
-                       #   in place. Read this rather than trusting any list here.
+  randomize/           # Everything the randomizer can change, BY SUBJECT. The
+                       #   pipeline decides the order; this tree is where code
+                       #   lives. Each folder's mod.rs lists and groups its modules.
+    mod.rs             # The index of the folders below
     rom_data/          # Shared ROM constants and read helpers, split by concern:
                        #   tables.rs (offset tables), free_space.rs (the allocation
                        #   registry), asm.rs (the 6502 patch checker), access.rs
                        #   (bank<->file mapping), grid.rs, tiles.rs, engine.rs,
                        #   fingerprint.rs (the overworld baseline hash)
-    # --- Overworld builder pipeline (catalog → pickup → build → write) ---
-    node_catalog/      # Phase 1: classify all 340 pointer table entries
-    overworld_pickup.rs # Phase 2: clear map, build level/HB pools
-    overworld_build/   # Phase 3: choice-first builder. Per world:
-                       #   connectivity → levels → forts → locks → shaping → spare
-                       #   pipes, plus route_choice.rs (the cost model) and the
-                       #   censuses in builder_tests.rs
-    overworld_writer/  # Phase 4: write assignments to ROM (pointer tables, FX,
-                       #   map tiles, sprites, march veto)
-    overworld_helpers.rs # Shared overworld write helpers (locks, FX, gap tiles)
-    # --- Helper modules (ROM write operations, no RNG) ---
-    pipe_helpers.rs    # Pipe destination tables, entry swaps, pointer table re-sorting
-    level_helpers.rs   # Shared shuffle_entries() for level entry shuffling
-    # --- The world maze (see docs/world_maze_design.md) ---
-    maze/              # The generator: 8 world states, cross-world edges, the
-                       #   winnability fixpoint, the shaping passes
-    maze_state.rs      # Its battery-backed SRAM map — the one place those
-                       #   addresses are decided
-    completion_bits.rs # Packed per-world map completions (8 worlds in 84 bytes)
-    world_persist.rs / world_travel.rs / map_objects.rs / wand_gate.rs
-    lock_keys.rs       # Every lock a fortress opens, keyed by position. Replaces
-                       #   vanilla's fortress-FX slot tables outright.
-    # --- Feature modules (a sample; mod.rs is the full list) ---
-    map_walker.rs      # BFS map walker for overworld connectivity analysis
-    levels.rs          # Airship shuffle (the one cross-world level shuffle that's still independent of the overworld builder)
-    powerups.rs        # ? block item randomization
-    palettes.rs / palette_variants.rs  # Wardrobe colors + themed world palettes
-    enemies/           # Enemy type swapping within class, wild injection, protections
+    overworld/         # The world maps
+      node_catalog/    #   Builder phase 1: classify all 340 pointer table entries
+      pickup.rs        #   Phase 2: clear map, build level/HB pools
+      build/           #   Phase 3: choice-first builder. Per world:
+                       #     connectivity → levels → forts → locks → shaping → spare
+                       #     pipes, plus route_choice.rs (the cost model) and the
+                       #     censuses in builder_tests.rs
+      writer/          #   Phase 4: write assignments to ROM (pointer tables, FX,
+                       #     map tiles, sprites, march veto)
+      lock_keys.rs     #   Every lock a fortress opens, keyed by position
+      world_order.rs / airship_shuffle.rs / map_walker.rs / troll_pipes.rs / ...
+      helpers.rs / pipe_helpers.rs / level_helpers.rs  # ROM write helpers, no RNG
+    maze/              # The world maze (see docs/world_maze_design.md). mod.rs
+                       #   groups it: the generator (graph, fill, roles, walk...),
+                       #   the ROM side (completion_bits, world_persist,
+                       #   world_travel, map_objects, maze_state, wand_gate...),
+                       #   item gates (item_keys, key_sites, canoe_gate...), hints
+    levels/            # Inside a level: antechambers, big_q_rooms, hand/piranha
+                       #   rooms, composed sub-areas, autoscroll, segment_writer
+    enemies/           # Enemy swaps within class, wild injection, protections.rs,
+                       #   plus koopalings.rs, stomp_fairness.rs, water_stomp.rs
+    items/             # mod.rs = chest/Toad House/Hammer Bro/letter tables;
+                       #   powerups.rs (? blocks), fire_flower, poison_mushroom
+    cosmetic/          # palettes + palette_variants, title_screen (seed hash),
+                       #   credits, king_quotes, anchor_visuals
     qol/               # Quality-of-life patches, grouped by subject rather than
                        #   one file per patch: overworld_map.rs alone holds the
                        #   rocks, W1 shortcut, W8 bridges, drawbridges and
                        #   N-card patches; starting_state.rs holds lives AND
-                       #   starting items. Also canoe.rs, cards.rs,
-                       #   hammer_breaks.rs, macobra.rs, map_warp.rs, ...
-    world_order.rs / items.rs / autoscroll.rs / title_screen.rs / king_quotes.rs
+                       #   starting items. Also canoe.rs, cards.rs, macobra.rs,
+                       #   two_player_vs.rs, ...
 web/
   index.html           # Browser frontend
   style.css
@@ -472,19 +482,19 @@ docs/                  # See docs/README.md for the index and each doc's status
   vision.md            # What the project is for, and what it refuses to be
   choice_first_charter.md # The overworld builder's design authority
   world_maze_design.md # The world maze
-  application_flow.md  # The pipeline, in execution order
+  (the pipeline order lives in src/pipeline/mod.rs, not in a doc)
 ```
 
 ## Overworld Builder Pipeline
 
-The overworld builder is the core randomization system, implemented as a four-phase pipeline in `randomizer.rs`: **catalog → pickup → build → write**.
+The overworld builder is the core randomization system, implemented as a four-phase pipeline in `pipeline/stages.rs` (stages 5-9): **catalog → pickup → build → write**.
 
-1. **Catalog** (`node_catalog.rs`) — classifies all 340 pointer table entries across 8 worlds (Level, Fortress, Pipe, HammerBro, ToadHouse, Airship, Bowser, etc.)
-2. **Pickup** (`overworld_pickup.rs`) — clears the map to blank path tiles, builds a shuffleable pool of levels and hammer bro encounters, applies theme-aware blank tiles per screen
-3. **Build** (`overworld_build/`) — the choice-first builder: per world, knob-free uniform placement phases (connectivity pipes bridge islands → levels → forts → locks) followed by a diagnosis-driven shaping loop (lock re-place, gated shortcut, fort+lock move, level move, pipe move) that guarantees a minimum cheapest-route cost (`C1_FLOOR`) and seeks ≥2 routes in the choice band; a world finishing below the floor redeals its pipe web. Cross-world passes handle secret-exit safety, hammer-bro fill, toad-house/spade promotion. Hard invariants: order-free completability fixpoint, row 7/8 completion-bit rule
-4. **Write** (`overworld_writer.rs`) — single-pass ROM write: updates pointer tables, FX table, pipe destination tables, map tiles, and hammer bro sprite assignments
+1. **Catalog** (`overworld/node_catalog/`) — classifies all 340 pointer table entries across 8 worlds (Level, Fortress, Pipe, HammerBro, ToadHouse, Airship, Bowser, etc.)
+2. **Pickup** (`overworld/pickup.rs`) — clears the map to blank path tiles, builds a shuffleable pool of levels and hammer bro encounters, applies theme-aware blank tiles per screen
+3. **Build** (`overworld/build/`) — the choice-first builder: per world, knob-free uniform placement phases (connectivity pipes bridge islands → levels → forts → locks) followed by a diagnosis-driven shaping loop (lock re-place, gated shortcut, fort+lock move, level move, pipe move) that guarantees a minimum cheapest-route cost (`C1_FLOOR`) and seeks ≥2 routes in the choice band; a world finishing below the floor redeals its pipe web. Cross-world passes handle secret-exit safety, hammer-bro fill, toad-house/spade promotion. Hard invariants: order-free completability fixpoint, row 7/8 completion-bit rule
+4. **Write** (`overworld/writer/`) — single-pass ROM write: updates pointer tables, FX table, pipe destination tables, map tiles, and hammer bro sprite assignments
 
-When the overworld builder is active, `levels.rs` intra-world shuffle and airship shuffle are bypassed since the builder handles them.
+When the overworld builder is active, the old `levels.rs` intra-world shuffle and airship shuffle are bypassed since the builder handles them.
 
 ## Tooling
 

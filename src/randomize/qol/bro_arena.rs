@@ -114,7 +114,7 @@ mod tests {
             let mut rom = Rom::from_bytes_lax(&bytes, true).unwrap();
             rebuild_desert_bro_arena(&mut rom);
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
-            crate::randomize::powerups::randomize(&mut rom, &mut rng, false);
+            crate::randomize::items::powerups::randomize(&mut rom, &mut rng, false);
             let got = rom.read_range(at, 12);
             assert_eq!(got[..11], DESERT_ARENA_REBUILT[..11]);
             items.insert(got[11]);

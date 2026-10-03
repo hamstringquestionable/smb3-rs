@@ -151,7 +151,7 @@ fn scan_setup_hooked() -> [u8; 4] {
 
 /// Write the summon routine without installing the A-press hook.
 ///
-/// [`canoe_gate`](crate::randomize::canoe_gate) calls this routine straight
+/// [`canoe_gate`](crate::randomize::maze::canoe_gate) calls this routine straight
 /// from the anchor's inventory handler, and must **not** have the free A-press
 /// summon alongside it — that would call the boat over for nothing and open
 /// the gate's wall.

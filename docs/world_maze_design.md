@@ -56,7 +56,7 @@ The ROM side is `world_persist.rs` (arrivals, `PAD_ENTER`), `completion_bits.rs`
 `lock_keys.rs` (every lock in the game, home and away, in one position-keyed
 table — it absorbed what an earlier `foreign_locks.rs` did; see
 `docs/fx_table_redesign.md`). Ordering between them is stated once, in
-`randomizer::randomize_inner`.
+`pipeline::randomize_inner`.
 
 ## Settled decisions
 
@@ -90,7 +90,7 @@ table — it absorbed what an earlier `foreign_locks.rs` did; see
   standard mode.
 
   **No shipped maze run has a short spine any more** (2026-09-11). World Count
-  greys out under the mode and the form sends its default, and `randomize_inner`
+  greys out under the mode and the form sends its default, and `world_order_and_shuffles`
   pins `world_count` to 7 so a CLI run and a pasted flag key agree with the page.
   Everything below still holds and is still tested: the capability is intact, the
   censuses exercise it, and re-exposing it is a UI decision — un-grey the control
@@ -1531,7 +1531,7 @@ into a one-shot.
 
 **The consequence is a budget.** Map-object slots 0 and 1 are free in a normal
 seed — two per world — which is what makes a hovering marker over each lock
-affordable. Measured (`randomizer::tests::map_object_slot_budget`, 30 seeds):
+affordable. Measured (`pipeline::tests::map_object_slot_budget`, 30 seeds):
 free slots go from ~2.8/0.0 to ~4.8/1.0 (W1-7/W8). It holds while autoscroll
 removal is on, which is the default; `--keep-autoscroll` restores the vanilla
 dependency, so any slot policy must key off that flag rather than assume.

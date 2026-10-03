@@ -216,7 +216,7 @@ impl Rom {
         Self::from_bytes_lax(bytes, false)
     }
 
-    /// Like [`from_bytes`], but optionally skips the SMB3 (USA Rev 1) layout
+    /// Like [`Self::from_bytes`], but optionally skips the SMB3 (USA Rev 1) layout
     /// checks (iNES magic, PRG/CHR page counts, exact size).
     ///
     /// The minimum-size check (16 bytes for the iNES header) is always

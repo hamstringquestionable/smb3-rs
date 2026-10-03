@@ -33,7 +33,7 @@ pub(super) struct SegmentLimits {
     /// The Big Bertha cap is already reached — no new bertha here.
     pub(super) cap_full: bool,
     /// No `$81` here: this room rewrites one into an unkillable object. See
-    /// `enemy_protections::rewrites_hammer_bro`.
+    /// `crate::randomize::enemies::protections::rewrites_hammer_bro`.
     pub(super) no_hammer_bro: bool,
     /// This segment's introduced-hazard budget is spent, so no pick may put a
     /// hazard where the vanilla enemy wasn't already one of the same category.

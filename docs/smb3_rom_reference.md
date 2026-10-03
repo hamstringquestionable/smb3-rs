@@ -883,7 +883,7 @@ FF               ; terminator
 
 **All 5 `OBJ_TREASURESET` chests in the vanilla ROM** (item byte offsets,
 randomized by `items::randomize` via a hardcoded `TREASURE_CHEST_OFFSETS` list in
-`src/randomize/items.rs` — no auto-discovery):
+`src/randomize/items/mod.rs` — no auto-discovery):
 
 | Y-byte offset | Sub-area enemy_ptr | Vanilla item | Where |
 |--------------|-------------------|--------------|-------|
@@ -1239,7 +1239,7 @@ Tight vanilla X gaps where naive ±2 jitter could break sort order:
 
 Enemy data segments are the level loader's input — entries within a
 segment must stay in ascending X order or activation timing breaks.
-SMB3-RS routes all segment edits through `src/randomize/segment_writer.rs`
+SMB3-RS routes all segment edits through `src/randomize/levels/segment_writer.rs`
 which sorts by X, validates count and X-collision invariants, and
 writes back. Per-level "composer" modules (`bowser_castle.rs`,
 `podoboo_gauntlet.rs`, etc.) build a full proposed entry list and pass
@@ -1445,7 +1445,7 @@ Source: `smb3.asm` from the [Southbird disassembly](https://github.com/captainso
 
 Object group 0 (IDs $00–$23, dispatched from PRG001, CPU $A000–$BFFF, file offset = CPU − $A000 + 0x2010) contains seven leftover objects with live handlers but no name in the Southbird disassembly: **$01, $02, $04, $05, $0A, $1A, $1C**. All seven are fully repurposable (verified 2026-08-02).
 
-> **$0A is now taken**: `src/randomize/poison_mushroom.rs` (the
+> **$0A is now taken**: `src/randomize/items/poison_mushroom.rs` (the
 > `--poison-mushrooms` flag) installs the Poison Mushroom trap object there
 > (upside-down 1-Up sprite, hurts on touch). It **reuses the 1-Up's Norm
 > handler** (`ObjNorm_PUp1UpMush` at $A77E) and adds only a 17-byte Init+Hit
@@ -2708,7 +2708,7 @@ What about HANDTRAP's grab and PIPE's transit-pipe behavior?
   loads a transit level whose `OBJ_PIPEWAYCONTROLLER` reads the pipe-destination tables
   in PRG002). On a regular-level slot, stamping `0xBC` produces a pipe-look tile that
   enters the underlying regular level on A — no transit, no destination lookup. This is
-  exactly what `troll_pipes` exploits (`src/randomize/troll_pipes.rs`).
+  exactly what `troll_pipes` exploits (`src/randomize/overworld/troll_pipes.rs`).
 
 The 11 parallel bytes at `0x14DCA` may be vestigial dev-time data, may be consumed by
 some other code path entirely, or may have been a planned-but-cut dispatch mechanism.
@@ -3012,7 +3012,7 @@ the hook site. Relevant object RAM: `Map_Object_ActY` `$0500`, `ActX` `$050F`,
 `ActXH` `$051E`, `Map_Object_Data` (march direction) `$052D`,
 `Map_March_Count` `$053C`.
 
-**Randomizer hook (march veto,** `overworld_writer/march_veto.rs`**):** the
+**Randomizer hook (march veto,** `overworld/writer/march_veto.rs`**):** the
 `JSR $B43B` at `$B3FD` is replaced with a JSR to a trampoline in PRG011 free
 space (`FS_MARCH_VETO`, file `0x17D70` / CPU `$BD60`; 59-byte routine +
 8-byte per-world offset table + 40-byte address list). It computes the
@@ -3226,7 +3226,7 @@ load LevelLayouts pointer into `Level_LayPtr_AddrL/H` → bank-switch via
 > from-scratch, position-keyed routine that occupies this very address range as
 > `FS_FORTRESS_FX` (537 bytes at `0x147CD`). There are no FX slots to index, no
 > `FortressFX_W1–W8`, and no `FortressFXBase_ByWorld` in an output ROM.
-> **What the randomizer does today: `src/randomize/lock_keys.rs` and
+> **What the randomizer does today: `src/randomize/overworld/lock_keys.rs` and
 > `docs/fx_table_redesign.md`.** The screen-check patch this section describes
 > at file `0x15554` is likewise gone — that run now holds `FS_LOCK_ENTRIES`, the
 > new position-keyed lock table, and the check is inline in a routine we own.
@@ -3802,7 +3802,7 @@ Tiles that block the row 8 fallthrough (completion-unsafe at row 7):
 - Removable: `$51, $52, $54, $67, $EB, $E4, $56, $9D`
 
 **Randomizer constraints:** one source of truth, `WorldState::row78_barred`
-(`overworld_build/state.rs`), read by `legal_blanks`, `lock_candidates` and the
+(`overworld/build/state.rs`), read by `legal_blanks`, `lock_candidates` and the
 hammer-bro fill. It bars the partner cell of all **three** things that claim
 the shared bit:
 
@@ -3816,7 +3816,7 @@ the shared bit:
   fortress at `(8, 6)` that could never show beaten, and a lock there would
   have grown back on reload.
 
-`row78_completion_bit_is_never_double_claimed` (`overworld_writer/tests.rs`)
+`row78_completion_bit_is_never_double_claimed` (`overworld/writer/tests.rs`)
 asserts it on the *written* ROM, where terrain, content and locks are finally
 the same kind of thing — the view the engine has. The check needs both rows
 completion-unsafe: a Hammer Bro rides a plain path tile the pass never touches,
@@ -4020,7 +4020,7 @@ so showing the worlds in a different order is a pure permutation of these tables
 - **Finale:** world 7 (Dark Land) is always shown last; the "THE END" sprite
   card and P-Wing-for-everybody reset follow.
 
-`src/randomize/credits.rs` reorders this montage to follow the World Order
+`src/randomize/cosmetic/credits.rs` reorders this montage to follow the World Order
 progression (permuting the tables above), redraws each mini-map from the
 randomized overworld grid, **and** rewrites each scene's "WORLD n" caption digit
 to its montage position (so the first-shown world reads "WORLD 1"). It only
@@ -4105,7 +4105,7 @@ Tanooki/Mushroom/Leaf.
 
 ### The 2-Player Vs Challenge — 339 bytes RECLAIMED in PRG030
 
-**Retired 2026-09-27 by `randomize/two_player_vs.rs`, unconditionally on every
+**Retired 2026-09-27 by `randomize/qol/two_player_vs.rs`, unconditionally on every
 seed.** Both runs below are now free and **unclaimed** — the first feature that
 needs them adds its own `FS_*` row, exactly the way `FS_FORTRESS_FX` works,
 because neither run is `$FF` and `--free-space` cannot see either of them. Check
@@ -4998,7 +4998,7 @@ two treasure-box rooms reached by a non-bro map object — the Coin Ship
 (`$DA0F`) and the 8-Tank sub-area (`$DA29`) — use a literal `$82` instead.
 
 The randomizer enforces this generically in `rewrites_hammer_bro`
-(`enemy_protections.rs`), keyed off the existing `HAMMER_BRO_OBJ_PTRS`. It replaced a
+(`enemies/protections.rs`), keyed off the existing `HAMMER_BRO_OBJ_PTRS`. It replaced a
 hand-curated `ForceTankBro` row on the 8-Tank sub-area that was labelled
 "HammerBro fails to spawn in ts=10" — a misdiagnosis. The tileset was never
 the cause; index 14 yields `OBJ_WARPHIDE`, which is invisible, and that is
@@ -5067,7 +5067,7 @@ shuffle (e.g. Thwomp variants) still works and a designed-in hazard is never
 stripped — only *introducing* a new hazard category is blocked. See
 `hazard_excluded` / `HAZARD_CATEGORIES` in `enemies/tables.rs`.
 
-Current `ExcludeHazards` levels (`enemy_protections.rs`):
+Current `ExcludeHazards` levels (`enemies/protections.rs`):
 - **7F2** Boom-Boom sub-area (0xD45C): tight boss arena
 - **7-5** sub-area (0xC171): open field — floor hazards unfair
 - **β4** sub-area (0xC7A7): narrow corridor on the Buzzy Beetle path
@@ -5320,7 +5320,7 @@ Each entry represents a 16x16 metatile column on the world map.
 
 Vanilla SMB3 leaves the 1P/2P select menu silent (the only title-screen music is the brief intro cutscene snippet, which the seed-hash patch skips). To add menu music, the intro-skip routine in PRG031 free space appends `LDA #music / STA $04F5` after setting `Title_State = 6`. The music engine picks up the change on the next frame and loops the track for as long as the player stays on the menu; pressing Start advances to the world map, which queues its own music as normal.
 
-The track is chosen deterministically from the seed via a curated 16-entry table (world map themes 1–9, plus level themes 0x10/0x20/0x30/0x40/0x60/0x80/0x90). See `src/randomize/title_screen.rs::MENU_MUSIC_TRACKS` and `pick_menu_music`. When `starting_items` is active it overwrites the lives-init hook, so `qol::write_starting_items` mirrors the same `STA $04F5` inside its own trampoline.
+The track is chosen deterministically from the seed via a curated 16-entry table (world map themes 1–9, plus level themes 0x10/0x20/0x30/0x40/0x60/0x80/0x90). See `src/randomize/cosmetic/title_screen.rs::MENU_MUSIC_TRACKS` and `pick_menu_music`. When `starting_items` is active it overwrites the lives-init hook, so `qol::write_starting_items` mirrors the same `STA $04F5` inside its own trampoline.
 
 ### Title Menu Input Loop (PRG024) — and the B-to-mute hook
 

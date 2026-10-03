@@ -106,7 +106,7 @@ randomization run.
 - `rom_data::free_space` — `FreeSpaceAlloc` (the registry row, now carrying an
   `owners` list of write-log tags), `audit_free_space`, `free_space_map`,
   `format_free_space_report`.
-- `randomizer::tests::free_space_audit_matches_registry` — the CI check.
+- `pipeline::tests::free_space_audit_matches_registry` — the CI check.
 - `--write-log` appends the report, so the file that says what changed also says
   what it cost and what is left.
 
@@ -114,7 +114,7 @@ randomization run.
 
 1. Every write inside a registered region carries a tag one of that region's
    `owners` covers. Owners match whole `/`-separated tag components, so
-   `fx_screen_check` covers `overworld_writer/fx_screen_check` and
+   `fx_screen_check` covers `overworld/writer/fx_screen_check` and
    `big_q_blocks` covers both `qol/` and `enemies/` variants.
 2. No write crosses a region boundary, in either direction.
 3. Every allocation is exercised by the audit run. Without this the check is

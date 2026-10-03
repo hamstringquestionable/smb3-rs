@@ -264,7 +264,7 @@ impl Sealable {
 /// 7F2 or 8F1 as well can ask for more.
 ///
 /// **The builder guarantees this and the maze breaks it.**
-/// `overworld_build::ensure_secret_exit_safe` leaves N safe locks behind; the
+/// `crate::randomize::overworld::build::ensure_secret_exit_safe` leaves N safe locks behind; the
 /// fill then permutes the fort/lock pairing, which can invalidate every one of
 /// them. Restoring it here is what makes the maze a transformer that preserves
 /// the contract it was handed rather than one that quietly voids it.

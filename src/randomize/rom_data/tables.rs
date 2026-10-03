@@ -270,7 +270,7 @@ pub(crate) const TILE_FORTRESS_W8: u8 = 0x6A;
 ///
 /// With map hints off the writer picks among these at random, purely for
 /// variety. With hints on the choice carries meaning — see
-/// `overworld_build::LockHint`.
+/// `crate::randomize::overworld::build::LockHint`.
 pub(crate) const FORTRESS_TILES: [u8; 3] = [TILE_FORTRESS, TILE_FORTRESS_AWAY, TILE_FORTRESS_W8];
 
 /// Airship dock tile ID.
@@ -414,7 +414,7 @@ pub(crate) const WAND_GATE_TILE: u8 = 0xE2;
 /// vanilla grid, because the builder may rewrite the terrain around it.
 ///
 /// The cell is on the bridge row. `qol::apply_w8_bridges` stamps it like every
-/// other span, and in maze mode `overworld_build::locks` holds it out of the
+/// other span, and in maze mode `crate::randomize::overworld::build::locks` holds it out of the
 /// bridge deal so a lock cannot claim the same tile — standard mode is
 /// unchanged and still deals all five. The gate itself is written last, over
 /// the finished map.
@@ -693,7 +693,7 @@ pub(crate) const FORTRESS_1F_OBJ_PTR: u16 = 0xD32B;
 /// Test-only since the fortress-FX rework: production no longer needs to reach
 /// one fortress's Boom-Boom record, because `lock_keys::apply` masks the spawn
 /// Y-nibble of all 17 unconditionally. What is left is the vanilla-layout
-/// reference reader in `overworld_build::sources`.
+/// reference reader in `crate::randomize::overworld::build::sources`.
 /// The obj_ptr identifies the fortress level's enemy data stream in PRG006.
 /// After level shuffle, the obj_ptr at a slot still points to the same enemy
 /// data — only the pointer table entries move, not the data itself.
@@ -878,7 +878,7 @@ pub(crate) const HB_NEEDS_SHELL_ENEMIES: &[u8] = &[
 ];
 
 /// Specific (obj_ptr, tileset) pairs to exclude from the HB cycling pool.
-/// W3[41] has lay=0xB3E7 with tileset 3, but the layout is designed for tileset 1
+/// `W3[41]` has lay=0xB3E7 with tileset 3, but the layout is designed for tileset 1
 /// (17 other entries with the same layout use tileset 1). Loading it with tileset 3
 /// causes garbled background graphics.
 pub(crate) const HB_EXCLUDE_ENTRIES: &[(u16, u8)] = &[
@@ -1175,7 +1175,7 @@ pub(crate) const UNUSED5_VANILLA_BGPAL: u8 = 6;
 /// Where one of vanilla's 17 fortress-FX slots points.
 ///
 /// Read from the *source* ROM only. The randomizer no longer writes these
-/// tables — `lock_keys` replaced them — but `overworld_pickup` still asks
+/// tables — `lock_keys` replaced them — but `overworld::pickup` still asks
 /// vanilla which cells are lock gaps so it can open them before placement.
 ///
 /// The slot's stored replacement tile is deliberately not carried: what a gap

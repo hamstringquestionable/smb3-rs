@@ -1,0 +1,1105 @@
+//! The pipeline's stages, in the order [`super::randomize_inner`] runs them.
+//!
+//! Each function is one contiguous slice of the run. **The order is part of the
+//! seed**: every stage that takes an `rng` draws from the same stream, so moving
+//! a call — even between two stages that look independent — changes every seed
+//! downstream of it. The ordering constraints between stages are stated where
+//! they apply, in the comments inside each one.
+
+use rand::SeedableRng;
+use rand_chacha::ChaCha8Rng;
+
+use super::*;
+use crate::randomize::maze::GlobalState;
+use crate::randomize::overworld::build::BuildResult;
+use crate::randomize::overworld::node_catalog::NodeCatalog;
+use crate::randomize::overworld::pickup::PickupResult;
+use crate::randomize::overworld::writer::WrittenOverworld;
+
+/// Everything settled from the seed and options before the first ROM write.
+pub(super) struct Resolved {
+    /// The *effective* whistle removal, not the raw flag — see [`resolve`].
+    pub whistles_removed: bool,
+    /// Whether item gates were asked for — see [`resolve`].
+    pub item_gates: bool,
+    /// Starting items with the random sentinels resolved to concrete items.
+    pub starting_items: Vec<u8>,
+    pub hammer_breaks_locks: bool,
+    pub hammer_breaks_bridges: bool,
+    pub troll_pipes: bool,
+    pub more_hammer_rocks: bool,
+    pub eights_are_wild: bool,
+    pub antechamber_shuffle: bool,
+    pub piranha_active: bool,
+    pub hints: crate::HintMode,
+}
+
+/// The maze's model-side decisions, handed from [`maze_model`] to [`maze_rom`].
+pub(super) struct MazeModel {
+    state: GlobalState,
+    wands: u8,
+    /// Per world: whether the ROM side must install the canoe gate.
+    gated: [bool; 8],
+}
+
+/// Stage 0: resolve random starting items and the tri-state flags.
+pub(super) fn resolve(seed: u64, options: &Options, rng: &mut ChaCha8Rng) -> Resolved {
+    // Resolve random starting items up front (deterministic from seed).
+    //
+    // `whistles_removed` is the *effective* value, not the raw flag: the maze
+    // forces whistles out of every item pool even when the player left the
+    // flag off, because it grants a permanent one of its own. The long form is
+    // at the `items` call site in [`item_tables`], which is the other reader.
+    // Hoisted here because starting items resolve before that point.
+    let whistles_removed = options.remove_whistles || options.world_maze;
+    // Item gates, as asked for. The option is maze-only — in a fixed world order
+    // the player cannot return to a world they have left, so a key would have to
+    // sit in front of its own gate — and this is the one place that conjunction
+    // is spelled out, so no reader has to remember it. It is *whether gates were
+    // asked for*; which ones got installed is `state.gates`, and which of those
+    // the ROM side must honour is `canoe_gated`, both further down.
+    let item_gates = options.world_maze && options.item_gates;
+    let starting_items: Vec<u8> = options
+        .starting_items
+        .iter()
+        .map(|&item| resolve_starting_item(item, whistles_removed, rng))
+        .collect();
+    // Resolve the player-hidden tri-state flags up front. These draw from a
+    // dedicated substream (MAYBE_SALT) so flipping a flag to `Maybe` never
+    // perturbs the main `rng` sequence — a seed with no `Maybe` flags is
+    // byte-identical to before this feature. The order here is part of the
+    // determinism contract: do not reorder, and append any future tri flags
+    // at the end.
+    let mut maybe_rng = ChaCha8Rng::seed_from_u64(seed ^ MAYBE_SALT);
+    let hammer_breaks_locks = options.hammer_breaks_locks.resolve(&mut maybe_rng);
+    let hammer_breaks_bridges = options.hammer_breaks_bridges.resolve(&mut maybe_rng);
+    let troll_pipes = options.troll_pipes.resolve(&mut maybe_rng);
+    let more_hammer_rocks = options.more_hammer_rocks.resolve(&mut maybe_rng);
+    let eights_are_wild = options.eights_are_wild.resolve(&mut maybe_rng);
+    let antechamber_shuffle = options.antechamber_shuffle.resolve(&mut maybe_rng);
+
+    // **Hints describe a maze, so they are off without one.**
+    //
+    // Both things a hint can say are maze-only: a fortress design says which
+    // world its lock is in, and outside the maze that is always "this one"; a
+    // lock's colour says its key is elsewhere, which cannot happen. The web
+    // form already greys the control out (`enabledWhen: { world_maze: true }`),
+    // but a flag key or a CLI run can still carry `hints: some` with the mode
+    // off — and `some` is the default.
+    //
+    // **This gate is load-bearing.** Nothing sets `SlotAssignment::lock_hint`
+    // outside the maze, but `lock_keys::lock_request` asks for a tan lock on
+    // every local lock under `some` — so without this, every sky lock in
+    // standard mode would turn tan, wearing a distinction that means nothing
+    // there. The key still encodes what the player chose; this
+    // only decides what the run does with it.
+    let hints = if options.world_maze { options.hints } else { crate::HintMode::Off };
+
+    Resolved {
+        whistles_removed,
+        item_gates,
+        starting_items,
+        hammer_breaks_locks,
+        hammer_breaks_bridges,
+        troll_pipes,
+        more_hammer_rocks,
+        eights_are_wild,
+        antechamber_shuffle,
+        piranha_active: options.piranha_shuffle != PiranhaMode::Off,
+        hints,
+    }
+}
+
+/// Stage 1: map fixes every later overworld pass must see.
+pub(super) fn map_fixes(rom: &mut Rom, run: &Resolved) {
+    // QoL map patches run first so all subsequent overworld operations
+    // (fortress redistribution, pipe shuffle, lock shuffle) see the final
+    // map connectivity and store correct replacement tiles.
+    rom.set_tag("qol/drawbridges");
+    randomize::qol::fix_w3_drawbridges(rom);
+    // Path-blocking rocks (W2 secret path, W3 boat dock, W4 pipe shortcut) are
+    // always removed: the overworld builder relies on those tiles being open
+    // for connectivity, so this is no longer player-gated.
+    rom.set_tag("qol/rocks");
+    randomize::qol::remove_rocks(rom);
+    if run.more_hammer_rocks {
+        rom.set_tag("qol/more_hammer_rocks");
+        randomize::qol::make_hammer_rocks(rom);
+    }
+
+    // W1 shortcut rock. The tiles land either way — only the rock's
+    // breakability follows `more_hammer_rocks`, so the map never leaks how a
+    // `Maybe` roll came out. Before the builder, like every map edit.
+    rom.set_tag("qol/w1_shortcut");
+    randomize::qol::apply_w1_shortcut(rom, run.more_hammer_rocks);
+
+    // W8 Dark World map edits. The screen-3 water/bridge final page is always
+    // applied; the screen-0 canoe + screen-2 extra paths are gated behind
+    // `8s are Wild`. Both must run before the overworld builder so it sees the
+    // new connectivity.
+    rom.set_tag("qol/w8_bridges");
+    randomize::qol::apply_w8_bridges(rom);
+    if run.eights_are_wild {
+        rom.set_tag("qol/w8_canoe_and_paths");
+        randomize::qol::apply_w8_canoe_and_paths(rom);
+    }
+
+    // Fix Big ? Block bonus rooms so they follow the level, not the world slot.
+    // Always applied — needed whenever world_order or cross-world shuffle is active,
+    // and harmless (identity mapping) when worlds aren't shuffled.
+    rom.set_tag("qol/big_q_blocks");
+    randomize::qol::fix_big_q_block_rooms(rom);
+
+    // The World 2 bro arena loses enemies inside its sand-brick block. Always
+    // applied, and before powerups and enemies so both see the rebuilt room.
+    rom.set_tag("qol/desert_bro_arena");
+    randomize::qol::rebuild_desert_bro_arena(rom);
+}
+
+/// Stage 2: level data — powerups, palettes, enemies, and the composed rooms.
+pub(super) fn level_data(rom: &mut Rom, options: &Options, rng: &mut ChaCha8Rng) {
+    // Autoscroll must run BEFORE powerups and the overworld builder:
+    // it writes pre-baked replacement level data for airship levels, and
+    // powerups/enemies need to randomize on top of that patched data.
+    // It also writes airship pointer table redirects to hardcoded vanilla
+    // offsets — the overworld builder's resort_pointer_table() rearranges
+    // entries later, so autoscroll must go first.
+    if options.disable_autoscroll {
+        rom.set_tag("autoscroll");
+        randomize::levels::autoscroll::disable_autoscroll(rom);
+    }
+    // Beta stage layout fixes must run before powerups/enemies so the
+    // randomization passes see the patched bytes (some patches reshape
+    // commands or convert hidden powerblocks into randomizable shapes).
+    if options.include_beta_stages {
+        rom.set_tag("qol/beta_stages");
+        randomize::qol::fix_beta_stages(rom);
+    }
+    if options.powerups {
+        rom.set_tag("powerups");
+        randomize::items::powerups::randomize(rom, rng, options.hammer_vulnerable_koopalings);
+    }
+    // Player colors and world colors are independent cosmetic layers:
+    // `palettes` drives the character wardrobe (random or player-picked),
+    // `palette_themed` drives level/enemy/map palettes.
+    if options.palettes || options.palette_themed {
+        rom.set_tag("palettes");
+        let mut palette_rng = ChaCha8Rng::from_os_rng();
+        if options.palettes {
+            randomize::cosmetic::palettes::randomize(rom, &mut palette_rng, options.player_color);
+        }
+        if options.palette_themed {
+            randomize::cosmetic::palettes::randomize_themed(rom, &mut palette_rng);
+        }
+    }
+    if options.any_enemies_active() {
+        rom.set_tag("enemies");
+        randomize::enemies::randomize(rom, rng, options);
+    }
+    // Force one of β9's Fire Chomps into a Tornado. Runs after the enemy pass
+    // (which may randomize β9's Fire Chomps when it's placed) so the Tornado is
+    // final, and only when beta stages are included so we don't touch β9's data
+    // for nothing.
+    if options.include_beta_stages {
+        rom.set_tag("beta_tornado");
+        randomize::levels::beta_tornado::randomize_beta9_tornado(rom, rng);
+    }
+    randomize::levels::bowser_castle::randomize(rom, rng);
+    randomize::levels::podoboo_gauntlet::randomize(rom, rng);
+}
+
+/// Stage 3: world order, then the level shuffles that must precede the
+/// overworld builder. Returns the world progression when worlds are ordered.
+pub(super) fn world_order_and_shuffles(
+    rom: &mut Rom,
+    options: &Options,
+    run: &Resolved,
+    rng: &mut ChaCha8Rng,
+) -> Option<Vec<u8>> {
+    // World order shuffle. The credits reorder that aligns the ending montage
+    // with the progression runs later (after the mini-maps are regenerated and
+    // repacked, since it permutes the picture pointers those steps rewrite).
+    // The world maze reads `world_order`'s table as its airship spine and
+    // chains the wand counter through the routine it installs, so it cannot run
+    // without it. Forced here rather than only in the CLI, because a flag key
+    // can name `world_maze` with `world_order` off.
+    //
+    // **The maze pins the spine to all eight worlds.** `world_count` means two
+    // different things in the two modes — worlds before Dark Land in standard,
+    // spine length in the maze — and the web form now greys the control out
+    // under the mode and sends its default instead. Pinning it here is what
+    // makes that true of a CLI run and a pasted flag key as well, rather than
+    // leaving the page describing one game and the ROM playing another. The key
+    // still carries whatever the player chose; see `flag_key`.
+    //
+    // Free of the seed: `world_order::randomize` shuffles all seven worlds and
+    // then takes a prefix, so the count selects from the deal without changing a
+    // single RNG draw.
+    let world_count = if options.world_maze { 7 } else { options.world_count };
+    let credits_progression = if options.world_order || options.world_maze {
+        rom.set_tag("world_order");
+        Some(randomize::overworld::world_order::randomize(rom, rng, world_count))
+    } else {
+        None
+    };
+    if options.big_q_blocks {
+        rom.set_tag("enemies/big_q_blocks");
+        randomize::enemies::randomize_big_q_blocks(rom, rng);
+    }
+    // Airship shuffle runs after autoscroll (which patches airship pointer
+    // entries at vanilla indices) and before the overworld builder (whose
+    // resort_pointer_table re-sorts everything). shuffle_entries only moves
+    // tileset + ObjSets + LevelLayouts, preserving row/col position, so
+    // patched data travels correctly to its new world.
+    if options.shuffle_airships {
+        rom.set_tag("levels/airships");
+        randomize::overworld::airship_shuffle::randomize_airships(rom, rng);
+    }
+
+    // Antechamber shuffle touches only level data (entry headers + junction
+    // commands), never pointer tables or enemy streams, so it's independent
+    // of the overworld builder and the enemy/powerup passes.
+    if run.antechamber_shuffle {
+        rom.set_tag("levels/antechambers");
+        randomize::levels::antechambers::shuffle(
+            rom,
+            rng,
+            options.include_beta_stages,
+            options.friendlier_levels,
+        );
+    }
+    credits_progression
+}
+
+/// Stage 4: Koopaling stability patches and identity remap.
+pub(super) fn koopalings(rom: &mut Rom, options: &Options, rng: &mut ChaCha8Rng) {
+    // Koopaling stability patches — needed whenever Koopalings may load in a
+    // non-native world (airship shuffle, identity remap) or when the hammer
+    // vulnerability patch is applied. Covers the softlock fix plus Fred's
+    // three guards (phantom double-stomps, stale VRAM writes, Y wraparound).
+    let koopalings_may_travel = options.shuffle_airships
+        || options.hammer_vulnerable_koopalings
+        || options.random_koopalings;
+    if koopalings_may_travel {
+        rom.set_tag("koopalings/fix_softlock");
+        randomize::enemies::koopalings::fix_koopaling_softlock(rom);
+        rom.set_tag("koopalings/collision_guard");
+        randomize::enemies::koopalings::koopaling_collision_guard(rom);
+        rom.set_tag("koopalings/vram_clear");
+        randomize::enemies::koopalings::koopaling_vram_clear(rom);
+        rom.set_tag("koopalings/y_clamp");
+        randomize::enemies::koopalings::koopaling_y_clamp(rom);
+    }
+
+    // Make Koopalings vulnerable to thrown hammers (PRG000 $8302).
+    if options.hammer_vulnerable_koopalings {
+        rom.set_tag("koopalings/hammer_vulnerable");
+        randomize::enemies::koopalings::hammer_vulnerable_koopalings(rom);
+    }
+
+    // Random Koopaling identity remap (Fred's Map_Unused7EEA hijack).
+    if options.random_koopalings {
+        rom.set_tag("koopalings/random_identity");
+        randomize::enemies::koopalings::random_koopalings(rom, rng);
+    }
+}
+
+/// Stage 5: classify the pointer table, and the catalog edits that must
+/// precede the builder.
+pub(super) fn overworld_catalog(
+    rom: &mut Rom,
+    options: &Options,
+    run: &Resolved,
+    rng: &mut ChaCha8Rng,
+) -> NodeCatalog {
+    rom.set_tag("overworld/builder");
+    let mut catalog =
+        randomize::overworld::node_catalog::NodeCatalog::build(rom, options.include_beta_stages);
+    // Piranha shuffle: free the two W7 plant levels into the pool. The sprite
+    // clear must precede the builder — capacity/eligibility reads sprite
+    // state straight from the ROM.
+    if run.piranha_active {
+        rom.set_tag("piranha_shuffle");
+        randomize::levels::piranha_rooms::clear_vanilla_plants(rom);
+        catalog.release_map_objects();
+    }
+    if options.swap_start_airship {
+        randomize::overworld::start_airship_swap::pick_swaps(&mut catalog, rng);
+    }
+    catalog
+}
+
+/// Stage 6: item tables, before the pickup reads them.
+pub(super) fn item_tables(
+    rom: &mut Rom,
+    options: &Options,
+    run: &Resolved,
+    item_rng: &mut ChaCha8Rng,
+) {
+    // These four tables — Hammer Bro rewards, Princess letter rewards, Toad
+    // House treasures and the in-level chests — are rolled here rather than
+    // late in the run, because `overworld::pickup` below reads the Hammer Bro
+    // reward table straight out of the ROM to build the pool the builder
+    // reattaches to redistributed encounters. Rolled afterwards, as they were,
+    // the same table got picked up, shuffled, stamped by the writer and then
+    // re-rolled over the top: two authorities on one table, and the builder's
+    // assignment always lost.
+    //
+    // Now it is decided once, and `(position -> item)` is settled in the model
+    // by the time the overworld is built. Nothing downstream rewrites it.
+    //
+    // They draw from `item_rng`, so moving them perturbs no other subsystem.
+
+    // Give each W8 Hand its own treasure-room enemy stream so the chest
+    // randomizer can roll a unique item per Hand. Must precede the chest
+    // rolls, or the clone overwrites the item byte the roll just wrote.
+    rom.set_tag("hand_rooms");
+    randomize::levels::hand_rooms::patch_clone_hand_rooms(rom);
+
+    // Piranha shuffle: once 7-P1/7-P2 leave their vanilla map-object spots
+    // they can be entered like any level tile, so their chests must carry
+    // their own OBJ_TREASURESET. Same ordering rule as the Hands above.
+    if run.piranha_active {
+        rom.set_tag("piranha_rooms");
+        randomize::levels::piranha_rooms::install_treasure_sets(rom);
+    }
+
+    // The maze turns the whistle into fast travel between worlds already
+    // visited, so `remove_whistles`' intent — "no skipping ahead" — is moot
+    // here: a maze whistle can never reach anywhere new.
+    //
+    // **Forced ON in the maze, not off.** The mode grants a permanent whistle
+    // of its own — `completion_bits`' new-game init writes one into inventory
+    // slot 0, and it is never consumed — so a whistle in a chest, a Hammer Bro
+    // drop or a Toad House is a duplicate of an item the player cannot run out
+    // of: it occupies a slot and does nothing.
+    //
+    // This used to force the flag OFF, which put whistles *back* into the item
+    // pool for the one mode with no use for them, and ignored the player's
+    // setting in the process (it defaults to on).
+    //
+    // Note this flag has **no bearing on the maze's own whistle** — that comes
+    // from the new-game init, not the item pool — and so none on the safety
+    // property that whistle carries. See `world_travel` for that, and for what
+    // would have to change if the mode ever shipped without one.
+    if options.chest_items {
+        rom.set_tag("items");
+        randomize::items::randomize(
+            rom,
+            item_rng,
+            run.whistles_removed,
+            run.piranha_active,
+            // Is the Anchor a key this run? Every gate this build installs is
+            // keyed on it, so the option answers that on its own — and it has to
+            // be answered here, before the maze exists, because the item tables
+            // are rolled ahead of the overworld. With gates off the Anchor is
+            // `write_mystery_anchor`'s surprise power-up and a Toad House stays
+            // the one shop the player is told about.
+            run.item_gates,
+        );
+    } else if run.whistles_removed {
+        rom.set_tag("items/whistles");
+        randomize::items::remove_whistles_only(rom, item_rng);
+    }
+}
+
+/// Stage 7: the overworld model — pickup, build, and the passes that mutate
+/// the build before anything is written.
+pub(super) fn overworld_build(
+    rom: &mut Rom,
+    options: &Options,
+    run: &Resolved,
+    catalog: &NodeCatalog,
+    rng: &mut ChaCha8Rng,
+) -> (PickupResult, BuildResult) {
+    let pickup = randomize::overworld::pickup::pick_up(
+        rom,
+        catalog,
+        randomize::overworld::pickup::PickupFlags {
+            shuffle_spade_games: options.shuffle_spade_games,
+            shuffle_toad_houses: options.shuffle_toad_houses,
+            shuffle_hammer_bros: options.shuffle_hammer_bros,
+        },
+    );
+    let data = randomize::overworld::build::OverworldData { pickup: &pickup, catalog };
+    let mut build = randomize::overworld::build::build(
+        rom,
+        &data,
+        rng,
+        randomize::overworld::build::BuildFlags {
+            shuffle_toad_houses: options.shuffle_toad_houses,
+            eights_are_wild: run.eights_are_wild,
+            shuffle_hammer_bros: options.shuffle_hammer_bros,
+            world_maze: options.world_maze,
+        },
+    );
+    if options.hands_levels {
+        rom.set_tag("hands_levels");
+        randomize::overworld::hands_levels::mark_hand_traps(&mut build, rng);
+        randomize::overworld::hands_levels::install_full_grab(rom);
+    }
+    if run.troll_pipes {
+        // No `set_tag` here: this only mutates `build`, and the ROM writes it
+        // leads to happen later in the writer. Tagging it would label none of
+        // its own bytes and leak the name onto everything the writer emits.
+        randomize::overworld::troll_pipes::mark_troll_pipes(&mut build, rng);
+    }
+    (pickup, build)
+}
+
+/// Stage 8: the world maze's model pass. `None` unless the mode is on.
+pub(super) fn maze_model(
+    rom: &mut Rom,
+    options: &Options,
+    run: &Resolved,
+    build: &mut BuildResult,
+    credits_progression: Option<&[u8]>,
+    rng: &mut ChaCha8Rng,
+) -> Option<MazeModel> {
+    // World maze: the eight world maps stop being a sequence and become the
+    // rooms of one Metroidvania — telepads between them, a fortress that can
+    // bust a lock in another world, and map progress that survives leaving.
+    //
+    // **A model pass, like the two above.** `maze::generate` takes a
+    // `BuildResult` and no `&Rom` — it is a pure function of the builder's
+    // model — and `stamp_into` folds its decisions back in as grid and lock
+    // edits. The writer then emits the finished map in one pass. Its ROM-side
+    // patches are installed after the writer, in [`maze_rom`].
+    //
+    // It used to run *after* the writer, patching tiles over grids already on
+    // the cartridge. That is what made the ordering here load-bearing, forced
+    // `completion_bits` and `world_travel` to read the ROM back to discover
+    // what had happened, and left the builder's placement guarantees
+    // un-repairable because the map was committed before the fill permuted the
+    // array those guarantees live in.
+    options.world_maze.then(|| {
+        // The spine IS `world_order`'s table, which is why the mode forces it
+        // on. With `world_count < 7` it is shorter than eight, and the worlds
+        // it leaves out are reachable only by telepad — see the design doc.
+        let spine: Vec<usize> = credits_progression
+            .expect("world_maze forces world_order on")
+            .iter()
+            .map(|&w| w as usize)
+            .collect();
+        // K cannot exceed the airships the spine offers: a shorter spine means
+        // fewer than seven wands exist in the game at all.
+        let wands = options.maze_wands.min(spine.len().saturating_sub(1) as u8);
+        let (state, _report) = randomize::maze::generate(
+            build,
+            &spine,
+            wands,
+            &randomize::maze::graph::Knobs::default(),
+            // The writer needs one fortress slot it can park a secret-exit
+            // level on. The maze re-pairs forts and locks, which invalidates
+            // the builder's answer, so it restores the invariant rather than
+            // being told which slot to protect.
+            randomize::overworld::build::SECRET_EXIT_SLOTS_NEEDED,
+            rng,
+        );
+        randomize::maze::stamp_into(build, &state);
+
+        // **The canoe gate's model half.** Beach every boat behind an Anchor,
+        // then make sure an Anchor exists somewhere the player can get to
+        // without one. Runs here, before the writer, because it decides a
+        // Hammer Bro's reward and the writer is what stamps that; and before
+        // the overworld capture point, so the snapshot shows the keys.
+        //
+        // `place` may give up on a world's gate, and `gated` is what the ROM
+        // side must then honour — beaching water the model did not key is
+        // precisely how a seed strands a player.
+        //
+        // **Skipped entirely with `item_gates` off, and that is the whole
+        // opt-out.** No gates installed means `state.gates` is empty, which every
+        // reader downstream already treats as "no item gates exist": the walker
+        // takes its old shape (`walk::MazeWorld::canoe_locked`), the metrics are
+        // exact rather than conservative, and `gated` stays all-false — which is
+        // what sends the ROM side to the free-summon arm in [`engine_patches`].
+        // There is no second switch to keep in step.
+        //
+        // Both halves are gate-agnostic: `install_item_gates` is the one place
+        // that says which gates exist, and the two passes below read `gates` as
+        // data. A new gate kind lands there and here it changes nothing.
+        let mut state = state;
+        if run.item_gates {
+            state.install_item_gates();
+            let sites = randomize::maze::key_sites::sites(rom, build, &state);
+            randomize::maze::key_placement::place(rom, build, &mut state, sites, rng);
+        }
+        // Per-target, because the ROM side cannot be generic — each target is a
+        // different patch. The irrefutable `let` is the enforcement: add a
+        // `GateTarget` variant and this stops compiling until the new target's
+        // patch is wired in alongside the canoe's.
+        let mut gated = [false; 8];
+        for g in &state.gates {
+            let randomize::maze::GateTarget::Canoe(w) = g.target;
+            gated[w] = true;
+        }
+        MazeModel { state, wands, gated }
+    })
+}
+
+/// Stage 9: write the finished overworld to the ROM in one pass.
+pub(super) fn write_overworld(
+    rom: &mut Rom,
+    options: &Options,
+    run: &Resolved,
+    build: &BuildResult,
+    pickup: &PickupResult,
+    catalog: &NodeCatalog,
+    rng: &mut ChaCha8Rng,
+) -> WrittenOverworld {
+    let data = randomize::overworld::build::OverworldData { pickup, catalog };
+    rom.set_tag("overworld_writer");
+    randomize::overworld::writer::write_overworld(
+        rom,
+        build,
+        &data,
+        rng,
+        randomize::overworld::writer::WriteFlags {
+            shuffle_hammer_bros: options.shuffle_hammer_bros,
+            piranha: options.piranha_shuffle,
+            friendlier_levels: options.friendlier_levels,
+            hints: run.hints,
+            deja_vu: options.deja_vu,
+            deja_vu_forts: options.deja_vu_forts,
+        },
+    )
+}
+
+/// Stage 10: the world maze's ROM side. Returns which worlds' canoes the item
+/// gate must beach, for [`engine_patches`]; `None` when no gate was installed.
+pub(super) fn maze_rom(
+    rom: &mut Rom,
+    options: &Options,
+    maze: Option<MazeModel>,
+    written: &WrittenOverworld,
+    credits_progression: Option<&[u8]>,
+) -> Option<[bool; 8]> {
+    // The world maze's ROM side. The map itself is already written — the maze
+    // was a model pass before the writer — so what is left is the engine
+    // scaffolding the mode needs, and none of it touches a map grid.
+    //
+    // `lock_keys` (in [`locks`], the next stage) still runs last, because it
+    // asks the packed store where a given cell's completion bit lives rather
+    // than re-deriving that arithmetic, and `world_persist` is what installs
+    // the store.
+    // Lifted out before the block below consumes `maze`: the canoe gate is
+    // installed much further down, with the rest of the item patches.
+    let canoe_gated: Option<[bool; 8]> =
+        maze.as_ref().map(|m| m.gated).filter(|g| g.iter().any(|&g| g));
+
+    if let Some(MazeModel { state, wands, .. }) = maze {
+        rom.set_tag("world_maze");
+        randomize::maze::writer::install_pad_metatile(rom, &state);
+        rom.set_tag("wand_gate");
+        randomize::maze::wand_gate::apply(rom, wands);
+        // After wand_gate: it installs the marker that fills WANDS_TABLE, and
+        // the readout counts what that marker records.
+        rom.set_tag("wand_readout");
+        randomize::maze::wand_readout::apply(rom, wands);
+        rom.set_tag("world_persist");
+        randomize::maze::world_persist::apply(
+            rom,
+            &randomize::maze::writer::telepad_specs(&state),
+            written.grids(rom),
+            // The HELP bubble is only ours to retire once the airship cutscene
+            // is gone — with `--keep-autoscroll` slot 0 still gates the dock
+            // tile's chain into the airship. See `map_objects`.
+            options.disable_autoscroll,
+        );
+        // After world_persist: `completion_bits` (which it calls) owns the two
+        // `$84A0` hooks that keep the per-player world table true.
+        rom.set_tag("player_worlds");
+        randomize::maze::player_worlds::apply(rom);
+        rom.set_tag("world_travel");
+        // The whistle cycles the worlds in the order the player numbers them,
+        // which is `world_order`'s spine and not the internal index.
+        randomize::maze::world_travel::apply(
+            rom,
+            written.grids(rom),
+            credits_progression.expect("world_maze forces world_order on"),
+        );
+    }
+    canoe_gated
+}
+
+/// Stage 11: every lock in the game, and the 2-player Vs retirement.
+pub(super) fn locks(rom: &mut Rom, build: &BuildResult, written: &WrittenOverworld) {
+    // Every lock in the game, home and away, in one table — and with it the
+    // rewritten fortress-FX effect that reads it. This is unconditional: the
+    // effect replaces vanilla's outright, so a run that skipped it would leave
+    // map operation 8 resolving slots out of tables this run has overwritten.
+    //
+    // It runs after the maze stages because that is where the assignment is
+    // decided when the mode is on. Away entries additionally need
+    // `world_persist` to have installed the packed store already, since their
+    // bit is looked up through it.
+    //
+    // **And after `world_order`, which is easy to miss.** A numbered lock shows
+    // the world number the *player* sees, read from the display table that
+    // module writes. Running before it would find the table unwritten, fall
+    // through to the vanilla identity, and stamp numbers that appear nowhere in
+    // the game — silently, since the tiles are still well-formed and the locks
+    // still open. `lock_keys::the_digit_is_the_world_the_player_sees` asserts
+    // the table is a permutation, which is what catches the wrong order.
+    rom.set_tag("lock_keys");
+    // One source, both modes: `stamp_into` wrote the maze's pairing into the
+    // build, so the writer's rows already carry it.
+    randomize::overworld::lock_keys::apply(
+        rom,
+        &randomize::overworld::writer::lock_entries(build),
+        written.grids(rom),
+        written.lock_tiles(),
+    );
+    // The marked away fortress's art and crumble. A no-op unless some-hints
+    // stamped one, so every other mode's bytes are untouched.
+    rom.set_tag("away_family");
+    randomize::maze::away_family::apply(rom, written.grids(rom));
+
+    // Retire the 2-player Vs Challenge. Unconditional and order-free — it
+    // splices three sites nothing else touches. See the module docs for why it
+    // is not gated on `world_maze`: the 339 bytes it frees in PRG030 are only
+    // allocatable if they are free in every seed.
+    rom.set_tag("two_player_vs");
+    randomize::qol::two_player_vs::apply(rom);
+}
+
+/// Stage 12: what needs the finished maps — Big [?] rooms, the credits
+/// mini-maps, and the metatile patches.
+pub(super) fn after_the_map(
+    rom: &mut Rom,
+    options: &Options,
+    written: &WrittenOverworld,
+    credits_progression: Option<&[u8]>,
+    rng: &mut ChaCha8Rng,
+) {
+    // Big [?] bonus-room shuffle: every level with a Big [?] pipe draws from a
+    // pool of 19 rooms (11 vanilla + 8 in the otherwise-dead "Unused Level 5").
+    // Runs after the overworld builder because the BigQBlock_GotIt "already
+    // opened" bit is per world *and* per screen, so the legal rooms for a host
+    // depend on where its level ended up — and after `write_overworld`, so the
+    // RNG it consumes cannot move the maps.
+    // Off by default. `vanilla_assignments` takes no `rng` *by signature* and
+    // writes no bytes, so with the option off every module downstream of here
+    // sees the stream it would see if this pass did not exist. It just reports
+    // where the eleven pipes already lead, so the 7-F1 protection below still
+    // knows which room to protect.
+    //
+    // Note this is not whole-ROM identity with a pre-feature build: the lookup
+    // routine `qol::fix_big_q_block_rooms` installs is unconditional and carries
+    // the slot-seeding halves either way.
+    let big_q_rooms = if options.shuffle_big_q_rooms {
+        rom.set_tag("big_q_blocks/rooms");
+        randomize::levels::big_q_rooms::shuffle(rom, rng)
+    } else {
+        randomize::levels::big_q_rooms::vanilla_assignments()
+    };
+
+    // 7-F1 cannot be beaten without flight, so whatever room it drew has to
+    // hand out a flight suit. Forced last, which is also why it needs no
+    // cooperation from the contents roll above.
+    if let Some(off) = big_q_rooms
+        .iter()
+        .find(|a| a.name == "7-F1")
+        .and_then(|a| randomize::levels::big_q_rooms::block_offset(rom, a.area, a.screen))
+    {
+        rom.set_tag("big_q_blocks/w7f1_flight");
+        rom.write_byte(off, randomize::levels::big_q_rooms::BIGQBLOCK_TANOOKI);
+    }
+
+    // Redraw + repack the ending credits mini-maps from the freshly-written
+    // randomized world maps, then (if world order shuffled) reorder the montage
+    // so each world's picture shows in the order the player traversed it. Both
+    // run after `write_overworld` reads the final map tiles; the reorder must
+    // run after the repack because it permutes the picture pointers.
+    rom.set_tag("credits/world_maps");
+    randomize::cosmetic::credits::render_world_maps(rom, rng, &written.lock_tiles().pairs());
+    if let Some(progression) = credits_progression {
+        rom.set_tag("credits/world_order");
+        let order = randomize::cosmetic::credits::order_from_progression(progression);
+        randomize::cosmetic::credits::reorder_world_pictures(rom, &order);
+    }
+    // Set starting lives (patched later by starting_items trampoline if items present)
+    rom.set_tag("qol/starting_lives");
+    randomize::qol::set_starting_lives(rom, options.starting_lives);
+
+    // Anchors stay in inventory as mystery items — patch the item-use
+    // dispatch so using an anchor triggers a random powerup effect.
+    rom.set_tag("items/mystery_anchor");
+    randomize::items::write_mystery_anchor(rom, rng);
+
+    // Patch double-digit level tiles (11–19) to show a "1" tens digit
+    rom.set_tag("metatile/double_digit");
+    randomize::overworld::writer::patch_double_digit_metatiles(rom);
+
+    // Freeze metatile 0x6A's CHR animation so it can serve as a static fortress tile.
+    rom.set_tag("metatile/6a_freeze");
+    randomize::overworld::writer::patch_metatile_6a_freeze(rom);
+}
+
+/// Stage 13: boss stomp counts, then the king quotes that remark on them.
+pub(super) fn bosses_and_quotes(
+    rom: &mut Rom,
+    options: &Options,
+    written: &WrittenOverworld,
+    credits_progression: Option<&[u8]>,
+    rng: &mut ChaCha8Rng,
+) {
+    // The stomp-count randomizers sit here, immediately above `king_quotes`,
+    // rather than with the other boss patches in [`engine_patches`]: one king
+    // remarks on the thresholds, so they have to exist before the quotes are
+    // written. Everything they were moved past takes `rom` only and draws
+    // nothing, so the move reorders the seed stream against these two calls and
+    // nothing else.
+    let koopaling_hits = if options.koopaling_hits {
+        rom.set_tag("koopalings/random_hits");
+        randomize::enemies::koopalings::randomize_koopaling_hits(rom, rng)
+    } else {
+        // Vanilla is three stomps for every Koopaling, which is a real fact
+        // about the ROM the player is about to play, not a placeholder.
+        randomize::cosmetic::king_quotes::VANILLA_KOOPALING_HITS
+    };
+
+    if options.boomboom_hits {
+        rom.set_tag("boomboom/random_hits");
+        randomize::enemies::koopalings::randomize_boomboom_hits(rom, rng);
+    }
+
+    // Randomize king quotes. Always called, even when the option is off: the
+    // module draws its quotes unconditionally and only the ROM writes are
+    // gated, so toggling this cannot shift the seed stream for anything below.
+    // What the oracle king is allowed to know. Every field is a fact already
+    // committed to the ROM by this point — the stomp table just above, the
+    // progression from `world_order`, and 1-F's chest, whose item `items` wrote
+    // and whose world the overworld writer reports. Reading the chest byte back
+    // out of the ROM rather than plumbing it through keeps the king right under
+    // every flag combination, chest randomization off included.
+    let one_f_chest =
+        written.one_f_world().map(|world| randomize::cosmetic::king_quotes::OneFChest {
+            world,
+            item: rom.read_byte(randomize::items::ONE_F_CHEST_ITEM),
+        });
+    rom.set_tag("king_quotes");
+    randomize::cosmetic::king_quotes::randomize(
+        rom,
+        rng,
+        options.king_quotes,
+        &randomize::cosmetic::king_quotes::OracleFacts {
+            koopaling_hits,
+            world_progression: credits_progression,
+            one_f_chest,
+        },
+    );
+}
+
+/// Stage 14: engine patches — always-on fixes and the option toggles.
+pub(super) fn engine_patches(
+    rom: &mut Rom,
+    options: &Options,
+    run: &Resolved,
+    written: &WrittenOverworld,
+    canoe_gated: Option<[bool; 8]>,
+    rng: &mut ChaCha8Rng,
+) {
+    // Cosmetic: render every item visual (reserve grid, Toad House chests,
+    // in-level treasure boxes) as the Anchor sprite.
+    if options.anchor_visuals {
+        rom.set_tag("anchor_visuals");
+        randomize::cosmetic::anchor_visuals::apply(rom);
+    }
+
+    // Skip the wand falling cutscene after defeating a Koopaling.
+    if options.skip_wand_cutscene {
+        rom.set_tag("koopalings/skip_wand_cutscene");
+        randomize::enemies::koopalings::skip_wand_cutscene(rom);
+    }
+
+    // Remove N-card (N-Spade) panels from the overworld map.
+    if options.remove_n_cards {
+        rom.set_tag("qol/remove_n_cards");
+        randomize::qol::remove_n_cards(rom);
+    }
+
+    // Fix canoe softlocks. Always applied: the vanilla W3 canoe is always
+    // present (and the W8 canoe is present when `8s are Wild` is on), and canoes
+    // are also reachable via spade and toad-house shuffle. The fix is
+    // world-agnostic (keys on the dock tile 0x4B and canoe object 0x10), so
+    // running it unconditionally is correct and safe.
+    rom.set_tag("qol/fix_canoe_softlock");
+    randomize::qol::fix_canoe_softlock(rom);
+
+    // Two-player "warp to partner" escape hatch (Start+Select on the map).
+    // Always applied: in 2P the players share one map and its movable objects
+    // (canoe, Hammer Bros), so one player can strand the other; this gives a
+    // manual recovery. No effect in 1P (guarded on Total_Players).
+    rom.set_tag("qol/map_warp");
+    randomize::qol::apply_map_warp(rom);
+
+    // The canoe, one way or the other. Both arms install the same summon
+    // routine in `FS_CANOE_SUMMON`; they differ in what triggers it.
+    //
+    // - **The gate** (the `item_gates` option, maze only and off by default):
+    //   boats sit one tile offshore and only an Anchor used on a dock calls one
+    //   over, so the water is a lock. Maze only because in a fixed world order
+    //   the player cannot go back to a world they have left, so the key would
+    //   have to sit in front of its own lock — not a gate at all. `gated` is
+    //   per world: key placement may have given up on one world's gate, and
+    //   beaching water the model did not key is precisely how a seed strands a
+    //   player.
+    // - **Otherwise**: the rescue. Press A on any dock to summon the shared
+    //   canoe. Covers the softlocks `map_warp` cannot (1P, and both players
+    //   stranded).
+    //
+    // After `8s are Wild`, which adds W8's boat: `move_canoes_offshore` scans
+    // for the map-object id, so a boat placed later would keep its vanilla
+    // berth and that world's water would stay free.
+    match canoe_gated {
+        Some(gated) => {
+            rom.set_tag("world_maze");
+            randomize::maze::canoe_gate::apply(rom, &gated);
+            // The Anchor is permanent here, so a second one is dead weight.
+            // Only alongside the gate: outside it the Anchor is
+            // `mystery_anchor`'s power-up and IS consumed, so duplicates are
+            // worth having.
+            randomize::maze::anchor_dedup::apply(rom, randomize::items::toad_house_substitute(rng));
+        }
+        None => {
+            rom.set_tag("qol/canoe_summon");
+            randomize::qol::apply_canoe_summon(rom);
+        }
+    }
+
+    // Stop an enemy that is jumping up at the player from turning a stomp into
+    // damage. Always applied: it only widens outcomes vanilla already got
+    // wrong, so there is nothing to opt out of.
+    rom.set_tag("stomp_fairness");
+    randomize::enemies::stomp_fairness::apply(rom);
+
+    // One unit on the level clock is 41 frames in vanilla (~0.68 s), so the
+    // displayed time runs ~47% fast. Always applied: the divider is simply the
+    // wrong number, and a clock that reads seconds is what the status bar
+    // already claims to show.
+    rom.set_tag("qol/real_time_clock");
+    randomize::qol::apply_real_time_clock(rom);
+
+    // Adjust Bowser and Koopaling hitboxes.
+    if options.adjust_boss_hitboxes {
+        rom.set_tag("koopalings/adjust_boss_hitboxes");
+        randomize::enemies::koopalings::adjust_boss_hitboxes(rom);
+    }
+
+    // Hammer breaks tiles on the overworld map (locks, bridges, or both).
+    if run.hammer_breaks_locks || run.hammer_breaks_bridges {
+        rom.set_tag("qol/hammer_breaks_tiles");
+        randomize::qol::hammer_breaks_tiles(
+            rom,
+            run.hammer_breaks_locks,
+            run.hammer_breaks_bridges,
+            &written.lock_tiles().pairs(),
+        );
+    }
+
+    // MaCobra52's "Early Sun" — Angry Sun begins attacking immediately.
+    if options.early_sun {
+        rom.set_tag("qol/early_sun");
+        randomize::qol::apply_early_sun(rom);
+    }
+
+    // Bro encounters run on a 10-second clock instead of their header's time.
+    if options.bro_battle_timer {
+        rom.set_tag("qol/bro_battle_timer");
+        randomize::qol::apply_bro_battle_timer(rom);
+    }
+
+    // Bloopers and Cheeps can be stomped from dry land.
+    if options.water_stomp {
+        rom.set_tag("water_stomp");
+        randomize::enemies::water_stomp::apply(rom);
+    }
+
+    // "Limit Bro Movement" — gate the wandering Hammer Bros' overworld roaming.
+    if options.limit_bro_movement {
+        rom.set_tag("qol/limit_bro_movement");
+        randomize::qol::apply_limit_bro_movement(rom);
+    }
+
+    // MaCobra52's "Japanese damage system" — damage drops straight to Small
+    // Mario (or kills from a suit) instead of tier-by-tier demotion.
+    if options.japanese_damage {
+        rom.set_tag("qol/japanese_damage");
+        randomize::qol::apply_japanese_damage(rom);
+    }
+
+    // MaCobra52's "Infinite use Mushroom Houses" — toad houses don't get
+    // removed from the map after entering, so they're reusable.
+    if options.infinite_mushroom_houses {
+        rom.set_tag("qol/infinite_mushroom_houses");
+        randomize::qol::apply_infinite_mushroom_houses(rom);
+    }
+
+    // MaCobra52's "Fast Mushroom House" — skip entry input-lock + faster exit.
+    if options.fast_mushroom_house {
+        rom.set_tag("qol/fast_mushroom_house");
+        randomize::qol::apply_fast_mushroom_house(rom);
+    }
+
+    // MaCobra52's "Faster Tail Speed" — reduced tail slowdown + balancing
+    // flight-time cut and 7-6 wall adjustment.
+    if options.faster_tail_speed {
+        rom.set_tag("qol/faster_tail_speed");
+        randomize::qol::apply_faster_tail_speed(rom);
+    }
+
+    // MaCobra52's "No Game Over Penalty" — keep reserve inventory and
+    // map progress after a Game Over.
+    // The maze forces it on: without it a game over wipes map completions, and
+    // in a mode built on "a world you can come back to" that is the whole point
+    // undone. It also makes the wipe uniform across all eight worlds, which
+    // removes the "which half gets wiped" question from the packed store.
+    if options.no_game_over_penalty || options.world_maze {
+        rom.set_tag("qol/no_game_over_penalty");
+        randomize::qol::apply_no_game_over_penalty(rom);
+    }
+
+    // Mariomon (MaCobra52's "No Extra Lives" + "No Continues") — a permadeath
+    // challenge mode: no 1-Ups anywhere a single player can reach them, and the
+    // Game Over popup no longer offers a way back onto the map.
+    if options.mariomon {
+        rom.set_tag("qol/mariomon");
+        randomize::qol::apply_mariomon(rom);
+    }
+
+    // Card speed clear: one-of-each clears cards with +1 life but no cutscene.
+    if options.card_speed_clear {
+        rom.set_tag("qol/card_speed_clear");
+        randomize::qol::card_speed_clear(rom);
+    }
+}
+
+/// Stage 15: the title-screen seed hash, then the starting-items trampoline
+/// that overwrites part of it.
+pub(super) fn title_and_starting_items(
+    rom: &mut Rom,
+    seed: u64,
+    options: &Options,
+    run: &Resolved,
+) {
+    // Title screen seed hash icons (cosmetic verification).
+    // This hooks STA $0736 at 0x308E2 for intro skip.
+    // Skipped when the user opted out of ROM validation, since the hooks
+    // assume vanilla offsets in PRG031 that may have been changed by a mod.
+    if !options.skip_rom_validation {
+        rom.set_tag("title_screen");
+        randomize::cosmetic::title_screen::write_seed_hash(rom, seed, options);
+    }
+
+    // Starting items trampoline — must run AFTER title_screen because both
+    // write to the lives init region at 0x308E0: this one wins, overwriting
+    // title_screen's intro-skip hook at 0x308E2. The trampoline replays the
+    // identical intro-skip + menu-music bytes (shared
+    // `title_screen::intro_skip_music_bytes`), so behavior is unchanged;
+    // title_screen's FS_INTRO_SKIP routine is left in ROM unreferenced.
+    //
+    // The maze owns inventory slot 0 — its permanent whistle goes there in
+    // `completion_bits`' new-game init — so the player's own items start at
+    // slot 1 there. The inventory is a compacted list and the engine's panel
+    // is dead while slot 0 is empty, so the two writers have to be contiguous
+    // from the bottom; see `write_starting_items`.
+    if !run.starting_items.is_empty() {
+        rom.set_tag("qol/starting_items");
+        let first_slot = u8::from(options.world_maze);
+        randomize::qol::write_starting_items(
+            rom,
+            seed,
+            options.starting_lives,
+            &run.starting_items,
+            first_slot,
+        );
+    }
+}
+
+/// Stage 16: MaCobra's always-on patches, and the options that layer on them.
+pub(super) fn macobra_layer(rom: &mut Rom, options: &Options) {
+    // MaCobra patches — always-on bugfixes and fairness tweaks.
+    rom.set_tag("qol/macobra");
+    randomize::qol::apply_macobra_patches(rom);
+
+    // MaCobra52's "Remove Flashing" — suppress the palette-flash animation for
+    // photosensitive-safe play. On by default; accessibility/cosmetic option,
+    // not in the flag key and consumes no RNG.
+    if options.remove_flashing {
+        rom.set_tag("qol/remove_flashing");
+        randomize::qol::apply_remove_flashing(rom);
+    }
+
+    // MaCobra52's "Change fireballs to hearts". Cosmetic, not in the flag key,
+    // no RNG. The visual patch is already on, so a reskin that redraws
+    // fireballs (Dr. Mario) is overridden — that is the point of choosing it.
+    if options.fireball_hearts {
+        rom.set_tag("qol/fireball_hearts");
+        randomize::qol::apply_fireball_hearts(rom);
+    }
+
+    // A defeated Lakitu is deleted instead of re-seeded two screens back, so it
+    // stops holding one of the five general object slots for the whole level
+    // (and stops feeding Spiny Eggs into the other four).
+    if options.lakitu_stays_down {
+        rom.set_tag("qol/lakitu_stays_down");
+        randomize::qol::apply_lakitu_stays_down(rom);
+    }
+
+    // Faster Frog — speeds up Frog-Suit swimming. MUST run after
+    // apply_macobra_patches: two of its writes patch inside the tail-swim
+    // routine that macobra writes unconditionally, so it has to layer on top.
+    if options.faster_frog {
+        rom.set_tag("qol/faster_frog");
+        randomize::qol::apply_faster_frog(rom);
+    }
+
+    // MaCobra52's "Easy Power-up System" — Small Mario gets suits / Fire power
+    // without first growing Big (modern Mario power-up behavior).
+    if options.modern_powerups {
+        rom.set_tag("qol/modern_powerups");
+        randomize::qol::apply_modern_powerups(rom);
+    }
+
+    // Random Fire Flower — in-level Fire Flower grants a position-derived suit
+    // instead of always Fire. Pure static patch (no RNG): the substitution is a
+    // deterministic function of World_Num + the flower's level position.
+    if options.fire_flower != FireFlowerMode::Off {
+        rom.set_tag("fire_flower");
+        randomize::items::fire_flower::apply(rom, options.fire_flower);
+        // ...and with it, the two level spots a Frog Suit cannot get out of.
+        // Only reachable in a frog *because* of the line above, so the fix
+        // rides the same flag. No ordering requirement — see the module doc.
+        rom.set_tag("frog_softlocks");
+        randomize::items::frog_softlocks::apply(rom);
+    }
+
+    // Poison Mushroom — each 1-Up block hands out either a real 1-Up or a
+    // purple upside-down poison mushroom, chosen by a seed-salted position
+    // hash. Installs the $0A trap object + a hook on the block-spawn sites.
+    // Must run after world_order so the salt is final (mirrors fire_flower).
+    // Replaces MaCobra52's all-1UPs-poison recolor under the same flag.
+    if options.poison_mushrooms {
+        rom.set_tag("poison_mushrooms");
+        randomize::items::poison_mushroom::apply(rom);
+    }
+}
+
+/// Stage 17: stamp the flag key and seed into the ROM.
+pub(super) fn stamp(rom: &mut Rom, seed: u64, options: &Options) {
+    // Stamp flag key + seed into free space at STAMP_OFFSET (PRG012):
+    //   "S3R" magic, a length byte, the flag key bytes, then the seed
+    //   (little-endian u64). The key bytes lead with their own format version,
+    //   and since v29 their length varies with how much of the payload the
+    //   options reach — hence the length byte, so the seed can still be found.
+    rom.set_tag("stamp");
+    let flag_bytes = options.to_flag_bytes();
+    let mut stamp = Vec::with_capacity(4 + flag_bytes.len() + 8);
+    stamp.extend_from_slice(b"S3R");
+    stamp.push(flag_bytes.len() as u8);
+    stamp.extend_from_slice(&flag_bytes);
+    stamp.extend_from_slice(&seed.to_le_bytes());
+    rom.write_range(STAMP_OFFSET, &stamp);
+}

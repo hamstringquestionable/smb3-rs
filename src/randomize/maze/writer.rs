@@ -7,19 +7,19 @@
 //!
 //! **It writes almost nothing itself.** The maze's map edits — pad tiles,
 //! uninstalled locks, the fortress hint tiles — are model edits made by
-//! [`super::stamp_into`] before `overworld_writer` runs, so they reach the ROM
+//! [`super::stamp_into`] before `overworld::writer` runs, so they reach the ROM
 //! in the writer's own single pass. What is left here is one metatile
 //! definition, which is not a grid edit and belongs to no world.
 //!
 //! **It does not orchestrate.** The order the maze's ROM-side modules install
-//! in is stated once, in `randomizer::randomize_inner`, where every other
+//! in is stated once, in `pipeline::randomize_inner`, where every other
 //! feature's ordering already lives.
 
 use crate::rom::Rom;
 
 use super::super::rom_data::{PRG012_FILE_BASE, TELEPAD_QUADRANTS, TILE_TELEPAD};
-use super::super::world_persist::Telepad;
 use super::GlobalState;
+use crate::randomize::maze::world_persist::Telepad;
 
 /// Every pad, as the spec `world_persist::apply` takes.
 ///

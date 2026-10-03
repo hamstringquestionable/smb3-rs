@@ -137,7 +137,7 @@ const W8_CANOE_PATH_EDITS: &[(usize, usize, u8)] = &[
 const W1_SHORTCUT_ROCK: (usize, usize) = (5, 8);
 const W1_SHORTCUT_STUB: (usize, usize, u8) = (6, 8, 0x4A);
 
-/// Write the W1 shortcut (see [`W1_SHORTCUT_EDITS`]). The tiles go down
+/// Write the W1 shortcut (see [`W1_SHORTCUT_ROCK`] and [`W1_SHORTCUT_STUB`]). The tiles go down
 /// unconditionally; `breakable` only decides whether the rock can be opened.
 ///
 /// `0x52` (breakable, opens to `0x46`) and `0x53` (permanent wall) are
@@ -183,12 +183,12 @@ const W8_WATER_EDITS: &[(usize, usize, u8)] = &[
 /// alternating with the nodes between them. Each is an ordinary lockable path
 /// tile, so a lock landing on one shows as a water gap (`gap_tile_for`:
 /// `0xB3 -> 0x9D`) that its fortress rebuilds — the "bridge out" the builder
-/// deals per seed (`overworld_build::locks`). Single source of truth: the
+/// deals per seed (`crate::randomize::overworld::build::locks`). Single source of truth: the
 /// builder reads these positions rather than repeating the coordinates.
 ///
 /// All five are stamped as bridges in every mode. In WORLD-MAZE mode only,
 /// the last of them — `rom_data::W8_WAND_GATE_POS` at (5,59) — is held out
-/// of the deal by `overworld_build::locks::free_bridge_spans`, because the
+/// of the deal by `crate::randomize::overworld::build::locks::free_bridge_spans`, because the
 /// maze writes its wand gate over that cell after the build. It stays stamped
 /// here either way: the corridor looks the same, and the gate goes down last,
 /// over the finished map.

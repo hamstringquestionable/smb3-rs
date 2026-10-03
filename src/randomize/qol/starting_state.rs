@@ -25,7 +25,7 @@ pub fn set_starting_lives(rom: &mut Rom, lives: u8) {
 ///
 /// `first_slot` is where those items start. It is 0 normally and **1 in the
 /// world maze**, which claims slot 0 for its permanent whistle in
-/// [`completion_bits`](crate::randomize::completion_bits)' new-game init.
+/// [`completion_bits`](crate::randomize::maze::completion_bits)' new-game init.
 /// The inventory is a compacted list — the engine's own panel refuses to open
 /// for use at all when slot 0 is empty, and using an item memmoves the tail
 /// down over it — so the two writers must be contiguous from slot 0, never
@@ -48,7 +48,7 @@ pub fn write_starting_items(rom: &mut Rom, seed: u64, lives: u8, items: &[u8], f
         0x8D, 0x36, 0x07,    // STA $0736
         0x8D, 0x37, 0x07,    // STA $0737
     ]);
-    buf.extend_from_slice(&crate::randomize::title_screen::intro_skip_music_bytes(seed));
+    buf.extend_from_slice(&crate::randomize::cosmetic::title_screen::intro_skip_music_bytes(seed));
     for (i, &item) in items.iter().take(3).enumerate() {
         let slot = first_slot + i as u8;
         #[rustfmt::skip]
