@@ -1229,6 +1229,9 @@ fn check_invariants(
                 Some(EntryProtection::ExcludeHazards) if hazard_excluded(new, orig) => {
                     bad("ExcludeHazards but introduced a new hazard category".into());
                 }
+                Some(EntryProtection::ExcludeRotodiscs) if is_rotodisc(new) => {
+                    bad("ExcludeRotodiscs but result is a Rotodisc".into());
+                }
                 _ => {}
             }
 

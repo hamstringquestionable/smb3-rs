@@ -303,6 +303,11 @@ pub(super) const ROTODISCS_DUAL: &[u8] = &[
     0x60, // OBJ_ROTODISCDUALCCLOCK (CCW sync)
 ];
 
+/// Any Rotodisc, single or dual (what `ExcludeRotodiscs` filters out).
+pub(super) fn is_rotodisc(id: u8) -> bool {
+    ROTODISCS_SINGLE.contains(&id) || ROTODISCS_DUAL.contains(&id)
+}
+
 /// Ghost house / fortress enemies. Boo and Hot Foot use CHR page $12/+4,
 /// Dry Bones uses $13/+5 (compatible with all slot 4 pages).
 /// NOT Stretch Boos (0x31/0x32) — attached to platforms, position-critical.

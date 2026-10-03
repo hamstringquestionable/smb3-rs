@@ -65,6 +65,8 @@ pub(super) enum EntryProtection {
     /// a hazard of the same category as the vanilla enemy here is kept). See
     /// `hazard_excluded` in enemies.rs.
     ExcludeHazards,
+    /// Walker excludes every Rotodisc (single and dual) from the chosen pool.
+    ExcludeRotodiscs,
 }
 
 const LEVEL_PROTECTIONS: &[LevelProtection] = &[
@@ -284,6 +286,19 @@ const LEVEL_PROTECTIONS: &[LevelProtection] = &[
         entries: &[
             EntryRule { offset: 0x0D562, rule: EntryProtection::ExcludeHazards }, // Rotodisc
             EntryRule { offset: 0x0D568, rule: EntryProtection::ExcludeHazards }, // Rotodisc
+        ],
+    },
+    // --- Rotodisc-excluded entries ---
+    LevelProtection {
+        label: "3F1 (screen 5 and 7 Dry Bones must not become Rotodiscs)",
+        enemy_ptr: 0xD393,
+        walker_segment: WalkerSegmentRule::Default,
+        entries: &[
+            EntryRule { offset: 0x0D3BC, rule: EntryProtection::ExcludeRotodiscs }, // DryBones scr=5 col=12
+            EntryRule { offset: 0x0D3BF, rule: EntryProtection::ExcludeRotodiscs }, // DryBones scr=5 col=5
+            EntryRule { offset: 0x0D3C8, rule: EntryProtection::ExcludeRotodiscs }, // DryBones scr=7 col=2
+            EntryRule { offset: 0x0D3CB, rule: EntryProtection::ExcludeRotodiscs }, // DryBones scr=7 col=4
+            EntryRule { offset: 0x0D3CE, rule: EntryProtection::ExcludeRotodiscs }, // DryBones scr=7 col=13
         ],
     },
     // --- Hammer Bro encounters (walker uses HB modes; injection skips) ---
