@@ -8,10 +8,27 @@ use crate::randomize::rom_data::AIRSHIP_ENTRIES;
 /// Shuffle airships across worlds 1-7. Each world's airship map tile
 /// can load any of the 7 airship levels.
 ///
-/// Note: when autoscroll is disabled, the autoscroll patch overwrites
-/// airship pointer entries with world-specific redesigned data after
-/// this shuffle runs, so airship shuffle only has a visible effect
-/// when autoscroll is kept enabled.
+/// The seven `AIRSHIP_ENTRIES` are the dock tiles' pointer-table rows. In
+/// vanilla each one enters a chain of rooms, every room's header naming
+/// the next (W1 shown):
+///
+/// ```text
+/// dock → king's room → anchor intro → airship → Koopaling arena
+///        $A837/$D2AF   $AC29/$D69C    $ADB7/$D6EA  $BA02/$D9E6
+/// ```
+///
+/// Autoscroll removal (on by default) repoints each dock straight at its
+/// world's reworked airship, skipping the first two rooms. It runs before
+/// this shuffle, so the shuffle permutes the repointed rows; with
+/// `--keep-autoscroll` it permutes the king's-room rows instead. Either
+/// way the arena travels with its airship, because the airship's header
+/// is what names it.
+///
+/// The Koopaling does **not** travel. The arena holds one generic
+/// Koopaling object whose identity is read at run time from `World_Num`
+/// (or `$7EEA` under `random_koopalings`), so a shuffled arena hosts the
+/// world's own Koopaling. That is why `pipeline::stages::koopalings`
+/// applies the stability patches whenever this shuffle is on.
 pub(crate) fn randomize_airships<R: Rng>(rom: &mut Rom, rng: &mut R) {
     level_helpers::shuffle_entries(rom, rng, AIRSHIP_ENTRIES);
 }

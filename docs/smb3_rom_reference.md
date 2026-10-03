@@ -3097,6 +3097,40 @@ CMP sites) requires also moving the ring page: `qol::random_koopalings` rewrites
 `KoopalingPatSet5` so `0x4A` follows the ring identity, `0x48` stays on Lemmy, and all
 others get `0x37`. Without it the new ring boss loads `0x37` and the ring renders garbled.
 
+### The Airship Room Chain (W1-W7)
+
+Each `AIRSHIP_ENTRIES` row (the dock tile) enters four rooms. Each room's level
+header begins with the next room's layout and enemy pointers (bytes 0-1, 2-3), so
+the chain is data, not code. Layout / enemy-stream CPU pointers, vanilla:
+
+| World | King's room | Anchor intro (3 scr) | Airship | Koopaling arena |
+|-------|-------------|----------------------|---------|-----------------|
+| W1 | `$A837/$D2AF` | `$AC29/$D69C` | `$ADB7/$D6EA` | `$BA02/$D9E6` |
+| W2 | `$A7E7/$D2AF` | `$ABF7/$D69C` | `$AEAB/$D71C` | `$BA4B/$D9EB` |
+| W3 | `$A7F7/$D2AF` | `$AC10/$D69C` | `$B009/$D757` | `$BAA0/$D9F0` |
+| W4 | `$A807/$D2AF` | `$B425/$D69C` | `$B13A/$D798` | `$AC42/$D6A1` |
+| W5 | `$A817/$D2AF` | `$B43E/$D69C` | `$AC97/$D6A6` | `$BAF5/$D9F5` |
+| W6 | `$A827/$D2AF` | `$B457/$D69C` | `$B2B3/$D7E5` | `$BB4A/$D9FA` |
+| W7 | `$A847/$D2AF` | `$B470/$D69C` | `$B489/$D814` | `$BBBA/$D9FF` |
+
+Verified against the W1 headers: king's room `29 AC 9C D6`, anchor intro
+`B7 AD EA D6`, airship `02 BA E6 D9`.
+
+- **The king's room only chains onward while the HELP bubble stands** (see
+  `docs/world_maze_design.md` → "The king rescue"). `$D2AF` is one
+  `OBJ_TOADANDKING`, shared by all seven.
+- **Autoscroll removal (the default) skips the first two rooms.** It repoints each
+  dock row straight at that world's airship (`levels/autoscroll.rs`). The airship
+  shuffle runs after it and permutes those repointed rows, so the airship and its
+  arena move together.
+- **The Koopaling does not move with the arena.** The arena stream holds one
+  generic Koopaling object, whose identity is read at run time from `World_Num`
+  (`$0727`), or from `$7EEA` when `random_koopalings` is on (see "Map_Unused7EEA"
+  above). `World_Num` is the internal world, not the displayed one, so World
+  Order shuffles the order you meet the Koopalings in but keeps each one on its
+  map. The Koopaling stomp-count table is also indexed by `$0727`, so the count
+  belongs to the world.
+
 ### Airship Travel Data
 
 | Label | Description |

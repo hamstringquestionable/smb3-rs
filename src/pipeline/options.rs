@@ -566,7 +566,9 @@ pub struct Options {
     /// Adjust hitboxes for Bowser and Koopalings so they're easier to hit.
     #[serde(default = "default_true")]
     pub adjust_boss_hitboxes: bool,
-    /// Randomize per-Koopaling stomp counts (each gets 1–5 hits independently).
+    /// Randomize Koopaling stomp counts (1–5 hits each). The table is indexed
+    /// by `World_Num`, so the count belongs to the world, not the Koopaling:
+    /// under `random_koopalings` it stays put while the boss changes.
     #[serde(default = "default_true")]
     pub koopaling_hits: bool,
     /// Randomize per-fortress Boom-Boom stomp counts (each gets 1–5 hits).
