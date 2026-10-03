@@ -71,7 +71,7 @@ pub fn apply_ips_patch(rom: &[u8], patch: &[u8]) -> Result<Vec<u8>, JsError> {
 #[wasm_bindgen]
 pub fn seed_hash_json(rom: &[u8], seed: u64, options_json: &str) -> Result<String, JsError> {
     let options: Options = parse_options(options_json)?;
-    let preview = crate::randomize::title_screen::seed_hash_preview(rom, seed, &options);
+    let preview = crate::randomize::cosmetic::title_screen::seed_hash_preview(rom, seed, &options);
     serde_json::to_string(&preview).map_err(|e| JsError::new(&format!("Serialize error: {e}")))
 }
 

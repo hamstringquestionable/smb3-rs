@@ -95,9 +95,9 @@
 
 use crate::rom::Rom;
 
-use super::rom_data::prg010_file_to_cpu;
+use crate::randomize::rom_data::prg010_file_to_cpu;
 #[cfg(test)]
-use super::rom_data::prg030_file_to_cpu;
+use crate::randomize::rom_data::prg030_file_to_cpu;
 
 // --- Sites ---------------------------------------------------------------
 

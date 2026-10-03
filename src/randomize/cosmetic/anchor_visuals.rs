@@ -1,4 +1,4 @@
-use super::rom_data::FS_ANCHOR_ITEM_GUARD;
+use crate::randomize::rom_data::FS_ANCHOR_ITEM_GUARD;
 use crate::rom::Rom;
 
 // Global Item ID for the Anchor — the visual we redirect every other item to.

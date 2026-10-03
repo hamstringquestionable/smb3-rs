@@ -186,10 +186,10 @@ pub(super) fn level_data(rom: &mut Rom, options: &Options, rng: &mut ChaCha8Rng)
         rom.set_tag("palettes");
         let mut palette_rng = ChaCha8Rng::from_os_rng();
         if options.palettes {
-            randomize::palettes::randomize(rom, &mut palette_rng, options.player_color);
+            randomize::cosmetic::palettes::randomize(rom, &mut palette_rng, options.player_color);
         }
         if options.palette_themed {
-            randomize::palettes::randomize_themed(rom, &mut palette_rng);
+            randomize::cosmetic::palettes::randomize_themed(rom, &mut palette_rng);
         }
     }
     if options.any_enemies_active() {
@@ -661,7 +661,7 @@ pub(super) fn locks(rom: &mut Rom, build: &BuildResult, written: &WrittenOverwor
     // is not gated on `world_maze`: the 339 bytes it frees in PRG030 are only
     // allocatable if they are free in every seed.
     rom.set_tag("two_player_vs");
-    randomize::two_player_vs::apply(rom);
+    randomize::qol::two_player_vs::apply(rom);
 }
 
 /// Stage 12: what needs the finished maps — Big [?] rooms, the credits
@@ -713,11 +713,11 @@ pub(super) fn after_the_map(
     // run after `write_overworld` reads the final map tiles; the reorder must
     // run after the repack because it permutes the picture pointers.
     rom.set_tag("credits/world_maps");
-    randomize::credits::render_world_maps(rom, rng, &written.lock_tiles().pairs());
+    randomize::cosmetic::credits::render_world_maps(rom, rng, &written.lock_tiles().pairs());
     if let Some(progression) = credits_progression {
         rom.set_tag("credits/world_order");
-        let order = randomize::credits::order_from_progression(progression);
-        randomize::credits::reorder_world_pictures(rom, &order);
+        let order = randomize::cosmetic::credits::order_from_progression(progression);
+        randomize::cosmetic::credits::reorder_world_pictures(rom, &order);
     }
     // Set starting lives (patched later by starting_items trampoline if items present)
     rom.set_tag("qol/starting_lives");
@@ -757,7 +757,7 @@ pub(super) fn bosses_and_quotes(
     } else {
         // Vanilla is three stomps for every Koopaling, which is a real fact
         // about the ROM the player is about to play, not a placeholder.
-        randomize::king_quotes::VANILLA_KOOPALING_HITS
+        randomize::cosmetic::king_quotes::VANILLA_KOOPALING_HITS
     };
 
     if options.boomboom_hits {
@@ -774,16 +774,17 @@ pub(super) fn bosses_and_quotes(
     // and whose world the overworld writer reports. Reading the chest byte back
     // out of the ROM rather than plumbing it through keeps the king right under
     // every flag combination, chest randomization off included.
-    let one_f_chest = written.one_f_world().map(|world| randomize::king_quotes::OneFChest {
-        world,
-        item: rom.read_byte(randomize::items::ONE_F_CHEST_ITEM),
-    });
+    let one_f_chest =
+        written.one_f_world().map(|world| randomize::cosmetic::king_quotes::OneFChest {
+            world,
+            item: rom.read_byte(randomize::items::ONE_F_CHEST_ITEM),
+        });
     rom.set_tag("king_quotes");
-    randomize::king_quotes::randomize(
+    randomize::cosmetic::king_quotes::randomize(
         rom,
         rng,
         options.king_quotes,
-        &randomize::king_quotes::OracleFacts {
+        &randomize::cosmetic::king_quotes::OracleFacts {
             koopaling_hits,
             world_progression: credits_progression,
             one_f_chest,
@@ -804,7 +805,7 @@ pub(super) fn engine_patches(
     // in-level treasure boxes) as the Anchor sprite.
     if options.anchor_visuals {
         rom.set_tag("anchor_visuals");
-        randomize::anchor_visuals::apply(rom);
+        randomize::cosmetic::anchor_visuals::apply(rom);
     }
 
     // Skip the wand falling cutscene after defeating a Koopaling.
@@ -989,7 +990,7 @@ pub(super) fn title_and_starting_items(
     // assume vanilla offsets in PRG031 that may have been changed by a mod.
     if !options.skip_rom_validation {
         rom.set_tag("title_screen");
-        randomize::title_screen::write_seed_hash(rom, seed, options);
+        randomize::cosmetic::title_screen::write_seed_hash(rom, seed, options);
     }
 
     // Starting items trampoline — must run AFTER title_screen because both

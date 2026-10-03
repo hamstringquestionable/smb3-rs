@@ -87,7 +87,7 @@ const VANILLA_SITES: [(usize, &[u8], &str); 2] = [
 /// Returns the shuffled progression as internal world numbers, in play order
 /// (first entry is the starting world, last is always 7/Dark Land). With
 /// `world_count` < 7 this is shorter than 8 (unvisited worlds are omitted).
-/// Callers such as [`crate::randomize::credits`] use it to align the ending montage.
+/// Callers such as [`crate::randomize::cosmetic::credits`] use it to align the ending montage.
 ///
 /// **`world_count` 0 is the degenerate end of that range, not a special case.**
 /// The prefix is simply empty, so the progression is `[7]` alone: the player

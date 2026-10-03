@@ -1,7 +1,7 @@
 use rand::Rng;
 use rand::seq::IndexedRandom;
 
-use crate::randomize::palette_variants::{
+use crate::randomize::cosmetic::palette_variants::{
     PLAINS_SLOT3_VARIANTS, POOL_VARIANTS, ROTATE_ONLY_QUARTETS, SLICE1_WATER_VARIANTS,
     SLICE2_VARIANTS, SLICE3_GIANT_VARIANTS, SLICE4_HEAD_VARIANTS, SLICE4_POST_VARIANTS,
     SLICE4_TAIL_VARIANTS, SLOT_TAIL_VARIANTS, SLOT0_MAP_VARIANTS, SLOT1_MAP_VARIANTS,

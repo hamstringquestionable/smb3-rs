@@ -963,11 +963,11 @@ const RACCOON_QUOTE_OFFSET: usize = 0x363B4;
 const HAMMER_QUOTE_OFFSET: usize = 0x3642C;
 
 /// Free space in PRG027 for standard quote data + ASM hook.
-const KING_QUOTE_BASE: usize = super::rom_data::FS_KING_QUOTES;
+const KING_QUOTE_BASE: usize = crate::randomize::rom_data::FS_KING_QUOTES;
 
 /// PRG027 (file 0x36010) is an $A000-window bank.
 fn cpu_addr(file_offset: usize) -> u16 {
-    super::rom_data::prg_bank_file_to_cpu(27, file_offset)
+    crate::randomize::rom_data::prg_bank_file_to_cpu(27, file_offset)
 }
 
 /// ROM offset of the vanilla quote selection code at CPU $A293.

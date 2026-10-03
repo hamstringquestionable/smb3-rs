@@ -15,6 +15,10 @@ mod macobra;
 mod map_warp;
 mod overworld_map;
 mod starting_state;
+/// Retires the 2-player Vs Challenge, whose trigger is unsound once the two
+/// players can be in different worlds and which bypassed the map's
+/// tile-enterability rules. Unconditional, and it frees 339 bytes of PRG030.
+pub mod two_player_vs;
 
 pub use beta::fix_beta_stages;
 pub use big_q::fix_big_q_block_rooms;

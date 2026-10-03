@@ -1,20 +1,24 @@
-pub mod anchor_visuals;
-pub mod credits;
+//! Everything the randomizer can change, grouped by what part of the game it
+//! touches. `crate::pipeline` decides the order these run in; this tree is
+//! only where they live.
+
+/// Shared ROM constants, the free-space registry, and the 6502 patch checker.
+pub mod rom_data;
+
+/// Palettes, the title screen, credits, king quotes: how the game looks and reads.
+pub mod cosmetic;
+/// Enemy swaps and protections, plus enemy and boss behaviour patches.
 pub mod enemies;
+/// Item tables, ? block contents, and power-up behaviour.
 pub mod items;
-pub mod king_quotes;
+/// What is inside a level: room shuffles, treasure rooms, composed sub-areas.
+pub mod levels;
 /// World maze: the generator (eight `WorldState`s, the cross-world edge set,
 /// the winnability fixpoint, the shaping passes) and everything the mode
 /// installs in the ROM. See `docs/world_maze_design.md`.
-pub mod levels;
 pub mod maze;
+/// The world maps: the builder pipeline (catalog -> pickup -> build -> write),
+/// locks, world order, and the airship shuffle.
 pub mod overworld;
-pub mod palette_variants;
-pub mod palettes;
+/// Quality-of-life and always-on engine fixes, grouped by subject.
 pub mod qol;
-pub mod rom_data;
-pub mod title_screen;
-/// Retires the 2-player Vs Challenge, whose trigger is unsound once the two
-/// players can be in different worlds and which bypassed the map's
-/// tile-enterability rules. Unconditional, and it frees 339 bytes of PRG030.
-pub mod two_player_vs;

@@ -23,7 +23,7 @@ import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-SRC = ROOT / "src/randomize/palette_variants.rs"
+SRC = ROOT / "src/randomize/cosmetic/palette_variants.rs"
 
 STRUCTURAL = {0x00, 0x0F, 0xFF}
 

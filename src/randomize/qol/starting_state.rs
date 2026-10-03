@@ -48,7 +48,7 @@ pub fn write_starting_items(rom: &mut Rom, seed: u64, lives: u8, items: &[u8], f
         0x8D, 0x36, 0x07,    // STA $0736
         0x8D, 0x37, 0x07,    // STA $0737
     ]);
-    buf.extend_from_slice(&crate::randomize::title_screen::intro_skip_music_bytes(seed));
+    buf.extend_from_slice(&crate::randomize::cosmetic::title_screen::intro_skip_music_bytes(seed));
     for (i, &item) in items.iter().take(3).enumerate() {
         let slot = first_slot + i as u8;
         #[rustfmt::skip]

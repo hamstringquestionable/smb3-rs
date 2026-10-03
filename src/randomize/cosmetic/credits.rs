@@ -33,7 +33,7 @@
 
 use rand::Rng;
 
-use super::rom_data::{self, Grid, ROWS, TILE_BOWSER};
+use crate::randomize::rom_data::{self, Grid, ROWS, TILE_BOWSER};
 use crate::rom::Rom;
 
 // All offsets are file offsets into the PRG024/PRG025 title-screen/endings

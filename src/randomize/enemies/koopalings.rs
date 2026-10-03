@@ -356,7 +356,7 @@ const KOOPA_HITS_CODE: [u8; 13] = [
 const KOOPA_FIRE_HANDOFF: usize = 0x03035;
 
 /// Returns the per-world stomp threshold table it wrote, so
-/// [`crate::randomize::king_quotes`] can have a king remark on it.
+/// [`crate::randomize::cosmetic::king_quotes`] can have a king remark on it.
 pub fn randomize_koopaling_hits<R: Rng>(rom: &mut Rom, rng: &mut R) -> [u8; 7] {
     use crate::randomize::rom_data::{FS_KOOPA_FIRE_PRESET, KOOPA_FIRE_PRESET_CPU};
 

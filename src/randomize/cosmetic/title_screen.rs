@@ -55,19 +55,20 @@ const _: () = assert!(HASH_PALETTE >= 2, "hash palette must not be the bros'");
 const HOOK_OFFSET: usize = 0x317B1;
 
 /// PRG031 free space for the sprite copy routine — from rom_data::FS_SEED_HASH_ROUTINE.
-const ROUTINE_OFFSET: usize = super::rom_data::FS_SEED_HASH_ROUTINE;
-const ROUTINE_CPU: u16 = super::rom_data::prg031_file_to_cpu(ROUTINE_OFFSET); // $E914
+const ROUTINE_OFFSET: usize = crate::randomize::rom_data::FS_SEED_HASH_ROUTINE;
+const ROUTINE_CPU: u16 = crate::randomize::rom_data::prg031_file_to_cpu(ROUTINE_OFFSET); // $E914
 
 /// Sprite data table immediately after the routine — from rom_data::FS_SEED_HASH_DATA.
-const DATA_OFFSET: usize = super::rom_data::FS_SEED_HASH_DATA;
-const DATA_CPU: u16 = super::rom_data::prg031_file_to_cpu(DATA_OFFSET); // $E92D
+const DATA_OFFSET: usize = crate::randomize::rom_data::FS_SEED_HASH_DATA;
+const DATA_CPU: u16 = crate::randomize::rom_data::prg031_file_to_cpu(DATA_OFFSET); // $E92D
 
 /// Skip the title screen intro cutscene by setting Title_State = 6 (IntroSkip)
 /// during init, after the zero-page clear. Title_State is at zero-page $DE.
 /// We hook STA $0736 at file 0x308E2 → JSR $E955 (free space after sprite data).
 const INTRO_SKIP_HOOK_OFFSET: usize = 0x308E2;
-const INTRO_SKIP_ROUTINE_OFFSET: usize = super::rom_data::FS_INTRO_SKIP;
-const INTRO_SKIP_CPU: u16 = super::rom_data::prg031_file_to_cpu(INTRO_SKIP_ROUTINE_OFFSET); // $E955
+const INTRO_SKIP_ROUTINE_OFFSET: usize = crate::randomize::rom_data::FS_INTRO_SKIP;
+const INTRO_SKIP_CPU: u16 =
+    crate::randomize::rom_data::prg031_file_to_cpu(INTRO_SKIP_ROUTINE_OFFSET); // $E955
 
 /// Disable the attract-mode demo. When the 1P/2P menu sits idle, a countdown
 /// (`$DF` × `$E0` frames) expires and the title handler at PRG024 CPU $8C4E does
@@ -91,7 +92,7 @@ const DEMO_TRIGGER_OPERAND_OFFSET: usize = 0x30C5F;
 /// routine has no reason to run anywhere but the title screen.
 const MUTE_HOOK_OFFSET: usize = 0x30C93;
 const TITLE_3GLOW_CPU: u16 = 0xAA7D;
-const MUTE_ROUTINE_OFFSET: usize = super::rom_data::FS_TITLE_MUTE;
+const MUTE_ROUTINE_OFFSET: usize = crate::randomize::rom_data::FS_TITLE_MUTE;
 /// PRG025 file 0x32010 is CPU $C000 while the title screen runs.
 const MUTE_ROUTINE_CPU: u16 = (0xC000 + MUTE_ROUTINE_OFFSET - 0x32010) as u16; // $DFE0
 
@@ -180,7 +181,7 @@ const Y_SPACING: u8 = 24;
 /// starting-items trampoline (`qol::starting_state`): set Title_State ($DE) =
 /// 6 (IntroSkip) and queue the seeded menu music via $04F5.
 #[rustfmt::skip]
-pub(super) fn intro_skip_music_bytes(seed: u64) -> [u8; 9] {
+pub(crate) fn intro_skip_music_bytes(seed: u64) -> [u8; 9] {
     let music = pick_menu_music(seed);
     [
         0xA9, 0x06,       // LDA #$06
