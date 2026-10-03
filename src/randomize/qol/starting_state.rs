@@ -11,7 +11,7 @@ const STARTING_LIVES_OFFSET: usize = 0x308E1;
 const LIVES_INIT_BASE: usize = 0x308E0;
 
 /// Set starting lives for both Mario and Luigi (1–99).
-pub fn set_starting_lives(rom: &mut Rom, lives: u8) {
+pub(crate) fn set_starting_lives(rom: &mut Rom, lives: u8) {
     let clamped = lives.clamp(1, 99);
     rom.write_byte(STARTING_LIVES_OFFSET, clamped);
 }
@@ -37,7 +37,13 @@ pub fn set_starting_lives(rom: &mut Rom, lives: u8) {
 /// replays the identical intro-skip + menu-music bytes (shared
 /// `title_screen::intro_skip_music_bytes`), so behavior is preserved;
 /// title_screen's FS_INTRO_SKIP routine is left in ROM unreferenced.
-pub fn write_starting_items(rom: &mut Rom, seed: u64, lives: u8, items: &[u8], first_slot: u8) {
+pub(crate) fn write_starting_items(
+    rom: &mut Rom,
+    seed: u64,
+    lives: u8,
+    items: &[u8],
+    first_slot: u8,
+) {
     let lives = lives.clamp(1, 99);
     let cpu = crate::randomize::rom_data::prg031_file_to_cpu(FS_STARTING_ITEMS); // $E250
     // Build trampoline: lives init + intro skip + menu music + item writes + RTS

@@ -35,21 +35,21 @@ const DIRECTIONS: [(i8, i8, bool); 4] = [
 #[allow(dead_code)]
 #[derive(PartialEq, Eq)]
 pub(super) struct Edge {
-    pub dest: (usize, usize),
+    pub(crate) dest: (usize, usize),
     /// Path tile position (None for pipe teleport edges).
-    pub path_pos: Option<(usize, usize)>,
+    pub(crate) path_pos: Option<(usize, usize)>,
 }
 
 /// Result of a BFS map walk.
 pub(super) struct WalkResult {
-    pub nodes: HashSet<(usize, usize)>,
+    pub(crate) nodes: HashSet<(usize, usize)>,
     /// BFS distance (in hops) from start to each reachable node.
-    pub distances: HashMap<(usize, usize), usize>,
+    pub(crate) distances: HashMap<(usize, usize), usize>,
     /// Edge graph — populated during BFS, consumed by test-only chokepoint analysis.
     #[allow(dead_code)]
-    pub edges: HashMap<(usize, usize), Vec<Edge>>,
+    pub(crate) edges: HashMap<(usize, usize), Vec<Edge>>,
     #[allow(dead_code)]
-    pub path_tiles: HashSet<(usize, usize)>,
+    path_tiles: HashSet<(usize, usize)>,
 }
 
 // ---------------------------------------------------------------------------
@@ -538,7 +538,7 @@ pub(crate) fn walk_reachable_blocked(
 ///
 /// Tests each path tile by removing it and checking if BFS still reaches all nodes.
 #[cfg(test)]
-pub(super) fn find_chokepoints(result: &WalkResult) -> HashSet<(usize, usize)> {
+fn find_chokepoints(result: &WalkResult) -> HashSet<(usize, usize)> {
     if result.nodes.is_empty() {
         return HashSet::new();
     }

@@ -78,7 +78,7 @@ const FIXED_ENTRIES: &[SegmentEntry] = &[
 const LASER_COUNT: usize = 2;
 const FIREBALL_COUNT: usize = 9;
 
-pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R) {
+pub(crate) fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R) {
     rom.push_tag("bowser_castle");
 
     // 1. Lasers: pick 2 distinct positions from the 9-pool.

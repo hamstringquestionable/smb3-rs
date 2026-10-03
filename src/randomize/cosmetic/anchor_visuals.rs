@@ -117,7 +117,7 @@ const TBOX_INIT_PALETTE_OFFSET: usize = 0x62A7;
 const TBOX_NORM_FRAME_OFFSET: usize = 0x634A;
 const TBOX_LDA_ANCHOR_PATCH: [u8; 3] = [0xA9, ANCHOR, 0xEA];
 
-pub fn apply(rom: &mut Rom) {
+pub(crate) fn apply(rom: &mut Rom) {
     rom.write_range(INV_DRAW_ITEM_INDEX_OFFSET, &INV_DRAW_ITEM_INDEX_PATCH);
     rom.write_range(FS_ANCHOR_ITEM_GUARD, &ANCHOR_ITEM_GUARD_BODY);
     rom.write_range(INV_HILITE_INDEX_OFFSET, &INV_HILITE_INDEX_PATCH);

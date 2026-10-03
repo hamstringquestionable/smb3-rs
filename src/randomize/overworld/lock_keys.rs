@@ -158,7 +158,7 @@ pub(crate) const ENTRIES_RESERVED: usize = 112;
 /// — and every fortress keys exactly one lock, so 17 is also the floor. The
 /// reservation is deliberately larger so stage 2's fort deja vu does not have to
 /// relocate anything.
-pub const MAX_ENTRIES: usize = ENTRIES_RESERVED / ENTRY_LEN;
+const MAX_ENTRIES: usize = ENTRIES_RESERVED / ENTRY_LEN;
 
 /// `[key0, key1, t0, t1]`.
 const ENTRY_LEN: usize = 4;
@@ -288,21 +288,21 @@ pub(crate) struct LockTiles {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) struct LockRequest {
     /// The path tile the lock stands on, and so the tile it reveals.
-    pub path: u8,
+    path: u8,
     /// The palette page the lock draws in.
-    pub colour: LockColour,
+    colour: LockColour,
     /// The world number to show, as the player sees it (1-8).
-    pub digit: Option<usize>,
+    digit: Option<usize>,
     /// The away-family nub ([`away_family::MARK`]) in the lower-right corner,
     /// matching its fortress's. Never set together with `digit`: both claim
     /// that corner, and only some-hints asks for the nub.
-    pub marked: bool,
+    marked: bool,
 }
 
 /// Which page a lock draws in. Tan is page 1, `$54`/`$56`'s; sky is page 3,
 /// `$E4`'s. The CHR is identical — the page *is* the colour.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum LockColour {
+enum LockColour {
     Tan,
     Sky,
 }
@@ -847,15 +847,15 @@ const FORTRESS_FX: [u8; 484] = [
 /// is a *home* lock (animated where the player stands); a pair that straddles
 /// worlds is an *away* lock (a completion bit set into the packed store).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct LockEntry {
+pub(crate) struct LockEntry {
     /// The world the fortress stands in, 0-based. Where the player will be.
-    pub key_world: usize,
+    pub(crate) key_world: usize,
     /// The fortress's map cell.
-    pub key_pos: (usize, usize),
+    pub(crate) key_pos: (usize, usize),
     /// The world the lock stands in, 0-based.
-    pub target_world: usize,
+    pub(crate) target_world: usize,
     /// The lock's map cell.
-    pub target_pos: (usize, usize),
+    pub(crate) target_pos: (usize, usize),
 }
 
 impl LockEntry {
@@ -1301,16 +1301,16 @@ pub(crate) fn decode_entries(rom: &Rom) -> Vec<DecodedEntry> {
 #[cfg(test)]
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct DecodedEntry {
-    pub key_world: usize,
+    pub(crate) key_world: usize,
     /// The fortress's grid cell. Every row is distinct — the key is the player's
     /// raw map position, not a folded completion index.
-    pub key_pos: (usize, usize),
+    pub(crate) key_pos: (usize, usize),
     /// Whether the target is in another world, so its bit went to the packed
     /// store rather than to the effect.
-    pub away: bool,
+    pub(crate) away: bool,
     /// The target cell, for a home entry. An away entry stores a packed-store
     /// address instead, which does not decode back to a cell.
-    pub target: Option<(usize, usize)>,
+    pub(crate) target: Option<(usize, usize)>,
 }
 
 #[cfg(test)]

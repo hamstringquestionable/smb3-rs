@@ -321,19 +321,19 @@ impl WrittenOverworld {
 /// them untouched.
 #[derive(Copy, Clone, Default)]
 pub(crate) struct WriteFlags {
-    pub shuffle_hammer_bros: bool,
-    pub piranha: PiranhaMode,
+    pub(crate) shuffle_hammer_bros: bool,
+    pub(crate) piranha: PiranhaMode,
     /// Deja Vu: how many times one level may appear on the map.
-    pub deja_vu: DejaVuMode,
+    pub(crate) deja_vu: DejaVuMode,
     /// Deja Vu, fortress half: redeal the fortress deck in the same mode.
     /// Read only when `deja_vu` is on.
-    pub deja_vu_forts: bool,
+    pub(crate) deja_vu_forts: bool,
     /// Friendlier Levels: drop `FRIENDLIER_BLOCKED_LEVELS` from the level deck
     /// and `FRIENDLIER_BLOCKED_FORTS` from the fortress deck, refilling both
     /// with duplicates of what remains.
-    pub friendlier_levels: bool,
+    pub(crate) friendlier_levels: bool,
     /// Map hints. Resolved to `Off` without the world maze by
     /// `pipeline::stages::resolve` — every hint is a claim about another
     /// world, so there is nothing to say without one.
-    pub hints: crate::HintMode,
+    pub(crate) hints: crate::HintMode,
 }

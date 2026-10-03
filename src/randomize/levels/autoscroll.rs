@@ -52,7 +52,7 @@ pub const SPOILED_SEGMENT_RANGES: &[Range<usize>] =
 ///
 /// All patch data is applied as static byte writes to exact ROM offsets,
 /// guaranteeing identical results to the reference IPS patch.
-pub fn disable_autoscroll(rom: &mut Rom) {
+pub(crate) fn disable_autoscroll(rom: &mut Rom) {
     for &(offset, data) in PATCHES.iter() {
         rom.write_range(offset, data);
     }

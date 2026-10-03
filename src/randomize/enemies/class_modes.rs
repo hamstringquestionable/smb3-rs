@@ -3,16 +3,16 @@
 use super::*;
 
 pub(super) struct ClassModes {
-    pub(super) ground: EnemyMode,
+    ground: EnemyMode,
     pub(super) shell: EnemyMode,
-    pub(super) flying: EnemyMode,
+    flying: EnemyMode,
     pub(super) piranhas: EnemyMode,
-    pub(super) ghosts: EnemyMode,
-    pub(super) thwomps: EnemyMode,
-    pub(super) rotodiscs: EnemyMode,
-    pub(super) cannons: EnemyMode,
-    pub(super) water: EnemyMode,
-    pub(super) bros: EnemyMode,
+    ghosts: EnemyMode,
+    thwomps: EnemyMode,
+    rotodiscs: EnemyMode,
+    cannons: EnemyMode,
+    water: EnemyMode,
+    bros: EnemyMode,
 }
 
 /// Return the wild swap pool that would be in effect for the given Options
@@ -142,7 +142,7 @@ impl ClassPool {
 /// enemies (koopas are $4F/+5) from Boom-Boom rooms, and the shell-vs-boss
 /// interaction is wanted gameplay. Boom-Booms sit alone in their arenas in
 /// almost every level, so the CHR risk is accepted.
-pub(super) fn should_precommit(obj_id: u8, modes: &ClassModes) -> bool {
+fn should_precommit(obj_id: u8, modes: &ClassModes) -> bool {
     match find_class_pool(obj_id, modes) {
         None => !BOOMBOOM_IDS.contains(&obj_id),
         Some(ClassPool::Wild) => false,

@@ -26,7 +26,7 @@ pub(crate) const PLANT_SPRITE_ID: u8 = 0x07;
 /// bytes. Must run before the overworld builder: it frees the two grid
 /// positions for placement (`fixed_positions_for_world` reads sprite positions
 /// from the ROM) and makes the slots eligible for redistributed Hammer Bros.
-pub fn clear_vanilla_plants(rom: &mut Rom) {
+pub(crate) fn clear_vanilla_plants(rom: &mut Rom) {
     rom.push_tag("piranha_rooms/clear_vanilla");
     for &(world_idx, slot, _entry_idx) in MAP_OBJ_ENTRY_LINKS {
         rom_data::clear_map_sprite(rom, world_idx, slot);
@@ -65,7 +65,7 @@ const P2_DEFAULT_ITEM: u8 = 0x01;
 
 /// Clone both chest-room streams into free space with an `OBJ_TREASURESET`
 /// prepended, and repoint the plant levels' sub-area enemy pointers.
-pub fn install_treasure_sets(rom: &mut Rom) {
+pub(crate) fn install_treasure_sets(rom: &mut Rom) {
     rom.push_tag("piranha_rooms");
 
     for (src, hdr, cpu, dst, item, label) in [

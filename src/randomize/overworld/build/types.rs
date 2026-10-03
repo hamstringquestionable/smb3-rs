@@ -6,8 +6,8 @@ use super::*;
 /// Both fields are produced by earlier phases and never mutated downstream —
 /// bundling them avoids threading two parallel references through every helper.
 pub(crate) struct OverworldData<'a> {
-    pub pickup: &'a PickupResult,
-    pub catalog: &'a NodeCatalog,
+    pub(crate) pickup: &'a PickupResult,
+    pub(crate) catalog: &'a NodeCatalog,
 }
 
 /// Feature flags consumed by the build phase. Construct exhaustively in
@@ -15,20 +15,20 @@ pub(crate) struct OverworldData<'a> {
 /// `BuildFlags { ..Default::default() }` so adding a flag leaves them untouched.
 #[derive(Copy, Clone, Default)]
 pub(crate) struct BuildFlags {
-    pub shuffle_toad_houses: bool,
-    pub eights_are_wild: bool,
-    pub shuffle_hammer_bros: bool,
+    pub(crate) shuffle_toad_houses: bool,
+    pub(crate) eights_are_wild: bool,
+    pub(crate) shuffle_hammer_bros: bool,
     /// World-maze mode. The builder's own behaviour is unchanged by it with
     /// one exception: W8's wand-gate cell is held out of the lock passes,
     /// because the maze writes a gate over that cell after the build and a
     /// lock there would be two owners for one tile. Standard mode must not
     /// move, so this is a flag rather than an unconditional rule.
-    pub world_maze: bool,
+    pub(crate) world_maze: bool,
 }
 
 /// What kind of node occupies a grid slot.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum SlotKind {
+pub(crate) enum SlotKind {
     Level,
     Fortress,
     Pipe,
@@ -39,20 +39,20 @@ pub enum SlotKind {
 
 /// A single slot assignment on the grid.
 #[derive(Clone, Debug)]
-pub struct SlotAssignment {
-    pub pos: (usize, usize),
-    pub kind: SlotKind,
+pub(crate) struct SlotAssignment {
+    pub(crate) pos: (usize, usize),
+    pub(crate) kind: SlotKind,
     /// Which section (0-based) this slot belongs to.
-    pub section: usize,
+    pub(crate) section: usize,
     /// When true, the writer stamps a HANDTRAP tile (0xE6) at this slot
     /// instead of a level-number tile. Only set on `SlotKind::Level` slots.
-    pub is_hand_trap: bool,
+    pub(crate) is_hand_trap: bool,
     /// When true, the writer stamps a PIPE tile (0xBC) at this slot instead
     /// of a level-number tile. Only set on `SlotKind::Level` slots. The
     /// slot's level pointer entry is unchanged; pressing A on the pipe-look
     /// tile drops the player into the underlying level (uniform Map_Op = $10
     /// dispatch — no pipe-transit state).
-    pub is_troll_pipe: bool,
+    pub(crate) is_troll_pipe: bool,
     /// **Deal this exact pointer-table entry here.** The `(world_idx,
     /// entry_idx)` of a vanilla entry, set by a model pass before the writer
     /// runs; `None` on every slot in every mode that does not use it.
@@ -68,12 +68,12 @@ pub struct SlotAssignment {
     /// A pass whose *correctness* rests on the pin has to read that report:
     /// "the entry was dealt somewhere else" is not the same as "nothing
     /// happened", and the difference is what strands a player.
-    pub pin: Option<(usize, usize)>,
+    pub(crate) pin: Option<(usize, usize)>,
     /// Where the lock this fortress opens is, for the map-hint tiles. Only
     /// meaningful on `SlotKind::Fortress` slots, and only set by the world
     /// maze — outside it every fortress opens a lock in its own world, so
     /// there is nothing to say.
-    pub lock_hint: LockHint,
+    pub(crate) lock_hint: LockHint,
 }
 
 /// Where the lock a fortress opens is — the *fact*, with no tile byte in it.
@@ -84,7 +84,7 @@ pub struct SlotAssignment {
 /// becomes once the fortress is beaten are all the writer's business; deciding
 /// which fortress opens which lock is the maze's.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
-pub enum LockHint {
+pub(crate) enum LockHint {
     /// Nothing to say — the writer picks a fortress tile for variety.
     #[default]
     Unhinted,
@@ -135,21 +135,21 @@ pub(crate) fn stamp_slots(grid: &mut Grid, slots: &[SlotAssignment]) {
 /// own world, and `maze::stamp_into` rewrites this with the maze's pairing.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub(crate) struct FortRef {
-    pub world: usize,
-    pub section: usize,
+    pub(crate) world: usize,
+    pub(crate) section: usize,
 }
 
 /// A lock/bridge placed on a path tile.
 #[derive(Clone, Debug)]
 pub(crate) struct LockAssignment {
     /// Path tile position where the lock goes.
-    pub pos: (usize, usize),
+    pub(crate) pos: (usize, usize),
     /// The fortress that opens it, which need not be in this world.
-    pub fort: FortRef,
+    pub(crate) fort: FortRef,
     /// True if the world's target (airship/Bowser) is still reachable with
     /// this lock closed. These locks are safe for 1-F (secret exit doesn't
     /// trigger FX replacement).
-    pub secret_exit_safe: bool,
+    pub(crate) secret_exit_safe: bool,
 }
 
 /// A redistributed wandering Hammer Bro sprite decided in the build phase.
@@ -158,29 +158,29 @@ pub(crate) struct LockAssignment {
 #[derive(Clone, Debug)]
 pub(crate) struct HbSprite {
     /// Grid position where the roaming sprite spawns.
-    pub grid_pos: (usize, usize),
+    pub(crate) grid_pos: (usize, usize),
     /// Reward item granted for clearing the encounter (Global Item ID).
-    pub reward: u8,
+    pub(crate) reward: u8,
 }
 
 /// Complete build result for one world.
 #[derive(Clone, Debug)]
 pub(crate) struct BuiltWorld {
     #[allow(dead_code)] // read in tests
-    pub world_idx: usize,
+    pub(crate) world_idx: usize,
     /// The grid with pipes placed (but no forts/levels/locks stamped yet).
-    pub grid: Grid,
+    pub(crate) grid: Grid,
     /// Slot assignments for placeable nodes.
-    pub slots: Vec<SlotAssignment>,
+    pub(crate) slots: Vec<SlotAssignment>,
     /// Lock/bridge assignments.
-    pub locks: Vec<LockAssignment>,
+    pub(crate) locks: Vec<LockAssignment>,
     /// Number of sections (= number of fortresses in this world).
-    pub section_count: usize,
+    pub(crate) section_count: usize,
     /// Pipe pair positions placed in this world: Vec of (endpoint_a, endpoint_b).
-    pub pipe_pairs: Vec<TeleportEdge>,
+    pub(crate) pipe_pairs: Vec<TeleportEdge>,
     /// Redistributed wandering Hammer Bro sprites for this world. Empty when
     /// `shuffle_hammer_bros` is off (the writer keeps the vanilla sprites).
-    pub hb_sprites: Vec<HbSprite>,
+    pub(crate) hb_sprites: Vec<HbSprite>,
     /// Cells no phase was allowed to place on: the pinned Airship/Bowser (and
     /// Toad House, when unshuffled) tiles, plus every map-object sprite that
     /// keeps its vanilla home — the canoe, the W8 army, the W7 piranha plants,
@@ -190,22 +190,22 @@ pub(crate) struct BuiltWorld {
     /// world, and a telepad stamped on a sprite's home cell would start the
     /// game with a sprite parked on it (#274). Deriving it again needs the ROM
     /// and the catalog, neither of which the maze holds.
-    pub fixed: HashSet<Pos>,
+    pub(crate) fixed: HashSet<Pos>,
     /// The C1 floor this world was built to (see `deal_c1_floors`). Carried
     /// out of the build so the census can score each world against its OWN
     /// floor — a global comparison would read a dealt 11 as a failure and a
     /// dealt 17 as a pass it never had to earn.
     #[allow(dead_code)] // read in tests
-    pub c1_floor: u32,
+    pub(crate) c1_floor: u32,
 }
 
 /// Complete Phase 3 output.
 #[derive(Clone)]
 pub(crate) struct BuildResult {
-    pub worlds: Vec<BuiltWorld>,
+    pub(crate) worlds: Vec<BuiltWorld>,
     /// Fortress counts per world (decided in Step 0).
     #[allow(dead_code)] // read in tests
-    pub fort_counts: [usize; 8],
+    pub(crate) fort_counts: [usize; 8],
 }
 
 /// Output of [`prepare_capacities`]: the per-world grids the builder walks, the

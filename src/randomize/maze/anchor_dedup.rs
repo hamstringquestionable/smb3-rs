@@ -194,7 +194,7 @@ const LETTER: [u8; 15] = [
 ///
 /// `house_substitute` is what a Toad House hands over instead of a duplicate
 /// Anchor — see [`house`] for why that one cannot simply give nothing.
-pub fn apply(rom: &mut Rom, house_substitute: u8) {
+pub(crate) fn apply(rom: &mut Rom, house_substitute: u8) {
     debug_assert_ne!(house_substitute, ANCHOR, "substituting an Anchor for an Anchor");
     rom.push_tag("anchor_dedup");
 

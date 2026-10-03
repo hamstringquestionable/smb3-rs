@@ -140,7 +140,7 @@ static FIXES: [Fix; 2] = [
 ///
 /// A fix with any site that is not vanilla is left alone entirely, so this is
 /// a no-op on a ROM that already carries someone else's edit there.
-pub fn apply(rom: &mut Rom) {
+pub(crate) fn apply(rom: &mut Rom) {
     for fix in &FIXES {
         let intact =
             fix.edits.iter().all(|e| rom.read_range(e.offset, e.vanilla.len()) == e.vanilla);

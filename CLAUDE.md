@@ -60,6 +60,17 @@ When clippy flags new code:
 
 Never silence a lint by deleting the warning text or globally disabling — the goal is "every warning was considered," not "no warnings emitted."
 
+**Give every item the narrowest visibility its users need**: private if only
+its own module uses it, `pub(crate)` if other modules do, `pub` only for what
+`tests/`, `main.rs`, the bins or `lib.rs`'s re-exports reach from outside the
+crate. Prefer `pub(crate)` to `pub(super)` for anything another folder
+uses: `pub(super)` is relative, so moving a file silently changes its
+meaning. `unreachable_pub` (on in `lib.rs`) catches a `pub` item nothing
+outside can reach, but not a `pub` item on a public path that nobody outside
+uses, and not a `pub(crate)` that could be private, so new code still needs
+the judgment. A `pub` item is also exempt from the dead-code lint, which is
+how the 2026-10 narrowing pass found dead code hidden behind it.
+
 **The one crate-wide exception is `rustdoc::private_intra_doc_links`**, allowed
 in `lib.rs` with its reason. It guards published API docs, where private pages
 do not exist; these docs are read with `--document-private-items`, where a link

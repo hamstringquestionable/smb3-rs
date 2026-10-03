@@ -11,7 +11,7 @@ use super::types::{BuiltWorld, SlotKind, stamp_slots};
 
 /// What occupies a grid position visited along the required path.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum PathNodeKind {
+enum PathNodeKind {
     Start,
     Level,
     Fortress {
@@ -30,31 +30,31 @@ pub(crate) enum PathNodeKind {
 pub(crate) struct RequiredProgression {
     /// Distinct fortress slots the player must clear (excludes the objective
     /// itself if it happens to live at a fortress tile).
-    pub forts_required: usize,
+    pub(crate) forts_required: usize,
     /// Distinct level slots the player must clear (excludes the objective).
-    pub levels_required: usize,
+    pub(crate) levels_required: usize,
     /// True when the airship/Bowser was reachable (always true on well-formed
     /// maps — false here would indicate a builder bug).
-    pub reachable: bool,
+    pub(crate) reachable: bool,
     /// Ordered list of (position, kind) starting at start, ending at target.
-    pub path: Vec<((usize, usize), PathNodeKind)>,
+    path: Vec<((usize, usize), PathNodeKind)>,
     /// Locks crossed during traversal, in path order: (lock_path_tile, fort section).
-    pub locks_crossed: Vec<((usize, usize), usize)>,
+    locks_crossed: Vec<((usize, usize), usize)>,
     /// Which section's lock the hammer pre-opened, if any. `None` means the
     /// hammer was not used (or the analysis was no-hammer).
-    pub hammer_broke_section: Option<usize>,
+    hammer_broke_section: Option<usize>,
     /// Longest run of back-to-back forced *level* plays along the required
     /// route with no other activity between them. A fortress, pipe transit,
     /// hammer-bro fight, or lock-poof resets the run; plain walking and
     /// toad-house/spade panels (rarely entered) do not. This is the "levels
     /// stacked with nothing to do between them" linearity signal.
-    pub level_streak: usize,
+    pub(crate) level_streak: usize,
     /// Trailing level run reaching the objective — how many forced levels sit
     /// right in front of the airship/Bowser with no fort/pipe/HB/lock between
     /// the run and the goal. `0` means an action (or lock) gates the final
     /// approach. A high value is the "clear path, just 2+ levels on the goal"
     /// complaint.
-    pub goal_stack: usize,
+    pub(crate) goal_stack: usize,
 }
 
 /// Compute the minimum number of fortress/level entries the player must clear
@@ -91,7 +91,7 @@ pub(crate) fn analyze_required_progression(
 
 /// Inner Dijkstra: returns the minimum-cost progression with `hammered_section`
 /// pre-opened (if `Some`) or no locks pre-opened (`None`).
-pub(super) fn analyze_with_pre_opened(
+fn analyze_with_pre_opened(
     built: &BuiltWorld,
     hammered_section: Option<usize>,
 ) -> RequiredProgression {
@@ -104,10 +104,7 @@ pub(super) fn analyze_with_pre_opened(
 
 /// Same as `analyze_with_pre_opened` but takes an arbitrary opened-section
 /// mask. Useful for the all-locks-open sanity check in the dump.
-pub(super) fn analyze_with_pre_opened_mask(
-    built: &BuiltWorld,
-    initial_mask: u32,
-) -> RequiredProgression {
+fn analyze_with_pre_opened_mask(built: &BuiltWorld, initial_mask: u32) -> RequiredProgression {
     // 1. Stamp slots onto a working grid so walk_map sees them as nodes.
     //    Skip locks — we model them as conditional edges instead.
     let mut grid = built.grid.clone();
@@ -647,7 +644,7 @@ pub(crate) fn dump_required_progression(built: &BuiltWorld) {
 /// Set of directed teleport edges (pipe-pair / canoe-pair, both orientations).
 type EdgeSet = HashSet<((usize, usize), (usize, usize))>;
 
-pub(super) fn print_progression(
+fn print_progression(
     label: &str,
     p: &RequiredProgression,
     pipe_set: &EdgeSet,

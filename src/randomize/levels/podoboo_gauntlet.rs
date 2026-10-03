@@ -87,7 +87,7 @@ const VANILLA: &[SegmentEntry] = &[
     SegmentEntry { obj_id: 0x3F, x: 0x7E, y: 0x17 }, // DryBones
 ];
 
-pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R) {
+pub(crate) fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R) {
     rom.push_tag("podoboo_gauntlet");
 
     // Walk vanilla left-to-right by X. For each entry: if it's a podoboo,

@@ -157,7 +157,7 @@ const MAP_WARP_ROUTINE: [u8; 162] = [
 ];
 
 /// Install the 2-player Start+Select "warp to partner" escape hatch.
-pub fn apply_map_warp(rom: &mut Rom) {
+pub(crate) fn apply_map_warp(rom: &mut Rom) {
     rom.write_range(FS_MAP_WARP, &MAP_WARP_ROUTINE);
 
     // Replace `LDA Controller1Press / ORA Controller2Press / AND #$80` (6 bytes)

@@ -143,47 +143,47 @@ pub(crate) use capacity::{
 // packs against it at build time, in every build, since the world maze became
 // a real option rather than a testrom-only experiment.
 pub(crate) use capacity::is_completion_unsafe;
-pub(crate) use route_choice::{
+use route_choice::{
     C1_FLOOR, COST_LEVEL, DEFAULT_SLACK, RouteChoice, SHAPING_SLACK, analyze_route_choice,
 };
 pub(crate) use types::{
     BuildFlags, BuildResult, BuiltWorld, CapacityPrep, FortRef, LockAssignment, OverworldData,
     stamp_slots,
 };
-pub use {types::LockHint, types::SlotAssignment, types::SlotKind};
+pub(crate) use {types::LockHint, types::SlotAssignment, types::SlotKind};
 
 // The phase set and its harness surface.
-pub(crate) use connectivity::Connectivity;
-pub(crate) use forts::Forts;
-pub(crate) use hammer_bros::HammerBroFill;
-pub(crate) use levels::Levels;
+use connectivity::Connectivity;
+use forts::Forts;
+use hammer_bros::HammerBroFill;
+use levels::Levels;
 pub(crate) use locks::{Locks, SECRET_EXIT_SLOTS_NEEDED, ensure_secret_exit_safe};
-pub(crate) use metrics::measure_world;
-pub(crate) use shaping::Shaping;
-pub(crate) use sources::{allot_budgets, from_pickup};
-pub(crate) use spare_pipes::SparePipes;
+use metrics::measure_world;
+use shaping::Shaping;
+use sources::{allot_budgets, from_pickup};
+use spare_pipes::SparePipes;
 pub(crate) use state::{Phase, PhaseReport, WorldState, row78_partner, run_schedule};
 
 // Test-only measurement surface: the census/probe harness in the test
 // modules and the diagnostic dumps.
 #[cfg(test)]
-pub(crate) use capacity::{C1_FLOOR_BAND, roll_bridges_out};
+use capacity::{C1_FLOOR_BAND, roll_bridges_out};
 #[cfg(test)]
-pub(crate) use progression::{
+use progression::{
     PipeClass, analyze_required_progression, classify_pipes, dump_required_progression,
     hammer_skip, island_count, level_adjacency_pairs, start_goal_express_pipe,
 };
 #[cfg(test)]
-pub(crate) use route_choice::dump_route_choice;
+use route_choice::dump_route_choice;
 pub(crate) use sources::from_built;
 #[cfg(test)]
-pub(crate) use sources::from_vanilla;
+use sources::from_vanilla;
 
 /// Pipe-web redeals allowed beyond the first attempt when the finished
 /// world ends below the C1 floor. Retries fire only on the few percent of
 /// worlds that finish sub-floor, so the cost is a handful of extra shaped
 /// runs per hundred seeds — census-watched, like everything else.
-pub(crate) const WEB_RETRIES: usize = 4;
+const WEB_RETRIES: usize = 4;
 
 /// The full shaped pipeline for one world, with pipe-web redeals — the
 /// answer to the sub-floor tail (2026-07-31 diagnosis). A world that
@@ -199,7 +199,7 @@ pub(crate) const WEB_RETRIES: usize = 4;
 /// screen enforces the full fort roster (a removed fort is deleted
 /// content). If every attempt fails, the best by (full forts, C1, routes
 /// in band) is kept.
-pub(crate) fn run_shaped_with_web_retries(state: &mut WorldState, rng: &mut dyn RngCore) {
+fn run_shaped_with_web_retries(state: &mut WorldState, rng: &mut dyn RngCore) {
     run_schedule(state, &[&Connectivity, &Levels, &Forts], rng);
     let placement = state.snapshot();
     run_schedule(state, &[&Locks, &Shaping, &SparePipes], rng);

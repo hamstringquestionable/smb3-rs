@@ -190,24 +190,24 @@ pub(super) const THWOMPS: &[u8] = &[
 // thwomp variants, still works). The filter is additive-only: it blocks
 // introducing a new hazard category, never strips an existing one.
 
-pub(super) const HAZARD_LAVA_LOTUS: &[u8] = &[0x67]; // OBJ_LAVALOTUS (fire arcs)
-pub(super) const HAZARD_PATOOIE: &[u8] = &[
+const HAZARD_LAVA_LOTUS: &[u8] = &[0x67]; // OBJ_LAVALOTUS (fire arcs)
+const HAZARD_PATOOIE: &[u8] = &[
     0x2A, // OBJ_PATOOIE (spits a spike ball up)
     0x46, // OBJ_PIRANHASPIKEBALL (Ptooie-style spike-ball launcher)
 ];
-pub(super) const HAZARD_NIPPER: &[u8] = &[
+const HAZARD_NIPPER: &[u8] = &[
     0x33, // OBJ_NIPPER
     0x39, // OBJ_NIPPERHOPPING
     0x3D, // OBJ_NIPPERFIREBREATHER
 ];
-pub(super) const HAZARD_HOTFOOT: &[u8] = &[
+const HAZARD_HOTFOOT: &[u8] = &[
     0x30, // OBJ_HOTFOOT_SHY
     0x45, // OBJ_HOTFOOT
 ];
 
 /// All hazard categories. THWOMPS and BRO_ENEMIES are reused as-is (the bros
 /// throw continuous projectiles, unavoidable in a forced spot).
-pub(super) const HAZARD_CATEGORIES: &[&[u8]] =
+const HAZARD_CATEGORIES: &[&[u8]] =
     &[THWOMPS, HAZARD_LAVA_LOTUS, HAZARD_PATOOIE, HAZARD_NIPPER, HAZARD_HOTFOOT, BRO_ENEMIES];
 
 /// The hazard category `id` belongs to (its index in [`HAZARD_CATEGORIES`]), or

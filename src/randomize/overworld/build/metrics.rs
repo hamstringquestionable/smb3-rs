@@ -13,28 +13,28 @@ use super::*;
 #[allow(dead_code)]
 pub(crate) struct WorldMeasure {
     /// Goal reachable at all (any lock state).
-    pub reachable: bool,
+    pub(crate) reachable: bool,
     /// Cost of the cheapest route ("C1", in scorer points: level 3 / fort 5 /
     /// pipe 1 / rock 8).
-    pub c1: u32,
+    pub(crate) c1: u32,
     /// Distinct non-dominated routes within the choice band of the cheapest.
     /// 1 = linear, 2+ = the player has a real decision.
-    pub routes_in_band: usize,
+    pub(crate) routes_in_band: usize,
     /// Dominated detour routes (pure supersets of a kept route) — not
     /// choices, but the raw material shaping passes work on.
-    pub dominated_detours: usize,
+    pub(crate) dominated_detours: usize,
     /// Mean count of levels an alternative route plays that the cheapest
     /// route does not — the "how different is the choice" number. 0.0 when
     /// linear.
-    pub mean_exclusive_levels: f64,
+    pub(crate) mean_exclusive_levels: f64,
     /// Goal reachable from start with EVERY lock closed — the world has no
     /// door-and-key moment on its trunk. NOT a problem by decree (2026-07-30):
     /// 5 of 8 vanilla worlds are goal-open, locks are milestones there, and
     /// an open goal behind a C1 ≥ floor route is fine. Only CHEAPNESS is a
     /// defect; this stays a census column, never a target.
-    pub goal_open: bool,
+    pub(crate) goal_open: bool,
     /// The full scorer result, for detailed printing/inspection.
-    pub rc: RouteChoice,
+    pub(crate) rc: RouteChoice,
 }
 
 /// Measure one world.

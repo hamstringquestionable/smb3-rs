@@ -93,7 +93,7 @@ const CANOE_BACKUP_ROUTINE: [u8; 66] = [
 /// data under the canoe is permanently corrupted.
 ///
 /// Based on "SMB3 - Canoe Softlock Fixes (Open World compatible).ips".
-pub fn fix_canoe_softlock(rom: &mut Rom) {
+pub(crate) fn fix_canoe_softlock(rom: &mut Rom) {
     // Record 1: hook at PRG010 CPU $C6EA → JSR $BD0C (FS_CANOE_BACKUP Part B,
     // the map-data restore), NOP-padded over the displaced 5 bytes.
     let [jsr, lo, hi] = jsr_into_bank(11, FS_CANOE_BACKUP + CANOE_RESTORE_OFFSET);

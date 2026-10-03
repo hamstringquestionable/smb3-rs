@@ -6,19 +6,19 @@
 pub mod rom_data;
 
 // Palettes, the title screen, credits, king quotes: how the game looks and reads.
-pub mod cosmetic;
+pub(crate) mod cosmetic;
 // Enemy swaps and protections, plus enemy and boss behaviour patches.
 pub mod enemies;
 // Item tables, ? block contents, and power-up behaviour.
-pub mod items;
+pub(crate) mod items;
 // What is inside a level: room shuffles, treasure rooms, composed sub-areas.
 pub mod levels;
 // World maze: the generator (eight `WorldState`s, the cross-world edge set,
 // the winnability fixpoint, the shaping passes) and everything the mode
 // installs in the ROM. See `docs/world_maze_design.md`.
-pub mod maze;
+pub(crate) mod maze;
 // The world maps: the builder pipeline (catalog -> pickup -> build -> write),
 // locks, world order, and the airship shuffle.
-pub mod overworld;
+pub(crate) mod overworld;
 // Quality-of-life and always-on engine fixes, grouped by subject.
-pub mod qol;
+pub(crate) mod qol;

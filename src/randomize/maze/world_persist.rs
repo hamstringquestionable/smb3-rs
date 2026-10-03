@@ -649,15 +649,15 @@ const PAD_BOX_DONE: [u8; 22] = [
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Telepad {
     /// The world the pad stands in, 0-based.
-    pub world: u8,
+    pub(crate) world: u8,
     /// The destination world, 0-based.
-    pub dest_world: u8,
+    pub(crate) dest_world: u8,
     /// Where to arrive on that world's map, as `(grid_row, grid_col)`.
-    pub dest_pos: (usize, usize),
+    pub(crate) dest_pos: (usize, usize),
     /// Where the pad stands, as `(grid_row, grid_col)`. **Load-bearing**: it is
     /// the key the routine matches the player's live position against, which is
     /// what lets one world hold several pads.
-    pub src_pos: (usize, usize),
+    pub(crate) src_pos: (usize, usize),
 }
 
 /// Install the telepads: the enter hook, its key tables, and the hook site.

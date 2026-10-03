@@ -159,7 +159,7 @@ fn sanitize_exit_dir(byte1: u8) -> u8 {
 /// Randomly permute which interior each antechamber level's entry pipe
 /// leads to. Identity assignments are allowed (a level may keep its own
 /// interior) and skip their writes entirely.
-pub fn shuffle(
+pub(crate) fn shuffle(
     rom: &mut Rom,
     rng: &mut ChaCha8Rng,
     include_beta_stages: bool,

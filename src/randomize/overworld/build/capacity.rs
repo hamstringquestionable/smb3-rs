@@ -49,10 +49,7 @@ pub(crate) fn bfs_ordered(
 /// Returns true if placing a completable tile at `pos` would create a
 /// row 7/8 completion-bit collision. This is a hard game engine constraint
 /// (shared bit $01) that cannot be relaxed.
-pub(super) fn is_row78_conflict(
-    pos: (usize, usize),
-    completable: &HashSet<(usize, usize)>,
-) -> bool {
+fn is_row78_conflict(pos: (usize, usize), completable: &HashSet<(usize, usize)>) -> bool {
     let (r, c) = pos;
     if r == 7 {
         completable.contains(&(8, c))
@@ -69,15 +66,12 @@ pub(super) fn is_row78_conflict(
 /// panel parked on the bridge deflates it — a free item and a free life are
 /// the wrong beat there. Only promotion is banned: levels, fortresses, locks
 /// and pipes still place across the screen as usual.
-pub(super) fn is_w8_valley(world_idx: usize, pos: (usize, usize)) -> bool {
+fn is_w8_valley(world_idx: usize, pos: (usize, usize)) -> bool {
     world_idx == rom_data::W8_IDX && pos.1 / 16 == 3
 }
 
 /// All blank placement slots on a grid, minus fixed positions.
-pub(super) fn find_blank_slots(
-    grid: &Grid,
-    fixed_positions: &HashSet<(usize, usize)>,
-) -> Vec<(usize, usize)> {
+fn find_blank_slots(grid: &Grid, fixed_positions: &HashSet<(usize, usize)>) -> Vec<(usize, usize)> {
     let mut blanks = Vec::new();
     for r in 0..grid.rows() {
         for c in 0..grid.cols {
@@ -141,10 +135,7 @@ pub(crate) fn is_completion_unsafe(tile: u8) -> bool {
 /// completion-check routine — the input to `is_row78_conflict`. This covers
 /// both completion-unsafe grid tiles and placed Level/Fortress/BonusGame slots
 /// (which will be stamped as completion-unsafe tiles by the writer).
-pub(super) fn completable_positions(
-    grid: &Grid,
-    slots: &[SlotAssignment],
-) -> HashSet<(usize, usize)> {
+fn completable_positions(grid: &Grid, slots: &[SlotAssignment]) -> HashSet<(usize, usize)> {
     let mut set: HashSet<(usize, usize)> = HashSet::new();
     for r in 0..grid.rows() {
         for c in 0..grid.cols {
@@ -566,7 +557,7 @@ pub(crate) fn roll_bridges_out<R: Rng>(rng: &mut R) -> usize {
 }
 
 /// Largest number of Hammer Bro sprites placed in a single world.
-pub(super) const MAX_HB_PER_WORLD: usize = 3;
+const MAX_HB_PER_WORLD: usize = 3;
 
 /// Map-object slots kept empty in every world so a level-triggered white
 /// mushroom house (and similar runtime bonus spawns) has somewhere to appear.
@@ -597,17 +588,13 @@ pub(super) const W8_HB_CAP: usize = 1;
 /// Maze-only, deliberately. Standard mode's overworld must not move, and this
 /// is a flag rather than an unconditional rule for the same reason W8's
 /// wand-gate cell is (see [`BuildFlags::world_maze`](super::BuildFlags)).
-pub(super) const W8_HB_CAP_MAZE: usize = 0;
+const W8_HB_CAP_MAZE: usize = 0;
 
 /// Distribute `total` Hammer Bro sprites across the 8 worlds: each world gets
 /// 1-3, bounded by `caps` (free map-object slots and available HammerBro
 /// tiles). Seeds every world with one (capacity permitting), then hands out the
 /// rest at random — mirrors [`redistribute_fortresses`].
-pub(super) fn distribute_hb_sprites<R: Rng>(
-    caps: &[usize; 8],
-    total: usize,
-    rng: &mut R,
-) -> [usize; 8] {
+fn distribute_hb_sprites<R: Rng>(caps: &[usize; 8], total: usize, rng: &mut R) -> [usize; 8] {
     let mut counts = [0usize; 8];
     for wi in 0..8 {
         counts[wi] = caps[wi].min(1);

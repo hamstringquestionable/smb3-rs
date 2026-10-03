@@ -25,38 +25,38 @@ use crate::randomize::rom_data::{self, FxSlot, Grid, VALID_BLANK_TILES, VALID_HO
 #[derive(Clone, Debug)]
 pub(crate) struct PoolEntry {
     /// Index into `NodeCatalog.entries`.
-    pub catalog_idx: usize,
+    pub(crate) catalog_idx: usize,
     /// Vanilla world_idx (or `usize::MAX` for synthetic beta entries).
     #[allow(dead_code)] // read in tests
-    pub world_idx: usize,
+    pub(crate) world_idx: usize,
     /// Vanilla pointer table slot.
-    pub entry_idx: usize,
+    pub(crate) entry_idx: usize,
 }
 
 /// One world's cleared grid plus tracking info for the Build phase.
 #[derive(Clone)]
 pub(crate) struct ClearedWorld {
     #[allow(dead_code)] // read in tests
-    pub world_idx: usize,
+    world_idx: usize,
     /// Grid with FX gaps pre-opened and pool entries blanked to `TILE_EMPTY_NODE`.
-    pub grid: Grid,
+    pub(crate) grid: Grid,
     /// Vanilla grid positions of the entries that were picked up (parallel to `pool_indices`).
     #[allow(dead_code)] // read in tests
-    pub pickup_positions: Vec<(usize, usize)>,
+    pickup_positions: Vec<(usize, usize)>,
     /// Indices into `PickupResult.pool` for this world's picked-up entries.
-    pub pool_indices: Vec<usize>,
+    pub(crate) pool_indices: Vec<usize>,
 }
 
 /// Complete Phase 2 output: cleared grids + global shuffle pool.
 pub(crate) struct PickupResult {
     /// Per-world cleared grids (indexed 0..8).
-    pub worlds: Vec<ClearedWorld>,
+    pub(crate) worlds: Vec<ClearedWorld>,
     /// Global pool of all level-like entries across all worlds.
-    pub pool: Vec<PoolEntry>,
+    pub(crate) pool: Vec<PoolEntry>,
     /// Reward items picked up from the wandering Hammer Bro sprites (Global Item
     /// IDs), to be reattached when the encounters are redistributed. Empty when
     /// `shuffle_hammer_bros` is off (the sprites stay at vanilla positions).
-    pub hb_reward_pool: Vec<u8>,
+    pub(crate) hb_reward_pool: Vec<u8>,
 }
 
 /// Per-feature flags controlling which catalog entry kinds the pickup phase
@@ -64,9 +64,9 @@ pub(crate) struct PickupResult {
 /// when false, those entries stay at their vanilla positions.
 #[derive(Copy, Clone, Default)]
 pub(crate) struct PickupFlags {
-    pub shuffle_spade_games: bool,
-    pub shuffle_toad_houses: bool,
-    pub shuffle_hammer_bros: bool,
+    pub(crate) shuffle_spade_games: bool,
+    pub(crate) shuffle_toad_houses: bool,
+    pub(crate) shuffle_hammer_bros: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -113,7 +113,7 @@ fn default_pickup_pred(entry: &CatalogEntry, flags: PickupFlags) -> bool {
 ///
 /// The `pred` hook exists only for the `#[ignore]`d `test_dump_cleared_roms`
 /// diagnostic dump; production always passes `default_pickup_pred`.
-pub(super) fn pick_up_filtered(
+fn pick_up_filtered(
     rom: &Rom,
     catalog: &NodeCatalog,
     flags: PickupFlags,

@@ -155,7 +155,7 @@ fn scan_setup_hooked() -> [u8; 4] {
 /// from the anchor's inventory handler, and must **not** have the free A-press
 /// summon alongside it — that would call the boat over for nothing and open
 /// the gate's wall.
-pub fn write_canoe_summon_routine(rom: &mut Rom) {
+pub(crate) fn write_canoe_summon_routine(rom: &mut Rom) {
     rom.write_range(FS_CANOE_SUMMON, &CANOE_SUMMON_ROUTINE);
 }
 
@@ -164,7 +164,7 @@ pub fn write_canoe_summon_routine(rom: &mut Rom) {
 /// Idempotent, and asserts the site is in one of the two states this module
 /// puts it in — anything else means another patch has claimed `$CEC5` and
 /// silently undoing it would be worse than stopping.
-pub fn remove_canoe_summon_hook(rom: &mut Rom) {
+pub(crate) fn remove_canoe_summon_hook(rom: &mut Rom) {
     let here = rom.read_range(SCAN_SETUP_HOOK, 4);
     assert!(
         here == SCAN_SETUP_VANILLA || here == scan_setup_hooked(),
@@ -180,12 +180,12 @@ pub fn remove_canoe_summon_hook(rom: &mut Rom) {
 /// tile scan so a dock answers a bare A press. Lives here so a caller asking
 /// the question does not re-derive the hook site.
 #[cfg(test)]
-pub fn a_press_hook_installed(rom: &Rom) -> bool {
+pub(crate) fn a_press_hook_installed(rom: &Rom) -> bool {
     rom.read_range(SCAN_SETUP_HOOK, 4) == scan_setup_hooked()
 }
 
 /// Install the "call the boat" summon: A on a dock warps the canoe alongside.
-pub fn apply_canoe_summon(rom: &mut Rom) {
+pub(crate) fn apply_canoe_summon(rom: &mut Rom) {
     write_canoe_summon_routine(rom);
 
     // Replace `LDA World_Map_Tile / LDY #$1A` (4 bytes) with `JSR canoe_summon`

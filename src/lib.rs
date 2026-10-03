@@ -15,6 +15,10 @@
 // with `--document-private-items` (CI does exactly that), and there a link to a
 // `pub(crate)` item resolves. Every other rustdoc lint stays fatal in CI.
 #![allow(rustdoc::private_intra_doc_links)]
+// A `pub` item nothing outside the crate can reach should say `pub(crate)`.
+// CI's `-D warnings` makes this fatal. It cannot see a `pub` item that IS
+// reachable but unused outside, nor a `pub(crate)` that could be private.
+#![warn(unreachable_pub)]
 
 pub mod ips;
 pub mod pipeline;

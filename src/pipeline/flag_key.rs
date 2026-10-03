@@ -34,7 +34,7 @@ use modular_bitfield::prelude::*;
 
 pub(super) const FLAG_KEY_VERSION: u8 = 29;
 
-pub(super) const FLAG_KEY_PREFIX: &str = "SMB3R-";
+const FLAG_KEY_PREFIX: &str = "SMB3R-";
 
 /// Salt mixed into the seed to derive the substream that resolves `Maybe`
 /// flags. Keeping it on a separate stream means turning a flag to `Maybe`
@@ -311,8 +311,11 @@ pub fn flag_key_fields() -> Vec<String> {
 /// uses the checked getters and encode uses the builders; the rest are
 /// unreachable by construction. The attribute has to sit on a module because it
 /// doesn't survive onto the generated `impl` from the struct.
+///
+/// `unreachable_pub` is allowed for the same reason: the macro gives its
+/// generated items `pub` visibility regardless of where the struct lives.
 mod payload {
-    #![allow(dead_code)]
+    #![allow(dead_code, unreachable_pub)]
     use super::*;
 
     /// The flag-key payload.
@@ -755,7 +758,7 @@ impl Options {
     }
 
     /// Encode options into the raw key bytes: version, checksum, payload.
-    pub fn to_flag_bytes(&self) -> Vec<u8> {
+    pub(crate) fn to_flag_bytes(&self) -> Vec<u8> {
         let payload = self.to_flag_bits().into_bytes();
         // Trailing zero bytes carry nothing, so they are not transmitted. That
         // is what decouples the format's capacity from the key's length: the

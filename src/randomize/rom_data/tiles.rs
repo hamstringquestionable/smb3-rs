@@ -91,7 +91,7 @@ pub(crate) fn is_gap_tile(tile: u8) -> bool {
 /// one. Kept for completeness of the classification; do not expect a change to
 /// it to move any output. (Verified: dropping it left all 20 baseline seeds
 /// byte-identical.)
-pub(crate) fn is_vertical_path(tile: u8) -> bool {
+fn is_vertical_path(tile: u8) -> bool {
     matches!(tile, 0x46 | 0xAA | 0xAB | 0xB0 | 0xB1 | 0xDB | 0xBA)
 }
 
@@ -140,10 +140,10 @@ pub(crate) fn path_for_gap_tile(tile: u8) -> Option<u8> {
 
 /// Lowest numbered-level tile. Level number = `tile - 2`.
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) const NUMBERED_TILE_LO: u8 = 0x03;
+const NUMBERED_TILE_LO: u8 = 0x03;
 /// Highest numbered-level tile.
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) const NUMBERED_TILE_HI: u8 = 0x0F;
+const NUMBERED_TILE_HI: u8 = 0x0F;
 
 /// A numbered action level (`0x03..=0x0F`, level number = `tile - 2`).
 #[cfg(not(target_arch = "wasm32"))]

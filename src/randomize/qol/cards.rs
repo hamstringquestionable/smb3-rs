@@ -37,7 +37,7 @@ const CARD_CLEAR_GUARD: usize = 0x12090; // BEQ at $A080
 /// Patch one-of-each card collection to skip the animation entirely.
 /// Cards are cleared instantly and the level ends as if < 3 cards — a speed bonus.
 /// Other mixed combos and matching triples still play the normal animation.
-pub fn card_speed_clear(rom: &mut Rom) {
+pub(crate) fn card_speed_clear(rom: &mut Rom) {
     // Hook: replace 5 bytes at $BCD8 with JMP $FFE0; NOP; NOP
     #[rustfmt::skip]
     rom.write_range(CARD_HOOK, &[

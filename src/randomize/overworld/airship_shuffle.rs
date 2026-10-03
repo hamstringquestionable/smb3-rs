@@ -12,7 +12,7 @@ use crate::randomize::rom_data::AIRSHIP_ENTRIES;
 /// airship pointer entries with world-specific redesigned data after
 /// this shuffle runs, so airship shuffle only has a visible effect
 /// when autoscroll is kept enabled.
-pub fn randomize_airships<R: Rng>(rom: &mut Rom, rng: &mut R) {
+pub(crate) fn randomize_airships<R: Rng>(rom: &mut Rom, rng: &mut R) {
     level_helpers::shuffle_entries(rom, rng, AIRSHIP_ENTRIES);
 }
 

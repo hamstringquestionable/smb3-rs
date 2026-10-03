@@ -124,7 +124,7 @@ pub(crate) fn layout_file_offset(cpu_addr: u16, tileset: u8) -> Option<usize> {
 }
 
 /// ROM file offset of PRG006 enemy/object data base (CPU $C000).
-pub(crate) const ENEMY_DATA_FILE_BASE: usize = 0x0C010;
+const ENEMY_DATA_FILE_BASE: usize = 0x0C010;
 
 /// Translate a CPU enemy-data pointer (`$C000..=$E00D`) to its absolute file
 /// offset.
@@ -331,7 +331,7 @@ pub(crate) fn write_map_sprite(
 }
 
 /// True if a map-object slot id is a Hammer Bro sprite (0x03–0x06).
-pub(crate) fn is_hb_sprite_id(id: u8) -> bool {
+fn is_hb_sprite_id(id: u8) -> bool {
     (0x03..=0x06).contains(&id)
 }
 
@@ -405,7 +405,7 @@ pub(crate) fn map_obj_reward_offset(world_idx: usize, slot: usize) -> usize {
 /// always holds a fixed non-HB marker (`id 0x01`) and is reserved; slot 1
 /// (the airship sprite slot) is reserved in W1-W7 but usable in W8, which has
 /// no airship.
-pub(crate) fn first_usable_map_obj_slot(world_idx: usize) -> usize {
+fn first_usable_map_obj_slot(world_idx: usize) -> usize {
     if world_idx == W8_IDX { 1 } else { 2 }
 }
 

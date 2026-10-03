@@ -40,14 +40,14 @@ pub(super) struct Island {
     // Reason: only the anatomy pinning test (cfg(test)) reads the size
     // today; it stays on the struct as the island's defining datum.
     #[allow(dead_code)]
-    pub size: usize,
-    pub role: IslandRole,
+    pub(crate) size: usize,
+    pub(crate) role: IslandRole,
 }
 
 impl Island {
     /// Spread-mouths preference applies: traversal should cross the
     /// island instead of entering and leaving through the same corner.
-    pub(super) fn wants_spread_mouths(&self) -> bool {
+    fn wants_spread_mouths(&self) -> bool {
         matches!(self.role, IslandRole::Routing | IslandRole::Corridor | IslandRole::Final)
     }
 }
@@ -154,11 +154,7 @@ pub(super) fn classify(
 }
 
 /// Existing pipe mouths on island `id`.
-pub(super) fn island_mouths(
-    pocket: &HashMap<Pos, usize>,
-    pipe_pairs: &[TeleportEdge],
-    id: usize,
-) -> Vec<Pos> {
+fn island_mouths(pocket: &HashMap<Pos, usize>, pipe_pairs: &[TeleportEdge], id: usize) -> Vec<Pos> {
     pipe_pairs.iter().flat_map(|&(a, b)| [a, b]).filter(|p| pocket.get(p) == Some(&id)).collect()
 }
 

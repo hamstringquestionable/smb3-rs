@@ -33,7 +33,7 @@ fn attr3_offset(id: u8) -> usize {
     0x10 + (group + 1) * 0x2000 + 0x120 + id as usize % 0x24
 }
 
-pub fn apply(rom: &mut Rom) {
+pub(crate) fn apply(rom: &mut Rom) {
     for id in IDS {
         let off = attr3_offset(id);
         let v = rom.read_byte(off);

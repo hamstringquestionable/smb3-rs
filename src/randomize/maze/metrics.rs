@@ -27,16 +27,16 @@ use crate::randomize::overworld::build::SlotKind;
 #[derive(Clone, Debug, Default)]
 pub(crate) struct CompletionCost {
     /// Levels and fortresses beaten on the way to the castle.
-    pub content: usize,
+    pub(crate) content: usize,
     /// How many of those were fortresses — the keys, as opposed to the road.
-    pub forts: usize,
+    pub(crate) forts: usize,
     /// Fortresses the run had to beat that were NOT on the direct route: the
     /// detours the lock/key structure forced.
-    pub detours: usize,
+    pub(crate) detours: usize,
     /// Airships the run had to clear purely to satisfy the wand gate.
-    pub wand_detours: usize,
+    pub(crate) wand_detours: usize,
     /// False when the castle was never reached.
-    pub reached: bool,
+    pub(crate) reached: bool,
 }
 
 /// Simulate a player who beats exactly what they must.

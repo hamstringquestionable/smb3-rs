@@ -156,7 +156,7 @@ const MENU_MUSIC_TRACKS: [u8; 16] = [
 /// Pick a deterministic menu music track from the seed. Independent of
 /// `compute_hash` so changes to the music list don't shift seed-verification
 /// icons.
-pub(super) fn pick_menu_music(seed: u64) -> u8 {
+fn pick_menu_music(seed: u64) -> u8 {
     let h = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15).wrapping_add(0xBF58_476D_1CE4_E5B9);
     MENU_MUSIC_TRACKS[(h % MENU_MUSIC_TRACKS.len() as u64) as usize]
 }
@@ -222,20 +222,20 @@ fn compute_hash(seed: u64, options: &Options) -> [usize; HASH_LENGTH] {
 /// whether the right half is the left half mirrored.
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct SeedHashIcon {
-    pub tiles: [usize; 4],
-    pub flip_right: bool,
+struct SeedHashIcon {
+    tiles: [usize; 4],
+    flip_right: bool,
 }
 
 /// The five title-screen hash icons for a seed + options, resolved against a
 /// specific ROM's title-screen CHR banks and palette. Lets the web app draw
 /// the icons the player is about to see, from their own ROM's graphics.
 #[derive(serde::Serialize)]
-pub struct SeedHashPreview {
-    pub icons: Vec<SeedHashIcon>,
+pub(crate) struct SeedHashPreview {
+    icons: Vec<SeedHashIcon>,
     /// NES color indices of the chosen sprite palette. Entry 0 is the
     /// universal backdrop and renders transparent.
-    pub palette: [u8; 4],
+    palette: [u8; 4],
 }
 
 /// Resolve an 8x16-mode OAM tile ID to its absolute CHR ROM tile index.
@@ -247,7 +247,10 @@ fn chr_tile_index(tile: u8) -> usize {
 
 /// Describe the hash `write_seed_hash` would stamp for `seed` + `options`,
 /// without writing anything. `rom` is only read for its title sprite palette.
-pub fn seed_hash_preview(rom: &[u8], seed: u64, options: &Options) -> SeedHashPreview {
+// Reason: the web page's only caller is `wasm.rs`, which a native build never
+// compiles, so there it looks dead. Allowing it keeps what it calls live too.
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+pub(crate) fn seed_hash_preview(rom: &[u8], seed: u64, options: &Options) -> SeedHashPreview {
     let icons = compute_hash(seed, options);
     let icons = icons
         .iter()
@@ -309,7 +312,7 @@ fn build_sprite_data(icons: &[usize; HASH_LENGTH]) -> [u8; HASH_LENGTH * 8] {
     sprite_data
 }
 
-pub fn write_seed_hash(rom: &mut Rom, seed: u64, options: &Options) {
+pub(crate) fn write_seed_hash(rom: &mut Rom, seed: u64, options: &Options) {
     let icons = compute_hash(seed, options);
     let sprite_data = build_sprite_data(&icons);
 

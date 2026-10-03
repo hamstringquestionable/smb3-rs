@@ -20,7 +20,7 @@ use naming::assign_names;
 
 /// Raw fields produced for each pointer table entry by `classify_world`,
 /// before they're packaged into a full `CatalogEntry`.
-pub(super) type RawClassifiedEntry = (usize, NodeKind, Pos, u8, Option<LevelEntry>);
+type RawClassifiedEntry = (usize, NodeKind, Pos, u8, Option<LevelEntry>);
 
 // ---------------------------------------------------------------------------
 // Node types
@@ -62,7 +62,7 @@ impl NodeKind {
     /// Short display name, used by tooling that lists catalog entries.
     /// Native-only: its sole consumer is the `testrom` builder.
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn label(&self) -> &'static str {
+    fn label(&self) -> &'static str {
         match self {
             NodeKind::Level => "level",
             NodeKind::Fortress => "fortress",
@@ -78,7 +78,7 @@ impl NodeKind {
     }
 
     /// Whether this node is a placeable game level (enters the shuffle pool).
-    pub fn is_level_like(&self) -> bool {
+    pub(crate) fn is_level_like(&self) -> bool {
         matches!(
             self,
             NodeKind::Level
@@ -97,17 +97,17 @@ impl NodeKind {
 /// A single classified pointer table entry.
 #[derive(Clone, Debug)]
 pub(crate) struct CatalogEntry {
-    pub world_idx: usize,
-    pub entry_idx: usize,
-    pub kind: NodeKind,
+    pub(crate) world_idx: usize,
+    pub(crate) entry_idx: usize,
+    pub(crate) kind: NodeKind,
     /// Human-readable name (e.g., "1-1", "3F2", "7-P1", "8B").
-    pub name: String,
+    pub(crate) name: String,
     /// Vanilla grid position (row, col).
-    pub grid_pos: (usize, usize),
+    pub(crate) grid_pos: (usize, usize),
     /// Vanilla map tile at this position.
-    pub tile: u8,
+    pub(crate) tile: u8,
     /// Level entry data (tileset, obj/lay ptrs). None for Start.
-    pub level_entry: Option<LevelEntry>,
+    pub(crate) level_entry: Option<LevelEntry>,
 }
 
 /// A flattened, `randomize`-independent view of one catalog entry.
@@ -119,15 +119,15 @@ pub(crate) struct CatalogEntry {
 /// Native-only, matching the `testrom` module that consumes it.
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) struct EntryView {
-    pub name: String,
-    pub world_idx: usize,
-    pub entry_idx: usize,
-    pub tile: u8,
+    pub(crate) name: String,
+    pub(crate) world_idx: usize,
+    pub(crate) entry_idx: usize,
+    pub(crate) tile: u8,
     /// Short kind name for display, e.g. "level", "fortress", "airship".
-    pub kind_label: &'static str,
+    pub(crate) kind_label: &'static str,
     /// True only for numbered action levels (the tiles `--place` targets).
-    pub is_numbered_level: bool,
-    pub level_entry: Option<LevelEntry>,
+    pub(crate) is_numbered_level: bool,
+    pub(crate) level_entry: Option<LevelEntry>,
 }
 
 // ---------------------------------------------------------------------------

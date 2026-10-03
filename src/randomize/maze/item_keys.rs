@@ -17,7 +17,7 @@
 /// change. The power-up keys (Mushroom/Flower/Leaf/Star) live on
 /// `refactor/items-before-pickup` and land here when MiMaze does.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-pub enum Key {
+pub(crate) enum Key {
     /// The canoe key. **Not a `?` block key** — no block dispenses an Anchor.
     /// It is found on the map (a Hammer Bro reward, a Princess letter) and
     /// read by the canoe summon, which is why it needs no dispenser row.

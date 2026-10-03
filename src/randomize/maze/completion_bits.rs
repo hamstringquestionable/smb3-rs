@@ -137,14 +137,14 @@ impl CompletionMap {
     /// Test-only: the mask is an intermediate the 6502 side rebuilds for itself
     /// from [`Self::base_table`] and the stencil, so nothing in a build reads it.
     #[cfg(test)]
-    pub(crate) fn mask(&self, world: usize) -> &[u8] {
+    fn mask(&self, world: usize) -> &[u8] {
         &self.masks[world]
     }
 
     /// How many bits world `w` needs in one plane. Test-only — the packer
     /// counts its own bits as it goes.
     #[cfg(test)]
-    pub(crate) fn bits(&self, world: usize) -> usize {
+    fn bits(&self, world: usize) -> usize {
         popcount(&self.masks[world])
     }
 
@@ -172,7 +172,7 @@ impl CompletionMap {
     /// Total SRAM the packed region needs, both planes. Test-only: it is what
     /// the capacity censuses measure against `PLANE_RESERVE`.
     #[cfg(test)]
-    pub(crate) fn total_bytes(&self) -> usize {
+    fn total_bytes(&self) -> usize {
         2 * self.mirror_offset()
     }
 
@@ -388,7 +388,7 @@ const TILE: u16 = 0x7AC0;
 /// is not: Worlds 5 and 8 are `$00` there because they never pan, and its own
 /// comment says movement is restricted by separate lock-out code instead.
 #[rustfmt::skip]
-pub(crate) const WORLD_COLS: [u8; 8] = [16, 32, 48, 32, 32, 48, 32, 64];
+const WORLD_COLS: [u8; 8] = [16, 32, 48, 32, 32, 48, 32, 64];
 
 /// Is this tile one the engine's completion pass acts on? Carry set if so.
 ///

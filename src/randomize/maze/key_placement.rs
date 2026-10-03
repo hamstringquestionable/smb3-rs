@@ -59,20 +59,20 @@ use crate::rom::Rom;
 #[derive(Default, Debug, Clone)]
 pub(crate) struct Placement {
     /// Keys written, in the order they were placed.
-    pub placed: Vec<Placed>,
+    placed: Vec<Placed>,
     /// Gates no reachable site could key. **The caller must not install
     /// these on the ROM.**
-    pub dropped: Vec<Gate>,
+    dropped: Vec<Gate>,
     /// Sites that already held a key the gates want, credited without a
     /// write. Most seeds have one: ~79% hold an Anchor somewhere already.
-    pub credited: Vec<Placed>,
+    credited: Vec<Placed>,
 }
 
 /// One key, and where it went.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) struct Placed {
-    pub key: Key,
-    pub site: KeySite,
+struct Placed {
+    key: Key,
+    site: KeySite,
 }
 
 /// Belt and braces. Each pass either places a key (one fewer missing key) or
