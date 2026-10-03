@@ -87,7 +87,7 @@ Flag if the patch writes to any of these ranges:
 ### 5. Ordering Concerns
 
 - If the patch touches pointer tables or airship entries, check ordering
-  relative to autoscroll and overworld builder in `randomizer/mod.rs`
+  relative to autoscroll and overworld builder in `pipeline/stages.rs`
 - Autoscroll MUST run before overworld builder (writes to hardcoded vanilla
   offsets that get displaced by `resort_pointer_table`)
 

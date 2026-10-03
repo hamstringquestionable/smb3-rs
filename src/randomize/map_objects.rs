@@ -580,7 +580,7 @@ mod tests {
     /// The consequence is a budget, not a bug: slots 0 and 1 are **free for a
     /// map-object marker** in a normal seed, which is two per world and the
     /// difference between World 8 having room for one and having room for
-    /// three. See `randomizer::tests::map_object_slot_budget`.
+    /// three. See `pipeline::tests::map_object_slot_budget`.
     ///
     /// The original claim is kept as the vanilla half, because it is why the
     /// code reads the way it does — but it is no longer the reason the maze's

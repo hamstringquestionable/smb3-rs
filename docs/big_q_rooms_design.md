@@ -89,7 +89,7 @@ space there. Unused Level 5 carries none and needs 3 bytes per room.
   it shifts the stream for everything downstream and rebaselines any pinned
   output. With it off, `vanilla_assignments()` draws nothing and writes nothing,
   so that arm is byte-identical to a build without the feature. Place the pass
-  deliberately in `randomizer/mod.rs`, not wherever is handy.
+  deliberately in `pipeline/stages.rs`, not wherever is handy.
 
 - **Block contents stay entirely `big_q_blocks`'s job** (2026-08-27). The eight
   Unused Level 5 blocks are all Tanooki Suits in the ROM, and they *are* already

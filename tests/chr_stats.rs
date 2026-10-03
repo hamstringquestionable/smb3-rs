@@ -3,10 +3,10 @@
 
 use std::collections::{BTreeMap, HashSet};
 
+use smb3_rs::pipeline::{self, EnemyMode, Options, WildChaser};
 use smb3_rs::randomize::autoscroll::SPOILED_SEGMENT_RANGES;
 use smb3_rs::randomize::enemies::{enemy_entry_points, sprite_bank, wild_pool_for};
 use smb3_rs::randomize::rom_data::{ENEMY_DATA_END, ENEMY_DATA_START};
-use smb3_rs::randomizer::{self, EnemyMode, Options, WildChaser};
 use smb3_rs::rom::Rom;
 
 /// Wild_injection-only obj_ids. Neither is a member of any class swap pool,
@@ -337,7 +337,7 @@ fn chr_page_stats() {
     let mut rando = ScanStats::default();
     for seed in 0..NUM_SEEDS {
         let mut rom_copy = rom.clone();
-        randomizer::randomize(&mut rom_copy, seed, &opts);
+        pipeline::randomize(&mut rom_copy, seed, &opts);
         let s = scan(rom_copy.read_range(ENEMY_DATA_START, ENEMY_DATA_END - ENEMY_DATA_START));
         for (&page, &count) in &s.slot4 {
             *rando.slot4.entry(page).or_insert(0) += count;

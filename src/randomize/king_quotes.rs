@@ -1134,7 +1134,7 @@ const PAT_THREE_FIVES: [&str; 6] = [
 /// Everything the oracle is allowed to know.
 ///
 /// One field per fact, every one of them already decided by the time the quotes
-/// are written — `randomizer::randomize_inner` fills this in immediately before
+/// are written — `pipeline::stages::bosses_and_quotes` fills this in immediately before
 /// the call. A topic that cannot be answered out of these fields is a topic the
 /// king may not raise: he is believed, so a line naming the wrong world is
 /// worse than no line at all.
@@ -1613,9 +1613,9 @@ mod tests {
     /// Run with world order on too, since that is what moves him off Grass Land.
     #[test]
     fn the_king_names_the_world_1f_is_really_in() {
+        use crate::pipeline::Options;
         use crate::randomize::rom_data;
         use crate::randomize::world_order::WORLD_INIT_OPERAND;
-        use crate::randomizer::Options;
 
         let Ok(bytes) = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes") else {
             eprintln!("SKIP: requires the ROM, which is not included in the repo");

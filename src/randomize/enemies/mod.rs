@@ -11,6 +11,7 @@ use std::borrow::Cow;
 use rand::Rng;
 use rand::seq::IndexedRandom;
 
+use crate::pipeline::{EnemyMode, HazardLimit, Options, WildChaser};
 use crate::randomize::enemy_protections::{
     EntryProtection, WalkerSegmentRule, entry_protection_at, rewrites_hammer_bro,
     walker_segment_rule_at,
@@ -20,7 +21,6 @@ use crate::randomize::rom_data::{
     STOMPABLE_ENEMIES, TREASURE_BOX_APPEAR,
 };
 use crate::randomize::segment_writer::{self, SegmentEntry as WriterEntry, SortMode};
-use crate::randomizer::{EnemyMode, HazardLimit, Options, WildChaser};
 use crate::rom::Rom;
 
 mod class_modes;

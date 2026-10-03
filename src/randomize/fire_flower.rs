@@ -66,7 +66,7 @@
 //!   this means the downgrade outcomes (Small/Big) can only ever *reduce* a
 //!   big-or-better Mario — a small Mario can't get "more small".
 
-use crate::randomizer::FireFlowerMode;
+use crate::pipeline::FireFlowerMode;
 use crate::rom::Rom;
 
 use super::rom_data::{FIRE_FLOWER_SUB_CPU, FS_FIRE_FLOWER};

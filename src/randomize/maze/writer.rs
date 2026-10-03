@@ -12,7 +12,7 @@
 //! definition, which is not a grid edit and belongs to no world.
 //!
 //! **It does not orchestrate.** The order the maze's ROM-side modules install
-//! in is stated once, in `randomizer::randomize_inner`, where every other
+//! in is stated once, in `pipeline::randomize_inner`, where every other
 //! feature's ordering already lives.
 
 use crate::rom::Rom;

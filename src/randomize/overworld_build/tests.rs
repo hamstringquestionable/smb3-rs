@@ -30,7 +30,7 @@ fn load_rom() -> Option<Rom> {
 }
 
 /// Apply the QoL patches that the real pipeline runs before the overworld
-/// builder (`randomizer.rs` pre-build block). These mutate the world-map
+/// builder (`pipeline::stages::map_fixes`). These mutate the world-map
 /// grid — rocks blocking pipe shortcuts, W3 drawbridge tiles, big-Q rooms,
 /// the always-on W8 screen-3 water/bridge page — so the catalog must see
 /// the post-patch state, not vanilla. (The W8 canoe edits are gated behind
@@ -61,7 +61,7 @@ fn apply_qol_variant(rom: &Rom, hammer_rocks: bool, eights_wild: bool) -> Rom {
 
 /// Build `(catalog, pickup)` for one seed. When the `SAS` env var is set,
 /// applies per-seed start↔airship swap before pickup runs, matching the
-/// real pipeline in `randomizer.rs` when `swap_start_airship` is on.
+/// real pipeline in `pipeline::stages::overworld_catalog` when `swap_start_airship` is on.
 fn build_catalog_pickup(rom: &Rom, seed: u64) -> (NodeCatalog, PickupResult) {
     let mut catalog = NodeCatalog::build(rom, false);
     if std::env::var("SAS").is_ok() {

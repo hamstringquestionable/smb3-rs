@@ -741,11 +741,11 @@ mod asm_checks {
     /// compare gets wrong.
     fn built(seed: u64, swap: bool) -> Option<Rom> {
         let mut rom = load_vanilla()?;
-        let opts = crate::randomizer::Options {
+        let opts = crate::pipeline::Options {
             swap_start_airship: swap,
-            ..crate::randomizer::Options::default()
+            ..crate::pipeline::Options::default()
         };
-        crate::randomizer::randomize(&mut rom, seed, &opts);
+        crate::pipeline::randomize(&mut rom, seed, &opts);
         Some(rom)
     }
 
@@ -946,11 +946,11 @@ mod asm_checks {
     fn the_destination_is_where_a_new_game_starts() {
         for seed in [1_u64, 7, 99] {
             let Some(mut rom) = load_vanilla() else { return };
-            let opts = crate::randomizer::Options {
+            let opts = crate::pipeline::Options {
                 world_maze: true,
-                ..crate::randomizer::Options::default()
+                ..crate::pipeline::Options::default()
             };
-            crate::randomizer::randomize(&mut rom, seed, &opts);
+            crate::pipeline::randomize(&mut rom, seed, &opts);
             assert_eq!(
                 rom.read_byte(FS_MAZE_GAMEOVER + GAMEOVER_WORLD_OFF),
                 rom.read_byte(crate::randomize::world_order::WORLD_INIT_OPERAND),

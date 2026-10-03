@@ -565,7 +565,7 @@ pub(crate) const FS_MAZE_VISITED: usize = 0x155EC;
 pub(crate) const FS_MAZE_GAMEOVER: usize = 0x1562C;
 
 /// The flag key + seed stamp: `"S3R"`, a length byte, the flag-key bytes and
-/// the seed. **This is not new** — `randomizer::STAMP_OFFSET` has written here
+/// the seed. **This is not new** — `pipeline::STAMP_OFFSET` has written here
 /// since long before the registry existed, with no row to say so, which is
 /// exactly how the world-maze wand gate came to be sited on top of it. Sized
 /// for the largest flag key the format can produce (3 magic + 1 length + up to

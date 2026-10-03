@@ -586,7 +586,7 @@ pub(super) const W8_HB_CAP: usize = 1;
 /// W8 is the only world that cannot afford them. It holds four locks — the most
 /// of any world, and ~3 of them take their key from elsewhere — against a
 /// map-object table already carrying two tanks, a battleship and an airship.
-/// Measured (`randomizer::tests::map_object_slot_budget`, 30 seeds) it has
+/// Measured (`pipeline::tests::map_object_slot_budget`, 30 seeds) it has
 /// **1.00 free slots** where the others have ~4.8.
 ///
 /// Its single wandering Hammer Bro is the cheapest slot in the game to buy

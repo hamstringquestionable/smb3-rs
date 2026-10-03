@@ -5,8 +5,9 @@ entry points, the RNG streams, and **every** randomization step / patch in the
 exact order `randomize_inner` applies them. Each step is annotated with the
 `Options` field that gates it (steps with no gate are **always** applied).
 
-Source of truth: `src/lib.rs` (entry points) and `src/randomizer/mod.rs`
-(`randomize_inner`). Keep this in sync when the orchestration order changes —
+Source of truth: `src/lib.rs` (entry points), `src/pipeline/mod.rs`
+(`randomize_inner`, the stage list) and `src/pipeline/stages.rs` (each stage's
+body). Keep this in sync when the orchestration order changes —
 and if you find it out of sync, regenerate the whole pipeline section from the
 function rather than patching a line, which is how it fell twenty steps behind
 once already. Last reconciled against the code: **2026-09-08**.
@@ -23,7 +24,7 @@ flowchart TD
         P1 --> P2{"visual_patch<br/>provided?"}
         P2 -- yes --> P3["rom.apply_ips_patch(patch)<br/>(applied BEFORE randomization)"]
         P2 -- no --> RZ
-        P3 --> RZ["randomizer::randomize()<br/>→ randomize_inner()"]
+        P3 --> RZ["pipeline::randomize()<br/>→ randomize_inner()"]
     end
 
     RZ --> CORE["『 Randomization pipeline 』<br/>(see next diagram)"]

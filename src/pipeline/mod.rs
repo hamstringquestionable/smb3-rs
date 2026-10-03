@@ -1,5 +1,6 @@
-//! Top-level randomization orchestration: parse options, run the pipeline, and
-//! stamp the result. The `Options` config and flag-key codec live in submodules.
+//! The pipeline: vanilla ROM in, randomized ROM out. [`randomize_inner`] is its
+//! table of contents and [`stages`] holds each step. The `Options` config and
+//! flag-key codec live in submodules.
 
 use rand::SeedableRng;
 use rand::seq::IndexedRandom;

@@ -390,8 +390,10 @@ src/
   main.rs              # CLI (clap): file I/O, arg parsing, --free-space, --write-log
   rom.rs               # iNES header parsing, ROM validation, Rom struct
   ips.rs               # IPS patch builder (build_ips_patch) and applier (apply_ips_patch)
-  randomizer/          # Orchestration
-    mod.rs             #   randomize_inner(): calls every randomize module, in order
+  pipeline/            # Orchestration: vanilla ROM in, randomized ROM out
+    mod.rs             #   randomize_inner(): the table of contents — 18 stage
+                       #   calls, in order. Start here to find where anything runs.
+    stages.rs          #   each stage's body; calls the randomize modules
     options.rs         #   the Options struct — one field per player-facing choice
     flag_key.rs        #   Options <-> the shareable flag key
   testrom.rs           # Playtest ROM builder (native-only) — see below
@@ -477,7 +479,7 @@ docs/                  # See docs/README.md for the index and each doc's status
 
 ## Overworld Builder Pipeline
 
-The overworld builder is the core randomization system, implemented as a four-phase pipeline in `randomizer.rs`: **catalog → pickup → build → write**.
+The overworld builder is the core randomization system, implemented as a four-phase pipeline in `pipeline/stages.rs` (stages 5-9): **catalog → pickup → build → write**.
 
 1. **Catalog** (`node_catalog.rs`) — classifies all 340 pointer table entries across 8 worlds (Level, Fortress, Pipe, HammerBro, ToadHouse, Airship, Bowser, etc.)
 2. **Pickup** (`overworld_pickup.rs`) — clears the map to blank path tiles, builds a shuffleable pool of levels and hammer bro encounters, applies theme-aware blank tiles per screen

@@ -101,7 +101,7 @@ pub(crate) struct MazeLock {
 ///
 /// **No shipped run produces one today.** `world_count` used to reach this
 /// (`world_order` returns a shorter order below 7), but the mode now pins it to
-/// 7 in `randomizer::randomize_inner`, and the web form greys that control out
+/// 7 in `pipeline::stages::world_order_and_shuffles`, and the web form greys that control out
 /// under the mode. The capability is kept here, and censuses still exercise
 /// short spines, so re-exposing it is a UI decision rather than a generator
 /// change.
@@ -551,7 +551,7 @@ impl GlobalState {
     /// nowhere else on the model side: `key_sites`, `key_placement` and the
     /// walker all read `gates` as data and neither know nor care what is in it.
     /// The ROM side is the half that cannot be generic, since each target needs
-    /// its own patch; `randomize_inner` derives those per target, and a new
+    /// its own patch; `pipeline::stages::maze_model` derives those per target, and a new
     /// `GateTarget` variant makes that derivation fail to compile until its
     /// patch is wired.
     ///

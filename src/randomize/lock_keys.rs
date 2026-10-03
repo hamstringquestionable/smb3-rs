@@ -1236,7 +1236,7 @@ pub(crate) fn apply(rom: &mut Rom, entries: &[LockEntry], grids: &[Grid], tiles:
             map.base_table(),
             "the packed-store base table in the ROM disagrees with the map this module just \
              read. Either a grid was written after `completion_bits::apply`, or this ran before \
-             it, or it never ran. See `randomizer::randomize_inner` for the order."
+             it, or it never ran. See `pipeline::randomize_inner` for the order."
         );
 
         for e in away {

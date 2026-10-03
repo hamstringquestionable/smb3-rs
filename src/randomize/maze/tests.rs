@@ -842,9 +842,9 @@ fn stamping_pads_writes_no_chr() {
 /// vacuously.
 #[test]
 fn no_pad_shares_a_tile_with_a_card_game() {
+    use crate::pipeline::{Options, randomize};
     use crate::randomize::rom_data::{self, TILE_BONUS_GAME, TILE_TELEPAD};
     use crate::randomize::world_persist::{PAD_TABLE_OFF, PORTAL_MAX};
-    use crate::randomizer::{Options, randomize};
 
     let Some(raw) = load_rom() else { return };
     let mut total_pads = 0usize;
@@ -2050,7 +2050,7 @@ fn sealable_repair_census() {
 /// **A secret-exit fortress can always decline its lock, in maze mode too.**
 ///
 /// The standard-mode half of this is
-/// `randomizer::tests::one_f_lands_on_a_lock_that_can_stay_shut`, which checks
+/// `pipeline::tests::one_f_lands_on_a_lock_that_can_stay_shut`, which checks
 /// the builder's per-world `secret_exit_safe` flag. That flag is not enough
 /// here for two independent reasons, and both were measured before this test
 /// was written:

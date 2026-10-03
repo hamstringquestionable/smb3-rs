@@ -94,7 +94,7 @@ const VANILLA_SITES: [(usize, &[u8], &str); 2] = [
 /// starts *in* Dark Land and it displays as "WORLD 1". Nothing below branches on
 /// it, but two consequences are worth naming. No airship stands before Bowser's
 /// castle, so no wand exists in the game at all — which is why the world maze
-/// pins this to 7 rather than exposing it (see `randomizer::randomize_inner`).
+/// pins this to 7 rather than exposing it (see `pipeline::stages::world_order_and_shuffles`).
 /// And the seven unvisited worlds keep display tile `$00`, exactly as any
 /// `world_count` < 7 already leaves them; it is invisible because they cannot be
 /// reached.
@@ -106,7 +106,7 @@ pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R, world_count: u8) -> Vec<u8>
             "0x{offset:05X} no longer holds vanilla's {what}, so something has already \
              patched it. `world_order::randomize` must run BEFORE `wand_gate` and \
              `completion_bits`, which both chain through bytes it writes — see \
-             `randomizer::randomize_inner` for the order."
+             `pipeline::randomize_inner` for the order."
         );
     }
 

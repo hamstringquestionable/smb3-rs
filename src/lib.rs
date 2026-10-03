@@ -1,6 +1,6 @@
 pub mod ips;
+pub mod pipeline;
 pub mod randomize;
-pub mod randomizer;
 pub mod rom;
 
 /// Playtest ROM assembly. Native-only: it exists to serve the CLI and has no
@@ -14,7 +14,7 @@ pub mod wasm;
 use rom::Rom;
 
 pub use ips::apply_ips_patch;
-pub use randomizer::{
+pub use pipeline::{
     DejaVuMode, EnemyMode, FireFlowerMode, HazardLimit, HintMode, ITEM_RANDOM,
     ITEM_RANDOM_NO_WHISTLE, ITEM_RANDOM_SUIT_ONLY, ITEMS, Options, PiranhaMode,
     STARTING_LIVES_VALUES, Tri, WildChaser, current_flag_key_version, flag_key_fields,
@@ -93,7 +93,7 @@ pub fn randomize_rom_with_patches(
     for (tag, patch) in visual_patches {
         rom.apply_ips_patch(patch, tag)?;
     }
-    randomizer::randomize(&mut rom, seed, options);
+    pipeline::randomize(&mut rom, seed, options);
     Ok(rom)
 }
 
@@ -140,7 +140,7 @@ pub(crate) fn randomize_rom_with_overworld_capture(
         rom.apply_ips_patch(patch, "visual_patch")?;
     }
     let mut capture: Option<randomize::overworld_build::BuildResult> = None;
-    randomizer::randomize_with_overworld_capture(&mut rom, seed, options, &mut capture);
+    pipeline::randomize_with_overworld_capture(&mut rom, seed, options, &mut capture);
     let build = capture.ok_or_else(|| "overworld capture not populated".to_string())?;
     Ok((rom, build))
 }

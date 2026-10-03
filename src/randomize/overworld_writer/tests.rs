@@ -13,7 +13,7 @@ fn load_rom() -> Option<Rom> {
 
 /// The ROM as the builder actually sees it in production.
 ///
-/// `randomizer.rs` runs these QoL patches *before* the overworld builder, and
+/// `pipeline::stages::map_fixes` runs these QoL patches *before* the overworld builder, and
 /// they move map tiles — rocks off the pipe shortcuts, the W3 drawbridges, the
 /// always-on W8 screen-3 water page. A builder run against plain vanilla is
 /// therefore building a map no player ever gets, and it shows: on the unprepped
@@ -1166,7 +1166,7 @@ fn test_piranha_shuffle_plants_written() {
         for seed in 42..47u64 {
             let mut out = rom.clone();
             let options = Options { piranha_shuffle: mode, palettes: false, ..Default::default() };
-            crate::randomizer::randomize(&mut out, seed, &options);
+            crate::pipeline::randomize(&mut out, seed, &options);
 
             let mut total_plants = 0;
             for wi in 0..8 {
@@ -1229,7 +1229,7 @@ fn test_piranha_shuffle_plants_written() {
     // Off: vanilla plants stay at their linked slots with a reward.
     let mut out = rom.clone();
     let options = Options { palettes: false, ..Default::default() };
-    crate::randomizer::randomize(&mut out, 42, &options);
+    crate::pipeline::randomize(&mut out, 42, &options);
     for &(wi, slot, _) in rom_data::MAP_OBJ_ENTRY_LINKS {
         let id = out.read_byte(rom_data::map_obj_slot_offset(
             &out,

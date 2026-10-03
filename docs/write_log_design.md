@@ -106,7 +106,7 @@ randomization run.
 - `rom_data::free_space` — `FreeSpaceAlloc` (the registry row, now carrying an
   `owners` list of write-log tags), `audit_free_space`, `free_space_map`,
   `format_free_space_report`.
-- `randomizer::tests::free_space_audit_matches_registry` — the CI check.
+- `pipeline::tests::free_space_audit_matches_registry` — the CI check.
 - `--write-log` appends the report, so the file that says what changed also says
   what it cost and what is left.
 

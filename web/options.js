@@ -444,10 +444,10 @@ export const SCHEMA = [
 		icon: WORLD_TILES,
 		group: "map", inFlagKey: true,
 		// The maze reads this table as its airship spine, so it cannot run
-		// without it — see `randomizer::randomize_inner`.
+		// without it — see `pipeline::randomize_inner`.
 		forcedInMaze: true },
 	// Standard-only: the maze uses all eight worlds, so it pins this to 7 (see
-	// `randomizer::randomize_inner`) and the row greys out under the mode.
+	// `pipeline::stages::world_order_and_shuffles`) and the row greys out under the mode.
 	{ id: "world_count", type: "tri", numeric: true,
 		options: [0,1,2,3,4,5,6,7].map(n => ({ value: n, label: String(n) })),
 		default: 7,

@@ -324,7 +324,7 @@ pub(crate) struct WriteFlags {
     /// with duplicates of what remains.
     pub friendlier_levels: bool,
     /// Map hints. Resolved to `Off` without the world maze by
-    /// `randomizer::randomize_inner` — every hint is a claim about another
+    /// `pipeline::stages::resolve` — every hint is a claim about another
     /// world, so there is nothing to say without one.
     pub hints: crate::HintMode,
 }

@@ -194,7 +194,7 @@ const PIPE_SQUISH_FIX_BYTES: [u8; 9] = [
 
 // ---------------------------------------------------------------------------
 // MaCobra patches — opt-in features
-// Each apply_* below is gated by an individual option in randomizer.rs;
+// Each apply_* below is gated by an individual option in pipeline/stages.rs;
 // none of these ship unless the corresponding flag is enabled.
 // ---------------------------------------------------------------------------
 

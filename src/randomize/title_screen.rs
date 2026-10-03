@@ -1,4 +1,4 @@
-use crate::randomizer::Options;
+use crate::pipeline::Options;
 use crate::rom::Rom;
 
 /// Tile pairs for each icon: (left_tile, right_tile, right_extra_attributes).
@@ -414,8 +414,8 @@ mod tests {
 
     #[test]
     fn hash_differs_by_options() {
-        let opts_a = Options { ground: crate::randomizer::EnemyMode::Off, ..Default::default() };
-        let opts_b = Options { ground: crate::randomizer::EnemyMode::Wild, ..Default::default() };
+        let opts_a = Options { ground: crate::pipeline::EnemyMode::Off, ..Default::default() };
+        let opts_b = Options { ground: crate::pipeline::EnemyMode::Wild, ..Default::default() };
         let a = compute_hash(42, &opts_a);
         let b = compute_hash(42, &opts_b);
         assert_ne!(a, b);
