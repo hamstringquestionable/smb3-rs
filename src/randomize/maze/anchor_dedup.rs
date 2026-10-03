@@ -82,7 +82,7 @@ const PLAYER_GET_ITEM: usize = 0x3FD7C;
 const PLAYER_GET_ITEM_REJOIN: u16 = 0xFD70;
 
 /// The tail of `ToadHouse_ChestPressB` (PRG029): `TAX / INX / RTS`, which the
-/// hook replaces with a `JMP` and [`HOUSE`] performs itself.
+/// hook replaces with a `JMP` and `HOUSE` performs itself.
 const CHEST_PRESS_B_TAIL: usize = 0x3B1C4;
 
 /// `Letter_GiveIncludedItem`'s `LDA LetterItem_ByWorld,Y` (PRG027).

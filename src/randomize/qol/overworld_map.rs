@@ -137,7 +137,7 @@ const W8_CANOE_PATH_EDITS: &[(usize, usize, u8)] = &[
 const W1_SHORTCUT_ROCK: (usize, usize) = (5, 8);
 const W1_SHORTCUT_STUB: (usize, usize, u8) = (6, 8, 0x4A);
 
-/// Write the W1 shortcut (see [`W1_SHORTCUT_EDITS`]). The tiles go down
+/// Write the W1 shortcut (see [`W1_SHORTCUT_ROCK`] and [`W1_SHORTCUT_STUB`]). The tiles go down
 /// unconditionally; `breakable` only decides whether the rock can be opened.
 ///
 /// `0x52` (breakable, opens to `0x46`) and `0x53` (permanent wall) are

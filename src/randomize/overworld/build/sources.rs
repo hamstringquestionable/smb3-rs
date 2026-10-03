@@ -4,7 +4,7 @@
 //!
 //! - [`from_pickup`] is the build input: one world as the shared pickup
 //!   phase hands it over, ready for placement phases to run on.
-//! - [`from_vanilla`] reads a world straight from the unmodified ROM. Vanilla
+//! - `from_vanilla` (test-only) reads a world straight from the unmodified ROM. Vanilla
 //!   is *known ground truth* — if a metric reads vanilla W1 and reports
 //!   something we know is wrong, the metric is broken, not the world.
 //! - [`from_built`] wraps the shipping builder's output — the baseline every

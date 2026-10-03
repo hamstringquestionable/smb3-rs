@@ -350,7 +350,7 @@ pub(super) fn entry_protection_at(file_offset: usize) -> Option<EntryProtection>
 /// it must never be given one.
 ///
 /// In a room with `Level_Event = 7` (i.e. whose enemy data holds
-/// [`TREASURE_BOX_APPEAR`]) a `$81` is not an enemy but a *placeholder* meaning
+/// [`TREASURE_BOX_APPEAR`](crate::randomize::rom_data::TREASURE_BOX_APPEAR)) a `$81` is not an enemy but a *placeholder* meaning
 /// "whichever bro's map sprite the player walked in through", which is how one
 /// arena serves all four bro battles. `ObjInit_HammerBro` (`prg004.asm:866`)
 /// overwrites the object's own ID with `BattleEnemy_ByEnterID[Map_EnterViaID]`

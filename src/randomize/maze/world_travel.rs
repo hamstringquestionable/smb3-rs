@@ -58,7 +58,7 @@
 //! The compare below needs no row arithmetic at all. It asks two questions
 //! about where the player is standing, against numbers the *engine* holds:
 //!
-//! * `World_Map_X` and `World_Map_XHi` against [`START_XKEY`], an eight-byte
+//! * `World_Map_X` and `World_Map_XHi` against `START_XKEY`, an eight-byte
 //!   table this module emits per seed from the map the writer actually laid
 //!   down;
 //! * `World_Map_Y` against `Map_Y_Starts[World_Num]`, the engine's own
@@ -174,7 +174,7 @@ const MARK_HOOK_VANILLA: [u8; MARK_HOOK_LEN] = [
     0x8D, 0x73, 0x79,       // STA Map_WasInPipeway
 ];
 
-/// Offset of [`START_XKEY`] inside [`MARK_VISITED`], and its CPU address.
+/// Offset of `START_XKEY` inside [`MARK_VISITED`], and its CPU address.
 ///
 /// The routine reads its own table absolutely, so it is **origin-locked**:
 /// relocating `FS_MAZE_VISITED` without updating this breaks it silently, and
@@ -247,7 +247,7 @@ fn start_xkey(col: usize) -> u8 {
     (((col % 16) as u8) << 4) | (col / 16) as u8
 }
 
-/// Derive [`START_XKEY`] and the row it implies, from the map in the ROM.
+/// Derive `START_XKEY` and the row it implies, from the map in the ROM.
 ///
 /// Returns the eight key bytes. Panics if a world has no START tile, or if the
 /// row it sits on disagrees with `Map_Y_Starts` — which is what "you called
@@ -309,7 +309,7 @@ const TRAVEL_HOOK_VANILLA: [u8; TRAVEL_HOOK_LEN] = [
     0x8D, 0x27, 0x07,       // STA World_Num
 ];
 
-/// Offset of [`NEXT_WORLD`] inside [`WHISTLE_TRAVEL`], and its CPU address.
+/// Offset of `NEXT_WORLD` inside [`WHISTLE_TRAVEL`], and its CPU address.
 ///
 /// Read absolutely, so the routine is **origin-locked** the same way the
 /// marker is; `.origin(WHISTLE_TRAVEL_CPU)` in the checks is what catches a
@@ -343,7 +343,7 @@ const NEXT_WORLD_CPU: u16 = WHISTLE_TRAVEL_CPU + TRAVEL_TABLE_OFF as u16;
 ///
 /// # The scan
 ///
-/// [`NEXT_WORLD`] is a single eight-cycle by construction, so eight steps from
+/// `NEXT_WORLD` is a single eight-cycle by construction, so eight steps from
 /// `World_Num` land back on `World_Num`: the last probe is the world the player
 /// is standing in. That is what makes the "nowhere to go" case free — after
 /// eight fruitless steps `Y` holds `World_Num` again and the exit path stores

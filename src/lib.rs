@@ -10,13 +10,19 @@
 //! 4. [`generate_patch`] diffs the result against the bytes the user supplied
 //!    into an IPS patch; [`generate_patched_rom`] returns the whole ROM.
 
+// Reason: this lint protects readers of published API docs, where private
+// pages do not exist. This crate's docs are only ever read internally, built
+// with `--document-private-items` (CI does exactly that), and there a link to a
+// `pub(crate)` item resolves. Every other rustdoc lint stays fatal in CI.
+#![allow(rustdoc::private_intra_doc_links)]
+
 pub mod ips;
 pub mod pipeline;
 pub mod randomize;
 pub mod rom;
 
-/// Playtest ROM assembly. Native-only: it exists to serve the CLI and has no
-/// role in the web build, which never needs a ROM the randomizer wouldn't make.
+// Playtest ROM assembly. Native-only: it exists to serve the CLI and has no
+// role in the web build, which never needs a ROM the randomizer wouldn't make.
 #[cfg(not(target_arch = "wasm32"))]
 pub mod testrom;
 

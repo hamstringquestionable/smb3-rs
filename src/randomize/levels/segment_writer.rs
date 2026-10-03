@@ -8,12 +8,12 @@
 //!
 //! This module is the single throat for segment edits. Two use cases:
 //!
-//! * **Composers** ([`bowser_castle`], [`podoboo_gauntlet`], [`hand_rooms`]):
+//! * **Composers** ([`bowser_castle`](super::bowser_castle), [`podoboo_gauntlet`](super::podoboo_gauntlet), [`hand_rooms`](super::hand_rooms)):
 //!   assemble a fresh entry list for one specific segment whose
 //!   `enemy_ptr` is known. These supply [`SortMode::SortByX`] so the
 //!   writer sorts before writing.
 //!
-//! * **In-place mutators** ([`enemies`]): walk the whole enemy data block
+//! * **In-place mutators** ([`enemies`](crate::randomize::enemies)): walk the whole enemy data block
 //!   and mutate individual obj_ids without changing X/Y or count. A
 //!   walker-segment in the block-wide view often spans multiple logical
 //!   levels (different `enemy_ptr`s pointing at different positions),

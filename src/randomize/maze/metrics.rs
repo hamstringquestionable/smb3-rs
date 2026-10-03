@@ -11,7 +11,7 @@
 //!
 //! * [`completion_cost`] — how many levels and fortresses a play-through
 //!   actually beats. This is the headline: the length of the game.
-//! * [`required_levels`] — how many levels the player has **no choice** about,
+//! * `required_levels` (test-only) — how many levels the player has **no choice** about,
 //!   in the strict sense that removing one makes the game unwinnable. This is
 //!   the mandatory core; everything else is a route decision.
 //!

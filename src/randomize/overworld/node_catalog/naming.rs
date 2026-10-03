@@ -39,7 +39,7 @@ fn ordinal_slot(kind: &NodeKind) -> Option<(usize, &'static str)> {
     }
 }
 
-/// "prefix" when the world has exactly one of the kind, "prefix<ord>" otherwise.
+/// "prefix" when the world has exactly one of the kind, `"prefix<ord>"` otherwise.
 fn suffixed(prefix: &str, count: usize, ord: usize) -> String {
     if count == 1 { prefix.to_string() } else { format!("{prefix}{ord}") }
 }

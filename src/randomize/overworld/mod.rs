@@ -23,9 +23,9 @@ pub mod troll_pipes;
 /// Airship shuffle: the one cross-world level shuffle that is still
 /// independent of the overworld builder.
 pub mod airship_shuffle;
-/// Every lock a fortress opens, keyed by where the player is standing rather
-/// than by a slot index. Replaces vanilla's fortress-FX tables outright, and
-/// absorbs what used to be a second, differently-keyed cross-world mechanism.
+// Every lock a fortress opens, keyed by where the player is standing rather
+// than by a slot index. Replaces vanilla's fortress-FX tables outright, and
+// absorbs what used to be a second, differently-keyed cross-world mechanism.
 pub mod lock_keys;
 pub mod world_order;
 

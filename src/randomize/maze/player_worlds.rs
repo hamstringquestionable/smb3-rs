@@ -54,7 +54,7 @@
 //!
 //! In the maze each player owns their world, so nothing either player does may
 //! move the other. Three situations, distinguished by
-//! [`HANDOVER`](crate::randomize::maze::maze_state::HANDOVER):
+//! [`HANDOVER`]:
 //!
 //! | situation | who is repositioned | why |
 //! |---|---|---|

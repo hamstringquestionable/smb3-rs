@@ -10,7 +10,7 @@ use crate::randomize::rom_data::{Grid, TILE_AIRSHIP, TILE_BOWSER};
 /// Water gaps (0x9D) replace bridge tiles (0xB3) specifically.
 ///
 /// The membership rule is **"the engine walks over it"** — presence in
-/// [`rom_data::VALID_HORZ`] / [`rom_data::VALID_VERT`], the engine's own
+/// [`rom_data::VALID_HORZ`](crate::randomize::rom_data::VALID_HORZ) / [`rom_data::VALID_VERT`](crate::randomize::rom_data::VALID_VERT), the engine's own
 /// `Map_Object_Valid_*` tables — not "it looks like a path". Two entries are
 /// therefore not path tiles at all:
 ///

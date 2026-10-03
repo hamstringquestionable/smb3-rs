@@ -30,7 +30,7 @@ mod segments;
 mod sprite_bank;
 mod tables;
 
-/// Which entries the swap pass must leave alone, and why.
+// Which entries the swap pass must leave alone, and why.
 pub mod protections;
 
 // --- Enemy and boss behaviour patches, applied outside the swap pass ---

@@ -62,7 +62,7 @@
 //! heals on their next move — which is exactly how it was reported, and why it
 //! was hard to reproduce on purpose.
 //!
-//! [`FLIP_CARRY`] closes it by copying [`STATUS_BAR_TIME`] into the flip's own
+//! `FLIP_CARRY` closes it by copying [`STATUS_BAR_TIME`] into the flip's own
 //! buffer, twenty bytes hooked over the `JSR StatusBar_Fill_Score` inside that
 //! routine.
 //!
@@ -115,7 +115,7 @@ use crate::randomize::rom_data::{
 /// Where [`wand_readout_routine`]'s output is assembled to run. `$B520`.
 const WAND_READOUT_CPU: u16 = (0xA000 + (FS_WAND_READOUT - PRG026_FILE_BASE)) as u16;
 
-/// Where [`FLIP_CARRY`] is assembled to run. `$B6ED`.
+/// Where `FLIP_CARRY` is assembled to run. `$B6ED`.
 const FLIP_CARRY_CPU: u16 = (0xA000 + (FS_WAND_READOUT_FLIP - PRG026_FILE_BASE)) as u16;
 
 /// Buffer index of the first timer cell within the row the flip is drawing:

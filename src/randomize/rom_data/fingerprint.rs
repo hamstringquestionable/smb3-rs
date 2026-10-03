@@ -1,6 +1,6 @@
 //! A stable hash of the bytes that describe the overworld.
 //!
-//! [`tests/overworld_baseline.rs`] compares this against a committed constant,
+//! `tests/overworld_baseline.rs` compares this against a committed constant,
 //! so that a change to the map a player walks is caught the moment it happens
 //! rather than a fortnight later.
 //!

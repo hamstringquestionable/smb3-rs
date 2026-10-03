@@ -35,7 +35,7 @@
 //!    not a key, and believing otherwise is exactly the stranding bug.
 //! 3. **The supply is thinner than it looks.** Only 5 of the 22 houses hand
 //!    over a fixed item; the other 17 roll it from a 3-wide window when the box
-//!    is opened (see [`rom_data::toad_house_reward_is_fixed`]). Those 5 share a
+//!    is opened (see [`rom_data::toad_house_reward_is_fixed`](crate::randomize::rom_data::toad_house_reward_is_fixed)). Those 5 share a
 //!    byte per treasure type — 2 Frog houses read one byte, 2 Tanooki another,
 //!    1 Hammer a third — so it is 3 distinct levers, not 5.
 //!

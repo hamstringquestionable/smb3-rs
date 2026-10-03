@@ -18,7 +18,7 @@ wasm-pack build --target web --out-dir pkg   # WASM module -> pkg/
 
 ## Lint Policy
 
-This project is **lint-clean**: `cargo clippy --all-targets` must produce zero warnings. CI (`.github/workflows/ci.yml`) enforces this with three gates, in this order — `cargo fmt --check`, then clippy on the native target, then clippy on wasm32. Each converts a warning into a build failure.
+This project is **lint-clean**: `cargo clippy --all-targets` must produce zero warnings. CI (`.github/workflows/ci.yml`) enforces this with four gates, in this order — `cargo fmt --check`, then clippy on the native target, then clippy on wasm32, then rustdoc. Each converts a warning into a build failure.
 
 Before committing:
 
@@ -26,6 +26,7 @@ Before committing:
 cargo fmt --check            # the repo IS rustfmt-formatted; CI checks this FIRST
 cargo clippy --all-targets   # must show no warnings
 cargo clippy --lib --target wasm32-unknown-unknown   # CI's second pass
+RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --document-private-items  # doc links
 cargo test                   # must pass
 ```
 
@@ -58,6 +59,16 @@ When clippy flags new code:
 2. **Judgment-call lints** (`too_many_arguments`, `type_complexity`): consider whether the suggested refactor reveals a real concept. If yes, do the refactor. If no, add `#[allow(clippy::<lint_name>)]` immediately above the item, prefixed with a `// Reason: ...` comment explaining the decision.
 
 Never silence a lint by deleting the warning text or globally disabling — the goal is "every warning was considered," not "no warnings emitted."
+
+**The one crate-wide exception is `rustdoc::private_intra_doc_links`**, allowed
+in `lib.rs` with its reason. It guards published API docs, where private pages
+do not exist; these docs are read with `--document-private-items`, where a link
+to a `pub(crate)` item works. Every other rustdoc lint is fatal. The usual
+rustdoc fixes: point a moved item's link at its new path; make a link to a
+`#[cfg(test)]` item a plain code span (doc builds never compile it); wrap
+bracketed prose like `W3[41]` or `<site>` in backticks; and keep `///` off a
+`pub mod x;` line whose file has `//!` docs — rustdoc merges the two and
+resolves the file's own links from the parent's scope. Use `//` there.
 
 ## Seeds Are Stable Within A Version, Never Across
 

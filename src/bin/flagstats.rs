@@ -57,7 +57,7 @@ const MAX_VALUES_SHOWN: usize = 6;
                   (GOATCOUNTER_TOKEN, or --token), unless --json reads a saved response."
 )]
 struct Cli {
-    /// GoatCounter site code (<site>.goatcounter.com).
+    /// GoatCounter site code (`<site>.goatcounter.com`).
     #[arg(long, default_value = "smb3rs")]
     site: String,
 

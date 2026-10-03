@@ -14,7 +14,7 @@
 //!
 //! A lock that no fortress opens teaches the player the wrong rule about every
 //! other lock on the map. So the gate is a *wall*, and it is literally World
-//! 8's own masonry: [`WAND_GATE_TILE`] (`$E2`), the Dark Land skull block the
+//! 8's own masonry: [`WAND_GATE_TILE`](crate::randomize::rom_data::WAND_GATE_TILE) (`$E2`), the Dark Land skull block the
 //! map already builds its walls from in 155 other cells. The engine has no
 //! per-tile "blocks movement" flag — a tile blocks a direction by being absent
 //! from `Map_Object_Valid_Left/Right/Up/Down` — so this byte walls all four

@@ -45,7 +45,7 @@ const P2_ROOM_SRC: usize = 0x0D0EA; // CPU $D0DA
 const P1_HDR: usize = 0x27C33;
 const P2_HDR: usize = 0x27B30;
 
-/// Each clone: [page][D6 X item][52 X Y][BA X Y][FF] = 11 bytes.
+/// Each clone: `[page][D6 X item][52 X Y][BA X Y][FF]` = 11 bytes.
 const CLONE_LEN: usize = 11;
 
 /// CPU addresses of the two cloned streams inside PRG006.

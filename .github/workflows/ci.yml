@@ -70,6 +70,14 @@ jobs:
       - name: Clippy — wasm target (deny warnings)
         run: cargo clippy --lib --target wasm32-unknown-unknown -- -D warnings
 
+      # Broken intra-doc links are invisible to clippy. Built with private items
+      # because that is how these docs are read; the one lint that only makes
+      # sense for published API docs is allowed in lib.rs, with its reason.
+      - name: Rustdoc (deny warnings)
+        run: cargo doc --no-deps --document-private-items
+        env:
+          RUSTDOCFLAGS: -D warnings
+
       - name: Build
         run: cargo build --all-targets
 

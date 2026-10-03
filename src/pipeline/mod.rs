@@ -34,7 +34,7 @@ use crate::randomize::rom_data::FS_SEED_STAMP as STAMP_OFFSET;
 /// Resolve a starting item value: sentinels (14–17) become random concrete
 /// items; concrete values (0–13) pass through unchanged.
 ///
-/// `whistles_removed` is [`Options::whistles_removed`]. Only
+/// `whistles_removed` is the effective value, [`stages::Resolved::whistles_removed`]. Only
 /// [`ITEM_RANDOM_NO_SUITS`] reads it — the other pools predate the flag and
 /// keep their historical contents, so passing it does not move any seed that
 /// does not use the new sentinel.
@@ -76,7 +76,7 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
     randomize_inner(rom, seed, options, None);
 }
 
-/// Same as [`randomize`] but additionally captures a snapshot of the overworld
+/// Same as [`randomize()`] but additionally captures a snapshot of the overworld
 /// `BuildResult` right before the writer stamps it onto the ROM. Used by
 /// internal analyzer tests (and the future WASM single-seed dump endpoint) to
 /// inspect the exact topology the player will see, while still consuming RNG

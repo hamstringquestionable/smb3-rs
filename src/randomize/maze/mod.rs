@@ -46,12 +46,12 @@ use walk::{MazePos, MazeWorld, walk_maze};
 // --- The generator: a model pass over the builder's result, no ROM writes ---
 pub(crate) mod fill;
 pub(crate) mod graph;
-/// How long a generated maze is, in levels.
-///
-/// It began as a measurement instrument and [`CONTENT_FLOOR`] promoted it:
-/// [`generate`] now prices every deal with [`metrics::completion_cost`] and
-/// redeals the short ones, so this runs on the shipping path. The rest of the
-/// module is still census-only.
+// How long a generated maze is, in levels.
+//
+// It began as a measurement instrument and [`CONTENT_FLOOR`] promoted it:
+// [`generate`] now prices every deal with [`metrics::completion_cost`] and
+// redeals the short ones, so this runs on the shipping path. The rest of the
+// module is still census-only.
 pub(crate) mod metrics;
 pub(crate) mod relocate;
 pub(crate) mod roles;
@@ -61,51 +61,51 @@ pub(crate) mod walk;
 pub(crate) mod writer;
 
 // --- The ROM side: engine patches the mode installs after the writer ---
-/// World-maze phase 1: the packed per-world completion-bit storage the
-/// two-world swap in [`world_persist`] has to become. Reached on both targets:
-/// `randomize_inner` applies it whenever `world_maze` is set, and the web app
-/// offers that option.
+// World-maze phase 1: the packed per-world completion-bit storage the
+// two-world swap in [`world_persist`] has to become. Reached on both targets:
+// `randomize_inner` applies it whenever `world_maze` is set, and the web app
+// offers that option.
 pub mod completion_bits;
-/// World-maze: map objects a world has already lost stay lost. `Map_Init`
-/// rebuilds all nine of a world's object slots from ROM on every entry, so
-/// without this a beaten Hammer Bro is standing there again when you come back.
+// World-maze: map objects a world has already lost stay lost. `Map_Init`
+// rebuilds all nine of a world's object slots from ROM on every entry, so
+// without this a beaten Hammer Bro is standing there again when you come back.
 pub mod map_objects;
-/// The world maze's state map, in the cartridge WRAM SMB3 already carries —
-/// the one place its SRAM addresses are decided. Not battery-backed: nothing
-/// sets the iNES battery bit, so this survives a reset, not a power-off.
+// The world maze's state map, in the cartridge WRAM SMB3 already carries —
+// the one place its SRAM addresses are decided. Not battery-backed: nothing
+// sets the iNES battery bit, so this survives a reset, not a power-off.
 pub mod maze_state;
-/// Two players, two worlds: in the maze each player keeps the world they are
-/// standing in, and the turn hand-over carries the map with it. One-player mode
-/// never reaches the new path. Its SRAM byte pair is [`maze_state`]'s.
+// Two players, two worlds: in the maze each player keeps the world they are
+// standing in, and the turn hand-over carries the map with it. One-player mode
+// never reaches the new path. Its SRAM byte pair is [`maze_state`]'s.
 pub mod player_worlds;
-/// The world maze's goal gate: a wall on World 8's bridge that stands until
-/// the player holds K of the seven wands, plus the counter that the wands are
-/// counted in. See `docs/world_maze_design.md`, "The wand gate".
+// The world maze's goal gate: a wall on World 8's bridge that stands until
+// the player holds K of the seven wands, plus the counter that the wands are
+// counted in. See `docs/world_maze_design.md`, "The wand gate".
 pub mod wand_gate;
 pub mod wand_readout;
-/// World-maze persistence: a world you leave is the world you come back to.
-/// Applied by `randomize_inner` on both targets whenever `world_maze` is set —
-/// it was `testrom`-only while the mode was still a POC.
+// World-maze persistence: a world you leave is the world you come back to.
+// Applied by `randomize_inner` on both targets whenever `world_maze` is set —
+// it was `testrom`-only while the mode was still a POC.
 pub mod world_persist;
-/// World-maze fast travel: the warp whistle hops between worlds the player has
-/// already stood on the start tile of. Its SRAM map is [`maze_state`]'s.
+// World-maze fast travel: the warp whistle hops between worlds the player has
+// already stood on the start tile of. Its SRAM map is [`maze_state`]'s.
 pub mod world_travel;
 
 // --- Item gates: keys, where they go, and the canoe gate they open ---
-/// Don't hand the player a second Anchor when it is a permanent key.
+// Don't hand the player a second Anchor when it is a permanent key.
 pub mod anchor_dedup;
-/// The canoe as a lock and the Anchor as its key: boats park out of reach and
-/// only an anchor used from the inventory, while standing on a dock, calls one
-/// alongside. World-maze only — in a fixed world order the key would have to
-/// sit in front of its own lock.
+// The canoe as a lock and the Anchor as its key: boats park out of reach and
+// only an anchor used from the inventory, while standing on a dock, calls one
+// alongside. World-maze only — in a fixed world order the key would have to
+// sit in front of its own lock.
 pub mod canoe_gate;
 pub mod item_keys;
 pub mod key_placement;
 pub mod key_sites;
 
 // --- Hints ---
-/// Under some-hints, every other away fortress and the lock it opens share a
-/// corner nub, halving the fortresses a stuck player has to try.
+// Under some-hints, every other away fortress and the lock it opens share a
+// corner nub, halving the fortresses a stuck player has to try.
 pub mod away_family;
 
 /// A directed edge the engine can traverse repeatedly.
@@ -461,7 +461,7 @@ impl GlobalState {
     ///
     /// `blocked` cells are walled off AFTER stamping, which is what makes
     /// "would the game still be winnable without this level?" a one-line
-    /// question (see [`metrics::required_levels`]). Any `BACKGROUND_TILES`
+    /// question (see `metrics::required_levels`). Any `BACKGROUND_TILES`
     /// member reads as a wall to the walker; the value never reaches the ROM.
     pub(crate) fn base_grids(&self, blocked: &HashSet<MazePos>) -> Vec<Grid> {
         self.worlds
@@ -487,7 +487,7 @@ impl GlobalState {
         self.shut_locks_sealed(open, None)
     }
 
-    /// [`Self::locked_grids`] with one lock held shut whatever opens it — the
+    /// [`Self::shut_locks`] with one lock held shut whatever opens it — the
     /// counterfactual [`Self::winnable_with_lock_sealed`] asks.
     pub(crate) fn shut_locks_sealed(
         &self,
@@ -564,7 +564,7 @@ impl GlobalState {
     }
 
     /// The fixpoint with some cells walled off — the counterfactual
-    /// [`metrics::required_levels`] asks 62 times per seed.
+    /// `metrics::required_levels` asks 62 times per seed.
     pub(crate) fn spheres_with_blocked(&self, blocked: &HashSet<MazePos>) -> Spheres {
         self.spheres_inner(blocked, None).0
     }
@@ -752,7 +752,7 @@ impl GlobalState {
     /// deposit the player on a start tile, so a start region they can leave
     /// certifies all three.
     ///
-    /// It is deliberately weaker than [`Self::start_region_has_exit`], and the
+    /// It is deliberately weaker than `Self::start_region_has_exit`, and the
     /// difference is the point. The charter asked for an exit reachable with
     /// **zero keys**; that is stricter than safety needs, because a fortress
     /// inside the start region is a key the player can go and get. What

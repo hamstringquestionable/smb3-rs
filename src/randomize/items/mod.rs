@@ -13,9 +13,9 @@ pub mod powerups;
 
 // --- Power-up behaviour patches ---
 pub mod fire_flower;
-/// The two level-geometry spots where an unwanted Frog Suit strands the
-/// player. Applied only with Random Fire Flower on, since that is the only way
-/// to arrive there in a frog. See [`fire_flower`].
+// The two level-geometry spots where an unwanted Frog Suit strands the
+// player. Applied only with Random Fire Flower on, since that is the only way
+// to arrive there in a frog. See [`fire_flower`].
 pub mod frog_softlocks;
 pub mod poison_mushroom;
 

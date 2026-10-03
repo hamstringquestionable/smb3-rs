@@ -17,7 +17,7 @@ use crate::rom::Rom;
 /// that scrambles adjacent real data when written back sorted.
 ///
 /// Block-wide walkers (currently `enemies.rs`'s randomization pass) must
-/// pass these ranges to [`segment_writer::walk_segments`] so the walker
+/// pass these ranges to [`super::segment_writer::walk_segments`] so the walker
 /// jumps past the spoiled bytes and resumes parsing at the next real
 /// segment.
 ///

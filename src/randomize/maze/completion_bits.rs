@@ -64,7 +64,7 @@
 //! grids. [`apply`] writes the 6502 half — the emitted tables plus the routines
 //! that replace the two-world swap at `$84CD` — and the tests below run those
 //! routines on an emulated 2A03 against this twin. The twin's own
-//! [`CompletionMap::unpack`] and its measuring accessors are `#[cfg(test)]`,
+//! `CompletionMap::unpack` and its measuring accessors are `#[cfg(test)]`,
 //! because on the console that direction is `UNPACK_PLANE`'s job.
 
 use crate::rom::Rom;
@@ -103,7 +103,7 @@ impl CompletionMap {
     /// change.
     ///
     /// A pipeline caller passes `WrittenOverworld::grids()`, which is the map
-    /// the writer just committed. [`Self::from_rom`] is the reader's entry
+    /// the writer just committed. `Self::from_rom` (test-only) is the reader's entry
     /// point, for a caller that has only a finished ROM.
     pub(crate) fn from_grids(grids: &[Grid]) -> Self {
         assert_eq!(grids.len(), 8, "the packed store covers all eight worlds");
@@ -154,7 +154,7 @@ impl CompletionMap {
     }
 
     /// Byte offset of world `w`'s Mario plane from the start of the packed
-    /// region. Its mirror plane sits [`Self::mirror_offset`] further on.
+    /// region. Its mirror plane sits `Self::mirror_offset` further on.
     pub(crate) fn base(&self, world: usize) -> usize {
         self.bases[world] as usize
     }
@@ -324,7 +324,7 @@ const ML_RANGE_CPU: u16 = crate::randomize::overworld::lock_keys::ML_RANGE_CPU;
 ///
 /// **Not `$A437`.** `lock_keys::relocate_removable_tables` moves the table so it
 /// can grow, and this routine's scan has to follow it; the count immediate below
-/// has to follow [`rom_data::REMOVABLE_STRIDE`]'s occupancy the same way. Both
+/// has to follow [`rom_data::REMOVABLE_STRIDE`](crate::randomize::rom_data::REMOVABLE_STRIDE)'s occupancy the same way. Both
 /// are pinned by `is_completable_matches_the_relocated_table`.
 const MAP_REMOVABLE_TILES: u16 = prg_bank_file_to_cpu(12, FS_MAP_REMOVABLE);
 /// `Map_Completable_Tiles` — 5 entries the engine marks with an M/L outright:
@@ -912,7 +912,7 @@ const NEW_GAME_INIT_CPU: u16 = (0xC000 + FS_NEW_GAME_INIT - 0x32010) as u16;
 ///   rather than argued away — `A` is already zero for the loops, so it is
 ///   three bytes.
 ///
-/// * the maze's own SRAM — [`maze_state`](crate::randomize::maze::maze_state)'s whole
+/// * the maze's own SRAM — [`maze_state`]'s whole
 ///   `$7AC1..` run: the visited table the whistle cycles, the wand counter the
 ///   goal gate compares against, and the map-object store. That module's header
 ///   has always said the new-game signal is what clears it, and until the

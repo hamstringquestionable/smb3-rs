@@ -283,7 +283,7 @@ impl WorldState {
     }
 
     /// Which of `candidates` are cut vertices between the start and the
-    /// goal — the test [`Self::forced_forts`] is built from, exposed so a
+    /// goal — the test `Self::forced_forts` is built from, exposed so a
     /// census can ask it of empty blanks ("could a fort placed HERE have
     /// been avoided?") as well as of placed forts.
     ///

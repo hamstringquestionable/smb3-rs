@@ -102,7 +102,7 @@ pub(super) fn write_pipe_dest(
 
 /// Re-sort all pointer table entries by (screen, row_nib, col) and rebuild InitIndex.
 ///
-/// The game scans entries per-screen from InitIndex[screen], matching row first
+/// The game scans entries per-screen from `InitIndex[screen]`, matching row first
 /// then column. Entries must be sorted for the lookup to work correctly.
 pub(super) fn resort_pointer_table(rom: &mut Rom, world_idx: usize) {
     let world = &WORLDS[world_idx];

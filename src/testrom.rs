@@ -1000,7 +1000,7 @@ fn resolve_telepads(
     Ok(out)
 }
 
-/// Stamp [`TILE_TELEPAD`] over each pad's cell, and compose the metatile it
+/// Stamp [`TILE_TELEPAD`](crate::randomize::rom_data::TILE_TELEPAD) over each pad's cell, and compose the metatile it
 /// wears.
 ///
 /// `world_persist::PAD_ENTER` keys on `World_Map_Tile`, so a pad whose cell

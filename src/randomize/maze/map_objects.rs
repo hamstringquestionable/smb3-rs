@@ -84,7 +84,7 @@
 //! and no other, which is precisely the set of entries that reach `$84CD` —
 //! `PRG030_84D7`, the turn-end re-init the map loop jumps to on every level
 //! entry and return, skips both. So the restore is chained onto the front of
-//! [`crate::randomize::maze::completion_bits::WIPE_REPLACEMENT`], three bytes, reusing a hook
+//! `completion_bits::WIPE_REPLACEMENT`, three bytes, reusing a hook
 //! rather than inventing one.
 //!
 //! **It is deliberately *not* behind that routine's `World_Num != LIVE_WORLD`
@@ -310,7 +310,7 @@ const MARK_DEAD: [u8; 22] = [
 ///
 /// 36 reserved, 34 used.
 ///
-/// Called from the front of [`crate::randomize::maze::completion_bits::WIPE_REPLACEMENT`], so
+/// Called from the front of `completion_bits::WIPE_REPLACEMENT`, so
 /// `Map_Init` has just refilled all nine slots out of ROM and `World_Num` names
 /// the world being drawn.
 ///
@@ -421,7 +421,7 @@ fn restore_objects(retire_help_bubble: bool) -> Vec<u8> {
 /// airship, so it is left standing. See the module docs.
 ///
 /// The restore's *call* is not here: it is the first three bytes of
-/// [`crate::randomize::maze::completion_bits::WIPE_REPLACEMENT`], because that is the routine
+/// `completion_bits::WIPE_REPLACEMENT`, because that is the routine
 /// that owns the `$84CD` hook. `the_wipe_replacement_calls_the_restore` is what
 /// keeps the two ends together.
 pub(crate) fn apply(rom: &mut Rom, retire_help_bubble: bool) {
