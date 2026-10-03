@@ -1,7 +1,7 @@
 //! Level-geometry fixes for the two spots where an unwanted Frog Suit strands
 //! the player.
 //!
-//! [`super::fire_flower`] can hand out a Frog Suit from any in-level Fire
+//! [`crate::randomize::items::fire_flower`] can hand out a Frog Suit from any in-level Fire
 //! Flower, so a player who grabbed what looked like a power-up can arrive at an
 //! obstacle wearing the one suit that cannot clear it. The Frog Suit cannot
 //! crouch, so a gap the vanilla level expects Big Mario to duck under stops
@@ -35,7 +35,7 @@
 //! # Ordering
 //!
 //! None required. The only other module that writes into these level-data
-//! regions is [`super::powerups`], which round-trips each whole region through
+//! regions is [`crate::randomize::items::powerups`], which round-trips each whole region through
 //! `Rom::read_range` — the *working* buffer, not `rom.original` — so an edit
 //! made either side of it survives. [`crate::randomize::levels::antechambers`] does not touch
 //! object streams at all: it rewrites the entry area's header and its junction

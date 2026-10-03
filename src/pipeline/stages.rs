@@ -177,7 +177,7 @@ pub(super) fn level_data(rom: &mut Rom, options: &Options, rng: &mut ChaCha8Rng)
     }
     if options.powerups {
         rom.set_tag("powerups");
-        randomize::powerups::randomize(rom, rng, options.hammer_vulnerable_koopalings);
+        randomize::items::powerups::randomize(rom, rng, options.hammer_vulnerable_koopalings);
     }
     // Player colors and world colors are independent cosmetic layers:
     // `palettes` drives the character wardrobe (random or player-picked),
@@ -1067,12 +1067,12 @@ pub(super) fn macobra_layer(rom: &mut Rom, options: &Options) {
     // deterministic function of World_Num + the flower's level position.
     if options.fire_flower != FireFlowerMode::Off {
         rom.set_tag("fire_flower");
-        randomize::fire_flower::apply(rom, options.fire_flower);
+        randomize::items::fire_flower::apply(rom, options.fire_flower);
         // ...and with it, the two level spots a Frog Suit cannot get out of.
         // Only reachable in a frog *because* of the line above, so the fix
         // rides the same flag. No ordering requirement — see the module doc.
         rom.set_tag("frog_softlocks");
-        randomize::frog_softlocks::apply(rom);
+        randomize::items::frog_softlocks::apply(rom);
     }
 
     // Poison Mushroom — each 1-Up block hands out either a real 1-Up or a
@@ -1082,7 +1082,7 @@ pub(super) fn macobra_layer(rom: &mut Rom, options: &Options) {
     // Replaces MaCobra52's all-1UPs-poison recolor under the same flag.
     if options.poison_mushrooms {
         rom.set_tag("poison_mushrooms");
-        randomize::poison_mushroom::apply(rom);
+        randomize::items::poison_mushroom::apply(rom);
     }
 }
 

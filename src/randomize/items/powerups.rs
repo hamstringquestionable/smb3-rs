@@ -3,7 +3,7 @@ use rand::seq::IndexedRandom;
 
 use crate::rom::Rom;
 
-use super::rom_data::LEVEL_DATA_REGIONS;
+use crate::randomize::rom_data::LEVEL_DATA_REGIONS;
 
 /// Level generator command encoding:
 ///   byte0 (Temp_Var15): bits 7-5 = generator group, bits 4-0 = Y position

@@ -69,8 +69,8 @@
 use crate::pipeline::FireFlowerMode;
 use crate::rom::Rom;
 
-use super::rom_data::{FIRE_FLOWER_SUB_CPU, FS_FIRE_FLOWER};
 use crate::randomize::overworld::world_order::WORLD_INIT_OPERAND;
+use crate::randomize::rom_data::{FIRE_FLOWER_SUB_CPU, FS_FIRE_FLOWER};
 
 /// File offset of the suit-store inside `ObjHit_FireFlower` (PRG001). The 12
 /// bytes here are vanilla `BEQ +0x0A / LDA #$1F / STA $0555 / LDA #$03 /

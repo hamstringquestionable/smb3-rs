@@ -1,8 +1,23 @@
+//! Items: what the chests, Toad Houses, Hammer Bros and letters hand out
+//! (this module), what the ? blocks hold, and how the power-ups themselves
+//! behave.
+
 use rand::Rng;
 use rand::seq::IndexedRandom;
 
 use super::rom_data::FS_MYSTERY_ANCHOR;
 use crate::rom::Rom;
+
+/// ? block contents.
+pub mod powerups;
+
+// --- Power-up behaviour patches ---
+pub mod fire_flower;
+/// The two level-geometry spots where an unwanted Frog Suit strands the
+/// player. Applied only with Random Fire Flower on, since that is the only way
+/// to arrive there in a frog. See [`fire_flower`].
+pub mod frog_softlocks;
+pub mod poison_mushroom;
 
 const ANCHOR: u8 = 0x0A;
 

@@ -515,7 +515,7 @@ pub fn apply_fireball_hearts(rom: &mut Rom) {
 
 // Poison Mushrooms: the `--poison-mushrooms` flag no longer uses MaCobra52's
 // all-1UPs-poison recolor. It now installs the per-block poison trap in
-// `randomize::poison_mushroom` (each 1-Up block hands out a real 1-Up or a
+// `randomize::items::poison_mushroom` (each 1-Up block hands out a real 1-Up or a
 // purple poison mushroom by a seed-salted position hash). The old recolor was
 // removed when the flag was repurposed.
 

@@ -51,8 +51,8 @@
 
 use crate::rom::Rom;
 
-use super::rom_data::{FS_POISON_HOOK, FS_POISON_MUSHROOM};
 use crate::randomize::overworld::world_order::WORLD_INIT_OPERAND;
+use crate::randomize::rom_data::{FS_POISON_HOOK, FS_POISON_MUSHROOM};
 
 /// New object ID: unused group-0 slot $0A.
 const POISON_ID: usize = 0x0A;
