@@ -311,8 +311,11 @@ pub fn flag_key_fields() -> Vec<String> {
 /// uses the checked getters and encode uses the builders; the rest are
 /// unreachable by construction. The attribute has to sit on a module because it
 /// doesn't survive onto the generated `impl` from the struct.
+///
+/// `unreachable_pub` is allowed for the same reason: the macro gives its
+/// generated items `pub` visibility regardless of where the struct lives.
 mod payload {
-    #![allow(dead_code)]
+    #![allow(dead_code, unreachable_pub)]
     use super::*;
 
     /// The flag-key payload.
