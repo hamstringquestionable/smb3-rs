@@ -5739,6 +5739,33 @@ Per-world variation on the map is **palette only** (`Map_Tile_ColorSets`); no
 per-world BG bank swap exists. Map object *sprites* are a different set, pages
 `$20-$23`.
 
+**The lower half of that CHR animates.** *(Measured 2026-10-02.)* The table
+above is only frame 0. `Map_DoAnimations` (`prg011.asm:4894`) rewrites
+`PatTable_BankSel` (the 2 KB bank behind CHR indices `$00-$7F`) on a per-world
+timer (`Map_AnimSpeeds`). It cycles through `Map_AnimCHRROM`: `$14, $70, $72,
+$74`. The upper half, `$80-$FF` (`PatTable_BankSel+1 = $16`), never changes.
+
+- **111 of the 128 lower-half tiles differ between frames.** That includes every
+  quadrant of the spiral `$5F` (`$60-$63`), the large fortress `$6A`
+  (`$64-$67`) and W8's `$61` (`$50-$53`). The 17 that hold still across all
+  four banks include `$68-$6B` (measured by comparing the four banks byte for
+  byte).
+- **World 5 and the W8 final screen are frozen on frame 0**: `Map_DoAnimations`
+  loads Y = 0 for both and skips the timer.
+- **A new metatile built from lower-half CHR animates whether you want it to or
+  not**, and one that mixes halves animates only in those quadrants.
+  `patch_metatile_6a_freeze` exists because `$6A` needed to stand still. When
+  composing a tile from borrowed quadrants, prefer `$80-$FF`.
+
+**Map palette 0 is the same in every world: `$0F $0F $30 $3C`.** The first
+four bytes of every `PalSet_Maps` row (`prg027.asm:1460`) are identical, so
+page `$00-$3F` tiles (the level panels) do not take a world's colours.
+**Index 1 is `$0F`, the same black as the background**, which leaves three
+visible colours: black, white and light cyan. Art painted in index 1 (fort
+walls, the castle base `$C9`) goes solid black in page 0. A page-0 copy of a
+page-1 or page-3 building therefore reads as a silhouette, not a recolour,
+which ruled page 0 out for the away-fortress variant (2026-10-02).
+
 **Unused capacity, measured against all eight world grids:**
 
 - 139 of the 256 tile bytes appear in some world's grid; **117 are unused**.
