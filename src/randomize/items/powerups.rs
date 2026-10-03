@@ -104,7 +104,7 @@ fn qblock_pool(file_offset: usize, no_airship_stars: bool) -> &'static [u8] {
 ///
 /// When `no_airship_stars` is true, airship Q-blocks draw from {flower, leaf}
 /// only (no star) to prevent trivializing Koopaling fights with star power.
-pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R, no_airship_stars: bool) {
+pub(crate) fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R, no_airship_stars: bool) {
     for region in LEVEL_DATA_REGIONS {
         let len = region.end - region.start;
         let mut data = rom.read_range(region.start, len).to_vec();

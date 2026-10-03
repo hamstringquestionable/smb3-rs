@@ -59,8 +59,8 @@ use crate::rom::Rom;
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) struct KeySite {
     /// The cell the player stands on to collect it.
-    pub pos: MazePos,
-    pub sink: Sink,
+    pub(crate) pos: MazePos,
+    pub(crate) sink: Sink,
 }
 
 /// How an item reaches a site. Both arms are a single byte; the difference is

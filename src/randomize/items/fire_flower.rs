@@ -98,7 +98,7 @@ const ROUTINE_LEN: u16 = 26;
 ///
 /// Must run after [`crate::randomize::overworld::world_order`] so the starting-world salt is read from
 /// its final value (the orchestrator guarantees this ordering).
-pub fn apply(rom: &mut Rom, mode: FireFlowerMode) {
+pub(crate) fn apply(rom: &mut Rom, mode: FireFlowerMode) {
     let pool: &[u8] = match mode {
         FireFlowerMode::Off => return,
         FireFlowerMode::On => POOL_ON,

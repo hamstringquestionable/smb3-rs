@@ -37,7 +37,7 @@ pub(crate) const HAND_ROOM_CLONE_B_ITEM: usize = FS_HAND_ROOMS + 11 + 3; // 0x0D
 
 /// Clone the shared Hand sub-area enemy stream so 8-Hnd2 and 8-Hnd3 each
 /// get an independent `OBJ_TREASURESET` Y-byte. 8-Hnd1 keeps the original.
-pub fn patch_clone_hand_rooms(rom: &mut Rom) {
+pub(crate) fn patch_clone_hand_rooms(rom: &mut Rom) {
     rom.push_tag("hand_rooms");
 
     // Clone the 3-entry source segment to both destinations. The segment

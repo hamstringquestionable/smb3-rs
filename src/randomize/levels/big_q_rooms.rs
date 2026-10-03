@@ -135,9 +135,9 @@ const HOSTS: [Host; 11] = [
 
 /// What one host ended up with, for the write log and the 7-F1 protection.
 pub(crate) struct Assignment {
-    pub name: &'static str,
-    pub area: u8,
-    pub screen: u8,
+    pub(crate) name: &'static str,
+    pub(crate) area: u8,
+    pub(crate) screen: u8,
 }
 
 /// Which world a host's level sits in after the overworld builder has run, by

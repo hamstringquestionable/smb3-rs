@@ -28,7 +28,7 @@ const PALETTE_RANGES: &[(usize, &str)] = &[
 /// swatch on the web grid. Either way the output goes through
 /// `apply_player_scheme`, so every roll is a coherent wardrobe (natural face,
 /// Luigi contrast, white Hammer suit) rather than independent byte picks.
-pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R, player_color: Option<u8>) {
+pub(crate) fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R, player_color: Option<u8>) {
     let anchor = player_color.filter(|&c| is_chromatic(c)).unwrap_or_else(|| {
         let row: u8 = rng.random_range(..4);
         let hue: u8 = rng.random_range(1..=0x0C);
@@ -69,7 +69,7 @@ fn is_chromatic(b: u8) -> bool {
 ///
 /// Picking Mario's current color reproduces the current wardrobe
 /// byte-for-byte (vanilla red 0x16 on an unpatched ROM).
-pub fn apply_player_scheme(rom: &mut Rom, anchor: u8) {
+fn apply_player_scheme(rom: &mut Rom, anchor: u8) {
     debug_assert!(is_chromatic(anchor), "anchor {anchor:#04x} must be chromatic");
     // Rotation origin = the CURRENT Mario body hue, not a hard-coded vanilla
     // red: visual reskin patches (Luigi-35th, Peach, ...) apply before
@@ -232,7 +232,7 @@ fn theme_group_for(offset: usize) -> Option<usize> {
 /// Quartets Recolored kept at vanilla but which hold chromatic bytes are in
 /// `ROTATE_ONLY_QUARTETS`: they never variant-swap, but they DO hue-rotate,
 /// so a kept-vanilla green can't clash with rotated colors on the same screen.
-pub fn randomize_themed<R: Rng>(rom: &mut Rom, rng: &mut R) {
+pub(crate) fn randomize_themed<R: Rng>(rom: &mut Rom, rng: &mut R) {
     // World palettes only — the character wardrobe is `randomize()`'s job,
     // driven independently by the player-colors option.
 

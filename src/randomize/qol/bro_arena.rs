@@ -47,7 +47,7 @@ const DESERT_ARENA_BRO_POS: [u8; 2] = [0x0A, 0x14];
 /// one tile in the direction an enemy falls. The column is three single-block
 /// commands because the desert tileset has no vertical block run, which is
 /// what the two cactus runs pay for.
-pub fn rebuild_desert_bro_arena(rom: &mut Rom) {
+pub(crate) fn rebuild_desert_bro_arena(rom: &mut Rom) {
     let (lay, tileset) = DESERT_ARENA_LAYOUT;
     let Some(base) = rom_data::layout_file_offset(lay, tileset) else {
         return;

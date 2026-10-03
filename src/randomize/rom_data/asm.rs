@@ -107,7 +107,7 @@ struct Hook<'a> {
 }
 
 /// A patch under verification. Build with [`check`], then [`Routine::assert_ok`].
-pub struct Routine<'a> {
+pub(crate) struct Routine<'a> {
     code: &'a [u8],
     allocation: Option<usize>,
     hook: Option<Hook<'a>>,
@@ -118,7 +118,7 @@ pub struct Routine<'a> {
 }
 
 /// Begin checking an assembled routine.
-pub fn check(code: &[u8]) -> Routine<'_> {
+pub(crate) fn check(code: &[u8]) -> Routine<'_> {
     Routine {
         code,
         allocation: None,
@@ -133,7 +133,7 @@ pub fn check(code: &[u8]) -> Routine<'_> {
 impl<'a> Routine<'a> {
     /// The [`FREE_SPACE_ALLOCATIONS`] row this routine is written to, named by
     /// its file offset so that owners holding several rows stay unambiguous.
-    pub fn allocation(mut self, file_offset: usize) -> Self {
+    pub(crate) fn allocation(mut self, file_offset: usize) -> Self {
         self.allocation = Some(file_offset);
         self
     }
@@ -144,7 +144,7 @@ impl<'a> Routine<'a> {
     /// With [`Routine::origin`] also set, a hook that opens with `JSR`/`JMP`
     /// must target the routine's origin — the check that catches a relocated
     /// allocation whose hook was not moved with it.
-    pub fn hook(mut self, vanilla: &'a [u8], offset: usize, patch: &'a [u8]) -> Self {
+    pub(crate) fn hook(mut self, vanilla: &'a [u8], offset: usize, patch: &'a [u8]) -> Self {
         self.hook = Some(Hook { vanilla, offset, patch });
         self
     }
@@ -162,7 +162,7 @@ impl<'a> Routine<'a> {
     /// routine must land on an instruction boundary, or in the data region
     /// declared by [`Routine::data_from`]. One that lands anywhere else means
     /// the routine moved, or the address was typed wrong.
-    pub fn origin(mut self, cpu: u16) -> Self {
+    pub(crate) fn origin(mut self, cpu: u16) -> Self {
         self.origin = Some(cpu);
         self
     }
@@ -172,7 +172,7 @@ impl<'a> Routine<'a> {
     /// A routine carrying its own lookup tables would otherwise be decoded as
     /// instructions past its last `RTS`/`JMP`, desynchronising everything after
     /// and reporting failures that say nothing about the code.
-    pub fn data_from(mut self, offset: usize) -> Self {
+    pub(crate) fn data_from(mut self, offset: usize) -> Self {
         self.data_from = Some(offset);
         self
     }
@@ -184,7 +184,7 @@ impl<'a> Routine<'a> {
     /// written next to further pieces in the same allocation, which it falls
     /// through into. Both drop the terminator requirement and allow branches to
     /// leave the array — branches landing *inside* it are still checked.
-    pub fn fragment(mut self) -> Self {
+    pub(crate) fn fragment(mut self) -> Self {
         self.fragment = true;
         self
     }
@@ -212,13 +212,13 @@ impl<'a> Routine<'a> {
     ///
     /// Reads count as well as writes: a routine has no business reading a
     /// zero-page byte it neither owns nor named.
-    pub fn zero_page(mut self, nmi_safe_max: u8, engine_vars: &'a [u8]) -> Self {
+    pub(crate) fn zero_page(mut self, nmi_safe_max: u8, engine_vars: &'a [u8]) -> Self {
         self.zero_page = Some((nmi_safe_max, engine_vars));
         self
     }
 
     /// Run every configured check, panicking with all failures at once.
-    pub fn assert_ok(self) {
+    pub(crate) fn assert_ok(self) {
         let mut problems: Vec<String> = Vec::new();
 
         let code = &self.code[..self.data_from.unwrap_or(self.code.len())];

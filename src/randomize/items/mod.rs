@@ -9,15 +9,15 @@ use super::rom_data::FS_MYSTERY_ANCHOR;
 use crate::rom::Rom;
 
 /// ? block contents.
-pub mod powerups;
+pub(crate) mod powerups;
 
 // --- Power-up behaviour patches ---
-pub mod fire_flower;
+pub(crate) mod fire_flower;
 // The two level-geometry spots where an unwanted Frog Suit strands the
 // player. Applied only with Random Fire Flower on, since that is the only way
 // to arrive there in a frog. See [`fire_flower`].
-pub mod frog_softlocks;
-pub mod poison_mushroom;
+pub(crate) mod frog_softlocks;
+pub(crate) mod poison_mushroom;
 
 const ANCHOR: u8 = 0x0A;
 
@@ -47,17 +47,6 @@ const GOOD_ITEMS: &[u8] = &[
     ANCHOR, // the mystery power-up — see above
     0x0B,   // Hammer
     0x0D,   // Music Box
-];
-
-/// Powerup-only pool for anchor replacement (excludes non-powerup items like
-/// Cloud, P-Wing, Starman which don't change suit).
-const POWERUP_ITEMS: &[u8] = &[
-    0x01, // Mushroom
-    0x02, // Fire Flower
-    0x03, // Leaf
-    0x04, // Frog Suit
-    0x05, // Tanooki Suit
-    0x06, // Hammer Suit
 ];
 
 /// Toad House pool — powerups and combat items only (no map consumables).
@@ -214,7 +203,7 @@ pub(crate) fn set_princess_reward(rom: &mut Rom, world: usize, item: u8) {
 /// `piranha_rooms::install_treasure_sets` also get their D6 item bytes
 /// rolled. Only pass true when the clones are installed (piranha shuffle
 /// active) — otherwise those free-space offsets hold no D6 entry.
-pub fn randomize<R: Rng>(
+pub(crate) fn randomize<R: Rng>(
     rom: &mut Rom,
     rng: &mut R,
     remove_whistles: bool,
@@ -256,23 +245,9 @@ pub fn randomize<R: Rng>(
     }
 }
 
-/// Replace all anchor items (0x0A) in item tables with a single randomly
-/// chosen powerup. Since the airship lock patch makes anchors unnecessary,
-/// this turns every anchor pickup into the same powerup for a given seed
-/// (e.g., all anchors become Hammer Suits). The sprite is not changed —
-/// only the item ID in the data tables.
-pub fn replace_anchors<R: Rng>(rom: &mut Rom, rng: &mut R) {
-    let replacement = *POWERUP_ITEMS.choose(rng).unwrap();
-    let swap_anchor = |b: u8| if b == ANCHOR { replacement } else { b };
-
-    map_table(rom, HAMMER_BROS_ITEMS_OFFSET, HAMMER_BROS_ITEMS_LEN, swap_anchor);
-    map_table(rom, PRINCESS_REWARDS_OFFSET, PRINCESS_REWARDS_LEN, swap_anchor);
-    map_table(rom, TOAD_HOUSE_ITEMS_OFFSET, TOAD_HOUSE_ITEMS_LEN, swap_anchor);
-}
-
 /// Remove warp whistles without full item randomization. Replaces the 3 known
 /// whistle locations with a random item from the good pool.
-pub fn remove_whistles_only<R: Rng>(rom: &mut Rom, rng: &mut R) {
+pub(crate) fn remove_whistles_only<R: Rng>(rom: &mut Rom, rng: &mut R) {
     for &offset in WHISTLE_OFFSETS {
         if rom.read_byte(offset) == WARP_WHISTLE {
             rom.write_byte(offset, *GOOD_ITEMS.choose(rng).unwrap());
@@ -338,7 +313,7 @@ fn mystery_anchor_trampoline(target: u8) -> [u8; 10] {
 /// 1. DynJump table: redirect anchor entry to Inv_UseItem_Powerup
 /// 2. Hook inside powerup handler: replace LDX $7D80,Y with JSR to trampoline
 /// 3. Trampoline: displaced LDX + anchor check + item substitution
-pub fn write_mystery_anchor<R: Rng>(rom: &mut Rom, rng: &mut R) {
+pub(crate) fn write_mystery_anchor<R: Rng>(rom: &mut Rom, rng: &mut R) {
     let target = *MYSTERY_ANCHOR_POOL.choose(rng).unwrap();
 
     // Patch 1: DynJump table at file 0x34550. Anchor is item 10; DynJump uses

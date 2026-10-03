@@ -82,25 +82,25 @@ use crate::randomize::overworld::build::SlotKind;
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Relocation {
     /// Where the fortress was, and which world it left.
-    pub from: MazePos,
+    pub(crate) from: MazePos,
     /// Where it went, and the world that gained it.
-    pub to: MazePos,
+    pub(crate) to: MazePos,
     /// The sphere both ends sit in — equal by construction.
-    pub sphere: usize,
+    pub(crate) sphere: usize,
 }
 
 /// What the pass did.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct RelocateReport {
     /// Exchanges rolled for this seed: [`MIN_SWAPS`]..=[`MAX_SWAPS`].
-    pub wanted: usize,
-    pub moves: Vec<Relocation>,
+    wanted: usize,
+    pub(crate) moves: Vec<Relocation>,
     /// Eligible (fortress, level) pairs before the first exchange — the supply.
     /// Zero means the pass could do nothing, which a census should notice
     /// rather than read as "it chose not to".
     // Reason: a census output, and the census is its only reader.
     #[allow(dead_code)]
-    pub pairs: usize,
+    pub(crate) pairs: usize,
 }
 
 impl RelocateReport {
@@ -110,7 +110,7 @@ impl RelocateReport {
 }
 
 /// Fewest exchanges a seed makes.
-pub(crate) const MIN_SWAPS: usize = 1;
+const MIN_SWAPS: usize = 1;
 
 /// Most exchanges a seed makes.
 ///
@@ -119,7 +119,7 @@ pub(crate) const MIN_SWAPS: usize = 1;
 /// distribution stops looking like a map someone laid out and starts looking
 /// like a shuffle, which is the thing `overworld::build` spends its whole
 /// shaping loop avoiding.
-pub(crate) const MAX_SWAPS: usize = 2;
+const MAX_SWAPS: usize = 2;
 
 /// The next free fortress id in a world.
 ///

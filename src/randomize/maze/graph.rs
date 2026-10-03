@@ -64,7 +64,7 @@ pub(crate) struct Knobs {
     /// for free); 1.0 makes every link a crossing. **This is the maze knob** —
     /// it is what decides whether the eight worlds are a graph or eight rooms
     /// with local shortcuts.
-    pub foreign_landing_bias: f64,
+    pub(crate) foreign_landing_bias: f64,
     /// Which way the key-assignment fill pushes a lock's fort. `-1.0` keeps
     /// keys local (a lock's fort is near it, vanilla-ish); `0.0` accepts any
     /// solvable reassignment, which is the null model; `+1.0` pushes keys as
@@ -75,7 +75,7 @@ pub(crate) struct Knobs {
     /// have exactly one lock (the charter's map-legibility rule: a lock
     /// breaking is the only feedback that says which fort did it), so the
     /// assignment is a bijection and "how many locks" is not a free parameter.
-    pub fort_distance_bias: f64,
+    pub(crate) fort_distance_bias: f64,
 }
 
 impl Default for Knobs {
@@ -98,11 +98,11 @@ impl Default for Knobs {
 #[allow(dead_code)]
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct PlacedPad {
-    pub edge: MazeEdge,
-    pub requested: PadRole,
-    pub granted: PadRole,
+    pub(crate) edge: MazeEdge,
+    pub(crate) requested: PadRole,
+    pub(crate) granted: PadRole,
     /// True when the partner is in a different world.
-    pub foreign: bool,
+    pub(crate) foreign: bool,
 }
 
 /// A claimed pad tile, before it knows what it is paired with.
@@ -126,7 +126,7 @@ struct Site {
 /// a hop degenerate is that the player can SEE where they came from, and that
 /// is a picture, not a path. The map moves two cells at a time, so 8 is four
 /// map moves — far enough to be off-screen-ish and to feel like travel.
-pub(crate) const SAME_WORLD_MIN_SPAN: usize = 8;
+const SAME_WORLD_MIN_SPAN: usize = 8;
 
 /// The valley: World 8's screen 3, the bridge approach to Bowser's castle.
 ///

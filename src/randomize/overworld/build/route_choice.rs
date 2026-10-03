@@ -32,10 +32,10 @@ use std::cmp::Reverse;
 use std::collections::BTreeSet;
 
 /// Weighted set-cost knobs, in plain points. Legible on purpose.
-pub(crate) const COST_PIPE: u32 = 1;
+const COST_PIPE: u32 = 1;
 pub(crate) const COST_LEVEL: u32 = 3;
-pub(crate) const COST_FORT: u32 = 5;
-pub(crate) const COST_ROCK: u32 = 8;
+const COST_FORT: u32 = 5;
+const COST_ROCK: u32 = 8;
 /// "Roughly equal" band, in points. 3 = one level of wobble.
 pub(crate) const DEFAULT_SLACK: u32 = 3;
 /// Floor on the cheapest route's cost — the world must charge at least this
@@ -64,21 +64,21 @@ const BREAKABLE_ROCKS: [(u8, u8); 2] = [(0x51, 0x45), (0x52, 0x46)];
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ChoiceRoute {
     /// Weighted set-cost, in points.
-    pub cost: u32,
+    pub(crate) cost: u32,
     /// Distinct levels played — with `rocks`, the route's identity (dedup key).
-    pub levels: BTreeSet<Pos>,
+    pub(crate) levels: BTreeSet<Pos>,
     /// Distinct rocks broken — part of the identity: breaking a rock spends a
     /// hammer, so a rock route never collapses into (or dominates) the
     /// rock-free way around.
-    pub rocks: BTreeSet<Pos>,
+    pub(crate) rocks: BTreeSet<Pos>,
     /// Distinct forts beaten (breakdown for display).
     // Reason: dead_code — read only by the cfg(test) renderers and census
     // tests; kept in the production struct so the breakdown is computed once,
     // next to the mask that defines it.
     #[allow(dead_code)]
-    pub forts: u32,
+    pub(crate) forts: u32,
     /// Node path start..goal, for rendering.
-    pub path: Vec<Pos>,
+    pub(crate) path: Vec<Pos>,
 }
 
 /// Per-world choice summary.
@@ -88,23 +88,23 @@ pub(crate) struct RouteChoice {
     // cfg(test) dump/census consumers today; production code derives its own
     // views (in-band count, shaping gap) from `routes` + `best_cost`.
     #[allow(dead_code)]
-    pub reachable: bool,
-    pub best_cost: u32,
+    pub(crate) reachable: bool,
+    pub(crate) best_cost: u32,
     /// Distinct non-dominated routes within `slack` of best, cheapest first.
-    pub routes: Vec<ChoiceRoute>,
+    pub(crate) routes: Vec<ChoiceRoute>,
     /// How many routes tie at `best_cost`.
     #[allow(dead_code)]
-    pub tied_at_best: usize,
+    tied_at_best: usize,
     /// Cheapest strictly-worse in-band route minus best (the "gap"); `None`
     /// when there is no in-band alternative (LINEAR).
     #[allow(dead_code)]
-    pub runner_up_gap: Option<u32>,
+    runner_up_gap: Option<u32>,
     /// DOMINATED routes (a strict superset of some kept route's levels at no
     /// lower cost — pure detours), cheapest first, capped. Not choices — but
     /// they are the shaping pass's raw material: a fort on the kept route's
     /// exclusive path stretch re-prices it, un-nesting the cost relation and
     /// turning the detour into a real alternative.
-    pub detours: Vec<ChoiceRoute>,
+    pub(crate) detours: Vec<ChoiceRoute>,
 }
 
 /// Cap on the dominated-detour list — plenty for shaping, keeps the struct

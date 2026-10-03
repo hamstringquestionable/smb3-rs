@@ -118,7 +118,7 @@ const RELOAD_SITES: [usize; 2] = [RELOAD_IN_COUNTDOWN, RELOAD_AT_INIT];
 /// more generous than Nintendo shipped as a result (a 300 level goes from ~3:25
 /// to 5:00), which matters little in practice: timing out is already a rare way
 /// to lose a seed.
-pub fn apply_real_time_clock(rom: &mut Rom) {
+pub(crate) fn apply_real_time_clock(rom: &mut Rom) {
     for site in RELOAD_SITES {
         rom.write_byte(site, TICK_RELOAD);
     }

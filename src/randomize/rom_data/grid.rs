@@ -5,29 +5,29 @@ use super::*;
 /// Mutable overworld tile grid.
 #[derive(Clone, Debug)]
 pub(crate) struct Grid {
-    pub tiles: Vec<Vec<u8>>,
-    pub cols: usize,
+    pub(crate) tiles: Vec<Vec<u8>>,
+    pub(crate) cols: usize,
     /// Whether `8s are Wild` is active for this run. Rides on the grid so the
     /// map walker and builder can resolve the active canoe edges (via
     /// [`active_canoe_edges`]) without threading the flag through every call
     /// site. Defaults to `false` (the safe default — no phantom W8 canoe); the
     /// overworld builder stamps the real value onto the grids it walks, and it
     /// is preserved through clones.
-    pub eights_are_wild: bool,
+    pub(crate) eights_are_wild: bool,
 }
 
 impl Grid {
-    pub fn get(&self, row: usize, col: usize) -> u8 {
+    pub(crate) fn get(&self, row: usize, col: usize) -> u8 {
         self.tiles[row][col]
     }
 
-    pub fn set(&mut self, row: usize, col: usize, tile: u8) {
+    pub(crate) fn set(&mut self, row: usize, col: usize, tile: u8) {
         self.tiles[row][col] = tile;
     }
 
     /// Row count — every overworld grid has exactly [`ROWS`] rows; only the
     /// column count varies per world.
-    pub fn rows(&self) -> usize {
+    pub(crate) fn rows(&self) -> usize {
         ROWS
     }
 }

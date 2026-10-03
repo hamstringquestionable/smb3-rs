@@ -54,9 +54,9 @@ pub(crate) enum PadRole {
 /// One world's terrain, sorted into the pools the roles draw from.
 pub(crate) struct WorldTerrain {
     /// Pad tiles in the start region: reachable with every lock closed.
-    pub hub_sites: Vec<Pos>,
+    pub(crate) hub_sites: Vec<Pos>,
     /// Pad tiles reachable only once some lock opens.
-    pub gated_sites: Vec<Pos>,
+    pub(crate) gated_sites: Vec<Pos>,
     /// Pad tiles no walk reaches at all, even with every lock open — the pool
     /// the charter's island pad would have drawn from. Once measured empty,
     /// now 0.16 per world and concentrated in W3/W4 (see [`PadRole`]).
@@ -65,14 +65,14 @@ pub(crate) struct WorldTerrain {
     /// is a wasted arrival id, and half a pair that can never be used from one
     /// end. Test-only, because `maze_terrain_pools_census` is its only reader.
     #[cfg(test)]
-    pub island_sites: Vec<Pos>,
+    pub(crate) island_sites: Vec<Pos>,
     /// Whether the world's own target is reachable from the start with every
     /// lock closed — invariant 3's first and cheapest satisfier, and measured
     /// to happen only 7.8% of the time. Test-only: the census reads it, the
     /// placer does not (it asks `start_region_escapable`, which is the property
     /// that actually matters).
     #[cfg(test)]
-    pub target_ungated: bool,
+    pub(crate) target_ungated: bool,
 }
 
 impl WorldTerrain {
@@ -180,7 +180,7 @@ pub(crate) fn classify(
 ///
 /// The row-7/8 rule is applied here even though the pad tile no longer needs
 /// it — see the comment on `barred` below.
-pub(crate) fn pad_sites(w: &WorldState, stamped: &Grid, reserved: &HashSet<Pos>) -> Vec<Pos> {
+fn pad_sites(w: &WorldState, stamped: &Grid, reserved: &HashSet<Pos>) -> Vec<Pos> {
     let taken: HashSet<Pos> = w.slots.iter().map(|s| s.pos).collect();
     // Rows 7 and 8 share completion bit `$01`, and the reload reads row 7
     // first: a COMPLETABLE tile at (7,c) swallows the bit that content at

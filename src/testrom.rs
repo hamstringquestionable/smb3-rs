@@ -44,7 +44,7 @@ const MOVEMENT_RECORD_RANGE: (usize, usize) = (0x14010, 0x18010);
 /// Deliberately a small named set plus a raw-byte escape hatch, rather than an
 /// expression language — add a class when a test actually needs one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TileClass {
+enum TileClass {
     Lock,
     Gap,
     Fortress,
@@ -114,11 +114,11 @@ impl TileClass {
 /// "at least `min_count` of `what` in world `world_idx`, optionally restricted
 /// to one screen." Parsed from `lock@w8:s2>=2`.
 pub struct Requirement {
-    pub what: TileClass,
-    pub world_idx: usize,
+    what: TileClass,
+    world_idx: usize,
     /// `None` matches anywhere in the world.
-    pub screen: Option<usize>,
-    pub min_count: usize,
+    screen: Option<usize>,
+    min_count: usize,
 }
 
 impl Requirement {

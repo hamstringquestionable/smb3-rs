@@ -15,7 +15,7 @@ use crate::randomize::rom_data::{KOOPA_HITS_SUB_CPU, KOOPA_HITS_TABLE_CPU};
 /// is enabled (the combined IPS also writes this byte).
 const KOOPALING_SOFTLOCK_OFFSET: usize = 0x02186;
 
-pub fn fix_koopaling_softlock(rom: &mut Rom) {
+pub(crate) fn fix_koopaling_softlock(rom: &mut Rom) {
     rom.write_byte(KOOPALING_SOFTLOCK_OFFSET, 0x09);
 }
 
@@ -36,7 +36,7 @@ pub fn fix_koopaling_softlock(rom: &mut Rom) {
 /// Patch site: file 0x0316D (CPU $B15D), 3 bytes.
 const KOOPA_COLLISION_PATCH_SITE: usize = 0x0316D;
 
-pub fn koopaling_collision_guard(rom: &mut Rom) {
+pub(crate) fn koopaling_collision_guard(rom: &mut Rom) {
     use crate::randomize::rom_data::{FS_KOOPA_COLLISION_GUARD, KOOPA_COLLISION_GUARD_CPU};
 
     // Subroutine (13 bytes):
@@ -82,7 +82,7 @@ pub fn koopaling_collision_guard(rom: &mut Rom) {
 /// Patch site: file 0x03FB8 (CPU $BFA8), 8 bytes.
 const KOOPA_DEFEAT_PATCH_SITE: usize = 0x03FB8;
 
-pub fn koopaling_vram_clear(rom: &mut Rom) {
+pub(crate) fn koopaling_vram_clear(rom: &mut Rom) {
     use crate::randomize::rom_data::{FS_KOOPA_VRAM_CLEAR, KOOPA_VRAM_CLEAR_CPU};
 
     // Subroutine (16 bytes):
@@ -134,7 +134,7 @@ pub fn koopaling_vram_clear(rom: &mut Rom) {
 /// Patch site: file 0x03404 (CPU $B3F4), 3 bytes.
 const KOOPA_Y_CLAMP_PATCH_SITE: usize = 0x03404;
 
-pub fn koopaling_y_clamp(rom: &mut Rom) {
+pub(crate) fn koopaling_y_clamp(rom: &mut Rom) {
     use crate::randomize::rom_data::{FS_KOOPA_Y_CLAMP, KOOPA_Y_CLAMP_CPU};
 
     // Subroutine (22 bytes):
@@ -181,7 +181,7 @@ pub fn koopaling_y_clamp(rom: &mut Rom) {
 /// Koopaling hammer invulnerability flag. Vanilla 0x89 → 0x09.
 const KOOPALING_HAMMER_VULN_OFFSET: usize = 0x00312;
 
-pub fn hammer_vulnerable_koopalings(rom: &mut Rom) {
+pub(crate) fn hammer_vulnerable_koopalings(rom: &mut Rom) {
     rom.write_byte(KOOPALING_HAMMER_VULN_OFFSET, 0x09);
 }
 
@@ -224,7 +224,7 @@ const CHR_PAGE_WAND: u8 = 0x37;
 /// Lemmy's Koopaling identity value.
 const LEMMY_IDENTITY: usize = 0x05;
 
-pub fn random_koopalings<R: Rng>(rom: &mut Rom, rng: &mut R) {
+pub(crate) fn random_koopalings<R: Rng>(rom: &mut Rom, rng: &mut R) {
     use rand::seq::SliceRandom;
 
     let mut koopalings: [u8; 7] = [0, 1, 2, 3, 4, 5, 6];
@@ -288,7 +288,7 @@ const HITBOX_C_OFFSET: usize = 0x0E681;
 const HITBOX_D_OFFSET: usize = 0x0E686;
 const HITBOX_E_OFFSET: usize = 0x0E691;
 
-pub fn adjust_boss_hitboxes(rom: &mut Rom) {
+pub(crate) fn adjust_boss_hitboxes(rom: &mut Rom) {
     rom.write_range(HITBOX_A_OFFSET, &HITBOX_A_DATA);
     rom.write_byte(HITBOX_B_OFFSET, 0x04);
     rom.write_byte(HITBOX_C_OFFSET, 0x32);
@@ -357,7 +357,7 @@ const KOOPA_FIRE_HANDOFF: usize = 0x03035;
 
 /// Returns the per-world stomp threshold table it wrote, so
 /// [`crate::randomize::cosmetic::king_quotes`] can have a king remark on it.
-pub fn randomize_koopaling_hits<R: Rng>(rom: &mut Rom, rng: &mut R) -> [u8; 7] {
+pub(crate) fn randomize_koopaling_hits<R: Rng>(rom: &mut Rom, rng: &mut R) -> [u8; 7] {
     use crate::randomize::rom_data::{FS_KOOPA_FIRE_PRESET, KOOPA_FIRE_PRESET_CPU};
 
     // Write stomp threshold subroutine into free space
@@ -447,7 +447,7 @@ const BOOMBOOM_SURVIVE_CPU: u16 = 0xAE70;
 /// CPU address of the vanilla "death" tail (sets death Timer, RTS).
 const BOOMBOOM_DEATH_CPU: u16 = 0xAE82;
 
-pub fn randomize_boomboom_hits<R: Rng>(rom: &mut Rom, rng: &mut R) {
+pub(crate) fn randomize_boomboom_hits<R: Rng>(rom: &mut Rom, rng: &mut R) {
     use crate::randomize::rom_data::{
         BOOMBOOM_HITS_SUB_CPU, BOOMBOOM_HITS_TABLE_CPU, FS_BOOMBOOM_HITS_SUB,
         FS_BOOMBOOM_HITS_TABLE,
@@ -528,7 +528,7 @@ pub fn randomize_boomboom_hits<R: Rng>(rom: &mut Rom, rng: &mut R) {
 /// Original IPS: 2 bytes at 0x002EF3.
 const SKIP_WAND_CUTSCENE_OFFSET: usize = 0x002EF3;
 
-pub fn skip_wand_cutscene(rom: &mut Rom) {
+pub(crate) fn skip_wand_cutscene(rom: &mut Rom) {
     rom.write_range(SKIP_WAND_CUTSCENE_OFFSET, &[0x16, 0xB5]);
 }
 

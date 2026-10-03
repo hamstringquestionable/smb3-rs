@@ -98,7 +98,7 @@ const VANILLA_SITES: [(usize, &[u8], &str); 2] = [
 /// And the seven unvisited worlds keep display tile `$00`, exactly as any
 /// `world_count` < 7 already leaves them; it is invisible because they cannot be
 /// reached.
-pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R, world_count: u8) -> Vec<u8> {
+pub(crate) fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R, world_count: u8) -> Vec<u8> {
     for (offset, want, what) in VANILLA_SITES {
         assert_eq!(
             rom.read_range(offset, want.len()),

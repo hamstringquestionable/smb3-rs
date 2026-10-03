@@ -192,7 +192,7 @@ pub(crate) fn is_installed(rom: &Rom) -> bool {
 /// `testrom` does — it takes the A-press summon back out itself rather than
 /// leaving that to the caller, because a summon left installed opens the wall
 /// for free and nothing downstream would notice.
-pub fn apply(rom: &mut Rom, gated: &[bool; 8]) {
+pub(crate) fn apply(rom: &mut Rom, gated: &[bool; 8]) {
     assert!(gated.iter().any(|&g| g), "apply with no world gated installs a wall with no door");
     rom.push_tag("canoe_gate");
 

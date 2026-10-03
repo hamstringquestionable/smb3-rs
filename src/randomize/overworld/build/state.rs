@@ -7,61 +7,61 @@ use capacity::is_completion_unsafe;
 /// Everything true about one world mid-build. A phase receives this, changes
 /// it, and the next phase sees the result — there is no other channel.
 pub(crate) struct WorldState {
-    pub world_idx: usize,
+    pub(crate) world_idx: usize,
     /// Map tiles. Locks are NEVER stamped here — they live in `locks` as an
     /// overlay, matching the route scorer's conditional-edge model (a lock
     /// tile on the grid would read as a plain wall).
-    pub grid: Grid,
+    pub(crate) grid: Grid,
     /// What occupies each placeable node: level / fortress / pipe / filler.
-    pub slots: Vec<SlotAssignment>,
+    pub(crate) slots: Vec<SlotAssignment>,
     /// Lock overlay. `LockAssignment::fort` pairs each lock to the fortress that
     /// opens it.
-    pub locks: Vec<LockAssignment>,
+    pub(crate) locks: Vec<LockAssignment>,
     /// Teleport pipe endpoint pairs.
-    pub pipe_pairs: Vec<TeleportEdge>,
+    pub(crate) pipe_pairs: Vec<TeleportEdge>,
     /// The START tile, if the grid has one.
-    pub start: Option<Pos>,
+    pub(crate) start: Option<Pos>,
     /// The world goal (airship dock / Bowser's castle), if present.
-    pub target: Option<Pos>,
+    pub(crate) target: Option<Pos>,
     /// Positions no phase may claim (floating map sprites, pinned toad
     /// houses, airship/Bowser tiles) — input from the shared pickup/catalog
     /// phases, constant across the build.
-    pub fixed: HashSet<Pos>,
+    pub(crate) fixed: HashSet<Pos>,
     /// Lone blanks sealed off by breakable hammer rocks (the W3 spade
     /// pocket, see `HAMMER_GATED_POCKETS`) — terrain, not stranded islands.
     /// Connectivity never bridges them and no phase claims them; they stay
     /// empty hammer-gated nooks.
-    pub hammer_gated: HashSet<Pos>,
+    pub(crate) hammer_gated: HashSet<Pos>,
     /// Hard limit on pipe pairs in this world — currently the vanilla
     /// per-world count, a chosen design budget (not an inherent ROM limit;
     /// it may be raised later). All pipe-placing phases share it: whatever
     /// connectivity doesn't spend, routing may. Every world's map needs
     /// fewer pipes than its budget to fully connect, so the bound also stops
     /// a bug from spraying pipes (e.g. 8 into W2) instead of looping.
-    pub pipe_budget: usize,
+    pub(crate) pipe_budget: usize,
     /// How many action levels the Levels phase places — a chosen per-world
     /// count, seeded from the vanilla catalog's Level tally. Loader sources
     /// (`from_built`/`from_vanilla`) set it to what's already on the map.
-    pub level_budget: usize,
+    pub(crate) level_budget: usize,
     /// How many fortresses the Forts phase places — same pattern as
     /// `level_budget`, seeded from the vanilla catalog's Fortress tally.
-    pub fort_budget: usize,
+    pub(crate) fort_budget: usize,
     /// Floor on this world's cheapest route ("C1"), in scorer points — the
     /// per-world value of [`C1_FLOOR`], dealt by [`allot_budgets`] so a seed
     /// mixes short worlds with long ones at a conserved total. Every site
     /// that used to read the constant reads this instead; the constant is
     /// the band's center and the default for the loader sources.
-    pub c1_floor: u32,
+    pub(crate) c1_floor: u32,
     /// Pointer-table entries available to this world (the pickup pool size).
     /// Every slot — level, fort, hammer bro, pipe endpoint — consumes one;
     /// the hammer-bro fill phase caps itself against this.
-    pub ptr_slots: usize,
+    pub(crate) ptr_slots: usize,
     /// How many spans of the W8 bridge approach to Bowser's castle this seed
     /// wants gapped out, rolled by `capacity::roll_bridges_out`. Always 0
     /// outside W8: the deal is scoped to that one row, and the vanilla
     /// bridges in W1 and W4-W6 stay ordinary lock sites ranked on their
     /// merits.
-    pub bridges_out: usize,
+    pub(crate) bridges_out: usize,
     /// Which spans, drawn by `locks::deal_bridge_spans` in the [`Locks`]
     /// phase — after connectivity, because whether a span gates anything
     /// depends on where this seed's pipes enter the corridor.
@@ -73,7 +73,7 @@ pub(crate) struct WorldState {
     /// ones the web left decorative (measured: 55/57/59 drawn twice as often
     /// as 51/53). A pipe-web redeal re-enters [`Locks`] and does draw again,
     /// which is right: the new web moves where the corridor is entered.
-    pub bridge_spans: Vec<Pos>,
+    pub(crate) bridge_spans: Vec<Pos>,
     /// Hold W8's wand-gate cell out of the bridge deal and out of the ranked
     /// lock candidates. True only in world-maze mode, and only for W8: the
     /// maze writes its gate over `rom_data::W8_WAND_GATE_POS` after the build,
@@ -83,15 +83,15 @@ pub(crate) struct WorldState {
     /// It is a flag rather than an unconditional rule because W8 otherwise
     /// deals five bridge spans and the maze would silently make that four for
     /// every seed anyone has ever generated. Standard mode does not move.
-    pub wand_gate_reserved: bool,
+    pub(crate) wand_gate_reserved: bool,
     /// Vanilla wandering-sprite positions that MUST become HammerBro slots
     /// (a sprite starts there and can be encountered immediately, so the
     /// tile needs a pointer entry). Empty when hammer-bro shuffle is on —
     /// redistribution picks fresh positions from the filled slots instead.
-    pub hb_sprite_pins: Vec<Pos>,
+    pub(crate) hb_sprite_pins: Vec<Pos>,
     /// What each phase did, in run order — the build's own story, read by
     /// the metrics harness and by per-feature breakdowns.
-    pub log: Vec<PhaseReport>,
+    pub(crate) log: Vec<PhaseReport>,
 }
 
 /// Exclusion radius (Manhattan tiles; node spacing is 2 tiles, so this is
@@ -101,7 +101,7 @@ pub(crate) struct WorldState {
 /// every lockable tile between them is bypassed by the pipe itself (the
 /// W4/W7/W8 stuck-cheap signature). Blocked at placement, for every
 /// pipe-placing site (connectivity, spare pipes, gated shortcut).
-pub(crate) const PIPE_ANCHOR_RADIUS: usize = 4;
+const PIPE_ANCHOR_RADIUS: usize = 4;
 
 impl WorldState {
     /// True if `pos` is within [`PIPE_ANCHOR_RADIUS`] of the start or goal —
@@ -471,8 +471,8 @@ pub(crate) fn row78_partner(pos: Pos) -> Option<Pos> {
 // census/probe test harness is the reader.
 #[allow(dead_code)]
 pub(crate) struct PhaseReport {
-    pub phase: &'static str,
-    pub actions: Vec<String>,
+    pub(crate) phase: &'static str,
+    pub(crate) actions: Vec<String>,
 }
 
 /// One placement pass. Implementations should be small: read the state,

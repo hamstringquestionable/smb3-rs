@@ -1008,7 +1008,7 @@ fn oracle_world(facts: &OracleFacts) -> usize {
 /// Vanilla's stomp threshold: every Koopaling takes three hits. This is the
 /// table to pass when `koopaling_hits` is off, and it is what makes the
 /// "is this even randomized?" line fire exactly when it is not.
-pub const VANILLA_KOOPALING_HITS: [u8; 7] = [3; 7];
+pub(crate) const VANILLA_KOOPALING_HITS: [u8; 7] = [3; 7];
 
 /// One king per seed reacts to the Koopaling stomp thresholds instead of
 /// telling a joke. The table is `FS_KOOPA_HITS_TABLE`, which the generated
@@ -1138,20 +1138,20 @@ const PAT_THREE_FIVES: [&str; 6] = [
 /// the call. A topic that cannot be answered out of these fields is a topic the
 /// king may not raise: he is believed, so a line naming the wrong world is
 /// worse than no line at all.
-pub struct OracleFacts<'a> {
+pub(crate) struct OracleFacts<'a> {
     /// Per-world Koopaling stomp thresholds; [`VANILLA_KOOPALING_HITS`] when
     /// the option is off, which is a real fact about the ROM and not a
     /// placeholder.
-    pub koopaling_hits: [u8; 7],
+    pub(crate) koopaling_hits: [u8; 7],
     /// The world progression in play order, or `None` when the worlds run in
     /// their vanilla sequence and "what comes next" is not a prediction.
     ///
     /// The world maze supplies it too: clearing an airship there follows this
     /// same table (the spine), so the remark stays true in both modes.
-    pub world_progression: Option<&'a [u8]>,
+    pub(crate) world_progression: Option<&'a [u8]>,
     /// 1-F's treasure chest, or `None` when the fort deal left that level off
     /// every map this seed.
-    pub one_f_chest: Option<OneFChest>,
+    pub(crate) one_f_chest: Option<OneFChest>,
 }
 
 /// The chest in 1-F's sub-area — what is in it, and where the level landed.
@@ -1160,11 +1160,11 @@ pub struct OracleFacts<'a> {
 /// holding it *is* the level's secret exit, so it can be taken without fighting
 /// Boom-Boom, and whether the detour pays depends entirely on the item.
 #[derive(Clone, Copy, Debug)]
-pub struct OneFChest {
+pub(crate) struct OneFChest {
     /// Internal world number of the map the level was dealt to.
-    pub world: usize,
+    pub(crate) world: usize,
     /// Global item ID, read back from `items::ONE_F_CHEST_ITEM`.
-    pub item: u8,
+    pub(crate) item: u8,
 }
 
 /// Six composed lines. The oracle names worlds and items, so unlike the joke
@@ -1335,7 +1335,7 @@ fn table_pattern(table: &[u8; 7]) -> Option<&'static [&'static str; 6]> {
 /// happens above the early return, so a run with quotes off consumes exactly
 /// the same seed stream as one with them on and nothing downstream shifts.
 /// Keep it that way: never move a `choose` call below the return.
-pub fn randomize(rom: &mut Rom, rng: &mut ChaCha8Rng, enabled: bool, facts: &OracleFacts) {
+pub(crate) fn randomize(rom: &mut Rom, rng: &mut ChaCha8Rng, enabled: bool, facts: &OracleFacts) {
     // --- 1. Draw every quote, whether or not we are going to write one ---
     // choose_multiple samples without replacement, so the 7 quotes are unique.
     // It draws inside the call, not lazily as the returned iterator is walked —

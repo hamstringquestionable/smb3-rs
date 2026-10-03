@@ -26,12 +26,12 @@
 //! attributes as well — keep the two in step.
 
 /// A palette-group variant set at a specific file offset.
-pub struct VariantGroup {
-    pub offset: usize,
+pub(crate) struct VariantGroup {
+    pub(crate) offset: usize,
     /// List of known-good 4-byte variants. At least one variant (vanilla)
     /// must always be present. Additional variants widen the randomization
     /// space without adding clash risk.
-    pub variants: &'static [[u8; 4]],
+    pub(crate) variants: &'static [[u8; 4]],
 }
 
 // --------------------------------------------------------------------------
@@ -40,7 +40,7 @@ pub struct VariantGroup {
 // --------------------------------------------------------------------------
 
 #[rustfmt::skip]
-pub const SLOT2_VARIANTS: &[VariantGroup] = &[
+pub(crate) const SLOT2_VARIANTS: &[VariantGroup] = &[
     VariantGroup { offset: 0x36C54, variants: &[
         [0x30, 0x3C, 0x0F, 0x36],  // vanilla
         [0x28, 0x06, 0x0F, 0x18],  // recolored
@@ -88,7 +88,7 @@ pub const SLOT2_VARIANTS: &[VariantGroup] = &[
 // --------------------------------------------------------------------------
 
 #[rustfmt::skip]
-pub const PLAINS_SLOT3_VARIANTS: &[VariantGroup] = &[
+pub(crate) const PLAINS_SLOT3_VARIANTS: &[VariantGroup] = &[
     VariantGroup { offset: 0x36C94, variants: &[
         [0x36, 0x0F, 0xFF, 0x1A],  // vanilla
         [0x37, 0x06, 0xFF, 0x1A],  // recolored
@@ -132,7 +132,7 @@ pub const PLAINS_SLOT3_VARIANTS: &[VariantGroup] = &[
 // --------------------------------------------------------------------------
 
 #[rustfmt::skip]
-pub const SLOT4_VARIANTS: &[VariantGroup] = &[
+pub(crate) const SLOT4_VARIANTS: &[VariantGroup] = &[
     VariantGroup { offset: 0x36CC4, variants: &[
         [0x30, 0x3C, 0x37, 0x0F],  // vanilla
         [0x32, 0x12, 0x37, 0x07],  // recolored
@@ -192,7 +192,7 @@ pub const SLOT4_VARIANTS: &[VariantGroup] = &[
 // --------------------------------------------------------------------------
 
 #[rustfmt::skip]
-pub const SLOT5_VARIANTS: &[VariantGroup] = &[
+pub(crate) const SLOT5_VARIANTS: &[VariantGroup] = &[
     VariantGroup { offset: 0x36CFC, variants: &[
         [0x0F, 0x0F, 0x0F, 0x01],  // vanilla
         [0x09, 0x0F, 0x0F, 0x0F],  // recolored
@@ -244,7 +244,7 @@ pub const SLOT5_VARIANTS: &[VariantGroup] = &[
 // --------------------------------------------------------------------------
 
 #[rustfmt::skip]
-pub const SLOT6_VARIANTS: &[VariantGroup] = &[
+pub(crate) const SLOT6_VARIANTS: &[VariantGroup] = &[
     VariantGroup { offset: 0x36D38, variants: &[
         [0x30, 0x16, 0xFF, 0x0C],  // vanilla
         [0x38, 0x16, 0xFF, 0x0C],  // recolored
@@ -280,7 +280,7 @@ pub const SLOT6_VARIANTS: &[VariantGroup] = &[
 // --------------------------------------------------------------------------
 
 #[rustfmt::skip]
-pub const SLOT7_VARIANTS: &[VariantGroup] = &[
+pub(crate) const SLOT7_VARIANTS: &[VariantGroup] = &[
     VariantGroup { offset: 0x36D6C, variants: &[
         [0x30, 0x10, 0x0F, 0x0C],  // vanilla
         [0x10, 0x00, 0x0F, 0x01],  // recolored
@@ -335,7 +335,7 @@ pub const SLOT7_VARIANTS: &[VariantGroup] = &[
 // --------------------------------------------------------------------------
 
 #[rustfmt::skip]
-pub const SLICE1_WATER_VARIANTS: &[VariantGroup] = &[
+pub(crate) const SLICE1_WATER_VARIANTS: &[VariantGroup] = &[
     VariantGroup { offset: 0x37000, variants: &[
         [0x13, 0x30, 0x0F, 0x0F],  // vanilla
         [0x13, 0x30, 0x0F, 0x02],  // recolored
@@ -623,7 +623,7 @@ pub const SLICE1_WATER_VARIANTS: &[VariantGroup] = &[
 // --------------------------------------------------------------------------
 
 #[rustfmt::skip]
-pub const SLICE2_VARIANTS: &[VariantGroup] = &[
+pub(crate) const SLICE2_VARIANTS: &[VariantGroup] = &[
     VariantGroup { offset: 0x37204, variants: &[
         [0x30, 0x3C, 0x0F, 0x17],  // vanilla
         [0x22, 0x12, 0x0F, 0x17],  // recolored
@@ -1008,7 +1008,7 @@ pub const SLICE2_VARIANTS: &[VariantGroup] = &[
 // --------------------------------------------------------------------------
 
 #[rustfmt::skip]
-pub const SLICE3_GIANT_VARIANTS: &[VariantGroup] = &[
+pub(crate) const SLICE3_GIANT_VARIANTS: &[VariantGroup] = &[
     VariantGroup { offset: 0x37404, variants: &[
         [0x36, 0x0F, 0xFF, 0x1A],  // vanilla
         [0x37, 0x06, 0xFF, 0x1A],  // recolored
@@ -1282,7 +1282,7 @@ pub const SLICE3_GIANT_VARIANTS: &[VariantGroup] = &[
 // --------------------------------------------------------------------------
 
 #[rustfmt::skip]
-pub const SLICE4_HEAD_VARIANTS: &[VariantGroup] = &[
+pub(crate) const SLICE4_HEAD_VARIANTS: &[VariantGroup] = &[
     VariantGroup { offset: 0x37604, variants: &[
         [0x30, 0x3C, 0x0F, 0x0F],  // vanilla
         [0x22, 0x12, 0x0F, 0x0F],  // recolored
@@ -1500,7 +1500,7 @@ pub const SLICE4_HEAD_VARIANTS: &[VariantGroup] = &[
 // --------------------------------------------------------------------------
 
 #[rustfmt::skip]
-pub const SLICE4_TAIL_VARIANTS: &[VariantGroup] = &[
+pub(crate) const SLICE4_TAIL_VARIANTS: &[VariantGroup] = &[
     VariantGroup { offset: 0x37808, variants: &[
         [0x0F, 0x16, 0x30, 0x36],  // vanilla
         [0x0F, 0x16, 0x30, 0x37],  // recolored
@@ -1543,7 +1543,7 @@ pub const SLICE4_TAIL_VARIANTS: &[VariantGroup] = &[
 // --------------------------------------------------------------------------
 
 #[rustfmt::skip]
-pub const SLOT0_MAP_VARIANTS: &[VariantGroup] = &[
+pub(crate) const SLOT0_MAP_VARIANTS: &[VariantGroup] = &[
     VariantGroup { offset: 0x36BE4, variants: &[
         [0x30, 0x3C, 0x0F, 0x36],  // vanilla
         [0x2C, 0x12, 0x0F, 0x28],  // recolored
@@ -1596,7 +1596,7 @@ pub const SLOT0_MAP_VARIANTS: &[VariantGroup] = &[
 // --------------------------------------------------------------------------
 
 #[rustfmt::skip]
-pub const SLOT1_MAP_VARIANTS: &[VariantGroup] = &[
+pub(crate) const SLOT1_MAP_VARIANTS: &[VariantGroup] = &[
     VariantGroup { offset: 0x36C1C, variants: &[
         [0x2A, 0x3A, 0x0F, 0x30],  // vanilla
         [0x1A, 0x2A, 0x0F, 0x30],  // recolored
@@ -1658,7 +1658,7 @@ pub const SLOT1_MAP_VARIANTS: &[VariantGroup] = &[
 // --------------------------------------------------------------------------
 
 #[rustfmt::skip]
-pub const SLOT_TAIL_VARIANTS: &[VariantGroup] = &[
+pub(crate) const SLOT_TAIL_VARIANTS: &[VariantGroup] = &[
     VariantGroup { offset: 0x36DAC, variants: &[
         [0x27, 0x16, 0x0F, 0x00],  // vanilla
         [0x27, 0x16, 0x0F, 0x2D],  // recolored
@@ -1713,7 +1713,7 @@ pub const SLOT_TAIL_VARIANTS: &[VariantGroup] = &[
 // --------------------------------------------------------------------------
 
 #[rustfmt::skip]
-pub const POOL_VARIANTS: &[VariantGroup] = &[
+pub(crate) const POOL_VARIANTS: &[VariantGroup] = &[
     VariantGroup { offset: 0x36E20, variants: &[
         [0x27, 0x17, 0x3C, 0x0F],  // vanilla
         [0x28, 0x18, 0x11, 0x02],  // recolored
@@ -2045,7 +2045,7 @@ pub const POOL_VARIANTS: &[VariantGroup] = &[
 // --------------------------------------------------------------------------
 
 #[rustfmt::skip]
-pub const SLICE4_POST_VARIANTS: &[VariantGroup] = &[
+pub(crate) const SLICE4_POST_VARIANTS: &[VariantGroup] = &[
     VariantGroup { offset: 0x37844, variants: &[
         [0x30, 0x36, 0x0F, 0xFF],  // vanilla
         [0x30, 0x38, 0x08, 0xFF],  // recolored
@@ -2066,7 +2066,7 @@ pub const SLICE4_POST_VARIANTS: &[VariantGroup] = &[
 // All quartets verified palette-like (every byte <= 0x3F or 0xFF).
 // --------------------------------------------------------------------------
 
-pub const ROTATE_ONLY_QUARTETS: &[usize] = &[
+pub(crate) const ROTATE_ONLY_QUARTETS: &[usize] = &[
     // slot 0 (W6 map) (3)
     0x36C00, 0x36C0C, 0x36C10, // slot 1 (W7 map) (1)
     0x36C40, // slot 2 (5)

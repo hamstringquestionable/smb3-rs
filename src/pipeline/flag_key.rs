@@ -34,7 +34,7 @@ use modular_bitfield::prelude::*;
 
 pub(super) const FLAG_KEY_VERSION: u8 = 29;
 
-pub(super) const FLAG_KEY_PREFIX: &str = "SMB3R-";
+const FLAG_KEY_PREFIX: &str = "SMB3R-";
 
 /// Salt mixed into the seed to derive the substream that resolves `Maybe`
 /// flags. Keeping it on a separate stream means turning a flag to `Maybe`
@@ -755,7 +755,7 @@ impl Options {
     }
 
     /// Encode options into the raw key bytes: version, checksum, payload.
-    pub fn to_flag_bytes(&self) -> Vec<u8> {
+    pub(crate) fn to_flag_bytes(&self) -> Vec<u8> {
         let payload = self.to_flag_bits().into_bytes();
         // Trailing zero bytes carry nothing, so they are not transmitted. That
         // is what decouples the format's capacity from the key's length: the

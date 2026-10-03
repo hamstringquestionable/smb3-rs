@@ -39,10 +39,10 @@ use crate::rom::Rom;
 /// then have their item byte randomized by another — and is the place to say
 /// so, not a licence to let an unrelated pass wander in.
 pub struct FreeSpaceAlloc {
-    pub offset: usize,
-    pub size: usize,
-    pub owners: &'static [&'static str],
-    pub label: &'static str,
+    pub(crate) offset: usize,
+    pub(crate) size: usize,
+    pub(crate) owners: &'static [&'static str],
+    pub(crate) label: &'static str,
 }
 
 /// Shorthand so registry rows stay one line each.
@@ -1138,24 +1138,24 @@ fn tag_owns(tag: &str, owner: &str) -> bool {
 
 /// What one allocation actually received during a run.
 pub struct AllocUsage {
-    pub alloc: &'static FreeSpaceAlloc,
+    pub(crate) alloc: &'static FreeSpaceAlloc,
     /// Bytes inside the region that the run changed.
-    pub changed: usize,
+    changed: usize,
     /// Region start through the last changed byte — the number that belongs in
     /// a `// N reserved, M used` comment. Zero when nothing was written.
-    pub used: usize,
+    pub(crate) used: usize,
     /// Tags that wrote here without owning the region, and how many bytes each
     /// wrote. Any entry is a bug: either the owner is wrong or the module is.
-    pub foreign: Vec<(String, usize)>,
+    pub(crate) foreign: Vec<(String, usize)>,
     /// Writes crossing the region boundary: (offset, len, tag). A write
     /// starting inside and ending past the end is an overrun; one starting
     /// before is an encroachment from outside.
-    pub overruns: Vec<(usize, usize, String)>,
+    pub(crate) overruns: Vec<(usize, usize, String)>,
 }
 
 impl AllocUsage {
     /// True when this allocation is in a state the registry does not describe.
-    pub fn is_problem(&self) -> bool {
+    pub(crate) fn is_problem(&self) -> bool {
         !self.foreign.is_empty() || !self.overruns.is_empty()
     }
 }
@@ -1206,8 +1206,8 @@ const MIN_FILLER_RUN: usize = 8;
 /// One unclaimed run of `$FF` filler: a place a patch could go.
 #[derive(Clone, Copy)]
 pub struct Gap {
-    pub offset: usize,
-    pub len: usize,
+    pub(crate) offset: usize,
+    pub(crate) len: usize,
 }
 
 /// Unclaimed filler in one PRG bank, measured against the vanilla ROM.
@@ -1217,31 +1217,31 @@ pub struct Gap {
 /// that, and the totals below carry caveats a gap does not (see
 /// [`free_space_map`]).
 pub struct BankFree {
-    pub bank: usize,
+    bank: usize,
     /// Bytes reserved by [`FREE_SPACE_ALLOCATIONS`] in this bank.
-    pub allocated: usize,
+    allocated: usize,
     /// Unclaimed `$FF` runs, largest first. Candidates, not confirmations:
     /// filler that nothing has *claimed* may still be data something *reads*.
     /// Verify a gap against the disassembly once, then record it as a registry
     /// row and it never needs checking again.
-    pub gaps: Vec<Gap>,
+    pub(crate) gaps: Vec<Gap>,
     /// `$FF` filler outside every allocation. An aggregate — useful for "is
     /// this bank roomy", never for "does my patch fit".
-    pub free_ff: usize,
+    free_ff: usize,
     /// `$00` runs outside every allocation. Reported apart from `free_ff`
     /// because zeroed *data* looks identical to zero padding — treat this
     /// column as a candidate list, not as available space.
-    pub free_00: usize,
+    free_00: usize,
 }
 
 impl BankFree {
     /// Largest single unclaimed `$FF` run, or 0.
-    pub fn largest_gap(&self) -> usize {
+    fn largest_gap(&self) -> usize {
         self.gaps.first().map_or(0, |g| g.len)
     }
 
     /// Where the largest run starts, or 0 when there is none.
-    pub fn largest_gap_at(&self) -> usize {
+    fn largest_gap_at(&self) -> usize {
         self.gaps.first().map_or(0, |g| g.offset)
     }
 }

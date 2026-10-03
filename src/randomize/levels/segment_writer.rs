@@ -29,15 +29,15 @@
 use crate::rom::Rom;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SegmentEntry {
-    pub obj_id: u8,
-    pub x: u8,
-    pub y: u8,
+pub(crate) struct SegmentEntry {
+    pub(crate) obj_id: u8,
+    pub(crate) x: u8,
+    pub(crate) y: u8,
 }
 
 /// How `write_segment` should treat the caller's entry order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SortMode {
+pub(crate) enum SortMode {
     /// Sort entries by ascending X before writing. Use when assembling a
     /// segment from scratch (composers): you know the segment is one
     /// logical level and want SMB3's expected X-sorted layout.
@@ -50,35 +50,35 @@ pub enum SortMode {
     Preserve,
 }
 
-pub struct SegmentSpec<'a> {
+pub(crate) struct SegmentSpec<'a> {
     /// File offset of the segment's page/header byte. Entries start at
     /// `file_offset + 1`.
-    pub file_offset: usize,
+    pub(crate) file_offset: usize,
     /// Expected entry count (defends against accidental segment growth/shrink).
-    pub original_count: usize,
+    pub(crate) original_count: usize,
     /// Proposed entries. Treated per `sort_mode`.
-    pub entries: &'a [SegmentEntry],
+    pub(crate) entries: &'a [SegmentEntry],
     /// Optional caller-supplied name (e.g. `"3-2 sub-area 0"`) that gets
     /// embedded in error messages alongside the file offset. Useful when a
     /// single pass writes many segments — knowing which segment failed is
     /// hard from offset alone.
-    pub label: Option<&'a str>,
+    pub(crate) label: Option<&'a str>,
     /// Whether the writer should sort entries by X (composers) or write
     /// them in caller-supplied order (in-place mutators).
-    pub sort_mode: SortMode,
+    pub(crate) sort_mode: SortMode,
 }
 
 /// Bounds of one segment in the enemy data block. `file_offset` points at
 /// the page/header byte; `entry_count` is the number of 3-byte entries
 /// before the terminating `0xFF`. Returned by [`walk_segments`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SegmentBounds {
-    pub file_offset: usize,
-    pub entry_count: usize,
+pub(crate) struct SegmentBounds {
+    pub(crate) file_offset: usize,
+    pub(crate) entry_count: usize,
 }
 
 #[derive(Debug)]
-pub enum WriteError {
+pub(crate) enum WriteError {
     CountMismatch { offset: usize, label: Option<String>, expected: usize, got: usize },
 }
 
@@ -101,7 +101,7 @@ impl std::fmt::Display for WriteError {
 }
 
 /// Read all entries from an existing segment.
-pub fn read_segment(rom: &Rom, file_offset: usize, count: usize) -> Vec<SegmentEntry> {
+pub(crate) fn read_segment(rom: &Rom, file_offset: usize, count: usize) -> Vec<SegmentEntry> {
     let base = file_offset + 1;
     (0..count)
         .map(|i| {
@@ -118,7 +118,7 @@ pub fn read_segment(rom: &Rom, file_offset: usize, count: usize) -> Vec<SegmentE
 /// Validate `entries`, optionally sort by X per `spec.sort_mode`, and
 /// write back to the segment. Errors are returned rather than panicking
 /// so callers can decide whether a failure is recoverable.
-pub fn write_segment(rom: &mut Rom, spec: &SegmentSpec) -> Result<(), WriteError> {
+pub(crate) fn write_segment(rom: &mut Rom, spec: &SegmentSpec) -> Result<(), WriteError> {
     let label_owned = || spec.label.map(|s| s.to_string());
 
     if spec.entries.len() != spec.original_count {
@@ -171,7 +171,7 @@ pub fn write_segment(rom: &mut Rom, spec: &SegmentSpec) -> Result<(), WriteError
 /// can be used both against in-memory edit buffers (e.g. inside
 /// `enemies.rs` which composes changes in a local `Vec<u8>` before
 /// committing) and against ROM bytes.
-pub fn walk_segments(
+pub(crate) fn walk_segments(
     data: &[u8],
     start: usize,
     end: usize,
@@ -232,13 +232,6 @@ pub fn walk_segments(
         }
     }
     bounds
-}
-
-/// Walk segments directly off a `Rom` — convenience wrapper around
-/// [`walk_segments`] when the caller hasn't already snapshot the block
-/// into a `Vec<u8>`.
-pub fn walk_segments_rom(rom: &Rom, start: usize, end: usize) -> Vec<SegmentBounds> {
-    walk_segments(&rom.data[..end.min(rom.data.len())], start, end, &[])
 }
 
 #[cfg(test)]

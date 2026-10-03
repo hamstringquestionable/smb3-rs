@@ -129,7 +129,7 @@ const STOMP_RISE_CODE: [u8; 26] = [
 const STOMP_HEIGHT_HOOK_BYTES: [u8; 4] =
     [0x20, STOMP_RISE_CPU as u8, (STOMP_RISE_CPU >> 8) as u8, 0xEA];
 
-pub fn apply(rom: &mut Rom) {
+pub(crate) fn apply(rom: &mut Rom) {
     rom.write_byte(OVERLAP_THRESHOLD, OVERLAP_TOLERANT);
     rom.write_range(FS_STOMP_RISE, &STOMP_RISE_CODE);
     rom.write_range(STOMP_HEIGHT_HOOK, &STOMP_HEIGHT_HOOK_BYTES);

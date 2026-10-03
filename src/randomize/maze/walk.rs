@@ -68,9 +68,9 @@ fn teleport_lookup(pairs: &[TeleportEdge]) -> TeleportLookup {
 /// which byte renders a lock. Which byte that is depends on the path underneath
 /// and is purely cosmetic — see `map_walker::walk_reachable_blocked`.
 pub(crate) struct MazeWorld<'a> {
-    pub grid: &'a Grid,
-    pub pipe_pairs: &'a [TeleportEdge],
-    pub blocked: &'a HashSet<Pos>,
+    pub(crate) grid: &'a Grid,
+    pub(crate) pipe_pairs: &'a [TeleportEdge],
+    pub(crate) blocked: &'a HashSet<Pos>,
     /// This world's boat stays beached however reachable its docks are.
     ///
     /// How an item gate on the canoe reaches the walker. [`GlobalState::view`](super::GlobalState::view)
@@ -82,7 +82,7 @@ pub(crate) struct MazeWorld<'a> {
     /// `MazeWorld` is built in two places and [`walk_maze`] is called from
     /// eighteen — a parameter would have rippled through all of them to say
     /// `false`.
-    pub canoe_locked: bool,
+    pub(crate) canoe_locked: bool,
 }
 
 /// Reachability across every world at once.

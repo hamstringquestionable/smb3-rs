@@ -19,19 +19,19 @@ use crate::randomize::overworld::writer::WrittenOverworld;
 /// Everything settled from the seed and options before the first ROM write.
 pub(super) struct Resolved {
     /// The *effective* whistle removal, not the raw flag — see [`resolve`].
-    pub whistles_removed: bool,
+    whistles_removed: bool,
     /// Whether item gates were asked for — see [`resolve`].
-    pub item_gates: bool,
+    item_gates: bool,
     /// Starting items with the random sentinels resolved to concrete items.
-    pub starting_items: Vec<u8>,
-    pub hammer_breaks_locks: bool,
-    pub hammer_breaks_bridges: bool,
-    pub troll_pipes: bool,
-    pub more_hammer_rocks: bool,
-    pub eights_are_wild: bool,
-    pub antechamber_shuffle: bool,
-    pub piranha_active: bool,
-    pub hints: crate::HintMode,
+    starting_items: Vec<u8>,
+    hammer_breaks_locks: bool,
+    hammer_breaks_bridges: bool,
+    troll_pipes: bool,
+    more_hammer_rocks: bool,
+    eights_are_wild: bool,
+    antechamber_shuffle: bool,
+    piranha_active: bool,
+    hints: crate::HintMode,
 }
 
 /// The maze's model-side decisions, handed from [`maze_model`] to [`maze_rom`].

@@ -38,7 +38,7 @@ use crate::randomize::rom_data::FS_SEED_STAMP as STAMP_OFFSET;
 /// [`ITEM_RANDOM_NO_SUITS`] reads it — the other pools predate the flag and
 /// keep their historical contents, so passing it does not move any seed that
 /// does not use the new sentinel.
-pub fn resolve_starting_item(item: u8, whistles_removed: bool, rng: &mut ChaCha8Rng) -> u8 {
+fn resolve_starting_item(item: u8, whistles_removed: bool, rng: &mut ChaCha8Rng) -> u8 {
     match item {
         ITEM_RANDOM => {
             // Any item 1–13

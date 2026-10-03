@@ -126,7 +126,7 @@ const HOOK_LEN: usize = 31;
 ///
 /// Must run after [`crate::randomize::overworld::world_order`] so the seed-derived salt is read from
 /// its final value (the orchestrator guarantees this ordering).
-pub fn apply(rom: &mut Rom) {
+pub(crate) fn apply(rom: &mut Rom) {
     install_object(rom);
     install_hook(rom);
 }

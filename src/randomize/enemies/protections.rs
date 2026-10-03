@@ -18,14 +18,14 @@ use crate::randomize::rom_data::{HAMMER_BRO_OBJ_PTRS, enemy_ptr_to_file_offset};
 
 /// One logical level or sub-area with protections that affect enemy
 /// randomization.
-pub(super) struct LevelProtection {
+struct LevelProtection {
     // Reason: `label` is documentation embedded in the table — its value is
     // grep-ability when investigating a protected offset.
     #[allow(dead_code)]
-    pub label: &'static str,
-    pub enemy_ptr: u16,
-    pub walker_segment: WalkerSegmentRule,
-    pub entries: &'static [EntryRule],
+    label: &'static str,
+    enemy_ptr: u16,
+    walker_segment: WalkerSegmentRule,
+    entries: &'static [EntryRule],
 }
 
 /// How the walker treats the $FF-bounded segment containing this level's
@@ -45,9 +45,9 @@ pub(super) enum WalkerSegmentRule {
 
 /// Per-entry rule attached to a specific 3-byte enemy entry by its absolute
 /// file offset.
-pub(super) struct EntryRule {
-    pub offset: usize,
-    pub rule: EntryProtection,
+struct EntryRule {
+    offset: usize,
+    rule: EntryProtection,
 }
 
 /// Per-entry behavior. The walker applies these inline during its swap pass;
@@ -67,7 +67,7 @@ pub(super) enum EntryProtection {
     ExcludeHazards,
 }
 
-pub(super) const LEVEL_PROTECTIONS: &[LevelProtection] = &[
+const LEVEL_PROTECTIONS: &[LevelProtection] = &[
     // --- Whole-level skips ---
     LevelProtection {
         label: "3-2 (enemies-as-platforms, sprite-overload risk)",

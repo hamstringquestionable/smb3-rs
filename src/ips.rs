@@ -124,9 +124,9 @@ fn write_rle_record(patch: &mut Vec<u8>, offset: usize, count: usize, value: u8)
 
 /// One decoded IPS record: the target file offset and the bytes to write there.
 /// RLE records are expanded, so callers see a uniform `(offset, payload)` shape.
-pub struct IpsRecord {
-    pub offset: usize,
-    pub payload: Vec<u8>,
+pub(crate) struct IpsRecord {
+    pub(crate) offset: usize,
+    pub(crate) payload: Vec<u8>,
 }
 
 /// Decode every record in an IPS patch.
@@ -135,7 +135,7 @@ pub struct IpsRecord {
 /// before applying them — the test-ROM builder takes only the movement records
 /// from a practice patch and drops the rest, which would clobber randomized
 /// data.
-pub fn parse_ips_records(patch: &[u8]) -> Result<Vec<IpsRecord>, String> {
+pub(crate) fn parse_ips_records(patch: &[u8]) -> Result<Vec<IpsRecord>, String> {
     if patch.len() < 8 {
         return Err("Patch too small".to_string());
     }

@@ -9,7 +9,7 @@ use super::*;
 /// (0); fire jets self-position differently, so they carry an offset: the upward
 /// jet sits `FIREJET_UP_Y_RISE` rows higher (−), the downward jet
 /// `FIREJET_DOWN_Y_DROP` rows lower (+). See `swap_enemy`.
-pub(super) fn piranha_pool_y_offset(id: u8) -> i8 {
+fn piranha_pool_y_offset(id: u8) -> i8 {
     match id {
         FIREJET_UP => -(FIREJET_UP_Y_RISE as i8),
         FIREJET_DOWN => FIREJET_DOWN_Y_DROP as i8,

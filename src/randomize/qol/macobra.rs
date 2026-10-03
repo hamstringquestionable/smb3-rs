@@ -207,7 +207,7 @@ const EARLY_SUN_OFFSET: usize = 0x0AD81;
 
 /// Apply MaCobra52's "Early Sun" patch — the Angry Sun starts attacking
 /// without its vanilla pre-attack delay.
-pub fn apply_early_sun(rom: &mut Rom) {
+pub(crate) fn apply_early_sun(rom: &mut Rom) {
     rom.write_byte(EARLY_SUN_OFFSET, 0x00);
 }
 
@@ -238,7 +238,7 @@ const LIMIT_BRO_CODE: [u8; 8] = [0xF0, 0x06, 0x88, 0xD0, 0xF8, 0x4C, 0xA3, 0xB3]
 /// Apply the "Limit Bro Movement" patch — converts the wandering-object
 /// landing-tile blacklist into a whitelist of path tiles, so wandering
 /// Hammer Bros may only step onto overworld path tiles.
-pub fn apply_limit_bro_movement(rom: &mut Rom) {
+pub(crate) fn apply_limit_bro_movement(rom: &mut Rom) {
     rom.write_range(LIMIT_BRO_TABLE_OFFSET, &LIMIT_BRO_TABLE);
     rom.write_range(LIMIT_BRO_FILL_OFFSET, &LIMIT_BRO_FILL);
     rom.write_range(LIMIT_BRO_CODE_OFFSET, &LIMIT_BRO_CODE);
@@ -257,7 +257,7 @@ const JP_DAMAGE_BYTES: [u8; 3] = [0xEA, 0xEA, 0xEA];
 /// from any power-up tier (Super, Fire, Raccoon, Frog, Tanooki, Hammer)
 /// drops the player straight to Small Mario instead of demoting one tier
 /// at a time.
-pub fn apply_japanese_damage(rom: &mut Rom) {
+pub(crate) fn apply_japanese_damage(rom: &mut Rom) {
     rom.write_range(JP_DAMAGE_OFFSET, &JP_DAMAGE_BYTES);
 }
 
@@ -273,7 +273,7 @@ const INF_MUSHROOM_HOUSES_BYTES: [u8; 5] = [0xE8, 0xE6, 0xBD, 0xEA, 0xEA];
 
 /// Apply MaCobra52's "Infinite use Mushroom Houses" patch — toad houses
 /// stay on the map after entering and can be visited any number of times.
-pub fn apply_infinite_mushroom_houses(rom: &mut Rom) {
+pub(crate) fn apply_infinite_mushroom_houses(rom: &mut Rom) {
     rom.write_range(INF_MUSHROOM_HOUSES_OFFSET, &INF_MUSHROOM_HOUSES_BYTES);
 }
 
@@ -295,7 +295,7 @@ const FAST_MUSH_EXIT_OFFSET: usize = 0x001E3F;
 /// Apply MaCobra52's "Fast Mushroom House" — combines the "Move Sooner"
 /// and "Exit Faster" timer tweaks: skip the entry-input-lock and shorten
 /// the exit transition.
-pub fn apply_fast_mushroom_house(rom: &mut Rom) {
+pub(crate) fn apply_fast_mushroom_house(rom: &mut Rom) {
     rom.write_byte(FAST_MUSH_MOVE_OFFSET, 0x00);
     rom.write_byte(FAST_MUSH_EXIT_OFFSET, 0x5F);
 }
@@ -326,7 +326,7 @@ const FASTER_TAIL_W76_WALL_BYTES: [u8; 3] = [0x42, 0x14, 0xBD];
 /// trims raccoon/Tanooki flight time to neutralize the 8-1 cheese the
 /// faster tail enables, and lowers the 7-6 wall so the intended fly
 /// strat still clears at the new flight duration.
-pub fn apply_faster_tail_speed(rom: &mut Rom) {
+pub(crate) fn apply_faster_tail_speed(rom: &mut Rom) {
     rom.write_byte(FASTER_TAIL_SLOWDOWN_OFFSET, 0x29);
     rom.write_byte(FASTER_TAIL_FLIGHT_OFFSET, 0x78);
     rom.write_range(FASTER_TAIL_W76_WALL_OFFSET, &FASTER_TAIL_W76_WALL_BYTES);
@@ -373,7 +373,7 @@ const FASTER_FROG_HOOK_BYTES: [u8; 3] = [0x20, 0xF0, 0xC5]; // JSR $C5F0
 /// inside that routine), plus a standalone speed-boost routine + hook in
 /// PRG029. Must run AFTER apply_macobra_patches so the tail-swim base it
 /// edits is already in place.
-pub fn apply_faster_frog(rom: &mut Rom) {
+pub(crate) fn apply_faster_frog(rom: &mut Rom) {
     rom.write_range(FASTER_FROG_EDIT_A_OFFSET, &FASTER_FROG_EDIT_A_BYTES);
     rom.write_range(FASTER_FROG_EDIT_B_OFFSET, &FASTER_FROG_EDIT_B_BYTES);
     rom.write_range(FS_FASTER_FROG, &FASTER_FROG_ROUTINE);
@@ -412,7 +412,7 @@ const NGO_NOP_BYTES: [u8; 3] = [0xEA, 0xEA, 0xEA];
 /// Apply MaCobra52's "No Game Over Penalty" patch — Game Overs no longer
 /// wipe the player's reserve inventory, world map progress, or card
 /// state.
-pub fn apply_no_game_over_penalty(rom: &mut Rom) {
+pub(crate) fn apply_no_game_over_penalty(rom: &mut Rom) {
     rom.write_range(NGO_HOOK_A_OFFSET, &NGO_HOOK_A_BYTES);
     rom.write_range(NGO_HOOK_B_OFFSET, &NGO_HOOK_B_BYTES);
     rom.write_range(NGO_ROUTINE_OFFSET, &NGO_ROUTINE);
@@ -465,7 +465,7 @@ const REMOVE_FLASHING_WRITES: &[(usize, &[u8])] = &[
 /// Apply MaCobra52's "Remove Flashing" patch — suppresses the full-screen
 /// palette-flash/fade animation for photosensitive-safe play. Cosmetic /
 /// accessibility option; not in the flag key and uses no RNG.
-pub fn apply_remove_flashing(rom: &mut Rom) {
+pub(crate) fn apply_remove_flashing(rom: &mut Rom) {
     for &(offset, bytes) in REMOVE_FLASHING_WRITES {
         rom.write_range(offset, bytes);
     }
@@ -504,7 +504,7 @@ const FIREBALL_HEART_TILES: [u8; 64] = [
 /// Apply MaCobra52's "Change fireballs to hearts" patch. Cosmetic; not in the
 /// flag key and uses no RNG. Runs after the visual patch, so it wins over one
 /// that redraws fireballs.
-pub fn apply_fireball_hearts(rom: &mut Rom) {
+pub(crate) fn apply_fireball_hearts(rom: &mut Rom) {
     for offset in FIREBALL_HEART_FLIP_FRAMES {
         rom.write_range(offset, &[0x01, 0x01]);
     }
@@ -541,7 +541,7 @@ const MODERN_POWERUP_TABLE_C_OFFSET: usize = 0x11810;
 /// Apply MaCobra52's "Easy Power-up System" patch — power-ups work like the
 /// modern Mario games: Small Mario grabbing a Fire Flower or suit gets its
 /// power straight away without turning Big first.
-pub fn apply_modern_powerups(rom: &mut Rom) {
+pub(crate) fn apply_modern_powerups(rom: &mut Rom) {
     rom.write_range(MODERN_POWERUP_JMP_A_OFFSET, &[0xEA, 0xEA, 0xEA]);
     rom.write_range(MODERN_POWERUP_JMP_B_OFFSET, &[0xEA, 0xEA, 0xEA]);
     rom.write_byte(MODERN_POWERUP_TABLE_A_OFFSET, 0x1E);
@@ -639,7 +639,7 @@ const MARIOMON_GUARD_BYTES: [u8; 2] = [0xEA, 0xEA];
 /// Apply MaCobra52's "No Extra Lives" + "No Continues" as one challenge mode:
 /// nothing in a single-player run grants a 1-Up, and the Game Over popup's
 /// first entry reads CONCEDE because neither entry returns to the map.
-pub fn apply_mariomon(rom: &mut Rom) {
+pub(crate) fn apply_mariomon(rom: &mut Rom) {
     for site in MARIOMON_LIFE_SITES {
         rom.write_range(site, &[0xEA; MARIOMON_INC_LIVES.len()]);
     }
@@ -651,7 +651,7 @@ pub fn apply_mariomon(rom: &mut Rom) {
 }
 
 /// Apply MaCobra's always-on bugfixes and fairness patches.
-pub fn apply_macobra_patches(rom: &mut Rom) {
+pub(crate) fn apply_macobra_patches(rom: &mut Rom) {
     // Prevent forced hammer bro fights (4 NOPs)
     rom.write_range(FORCED_BRO_FIGHT, &[0xEA; 4]);
 

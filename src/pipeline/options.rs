@@ -64,7 +64,7 @@ pub fn item_display_name(id: u8) -> &'static str {
 }
 
 /// Returns default starting lives (5).
-pub(super) fn default_starting_lives() -> u8 {
+fn default_starting_lives() -> u8 {
     5
 }
 
@@ -90,7 +90,7 @@ pub(super) fn lives_to_idx(lives: u8) -> u8 {
 }
 
 /// Returns default world count (7 — all worlds before Dark Land).
-pub(super) fn default_world_count() -> u8 {
+fn default_world_count() -> u8 {
     7
 }
 
@@ -126,11 +126,11 @@ pub enum EnemyMode {
     Wild,
 }
 
-pub(super) fn default_shuffle() -> EnemyMode {
+fn default_shuffle() -> EnemyMode {
     EnemyMode::Shuffle
 }
 
-pub(super) fn default_off() -> EnemyMode {
+fn default_off() -> EnemyMode {
     EnemyMode::Off
 }
 
@@ -320,7 +320,7 @@ pub enum HintMode {
 impl HintMode {
     /// Position on the ladder — 0 Off, 1 Some, 2 Full — so callers can ask
     /// "at least Some" without caring that the encoding is in the other order.
-    pub fn rung(self) -> u8 {
+    fn rung(self) -> u8 {
         match self {
             HintMode::Off => 0,
             HintMode::Partial => 1,
@@ -329,12 +329,12 @@ impl HintMode {
     }
 
     /// Does the map say anything at all about which fortress opens which lock?
-    pub fn hints_at_all(self) -> bool {
+    pub(crate) fn hints_at_all(self) -> bool {
         self.rung() >= HintMode::Partial.rung()
     }
 
     /// Do locks carry the world number, rather than only a colour?
-    pub fn numbers_locks(self) -> bool {
+    pub(crate) fn numbers_locks(self) -> bool {
         self == HintMode::Full
     }
 }
@@ -418,7 +418,7 @@ impl Tri {
     }
 }
 
-pub(super) fn default_tri_on() -> Tri {
+fn default_tri_on() -> Tri {
     Tri::On
 }
 
@@ -820,7 +820,7 @@ pub struct Options {
     pub skip_rom_validation: bool,
 }
 
-pub(super) fn default_true() -> bool {
+fn default_true() -> bool {
     true
 }
 

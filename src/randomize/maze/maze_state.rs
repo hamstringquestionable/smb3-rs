@@ -20,7 +20,7 @@
 pub(crate) const MAZE_STATE_START: u16 = 0x7AC1;
 
 /// Last byte of the free run this all has to fit inside.
-pub(crate) const MAZE_STATE_END: u16 = 0x7ADF;
+const MAZE_STATE_END: u16 = 0x7ADF;
 
 /// Which worlds the player has stood on the start tile of, one byte per world.
 ///

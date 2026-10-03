@@ -140,7 +140,7 @@ const BRO_TIMER: [u8; 25] = [
 
 /// Give Hammer / Boomerang / Heavy / Fire Bro encounters a [`BRO_CLOCK`]-second
 /// clock, whatever their level header asks for. Every other level is untouched.
-pub fn apply_bro_battle_timer(rom: &mut Rom) {
+pub(crate) fn apply_bro_battle_timer(rom: &mut Rom) {
     rom.write_range(FS_BRO_TIMER, &BRO_TIMER);
     rom.write_range(TIMER_HOOK, &TIMER_HOOK_PATCH);
 }

@@ -107,7 +107,7 @@ const CAPTION_DIGIT_OFFSETS: [&[usize]; 8] = [
 ///
 /// The identity order is a no-op, so calling this with world-order
 /// randomization disabled leaves the ROM byte-identical.
-pub fn reorder_world_pictures(rom: &mut Rom, order: &[u8; 8]) {
+pub(crate) fn reorder_world_pictures(rom: &mut Rom, order: &[u8; 8]) {
     debug_assert!(is_permutation(order), "credits order must be a permutation of 0..=7");
 
     if *order == [0, 1, 2, 3, 4, 5, 6, 7] {
@@ -149,7 +149,7 @@ pub fn reorder_world_pictures(rom: &mut Rom, order: &[u8; 8]) {
 /// worlds are enabled. Visited worlds come first in play order; any worlds not
 /// in the progression are appended in ascending order so the result is always
 /// a permutation of `0..=7` and every montage slot shows a real picture.
-pub fn order_from_progression(progression: &[u8]) -> [u8; 8] {
+pub(crate) fn order_from_progression(progression: &[u8]) -> [u8; 8] {
     let mut order = [0u8; 8];
     let mut seen = [false; 8];
     let mut n = 0;
@@ -268,7 +268,7 @@ const CASTLE_ICON_COL: usize = 11;
 /// `allocated` is the seed's allocated lock tiles as `(tile, revealed path)`
 /// (`lock_keys::LockTiles::pairs`). Those bytes mean something different every
 /// seed, so no flat table can name them.
-pub fn render_world_maps<R: Rng>(rom: &mut Rom, rng: &mut R, allocated: &[(u8, u8)]) {
+pub(crate) fn render_world_maps<R: Rng>(rom: &mut Rom, rng: &mut R, allocated: &[(u8, u8)]) {
     let pictures: Vec<Vec<u8>> = (0..8)
         .map(|w| {
             let grid = rom_data::read_tile_grid(rom, w);

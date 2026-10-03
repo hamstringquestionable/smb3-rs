@@ -31,12 +31,12 @@ mod sprite_bank;
 mod tables;
 
 // Which entries the swap pass must leave alone, and why.
-pub mod protections;
+mod protections;
 
 // --- Enemy and boss behaviour patches, applied outside the swap pass ---
-pub mod koopalings;
-pub mod stomp_fairness;
-pub mod water_stomp;
+pub(crate) mod koopalings;
+pub(crate) mod stomp_fairness;
+pub(crate) mod water_stomp;
 
 use class_modes::*;
 use injection::*;
@@ -57,7 +57,7 @@ mod tests;
 /// object IDs that belong to a known enemy class. Position bytes and all
 /// special objects (end-level cards, pipes, platforms, bosses, powerups,
 /// autoscroll triggers, cannons, etc.) are never modified.
-pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R, opts: &Options) {
+pub(crate) fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R, opts: &Options) {
     randomize_object_data(rom, rng, false, opts);
 }
 
@@ -67,7 +67,7 @@ pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R, opts: &Options) {
 /// Nothing is exempt. 7-F1 needs flight, but which room its pipe opens is drawn
 /// per seed by `big_q_rooms`, which runs after this and forces *that* room's
 /// block — so the guarantee does not depend on any offset being skipped here.
-pub fn randomize_big_q_blocks<R: Rng>(rom: &mut Rom, rng: &mut R) {
+pub(crate) fn randomize_big_q_blocks<R: Rng>(rom: &mut Rom, rng: &mut R) {
     // All enemy classes off — only Big ? Blocks get randomized
     let no_flags = Options {
         ground: EnemyMode::Off,
