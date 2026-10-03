@@ -134,23 +134,25 @@ pub(crate) fn bowser_door_buffer_clear(rom: &mut Rom) {
     ]);
 }
 
-/// Clamp the in-hand wand's sprite Y to `$08`–`$E8`.
+/// Keep the Koopaling's X position inside `$08`–`$E7`.
 ///
 /// Source: fcoughlin (Fred). His randomizer applies it at this same address;
-/// there is no IPS.
+/// there is no IPS. It was ported as a "Y clamp", but `$91` is `Objects_X`
+/// (`Objects_Y` is `$A3`), and it clamps the Koopaling's real position.
 ///
-/// **This moves the wand's drawn position, not the Koopaling.** The hook is
-/// inside `Draw_KoopalingWand`, after it has temporarily added the wand offset
-/// (`Koopaling_OffYLo`, -5..+15) to `Objects_Y` and pushed the real position;
-/// the routine restores it with `PLA / STA Objects_Y,X` when it is done. It
-/// only acts when the Koopaling is at the very top or bottom of the screen,
-/// and only on frames 0-3 (walking, firing), the frames the wand is drawn.
+/// The hook is inside `Draw_KoopalingWand`, which pushes each coordinate,
+/// adds the wand's offset, draws, and pulls them back. At `$B3F4` it has
+/// already done that to Y but **not yet to X**, so the clamped X is what
+/// gets pushed and what gets restored: the Koopaling itself cannot pass
+/// `$08` or `$E7` horizontally. Collision, movement and
+/// `Object_DeleteOffScreen` all see the clamped X on the next frame.
 ///
-/// Why Fred added it is not recorded. The out-of-bounds jump table fixed in
-/// [`randomize_koopaling_hits`] could throw a Koopaling to the top of the
-/// screen, where the wand would wrap to the bottom; that is a guess. Kept
-/// because Koopaling softlocks were common before these patches and nobody
-/// recorded which one fixed what.
+/// That keeps a Koopaling from leaving the side of the arena, where
+/// `Object_DeleteOffScreen` would delete it and leave no wand and no exit — a
+/// plausible softlock it guards against, though which softlock Fred hit is not
+/// recorded. It only runs on frames 0-3 (walking, firing): the wand routine
+/// returns earlier from frame 4 up, so the shell spin and the fly-off after the
+/// final hit (frames 10-17) are not clamped. It reads only the low X byte.
 ///
 /// Hooks `$B3F4` (file 0x03404) by replacing `LDA Objects_FlipBits,X`
 /// (`$0679`) with `JSR clamp_routine`. The displaced instruction executes
@@ -158,23 +160,23 @@ pub(crate) fn bowser_door_buffer_clear(rom: &mut Rom) {
 /// value.
 ///
 /// Patch site: file 0x03404 (CPU $B3F4), 3 bytes.
-const KOOPA_Y_CLAMP_PATCH_SITE: usize = 0x03404;
+const KOOPA_X_CLAMP_PATCH_SITE: usize = 0x03404;
 
-pub(crate) fn koopaling_y_clamp(rom: &mut Rom) {
-    use crate::randomize::rom_data::{FS_KOOPA_Y_CLAMP, KOOPA_Y_CLAMP_CPU};
+pub(crate) fn koopaling_x_clamp(rom: &mut Rom) {
+    use crate::randomize::rom_data::{FS_KOOPA_X_CLAMP, KOOPA_X_CLAMP_CPU};
 
     // Subroutine (22 bytes):
-    //   LDA $91,X      ; Objects_Y
-    //   CMP #$08       ; below top bound?
+    //   LDA $91,X      ; Objects_X
+    //   CMP #$08       ; left of the left bound?
     //   BCC .low       ; if < 8, clamp low
-    //   CMP #$E8       ; above bottom bound?
+    //   CMP #$E8       ; right of the right bound?
     //   BCC .store     ; if < 232, in range
     //   LDA #$E8       ; clamp high
     //   BCS .store     ; unconditional (carry set)
     // .low:
     //   LDA #$08       ; clamp low
     // .store:
-    //   STA $91,X      ; write clamped Y
+    //   STA $91,X      ; write clamped X
     //   LDA $0679,X    ; displaced instruction from caller
     //   RTS
     #[rustfmt::skip]
@@ -192,12 +194,12 @@ pub(crate) fn koopaling_y_clamp(rom: &mut Rom) {
         0xBD, 0x79, 0x06,   // LDA $0679,X (displaced)
         0x60,                // RTS
     ];
-    rom.write_range(FS_KOOPA_Y_CLAMP, &code);
+    rom.write_range(FS_KOOPA_X_CLAMP, &code);
 
     // Patch site: LDA $0679,X → JSR clamp_routine
-    let lo = (KOOPA_Y_CLAMP_CPU & 0xFF) as u8;
-    let hi = (KOOPA_Y_CLAMP_CPU >> 8) as u8;
-    rom.write_range(KOOPA_Y_CLAMP_PATCH_SITE, &[0x20, lo, hi]); // JSR
+    let lo = (KOOPA_X_CLAMP_CPU & 0xFF) as u8;
+    let hi = (KOOPA_X_CLAMP_CPU >> 8) as u8;
+    rom.write_range(KOOPA_X_CLAMP_PATCH_SITE, &[0x20, lo, hi]); // JSR
 }
 
 /// Make Koopalings vulnerable to thrown hammers.

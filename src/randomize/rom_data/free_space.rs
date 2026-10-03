@@ -429,7 +429,7 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
         &["koopalings"],
         "koopa_fire_preset: set stomp counter from threshold table for fireball defeat",
     ),
-    fs(0x03FD0, 22, &["koopalings"], "koopa_y_clamp: clamp the wand sprite's Y to screen"),
+    fs(0x03FD0, 22, &["koopalings"], "koopa_x_clamp: keep the Koopaling's X on screen"),
     fs(0x03FE6, 36, &["fire_flower"], "position-hash suit routine + pool table"),
     fs(0x0400A, 6, &["koopalings"], "koopa_jump_base: Koopaling_JumpYVelsBase for hit counts 0-5"),
     fs(
@@ -997,18 +997,18 @@ pub(crate) const FS_BOWSER_DOOR_BUFFER_CLEAR: usize = 0x0384E; // 16 bytes
 
 pub(crate) const BOWSER_DOOR_BUFFER_CLEAR_CPU: u16 = 0xB83E; // $A000 + (0x0384E - 0x02010)
 
-// Koopaling wand Y clamp — pins the in-hand wand sprite's Y to the screen
-// (the Koopaling's own Y is restored after). Source: Fred.
-// See `koopalings::koopaling_y_clamp`.
-pub(crate) const FS_KOOPA_Y_CLAMP: usize = 0x03FD0; // 22 bytes
+// Koopaling X clamp — keeps the Koopaling's X inside $08-$E7 on frames 0-3
+// ($91 is Objects_X; ported as a "Y clamp"). Source: Fred.
+// See `koopalings::koopaling_x_clamp`.
+pub(crate) const FS_KOOPA_X_CLAMP: usize = 0x03FD0; // 22 bytes
 
-pub(crate) const KOOPA_Y_CLAMP_CPU: u16 = 0xBFC0; // $A000 + (0x03FD0 - 0x02010)
+pub(crate) const KOOPA_X_CLAMP_CPU: u16 = 0xBFC0; // $A000 + (0x03FD0 - 0x02010)
 
 // Random Fire Flower (issue #22) — injected routine that derives the granted
 // power state from a seed-derived salt (the shuffled starting world) + the
 // current World_Num + the level layout pointer + the flower's screen number,
 // instead of the vanilla hardcoded Fire. Sits in the PRG001 bank-end gap right
-// after koopa_y_clamp (which ends at 0x3FE6). Up to 36 bytes: 26-byte routine +
+// after koopa_x_clamp (which ends at 0x3FE6). Up to 36 bytes: 26-byte routine +
 // a 4- or 6-byte pool table. ObjHit_FireFlower runs with PRG001 banked at
 // $A000, so the JSR from the hook is bank-local.
 pub(crate) const FS_FIRE_FLOWER: usize = 0x03FE6;
@@ -1559,7 +1559,7 @@ mod free_space_tests {
             (FS_BOWSER_DOOR_BUFFER_CLEAR, "FS_BOWSER_DOOR_BUFFER_CLEAR"),
             (FS_KOOPA_JUMP_BASE, "FS_KOOPA_JUMP_BASE"),
             (FS_KOOPA_FIRE_PRESET, "FS_KOOPA_FIRE_PRESET"),
-            (FS_KOOPA_Y_CLAMP, "FS_KOOPA_Y_CLAMP"),
+            (FS_KOOPA_X_CLAMP, "FS_KOOPA_X_CLAMP"),
             (FS_FIRE_FLOWER, "FS_FIRE_FLOWER"),
             (FS_POISON_MUSHROOM, "FS_POISON_MUSHROOM"),
             (FS_POISON_HOOK, "FS_POISON_HOOK"),
