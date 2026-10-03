@@ -39,7 +39,7 @@ A change that moves output has to show that the *shape* of what the builder
 produces is unchanged. Concretely: run the censuses before and after, and
 account for every figure that moved by more than sampling noise.
 
-The censuses are in `src/randomize/overworld_build/builder_tests.rs` and
+The censuses are in `src/randomize/overworld/build/builder_tests.rs` and
 `src/randomize/maze/tests.rs`; all take `CENSUS_SEEDS`. The one that matters
 most is the route census, because route choice *is* the builder's product:
 

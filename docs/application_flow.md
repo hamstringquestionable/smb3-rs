@@ -113,11 +113,11 @@ changes every seed that uses `Maybe`.
 | 4.2 | `piranha_rooms::clear_vanilla_plants` + `catalog.release_map_objects()` · `piranha_shuffle` — frees 7-P1/7-P2 into the pool; **must precede the builder**, which reads sprite state from the ROM | [opt `piranha_shuffle != Off`] |
 | 4.3 | `start_airship_swap::pick_swaps` | [opt `swap_start_airship`] |
 | 4.4 | `overworld_pickup::pick_up{shuffle_spade_games, shuffle_toad_houses, shuffle_hammer_bros}` — Phase 2 | [always] |
-| 4.5 | `overworld_build::build{shuffle_toad_houses, eights_are_wild, shuffle_hammer_bros, world_maze}` — Phase 3 | [always] |
+| 4.5 | `overworld::build::build{shuffle_toad_houses, eights_are_wild, shuffle_hammer_bros, world_maze}` — Phase 3 | [always] |
 | 4.6 | `hands_levels::mark_hand_traps` + `install_full_grab` · `hands_levels` | [opt `hands_levels`] |
 | 4.7 | `troll_pipes::mark_troll_pipes` — **deliberately untagged**: it mutates `build` only, and a tag here would leak onto everything the writer emits | [tri `troll_pipes`] |
 | 4.8 | ★ **OVERWORLD CAPTURE POINT** — clone the finished `BuildResult` for analyzers. Keep it immediately before the writer | [opt caller asked] |
-| 4.9 | `overworld_writer::write_overworld{shuffle_hammer_bros, piranha, friendlier_levels, deja_vu, deja_vu_forts}` → `lock_pairing` — Phase 4 · **tag switches to `overworld_writer`** | [always] |
+| 4.9 | `overworld::writer::write_overworld{shuffle_hammer_bros, piranha, friendlier_levels, deja_vu, deja_vu_forts}` → `lock_pairing` — Phase 4 · **tag switches to `overworld_writer`** | [always] |
 
 ### 5 · World maze (tag `world_maze`) — [opt `world_maze`]
 

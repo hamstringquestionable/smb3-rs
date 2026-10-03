@@ -29,7 +29,7 @@ Positions where we have no curated alternatives (or where even Recolored didn't
 change anything) are left vanilla. For plains that's ~70% of the bytes in the
 mapped palette region.
 
-Current variant library (`src/randomize/palette_variants.rs`):
+Current variant library (`src/randomize/cosmetic/palette_variants.rs`):
 - **Plains slot 3** (0x36BE4 band 3): 7 positions × 2 variants (vanilla, Recolored)
 - **Plains slice 4 band 3** (0x376D8): 1 position × 2 variants
 
@@ -66,7 +66,7 @@ This draft is the output of the reverse-engineering phase documented in
 `tools/palette_inspect.py` (since deleted — recover from git history if the
 analysis needs redoing). It proposes how to turn that understanding into a
 thoughtful in-game palette randomizer, replacing the current minimal
-`src/randomize/palettes.rs` (Mario/Luigi power-up colors only).
+`src/randomize/cosmetic/palettes.rs` (Mario/Luigi power-up colors only).
 
 Goals, in priority order:
 1. Coherent per-tileset theming — plains still *feels* like grass-and-sky,
@@ -125,7 +125,7 @@ Plus three isolated tables we already know:
 - **Outline color `0x0F`**: always byte-2 or byte-3 of a palette quartet depending on table alignment. The "raw painter" rule (don't touch any byte whose vanilla value is `0x00` or `0x0F`) is safe across every probe run so far.
 - **Universal BG color `$3F00`**: when written via byte-0 of a palette quartet, changes the HUD background for all levels using that slot. If HUD readability matters, constrain `$3F00` writes to dark colors (≤ `0x1C`).
 - **Color `0x0D`**: black variant that behaves weirdly on some NES hardware. Already excluded from `SAFE_COLORS` in `palettes.rs`.
-- **Character palette slot count**: existing `src/randomize/palettes.rs` handles byte-1/byte-2 only. Keep that rule when extending.
+- **Character palette slot count**: existing `src/randomize/cosmetic/palettes.rs` handles byte-1/byte-2 only. Keep that rule when extending.
 
 ---
 

@@ -1,6 +1,6 @@
 # Start ↔ Airship swap — engine internals
 
-Reference notes for the `src/randomize/start_airship_swap.rs` module. Captures the SMB3 engine details that took the longest to derive, so future work in this area doesn't have to re-derive them.
+Reference notes for the `src/randomize/overworld/start_airship_swap.rs` module. Captures the SMB3 engine details that took the longest to derive, so future work in this area doesn't have to re-derive them.
 
 ## Goal
 
@@ -55,7 +55,7 @@ The airship is normally entered via sprite collision (Mario walks into the movin
 
 The vanilla tile directly above the airship (`0xC8`, the castle's top half) is part of the visible airship sprite — it's a two-tile-tall composite. Without also swapping the tile above, the castle-top stays anchored above the vanilla airship location and dangles as a stray graphic.
 
-For W4/W5/W7, the tile that ends up above the **new** start position (the tile that vanilla had above the start, dropped into the new airship-coords-for-start location) is a water square — fine above the original start but jarring elsewhere. The module overrides those three worlds with a generic land/sky blank (see `above_start_override` in `src/randomize/start_airship_swap.rs`).
+For W4/W5/W7, the tile that ends up above the **new** start position (the tile that vanilla had above the start, dropped into the new airship-coords-for-start location) is a water square — fine above the original start but jarring elsewhere. The module overrides those three worlds with a generic land/sky blank (see `above_start_override` in `src/randomize/overworld/start_airship_swap.rs`).
 
 ### W3 reachability — the canoe-dock trap
 
@@ -65,7 +65,7 @@ When SAS swaps W3, the start moves to the vanilla airship position `(6, 41)` —
 
 The builder used `walk_map` for its connectivity checks (lock safety, pipe placement). `walk_map` historically treated canoe edges as free bidirectional teleports, so the builder believed every island was always reachable from the mainland and vice versa — including from a stranded start. This let unwinnable layouts pass the builder's checks.
 
-**Fix landed in `src/randomize/map_walker.rs`:** `walk_map` now does a two-pass BFS. The first pass uses walking + pipes only; if any canoe mainland dock is in the resulting reachable set, the second pass enables canoe edges (bidirectional). If the dock isn't walk-reachable, no canoe edges are added at all. The bidirectional model in the second pass is still correct because once the player can reach the dock they can shuttle the boat between mainland and any island as needed.
+**Fix landed in `src/randomize/overworld/map_walker.rs`:** `walk_map` now does a two-pass BFS. The first pass uses walking + pipes only; if any canoe mainland dock is in the resulting reachable set, the second pass enables canoe edges (bidirectional). If the dock isn't walk-reachable, no canoe edges are added at all. The bidirectional model in the second pass is still correct because once the player can reach the dock they can shuttle the boat between mainland and any island as needed.
 
 After this change the SAS 1000-seed sweep drops from 63 unreachable W3 cases to 0. The W5 carve-out and other SAS mechanics are unaffected — they don't interact with canoes.
 
@@ -110,7 +110,7 @@ unswapped / page-0 worlds get no-op stores.
 
 ## Verification tooling
 
-The W3 reachability bug was caught by `test_required_progression` in `src/randomize/overworld_build/`, a Dijkstra-based must-clear analyzer. Useful flow when changing anything SAS-related:
+The W3 reachability bug was caught by `test_required_progression` in `src/randomize/overworld/build/`, a Dijkstra-based must-clear analyzer. Useful flow when changing anything SAS-related:
 
 ```sh
 nix-shell -p gcc --run 'export PATH="$HOME/.cargo/bin:$PATH" && \

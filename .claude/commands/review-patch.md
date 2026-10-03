@@ -32,7 +32,7 @@ So for the patch under review, check only what the tests cannot:
   (`tools/offset_dups.py` catches the general case)
 - The registry row's `owners` names the write-log tag this patch writes under.
   If the patch is emitted by a larger pass it needs its own `push_tag` — see
-  `march_veto` / `fx_screen_check` in `overworld_writer/mod.rs` — or its bytes
+  `march_veto` / `fx_screen_check` in `overworld/writer/mod.rs` — or its bytes
   are attributed to the whole pass and the audit cannot tell them apart
 - The reserved size leaves sensible headroom, and any `// N reserved, M used`
   comment matches. `--write-log` prints measured usage per allocation. It counts

@@ -20,7 +20,7 @@ bank swap works, the block is collectable, and the pipe returns to 5-2. Palette
 
 ## What is built in the randomizer
 
-`randomize/big_q_rooms.rs` — every host draws from the 19-room pool when
+`randomize/levels/big_q_rooms.rs` — every host draws from the 19-room pool when
 `shuffle_big_q_rooms` is set. `qol/big_q.rs` grew the slot-seeding halves and
 the four payload tables the pass fills in.
 

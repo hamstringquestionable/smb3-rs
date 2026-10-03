@@ -114,7 +114,7 @@ randomization run.
 
 1. Every write inside a registered region carries a tag one of that region's
    `owners` covers. Owners match whole `/`-separated tag components, so
-   `fx_screen_check` covers `overworld_writer/fx_screen_check` and
+   `fx_screen_check` covers `overworld/writer/fx_screen_check` and
    `big_q_blocks` covers both `qol/` and `enemies/` variants.
 2. No write crosses a region boundary, in either direction.
 3. Every allocation is exercised by the audit run. Without this the check is

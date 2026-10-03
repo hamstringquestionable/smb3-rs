@@ -17,8 +17,8 @@ own cell. Exercised on hardware through World Maze playtesting.
 > fortress reach the effect identically. See "The trigger" below.
 
 **Read first:** `docs/world_maze_design.md` for the mode this serves, and
-`src/randomize/lock_keys.rs` for the mechanism as built. What is left of the
-old writer is `overworld_writer/fortress_fx.rs`, now a dozen lines that pair a
+`src/randomize/overworld/lock_keys.rs` for the mechanism as built. What is left of the
+old writer is `overworld/writer/fortress_fx.rs`, now a dozen lines that pair a
 lock with a fortress and nothing else.
 
 ---
@@ -347,7 +347,7 @@ failure shape as a lock having two keys.
 
 `Map_Removable_Tiles`/`Map_RemoveTo_Tiles` (`$A437`/`$A43F`) and the metatile
 quadrant tables (`PRG012_FILE_BASE`, UL/LL/UR/LR x 256 — see
-`overworld_writer/metatiles.rs`) are **all in PRG012**. During map play `$A000`
+`overworld/writer/metatiles.rs`) are **all in PRG012**. During map play `$A000`
 is PRG011 and `$C000` is PRG010; **PRG012 is not mapped**. Neither lookup is
 reachable from `MO_DoFortressFX` without a bank swap.
 
@@ -604,7 +604,7 @@ row-7/8 shared-bit rule (#212) into play for the new tile. It is not a free knob
    count, default 8). Findings are folded into "Most of that is cached
    arithmetic" above.
 2. **Stage 1 — one ROM change. Done** (2026-09-06), in
-   `src/randomize/lock_keys.rs`. What landed, and where it differs from the plan
+   `src/randomize/overworld/lock_keys.rs`. What landed, and where it differs from the plan
    above:
 
    * **The whole routine moved**, rather than being patched in place. The map
@@ -709,7 +709,7 @@ anything touching the overworld needs the two deep censuses re-run:
   position encoding.
 - `completion_bits::vanilla_fx_bits_are_owned` (**test**) reads
   `FX_MAP_COMP_IDX` for all 17 slots.
-- `rom_data::access::read_fx_slots` and `overworld_writer/tests.rs:552`.
+- `rom_data::access::read_fx_slots` and `overworld/writer/tests.rs:552`.
 
 ---
 

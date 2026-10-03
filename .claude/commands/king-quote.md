@@ -1,4 +1,4 @@
-Format a quote and add it to the king quotes database in `src/randomize/king_quotes.rs`.
+Format a quote and add it to the king quotes database in `src/randomize/cosmetic/king_quotes.rs`.
 
 ## Usage
 `/king-quote <text>`
@@ -47,7 +47,7 @@ Examples:
    |from the Princess.  |
    ```
 
-6. **After user approval**, append the new entry to the **standard `QUOTES`** array (the first and largest `&[[&str; 6]]` constant) in `src/randomize/king_quotes.rs`. Insert it as the last entry before that array's closing `];`. Do NOT add it to the suit-specific arrays (`FROG_QUOTES`, `RACCOON_QUOTES`, `HAMMER_QUOTES`).
+6. **After user approval**, append the new entry to the **standard `QUOTES`** array (the first and largest `&[[&str; 6]]` constant) in `src/randomize/cosmetic/king_quotes.rs`. Insert it as the last entry before that array's closing `];`. Do NOT add it to the suit-specific arrays (`FROG_QUOTES`, `RACCOON_QUOTES`, `HAMMER_QUOTES`).
 
 7. **Run the tests** to validate: `nix-shell -p gcc --run 'export PATH="$HOME/.cargo/bin:$PATH" && cargo test king_quotes'`
 
