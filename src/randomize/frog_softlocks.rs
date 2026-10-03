@@ -37,7 +37,7 @@
 //! None required. The only other module that writes into these level-data
 //! regions is [`super::powerups`], which round-trips each whole region through
 //! `Rom::read_range` — the *working* buffer, not `rom.original` — so an edit
-//! made either side of it survives. [`super::antechambers`] does not touch
+//! made either side of it survives. [`crate::randomize::levels::antechambers`] does not touch
 //! object streams at all: it rewrites the entry area's header and its junction
 //! spawn bytes, and 7-5's fix is in the interior (layout `$A5CD`), so it
 //! travels with that interior wherever the shuffle routes it.

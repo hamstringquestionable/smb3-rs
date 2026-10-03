@@ -66,8 +66,8 @@ fn w7f1_block_is_always_a_flight_suit() {
             let area = rom.read_byte(base_off + randomize::qol::big_q::OFF_ROOM + 8);
             let screen = rom.read_byte(base_off + randomize::qol::big_q::OFF_ARR_X + 8) & 0x0F;
 
-            let block =
-                randomize::big_q_rooms::block_offset(&rom, area, screen).unwrap_or_else(|| {
+            let block = randomize::levels::big_q_rooms::block_offset(&rom, area, screen)
+                .unwrap_or_else(|| {
                     panic!(
                         "seed {seed}: 7-F1 drew area {area} screen {screen}, \
                                        which holds no Big [?] block"
@@ -75,7 +75,7 @@ fn w7f1_block_is_always_a_flight_suit() {
                 });
             assert_eq!(
                 rom.read_byte(block),
-                randomize::big_q_rooms::BIGQBLOCK_TANOOKI,
+                randomize::levels::big_q_rooms::BIGQBLOCK_TANOOKI,
                 "seed {seed}: 7-F1's room (area {area} screen {screen}) does not hand out \
              flight (shuffle_big_q_rooms = {shuffle_rooms})",
             );

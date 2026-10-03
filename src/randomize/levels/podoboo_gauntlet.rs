@@ -17,7 +17,7 @@
 
 use rand::Rng;
 
-use super::segment_writer::{self, SegmentEntry, SegmentSpec, SortMode};
+use crate::randomize::levels::segment_writer::{self, SegmentEntry, SegmentSpec, SortMode};
 use crate::rom::Rom;
 
 const SEG_OFFSET: usize = 0xD2C9;

@@ -165,7 +165,7 @@ pub(super) fn write_plant_sprites(rom: &mut Rom, plants: &[(usize, (usize, usize
             slot,
             row,
             col,
-            crate::randomize::piranha_rooms::PLANT_SPRITE_ID,
+            crate::randomize::levels::piranha_rooms::PLANT_SPRITE_ID,
         );
         rom.write_byte(rom_data::map_obj_reward_offset(wi, slot), 0);
     }

@@ -166,7 +166,7 @@ pub(super) fn level_data(rom: &mut Rom, options: &Options, rng: &mut ChaCha8Rng)
     // entries later, so autoscroll must go first.
     if options.disable_autoscroll {
         rom.set_tag("autoscroll");
-        randomize::autoscroll::disable_autoscroll(rom);
+        randomize::levels::autoscroll::disable_autoscroll(rom);
     }
     // Beta stage layout fixes must run before powerups/enemies so the
     // randomization passes see the patched bytes (some patches reshape
@@ -202,10 +202,10 @@ pub(super) fn level_data(rom: &mut Rom, options: &Options, rng: &mut ChaCha8Rng)
     // for nothing.
     if options.include_beta_stages {
         rom.set_tag("beta_tornado");
-        randomize::beta_tornado::randomize_beta9_tornado(rom, rng);
+        randomize::levels::beta_tornado::randomize_beta9_tornado(rom, rng);
     }
-    randomize::bowser_castle::randomize(rom, rng);
-    randomize::podoboo_gauntlet::randomize(rom, rng);
+    randomize::levels::bowser_castle::randomize(rom, rng);
+    randomize::levels::podoboo_gauntlet::randomize(rom, rng);
 }
 
 /// Stage 3: world order, then the level shuffles that must precede the
@@ -261,7 +261,7 @@ pub(super) fn world_order_and_shuffles(
     // of the overworld builder and the enemy/powerup passes.
     if run.antechamber_shuffle {
         rom.set_tag("levels/antechambers");
-        randomize::antechambers::shuffle(
+        randomize::levels::antechambers::shuffle(
             rom,
             rng,
             options.include_beta_stages,
@@ -320,7 +320,7 @@ pub(super) fn overworld_catalog(
     // state straight from the ROM.
     if run.piranha_active {
         rom.set_tag("piranha_shuffle");
-        randomize::piranha_rooms::clear_vanilla_plants(rom);
+        randomize::levels::piranha_rooms::clear_vanilla_plants(rom);
         catalog.release_map_objects();
     }
     if options.swap_start_airship {
@@ -354,14 +354,14 @@ pub(super) fn item_tables(
     // randomizer can roll a unique item per Hand. Must precede the chest
     // rolls, or the clone overwrites the item byte the roll just wrote.
     rom.set_tag("hand_rooms");
-    randomize::hand_rooms::patch_clone_hand_rooms(rom);
+    randomize::levels::hand_rooms::patch_clone_hand_rooms(rom);
 
     // Piranha shuffle: once 7-P1/7-P2 leave their vanilla map-object spots
     // they can be entered like any level tile, so their chests must carry
     // their own OBJ_TREASURESET. Same ordering rule as the Hands above.
     if run.piranha_active {
         rom.set_tag("piranha_rooms");
-        randomize::piranha_rooms::install_treasure_sets(rom);
+        randomize::levels::piranha_rooms::install_treasure_sets(rom);
     }
 
     // The maze turns the whistle into fast travel between worlds already
@@ -690,9 +690,9 @@ pub(super) fn after_the_map(
     // the slot-seeding halves either way.
     let big_q_rooms = if options.shuffle_big_q_rooms {
         rom.set_tag("big_q_blocks/rooms");
-        randomize::big_q_rooms::shuffle(rom, rng)
+        randomize::levels::big_q_rooms::shuffle(rom, rng)
     } else {
-        randomize::big_q_rooms::vanilla_assignments()
+        randomize::levels::big_q_rooms::vanilla_assignments()
     };
 
     // 7-F1 cannot be beaten without flight, so whatever room it drew has to
@@ -701,10 +701,10 @@ pub(super) fn after_the_map(
     if let Some(off) = big_q_rooms
         .iter()
         .find(|a| a.name == "7-F1")
-        .and_then(|a| randomize::big_q_rooms::block_offset(rom, a.area, a.screen))
+        .and_then(|a| randomize::levels::big_q_rooms::block_offset(rom, a.area, a.screen))
     {
         rom.set_tag("big_q_blocks/w7f1_flight");
-        rom.write_byte(off, randomize::big_q_rooms::BIGQBLOCK_TANOOKI);
+        rom.write_byte(off, randomize::levels::big_q_rooms::BIGQBLOCK_TANOOKI);
     }
 
     // Redraw + repack the ending credits mini-maps from the freshly-written

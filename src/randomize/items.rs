@@ -146,13 +146,13 @@ pub(crate) const ONE_F_CHEST_ITEM: usize = 0x0D36A;
 // enemy streams by `hand_rooms::patch_clone_hand_rooms`, so each rolls
 // independently here.
 const TREASURE_CHEST_OFFSETS: &[usize] = &[
-    0x0C427,                                   // Music Box chest
-    0x0CE9F,                                   // Cloud chest
-    0x0D0E2,                                   // 8-Hnd1 chest (vanilla shared sub-area)
-    super::hand_rooms::HAND_ROOM_CLONE_A_ITEM, // 8-Hnd2 chest (clone A)
-    super::hand_rooms::HAND_ROOM_CLONE_B_ITEM, // 8-Hnd3 chest (clone B)
-    ONE_F_CHEST_ITEM,                          // 1-F's chest (vanilla: Warp Whistle)
-    0x0DA3F,                                   // Star chest
+    0x0C427,                                                      // Music Box chest
+    0x0CE9F,                                                      // Cloud chest
+    0x0D0E2, // 8-Hnd1 chest (vanilla shared sub-area)
+    crate::randomize::levels::hand_rooms::HAND_ROOM_CLONE_A_ITEM, // 8-Hnd2 chest (clone A)
+    crate::randomize::levels::hand_rooms::HAND_ROOM_CLONE_B_ITEM, // 8-Hnd3 chest (clone B)
+    ONE_F_CHEST_ITEM, // 1-F's chest (vanilla: Warp Whistle)
+    0x0DA3F, // Star chest
 ];
 
 // Known warp whistle byte locations across all item tables.
@@ -232,7 +232,10 @@ pub fn randomize<R: Rng>(
 
     // Piranha-shuffle chest rooms (7-P1/7-P2 cloned streams).
     if piranha_chests {
-        for offset in [super::piranha_rooms::P1_ROOM_ITEM, super::piranha_rooms::P2_ROOM_ITEM] {
+        for offset in [
+            crate::randomize::levels::piranha_rooms::P1_ROOM_ITEM,
+            crate::randomize::levels::piranha_rooms::P2_ROOM_ITEM,
+        ] {
             rom.write_byte(offset, *pool.choose(rng).unwrap());
         }
     }

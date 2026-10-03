@@ -1114,7 +1114,7 @@ fn check_invariants(
     // Same spoiled-range skips the randomizer uses, so segment boundaries
     // (and per-segment bertha counts) line up exactly.
     let skip_ranges: Vec<core::ops::Range<usize>> =
-        crate::randomize::autoscroll::SPOILED_SEGMENT_RANGES
+        crate::randomize::levels::autoscroll::SPOILED_SEGMENT_RANGES
             .iter()
             .map(|r| (r.start - ENEMY_DATA_START)..(r.end - ENEMY_DATA_START))
             .collect();

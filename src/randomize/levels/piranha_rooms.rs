@@ -15,12 +15,12 @@
 //! defaults reproduce the vanilla sprite rewards (P-Wing / Mushroom) and
 //! `items::randomize` re-rolls them when chest randomization is on.
 
-use super::rom_data::{self, FS_PIRANHA_ROOMS, MAP_OBJ_ENTRY_LINKS};
-use super::segment_writer::{self, SegmentEntry, SegmentSpec, SortMode};
+use crate::randomize::levels::segment_writer::{self, SegmentEntry, SegmentSpec, SortMode};
+use crate::randomize::rom_data::{self, FS_PIRANHA_ROOMS, MAP_OBJ_ENTRY_LINKS};
 use crate::rom::Rom;
 
 /// The map-object sprite id of a stationary piranha plant.
-pub(super) const PLANT_SPRITE_ID: u8 = 0x07;
+pub(crate) const PLANT_SPRITE_ID: u8 = 0x07;
 
 /// Clear the vanilla W7 plant sprites (map-object slots 2-3) and their reward
 /// bytes. Must run before the overworld builder: it frees the two grid
@@ -54,8 +54,8 @@ const CLONE_P2_CPU: u16 = 0xDA85; // file 0x0DA95
 
 /// Item (row) byte file offsets of the injected OBJ_TREASURESET entries.
 /// The D6 entry is first in the stream, so its item byte sits at +3.
-pub(super) const P1_ROOM_ITEM: usize = FS_PIRANHA_ROOMS + 3;
-pub(super) const P2_ROOM_ITEM: usize = FS_PIRANHA_ROOMS + CLONE_LEN + 3;
+pub(crate) const P1_ROOM_ITEM: usize = FS_PIRANHA_ROOMS + 3;
+pub(crate) const P2_ROOM_ITEM: usize = FS_PIRANHA_ROOMS + CLONE_LEN + 3;
 
 /// Vanilla rewards carried by the W7 plant sprites (map-object item table):
 /// plant 1 = P-Wing (0x08), plant 2 = Mushroom (0x01). Used as the injected

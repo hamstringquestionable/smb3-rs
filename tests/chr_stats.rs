@@ -4,8 +4,8 @@
 use std::collections::{BTreeMap, HashSet};
 
 use smb3_rs::pipeline::{self, EnemyMode, Options, WildChaser};
-use smb3_rs::randomize::autoscroll::SPOILED_SEGMENT_RANGES;
 use smb3_rs::randomize::enemies::{enemy_entry_points, sprite_bank, wild_pool_for};
+use smb3_rs::randomize::levels::autoscroll::SPOILED_SEGMENT_RANGES;
 use smb3_rs::randomize::rom_data::{ENEMY_DATA_END, ENEMY_DATA_START};
 use smb3_rs::rom::Rom;
 

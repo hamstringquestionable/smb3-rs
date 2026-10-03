@@ -1,7 +1,8 @@
 use super::*;
 use crate::randomize::overworld;
 use crate::randomize::{
-    overworld::map_walker, overworld::node_catalog, overworld::troll_pipes, piranha_rooms, qol,
+    levels::piranha_rooms, overworld::map_walker, overworld::node_catalog, overworld::troll_pipes,
+    qol,
 };
 use crate::rom::Rom;
 use rand::SeedableRng;

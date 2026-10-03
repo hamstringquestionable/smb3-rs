@@ -29,7 +29,7 @@
 use rand::seq::SliceRandom;
 use rand_chacha::ChaCha8Rng;
 
-use super::rom_data;
+use crate::randomize::rom_data;
 use crate::rom::Rom;
 
 /// One antechamber-pattern level. The vanilla entries are emitted by

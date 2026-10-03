@@ -12,7 +12,7 @@
 //! testing, and lock testing are all combinations rather than named modes.
 
 use crate::ips;
-use crate::randomize::big_q_rooms;
+use crate::randomize::levels::big_q_rooms;
 use crate::randomize::overworld::node_catalog::{EntryView, NodeCatalog};
 use crate::randomize::overworld::world_order::WORLD_INIT_OPERAND;
 use crate::randomize::rom_data::{self, LevelEntry, WORLDS};

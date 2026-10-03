@@ -16,11 +16,11 @@ use crate::randomize::enemy_protections::{
     EntryProtection, WalkerSegmentRule, entry_protection_at, rewrites_hammer_bro,
     walker_segment_rule_at,
 };
+use crate::randomize::levels::segment_writer::{self, SegmentEntry as WriterEntry, SortMode};
 use crate::randomize::rom_data::{
     ENEMY_DATA_END, ENEMY_DATA_START, HAMMER_BRO_ID, HB_NEEDS_SHELL_ENEMIES, LEVEL_DATA_REGIONS,
     STOMPABLE_ENEMIES, TREASURE_BOX_APPEAR,
 };
-use crate::randomize::segment_writer::{self, SegmentEntry as WriterEntry, SortMode};
 use crate::rom::Rom;
 
 mod class_modes;
@@ -90,10 +90,11 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
     // "ghost" segment that swallows the next real segment's page byte +
     // first entry). Translated from ROM file offsets to local-buffer
     // indices so the walker can jump past them.
-    let skip_ranges: Vec<core::ops::Range<usize>> = super::autoscroll::SPOILED_SEGMENT_RANGES
-        .iter()
-        .map(|r| (r.start - ENEMY_DATA_START)..(r.end - ENEMY_DATA_START))
-        .collect();
+    let skip_ranges: Vec<core::ops::Range<usize>> =
+        crate::randomize::levels::autoscroll::SPOILED_SEGMENT_RANGES
+            .iter()
+            .map(|r| (r.start - ENEMY_DATA_START)..(r.end - ENEMY_DATA_START))
+            .collect();
     let in_skip_range = |idx: usize| -> Option<usize> {
         skip_ranges.iter().find(|r| r.contains(&idx)).map(|r| r.end)
     };

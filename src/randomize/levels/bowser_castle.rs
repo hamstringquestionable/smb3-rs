@@ -16,7 +16,7 @@
 use rand::Rng;
 use rand::seq::IndexedRandom;
 
-use super::segment_writer::{self, SegmentEntry, SegmentSpec, SortMode};
+use crate::randomize::levels::segment_writer::{self, SegmentEntry, SegmentSpec, SortMode};
 use crate::rom::Rom;
 
 /// File offset of the segment's page/header byte (entries start at +1).

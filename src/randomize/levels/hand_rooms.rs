@@ -10,8 +10,8 @@
 //! for losing the autoscroll-as-risk gating on the chest. Removed in
 //! favour of making the coin heaven reachable only from 3-7.
 
-use super::rom_data::FS_HAND_ROOMS;
-use super::segment_writer::{self, SegmentSpec, SortMode};
+use crate::randomize::levels::segment_writer::{self, SegmentSpec, SortMode};
+use crate::randomize::rom_data::FS_HAND_ROOMS;
 use crate::rom::Rom;
 
 /// File offset of the original Hand sub-area enemy stream (11 bytes:
@@ -32,8 +32,8 @@ const CLONE_B_CPU: u16 = 0xDA6F; // file 0x0DA7F
 /// Y-byte file offsets of the OBJ_TREASURESET (0xD6) entry in each clone.
 /// Layout within an 11-byte stream: [page][D6 X Y][52 X Y][BA X Y][FF],
 /// so the first entry's Y-byte sits at offset +3.
-pub(super) const HAND_ROOM_CLONE_A_ITEM: usize = FS_HAND_ROOMS + 3; // 0x0DA77
-pub(super) const HAND_ROOM_CLONE_B_ITEM: usize = FS_HAND_ROOMS + 11 + 3; // 0x0DA82
+pub(crate) const HAND_ROOM_CLONE_A_ITEM: usize = FS_HAND_ROOMS + 3; // 0x0DA77
+pub(crate) const HAND_ROOM_CLONE_B_ITEM: usize = FS_HAND_ROOMS + 11 + 3; // 0x0DA82
 
 /// Clone the shared Hand sub-area enemy stream so 8-Hnd2 and 8-Hnd3 each
 /// get an independent `OBJ_TREASURESET` Y-byte. 8-Hnd1 keeps the original.

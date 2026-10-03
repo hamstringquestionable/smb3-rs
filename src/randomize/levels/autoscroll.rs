@@ -549,10 +549,10 @@ mod tests {
     /// what a neutralized autoscroll becomes, and what the block's leading
     /// placeholders already were in vanilla), or inside a skip range.
     fn adrift_entry_points(rom: &Rom, entry_points: &[u16], skip: &[Range<usize>]) -> Vec<String> {
+        use crate::randomize::levels::segment_writer::walk_segments;
         use crate::randomize::rom_data::{
             ENEMY_DATA_END, ENEMY_DATA_START, enemy_ptr_to_file_offset,
         };
-        use crate::randomize::segment_writer::walk_segments;
 
         let starts: std::collections::HashSet<usize> =
             walk_segments(&rom.data, ENEMY_DATA_START, ENEMY_DATA_END, skip)
