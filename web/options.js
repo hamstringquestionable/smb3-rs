@@ -535,7 +535,7 @@ export const SCHEMA = [
 	// The ROM side doesn't care about the water mode; the page only offers the
 	// pill beside Wild, the one mode that puts swimmers on land.
 	{ id: "water_stomp", type: "bool", default: false, pillOf: "water",
-		label: "Stompable", flavorWhenOn: "Wittle Baby Mode",
+		label: "Stompable", flavorWhenOn: "Superior Competition Friendly Mode",
 		summaryLabel: "Water (stompable)",
 		tip: "Bloopers and Cheep Cheeps can be stomped when you're out of the water.",
 		group: "enemies", inFlagKey: true,
