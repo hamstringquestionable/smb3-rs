@@ -331,7 +331,7 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
                 }
                 // Same predicate `keep` blocks on, so under All this never
                 // fires and under Sparse it spends the segment's one budget.
-                if hazard_excluded(chosen, entry.obj_id) {
+                if HAZARDS.excludes(chosen, entry.obj_id) {
                     added_hazards = added_hazards.saturating_add(1);
                 }
                 swap_enemy(&mut data, entry.data_index, chosen);

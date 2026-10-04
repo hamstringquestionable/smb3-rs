@@ -5083,8 +5083,8 @@ of wild mode settings. Current protected levels:
 
 Some enemies are unfair to *introduce* at a forced or narrow spot — unstompable
 or continuous threats that block a path or can't be avoided. The randomizer
-groups them into a hazard taxonomy (6 categories, 18 IDs) and filters them out of
-the swap pool at curated `ExcludeHazards` offsets:
+groups them into the `HAZARDS` exclusion group (6 ID lists, 18 IDs) and filters
+them out of the swap pool at curated `Exclude(HAZARDS)` offsets:
 
 | Category | IDs |
 |----------|-----|
@@ -5095,13 +5095,17 @@ the swap pool at curated `ExcludeHazards` offsets:
 | Hot Foot | 0x30, 0x45 |
 | Hammer Bro | 0x81, 0x82, 0x86, 0x87 |
 
-**Additive-only (vanilla exception):** at an `ExcludeHazards` offset a hazard is
-excluded *unless the vanilla enemy there was the same category*, so within-category
+**Additive-only (vanilla exception):** at an `Exclude` offset an enemy is
+excluded *unless the vanilla enemy there sits in the same ID list*, so within-list
 shuffle (e.g. Thwomp variants) still works and a designed-in hazard is never
-stripped — only *introducing* a new hazard category is blocked. See
-`hazard_excluded` / `HAZARD_CATEGORIES` in `enemies/tables.rs`.
+stripped — only *introducing* one is blocked.
 
-Current `ExcludeHazards` levels (`enemies/protections.rs`):
+`Exclude` takes any `Group` (`enemies/tables.rs`): a group is either a list of
+IDs or a union of other groups, so a rule can name `HAZARDS`, `ROTODISCS` (every
+single and dual variant), a single ID (`Group::Ids(&[0x2A])`), or a mix
+(`Group::Any(&[HAZARDS, ROTODISCS])`).
+
+Current `Exclude(HAZARDS)` levels (`enemies/protections.rs`):
 - **7F2** Boom-Boom sub-area (0xD45C): tight boss arena
 - **7-5** sub-area (0xC171): open field — floor hazards unfair
 - **β4** sub-area (0xC7A7): narrow corridor on the Buzzy Beetle path
@@ -5111,7 +5115,7 @@ Current `ExcludeHazards` levels (`enemies/protections.rs`):
 Piranha-pipe slots are *not* listed: the piranha pools (`PIRANHAS_WILD` /
 `PIRANHASC_WILD`) are self-contained and hold no hazards, so a pipe lip can't
 become one through the pool. The `enemy_invariant_baseline` test verifies both
-this and the `ExcludeHazards` filter over many seeds.
+this and the `Exclude` filter over many seeds.
 
 ### Player Physics
 
