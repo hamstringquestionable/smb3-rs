@@ -399,9 +399,9 @@ struct Cli {
     #[arg(long)]
     no_hands_levels: bool,
 
-    /// Troll-pipe level slots (one regular level per world W2-W8 disguised as a
-    /// pipe tile): off, on, or maybe (the seed decides, hidden from the flag
-    /// key). Default: on.
+    /// Troll-pipe level slots (up to one regular level per world W2-W8
+    /// disguised as a pipe tile): off, on, or maybe (the seed decides, hidden
+    /// from the flag key). Default: on.
     #[arg(long, default_value = "on", value_parser = parse_tri)]
     troll_pipes: Tri,
 
