@@ -187,9 +187,9 @@ pub enum PiranhaMode {
 
 /// How hard to stop the randomizer from *introducing* hazards.
 ///
-/// A "hazard" is one of the `HAZARD_CATEGORIES` — thwomps, Lava Lotus,
-/// Ptooie, nippers, Hot Foot, bros — the same taxonomy the curated
-/// `ExcludeHazards` entries use. The rule is additive-only in every mode: a
+/// A "hazard" is a member of the `HAZARDS` group — thwomps, Lava Lotus,
+/// Ptooie, nippers, Hot Foot, bros — the same set the curated
+/// `Exclude(HAZARDS)` entries use. The rule is additive-only in every mode: a
 /// hazard is only blocked where the slot's *vanilla* enemy wasn't the same
 /// category, so designed-in hazards survive and within-category shuffle (e.g.
 /// thwomp variants) still works. Nothing is ever removed from vanilla.

@@ -1029,7 +1029,7 @@ struct PlacementStats {
     giant_reds_placed: u64,
     /// Segment-instances (seed × segment) where the bertha cap was exceeded.
     /// Hard invariant: the predicate pipeline applies MAX_BERTHA_PER_SEGMENT
-    /// to every pick (including the Force*/ExcludeHazards paths that used to
+    /// to every pick (including the Force*/Exclude paths that used to
     /// bypass it), so this must stay 0 — any nonzero count is a violation.
     bertha_cap_exceeded: u64,
     max_berthas_in_seg: u8,
@@ -1203,7 +1203,7 @@ fn check_invariants(
             // `keep`, and an injectable slot's `orig` is the vanilla enemy
             // rather than the injected id, so measuring it against `orig`
             // would be meaningless. Chasers aren't hazards anyway.
-            if hazard_excluded(new, orig) {
+            if HAZARDS.excludes(new, orig) {
                 stats.hazards_added += 1;
                 hazards_added_in_seg = hazards_added_in_seg.saturating_add(1);
                 if opts.limit_hazards == HazardLimit::All {
@@ -1226,11 +1226,8 @@ fn check_invariants(
                 Some(EntryProtection::ForceStompable) if !STOMPABLE_ENEMIES.contains(&new) => {
                     bad("ForceStompable but result not stompable".into());
                 }
-                Some(EntryProtection::ExcludeHazards) if hazard_excluded(new, orig) => {
-                    bad("ExcludeHazards but introduced a new hazard category".into());
-                }
-                Some(EntryProtection::ExcludeRotodiscs) if is_rotodisc(new) => {
-                    bad("ExcludeRotodiscs but result is a Rotodisc".into());
+                Some(EntryProtection::Exclude(group)) if group.excludes(new, orig) => {
+                    bad("Exclude but introduced an excluded enemy".into());
                 }
                 _ => {}
             }
@@ -1255,9 +1252,10 @@ fn check_invariants(
 
             // --- A piranha slot must never become a hazard (the runtime
             // guard was removed; this verifies the piranha pools' self-
-            // containment achieves it). ---
+            // containment achieves it). A piranha is not itself a hazard,
+            // so the vanilla exception never applies here. ---
             if (PIRANHAS.contains(&orig) || PIRANHASC.contains(&orig))
-                && hazard_category(new).is_some()
+                && HAZARDS.excludes(new, orig)
             {
                 bad("piranha slot replaced by a hazard".into());
             }
@@ -1299,7 +1297,7 @@ fn check_invariants(
         }
 
         // Bertha cap: hard invariant now that the predicate pipeline applies
-        // it to every pick (it used to be bypassed by the Force*/ExcludeHazards
+        // it to every pick (it used to be bypassed by the Force*/Exclude
         // branches — see PlacementStats::bertha_cap_exceeded).
         stats.max_berthas_in_seg = stats.max_berthas_in_seg.max(bertha_in_seg);
         if bertha_in_seg > MAX_BERTHA_PER_SEGMENT {

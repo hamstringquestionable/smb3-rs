@@ -179,53 +179,72 @@ pub(super) const THWOMPS: &[u8] = &[
     0x8F, // OBJ_THWOMPDIAGONALDL
 ];
 
-// --- Hazard taxonomy ---
+// --- Exclusion groups ---
 //
-// Enemies that are unfair to *introduce* at a curated `ExcludeHazards` spot:
-// unstompable/continuous threats (drops, fire, spike balls, projectile bros)
-// that a player can't avoid in a tight or forced-transit position. Grouped by
-// category so the placement filter can honor the "vanilla exception" — a hazard
-// is allowed when the slot's vanilla enemy was the *same category*, so the level
-// keeps the threat it was designed with (and within-category shuffle, e.g.
-// thwomp variants, still works). The filter is additive-only: it blocks
-// introducing a new hazard category, never strips an existing one.
+// A per-entry protection excludes a `Group` of enemy IDs from a slot's pool.
+// A group is either the IDs themselves or a union of other groups, so a rule
+// can name the whole hazard set, every Rotodisc, or a single ID:
+//
+//     Exclude(HAZARDS)
+//     Exclude(ROTODISCS)
+//     Exclude(Group::Ids(&[0x2A]))
+//     Exclude(Group::Any(&[HAZARDS, ROTODISCS]))
+//
+// Every exclusion is additive-only (the "vanilla exception"): a candidate is
+// still allowed where the slot's vanilla enemy sits in the same ID list, so a
+// level keeps the threat it was designed with and within-list shuffle (thwomp
+// variants, say) still works. It blocks introducing an enemy, never strips one.
 
-const HAZARD_LAVA_LOTUS: &[u8] = &[0x67]; // OBJ_LAVALOTUS (fire arcs)
-const HAZARD_PATOOIE: &[u8] = &[
+/// A set of enemy IDs an `Exclude` protection filters out of a slot's pool.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum Group {
+    /// The IDs themselves; also the unit the vanilla exception works in.
+    Ids(&'static [u8]),
+    /// The union of other groups.
+    Any(&'static [Group]),
+}
+
+impl Group {
+    /// Whether `candidate` must be excluded at a slot whose vanilla enemy was
+    /// `vanilla`: some ID list in this group holds `candidate` but not
+    /// `vanilla`.
+    pub(super) fn excludes(self, candidate: u8, vanilla: u8) -> bool {
+        match self {
+            Group::Ids(ids) => ids.contains(&candidate) && !ids.contains(&vanilla),
+            Group::Any(groups) => groups.iter().any(|g| g.excludes(candidate, vanilla)),
+        }
+    }
+}
+
+// Enemies that are unfair to *introduce* at a tight or forced-transit spot:
+// unstompable/continuous threats (drops, fire, spike balls, projectile bros).
+// `HAZARDS` is also what `HazardLimit` counts.
+
+const LAVA_LOTUS: Group = Group::Ids(&[0x67]); // OBJ_LAVALOTUS (fire arcs)
+const PATOOIE: Group = Group::Ids(&[
     0x2A, // OBJ_PATOOIE (spits a spike ball up)
     0x46, // OBJ_PIRANHASPIKEBALL (Ptooie-style spike-ball launcher)
-];
-const HAZARD_NIPPER: &[u8] = &[
+]);
+const NIPPER: Group = Group::Ids(&[
     0x33, // OBJ_NIPPER
     0x39, // OBJ_NIPPERHOPPING
     0x3D, // OBJ_NIPPERFIREBREATHER
-];
-const HAZARD_HOTFOOT: &[u8] = &[
+]);
+const HOTFOOT: Group = Group::Ids(&[
     0x30, // OBJ_HOTFOOT_SHY
     0x45, // OBJ_HOTFOOT
-];
+]);
 
-/// All hazard categories. THWOMPS and BRO_ENEMIES are reused as-is (the bros
-/// throw continuous projectiles, unavoidable in a forced spot).
-const HAZARD_CATEGORIES: &[&[u8]] =
-    &[THWOMPS, HAZARD_LAVA_LOTUS, HAZARD_PATOOIE, HAZARD_NIPPER, HAZARD_HOTFOOT, BRO_ENEMIES];
-
-/// The hazard category `id` belongs to (its index in [`HAZARD_CATEGORIES`]), or
-/// `None` if `id` isn't a hazard.
-pub(super) fn hazard_category(id: u8) -> Option<usize> {
-    HAZARD_CATEGORIES.iter().position(|cat| cat.contains(&id))
-}
-
-/// Whether `candidate` must be excluded at a protected spot whose vanilla enemy
-/// was `vanilla`. A hazard is excluded unless it shares the vanilla enemy's
-/// category (the additive-only vanilla exception); a non-hazard is never
-/// excluded.
-pub(super) fn hazard_excluded(candidate: u8, vanilla: u8) -> bool {
-    match hazard_category(candidate) {
-        None => false,
-        Some(c) => hazard_category(vanilla) != Some(c),
-    }
-}
+/// Every hazard. THWOMPS and BRO_ENEMIES are reused as-is (the bros throw
+/// continuous projectiles, unavoidable in a forced spot).
+pub(super) const HAZARDS: Group = Group::Any(&[
+    Group::Ids(THWOMPS),
+    LAVA_LOTUS,
+    PATOOIE,
+    NIPPER,
+    HOTFOOT,
+    Group::Ids(BRO_ENEMIES),
+]);
 
 /// Enemies whose sprites are taller than a standard 1-tile enemy.
 /// When one of these is the replacement in a swap, Y is decremented by 1
@@ -303,10 +322,10 @@ pub(super) const ROTODISCS_DUAL: &[u8] = &[
     0x60, // OBJ_ROTODISCDUALCCLOCK (CCW sync)
 ];
 
-/// Any Rotodisc, single or dual (what `ExcludeRotodiscs` filters out).
-pub(super) fn is_rotodisc(id: u8) -> bool {
-    ROTODISCS_SINGLE.contains(&id) || ROTODISCS_DUAL.contains(&id)
-}
+/// Every Rotodisc, single or dual. Singles and duals are separate lists, so
+/// under the vanilla exception a single may still become a single.
+pub(super) const ROTODISCS: Group =
+    Group::Any(&[Group::Ids(ROTODISCS_SINGLE), Group::Ids(ROTODISCS_DUAL)]);
 
 /// Ghost house / fortress enemies. Boo and Hot Foot use CHR page $12/+4,
 /// Dry Bones uses $13/+5 (compatible with all slot 4 pages).
@@ -422,7 +441,7 @@ pub(super) const MAX_BERTHA_PER_SEGMENT: u8 = 2;
 /// Maximum number of *introduced* hazards allowed in a single enemy segment
 /// under `HazardLimit::Sparse`. Vanilla hazards don't count — only a pick that
 /// puts a hazard where the slot's vanilla enemy was a different category (see
-/// [`hazard_excluded`]), which is the same thing `HazardLimit::All` forbids
+/// [`Group::excludes`] on [`HAZARDS`]), which is the same thing `HazardLimit::All` forbids
 /// outright.
 ///
 /// One, so the player can still meet a Ptooie or a nipper and learn to handle
