@@ -9,10 +9,12 @@ import init, {
 	flag_key_fields_json,
 	default_options_json,
 	seed_hash_json,
+	map_background_json,
+	map_background_worlds,
 	apply_ips_patch,
 	version,
 } from "./pkg/smb3_rs.js";
-import { renderIcon as renderChrIcon, renderIconBox } from "./chr.js";
+import { renderIcon as renderChrIcon, renderIconBox, renderMapBackground } from "./chr.js";
 import { loadRom, saveRom, deleteCached } from "./rom-cache.js";
 import {
 	renderOptions,
@@ -474,6 +476,43 @@ function refreshRomGraphics() {
 	updateSeedHash();
 	renderAllIcons();
 	renderTheEnd();
+	renderPageMap();
+}
+
+// Page background: one world's map from the player's own ROM (not a visual
+// patch's, and never a randomized one). The world is picked once per page
+// load; a new ROM redraws the same world. It is scaled by the smallest whole
+// number that covers the window, so pixels stay square at any size.
+let pageMapWorld = null;
+let pageMapSize = null;
+
+function fitPageMap() {
+	const layer = document.getElementById("map-bg");
+	if (!layer || !pageMapSize) return;
+	const scale = Math.max(
+		Math.ceil(window.innerWidth / pageMapSize.w),
+		Math.ceil(window.innerHeight / pageMapSize.h),
+	);
+	layer.style.setProperty("--map-scale", scale);
+}
+window.addEventListener("resize", fitPageMap);
+
+function renderPageMap() {
+	const layer = document.getElementById("map-bg");
+	if (!layer || !romBytes) return;
+	try {
+		pageMapWorld ??= Math.floor(Math.random() * map_background_worlds());
+		const map = JSON.parse(map_background_json(romBytes, pageMapWorld));
+		const canvas = document.createElement("canvas");
+		renderMapBackground(canvas, romBytes, map);
+		pageMapSize = { w: canvas.width, h: canvas.height };
+		layer.style.setProperty("--map-w", `${canvas.width}px`);
+		layer.style.backgroundImage = `url(${canvas.toDataURL()})`;
+		fitPageMap();
+		layer.hidden = false;
+	} catch (_) {
+		layer.hidden = true;
+	}
 }
 
 // Footer sign-off: "THE END" from the ending sequence, CHR page $1B. Not an
