@@ -119,13 +119,22 @@ export const GROUPS = [
 		link: { href: "maze-tracker.html", label: "Open the World Maze tracker →" } },
 	{ id: "map", label: "Map" },
 	{ id: "enemies", label: "Enemies",
-		note: "Off: vanilla enemies. Shuffle: each enemy is only swapped with others of its own class. Wild: every class set to Wild is mixed together into one shared pool." },
+		// A small key instead of a `note`: three modes read better as rows.
+		noteRows: [
+			["Off", "Vanilla enemies."],
+			["Shuffle", "Each enemy only swaps with others of its own class."],
+			["Wild", "Every class set to Wild mixes into one shared pool."],
+		] },
 	// Classes whose Wild stays within their own family. Piranhas and cannons
 	// are hidden until they pop up or fire, so in open ground they would hit
 	// out of nowhere; Hammer Bro battle rooms are closed, so a wrong enemy
 	// could leave the player stuck. See `build_wild_pool` in class_modes.rs.
 	{ id: "enemies_protected", label: "Protected Pools",
-		note: "These never join the shared Wild pool. Piranhas and cannons stay hidden until they pop up or fire, so out in the open they would hit you out of nowhere, and Hammer Bro battle rooms are closed, so the wrong enemy could leave you stuck. Wild here only mixes within the same family." },
+		note: "Wild here only mixes within the same family. These never join the shared Wild pool:",
+		noteRows: [
+			["Piranhas, Cannons", "Hidden until they pop up or fire, so out in the open they would hit you out of nowhere."],
+			["HB Encounters", "Battle rooms are closed, so the wrong enemy could leave you stuck."],
+		] },
 	{ id: "bosses", label: "Bosses" },
 	{ id: "items", label: "Items & Pickups" },
 	{ id: "player", label: "Player" },
@@ -1729,6 +1738,10 @@ export function renderOptions(rootEl, hosts = {}) {
 		fieldset.appendChild(el("legend", {}, group.label));
 		if (group.note) {
 			fieldset.appendChild(el("p", { class: "note group-note" }, group.note));
+		}
+		if (group.noteRows) {
+			fieldset.appendChild(el("dl", { class: "note group-note note-rows" },
+				...group.noteRows.flatMap(([term, text]) => [el("dt", {}, term), el("dd", {}, text)])));
 		}
 		if (group.link) {
 			fieldset.appendChild(el("p", { class: "note group-note" },
