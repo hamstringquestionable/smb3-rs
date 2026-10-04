@@ -118,7 +118,14 @@ export const GROUPS = [
 		// root one, with no build-time knowledge of which it is.
 		link: { href: "maze-tracker.html", label: "Open the World Maze tracker →" } },
 	{ id: "map", label: "Map" },
-	{ id: "enemies", label: "Enemies" },
+	{ id: "enemies", label: "Enemies",
+		note: "Off: vanilla enemies. Shuffle: each enemy is only swapped with others of its own class. Wild: every class set to Wild is mixed together into one shared pool." },
+	// Classes whose Wild stays within their own family. Piranhas and cannons
+	// are hidden until they pop up or fire, so in open ground they would hit
+	// out of nowhere; Hammer Bro battle rooms are closed, so a wrong enemy
+	// could leave the player stuck. See `build_wild_pool` in class_modes.rs.
+	{ id: "enemies_protected", label: "Protected Pools",
+		note: "These never join the shared Wild pool. Piranhas and cannons stay hidden until they pop up or fire, so out in the open they would hit you out of nowhere, and Hammer Bro battle rooms are closed, so the wrong enemy could leave you stuck. Wild here only mixes within the same family." },
 	{ id: "bosses", label: "Bosses" },
 	{ id: "items", label: "Items & Pickups" },
 	{ id: "player", label: "Player" },
@@ -504,9 +511,9 @@ export const SCHEMA = [
 		group: "enemies", inFlagKey: true },
 	{ id: "piranhas", type: "tri", options: TRI, default: "shuffle",
 		label: "Piranhas",
-		tip: "Piranha plant variants (upward and ceiling)",
+		tip: "Piranha plant variants. Wild also mixes in Rocky Wrench and the fire jets; upward and ceiling plants stay separate.",
 		icon: [GREEN_PIRANHA, RED_PIRANHA, GREEN_FIRE_PIRANHA, VENUS_FIRE_TRAP],
-		group: "enemies", inFlagKey: true },
+		group: "enemies_protected", inFlagKey: true },
 	{ id: "ghosts", type: "tri", options: TRI, default: "shuffle",
 		label: "Ghosts",
 		tip: "Ghost house enemies (Boo, Hot Foot)",
@@ -526,7 +533,7 @@ export const SCHEMA = [
 		label: "Cannons",
 		tip: "Cannons, Bullet Bill launchers, goomba pipes, and bob-omb launchers. Shuffle keeps fire direction; Wild lets any cannon become any other.",
 		icon: CANNON,
-		group: "enemies", inFlagKey: true },
+		group: "enemies_protected", inFlagKey: true },
 	{ id: "water", type: "tri", options: TRI, default: "shuffle",
 		label: "Water",
 		tip: "Water enemies (Blooper, Big Bertha, etc.)",
@@ -547,9 +554,9 @@ export const SCHEMA = [
 		group: "enemies", inFlagKey: true },
 	{ id: "hb_encounters", type: "tri", options: TRI, default: "off",
 		label: "HB Encounters",
-		tip: "All enemies in overworld Hammer Bro mini-battles",
+		tip: "Every enemy in the overworld Hammer Bro battles. These rooms ignore the settings above; Wild fills them from enemies you can always clear.",
 		icon: MAP_HAMMER_BRO,
-		group: "enemies", inFlagKey: true },
+		group: "enemies_protected", inFlagKey: true },
 	{ id: "friendlier_levels", type: "bool", default: false,
 		label: "Friendlier Levels",
 		tip: "Keeps the roughest levels out of the shuffle — 2-3, 5-3, 6-6, 7-5, 7-8 and 8-1. Their slots go to beta stages if you have those on, otherwise to a second visit to a level already in the seed. Two fortresses go the same way, 7F2 and 8F1: they are not on the map at all, and their tiles go to a fort you have already beaten.",
