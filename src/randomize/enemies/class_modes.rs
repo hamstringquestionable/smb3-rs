@@ -55,6 +55,9 @@ impl ClassModes {
         // cfire, they are self-contained in Wild mode: a piranha slot swaps
         // only within piranha-kind (standard + Rocky Wrench, or ceiling), and
         // no other class can ever turn into a piranha. See find_class_pool.
+        // The reason is the same as cfire's (1) below: a plant is hidden
+        // until it pops up, so one placed in open ground hits the player out
+        // of nowhere.
         if self.ghosts == EnemyMode::Wild {
             pool.extend_from_slice(GHOST_ENEMIES);
         }
@@ -87,9 +90,9 @@ impl ClassModes {
         //    flooding mechanism no longer exists. Reason (1) alone is
         //    enough to keep cfire out.
         //
-        // Net semantic: cfire can still transform INTO other wild enemies,
-        // but other classes never swap TO cfire — total cfire count stays
-        // ≤ vanilla and projectile emitters only appear where Nintendo put
+        // Net semantic: cfire swaps only with cfire (`find_class_pool` gives
+        // it ALL_CANNONS, never the wild pool), so the cfire count never exceeds
+        // vanilla and projectile emitters only appear where Nintendo put
         // them.
         if self.water == EnemyMode::Wild {
             pool.extend_from_slice(WATER_ENEMIES);

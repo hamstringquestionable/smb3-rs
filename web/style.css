@@ -221,6 +221,29 @@ legend {
     margin-bottom: 0.75rem;
 }
 
+/* A group note as a two-column key (term | meaning), e.g. the enemy modes. */
+.note-rows {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 0.2rem 0.75rem;
+    font-size: 0.75rem;
+}
+
+.note-rows dt {
+    color: #e0e0e0;
+    font-weight: bold;
+}
+
+.note-rows dd {
+    margin: 0;
+    color: #9a9ab0;
+}
+
+/* An intro line above the key sits closer to it than to the rows below. */
+p.group-note + .note-rows {
+    margin-top: -0.4rem;
+}
+
 #visual-patch-block {
     margin-top: 0.75rem;
     padding-top: 0.75rem;

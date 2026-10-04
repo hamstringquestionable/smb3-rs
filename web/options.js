@@ -118,7 +118,19 @@ export const GROUPS = [
 		// root one, with no build-time knowledge of which it is.
 		link: { href: "maze-tracker.html", label: "Open the World Maze tracker →" } },
 	{ id: "map", label: "Map" },
-	{ id: "enemies", label: "Enemies" },
+	{ id: "enemies", label: "Enemies",
+		// A small key instead of a `note`: three modes read better as rows.
+		noteRows: [
+			["Off", "Vanilla enemies."],
+			["Shuffle", "Each enemy only swaps with others of its own class."],
+			["Wild", "Every class set to Wild mixes into one shared pool."],
+		] },
+	// Classes whose Wild stays within their own family. Piranhas and cannons
+	// are hidden until they pop up or fire, so in open ground they would hit
+	// out of nowhere; Hammer Bro battle rooms are closed, so a wrong enemy
+	// could leave the player stuck. See `build_wild_pool` in class_modes.rs.
+	{ id: "enemies_protected", label: "Protected Pools",
+		note: "These never join the shared Wild pool. Wild here only mixes within the same family." },
 	{ id: "bosses", label: "Bosses" },
 	{ id: "items", label: "Items & Pickups" },
 	{ id: "player", label: "Player" },
@@ -504,9 +516,9 @@ export const SCHEMA = [
 		group: "enemies", inFlagKey: true },
 	{ id: "piranhas", type: "tri", options: TRI, default: "shuffle",
 		label: "Piranhas",
-		tip: "Piranha plant variants (upward and ceiling)",
+		tip: "Piranha plant variants. Wild also mixes in Rocky Wrench and fire jets. Kept out of the shared Wild pool, since a plant out in the open would pop up out of nowhere.",
 		icon: [GREEN_PIRANHA, RED_PIRANHA, GREEN_FIRE_PIRANHA, VENUS_FIRE_TRAP],
-		group: "enemies", inFlagKey: true },
+		group: "enemies_protected", inFlagKey: true },
 	{ id: "ghosts", type: "tri", options: TRI, default: "shuffle",
 		label: "Ghosts",
 		tip: "Ghost house enemies (Boo, Hot Foot)",
@@ -524,9 +536,9 @@ export const SCHEMA = [
 		group: "enemies", inFlagKey: true },
 	{ id: "cannons", type: "tri", options: TRI, default: "off",
 		label: "Cannons",
-		tip: "Cannons, Bullet Bill launchers, goomba pipes, and bob-omb launchers. Shuffle keeps fire direction; Wild lets any cannon become any other.",
+		tip: "Cannons, Bullet Bill launchers, goomba pipes, and bob-omb launchers. Shuffle keeps fire direction; Wild lets any cannon become any other. Kept out of the shared Wild pool, since their shots would come out of nowhere.",
 		icon: CANNON,
-		group: "enemies", inFlagKey: true },
+		group: "enemies_protected", inFlagKey: true },
 	{ id: "water", type: "tri", options: TRI, default: "shuffle",
 		label: "Water",
 		tip: "Water enemies (Blooper, Big Bertha, etc.)",
@@ -547,9 +559,9 @@ export const SCHEMA = [
 		group: "enemies", inFlagKey: true },
 	{ id: "hb_encounters", type: "tri", options: TRI, default: "off",
 		label: "HB Encounters",
-		tip: "All enemies in overworld Hammer Bro mini-battles",
+		tip: "Every enemy in the map's Hammer Bro battles. Most battle rooms keep you in until they're clear, so Wild only uses enemies you can always beat.",
 		icon: MAP_HAMMER_BRO,
-		group: "enemies", inFlagKey: true },
+		group: "enemies_protected", inFlagKey: true },
 	{ id: "friendlier_levels", type: "bool", default: false,
 		label: "Friendlier Levels",
 		tip: "Keeps the roughest levels out of the shuffle — 2-3, 5-3, 6-6, 7-5, 7-8 and 8-1. Their slots go to beta stages if you have those on, otherwise to a second visit to a level already in the seed. Two fortresses go the same way, 7F2 and 8F1: they are not on the map at all, and their tiles go to a second visit to another fortress in the seed, which you may or may not have beaten yet.",
@@ -1722,6 +1734,10 @@ export function renderOptions(rootEl, hosts = {}) {
 		fieldset.appendChild(el("legend", {}, group.label));
 		if (group.note) {
 			fieldset.appendChild(el("p", { class: "note group-note" }, group.note));
+		}
+		if (group.noteRows) {
+			fieldset.appendChild(el("dl", { class: "note group-note note-rows" },
+				...group.noteRows.flatMap(([term, text]) => [el("dt", {}, term), el("dd", {}, text)])));
 		}
 		if (group.link) {
 			fieldset.appendChild(el("p", { class: "note group-note" },
