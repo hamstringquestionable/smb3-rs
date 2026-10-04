@@ -552,7 +552,7 @@ export const SCHEMA = [
 		group: "enemies", inFlagKey: true },
 	{ id: "friendlier_levels", type: "bool", default: false,
 		label: "Friendlier Levels",
-		tip: "Keeps the roughest levels out of the shuffle — 2-3, 5-3, 6-6, 7-5, 7-8 and 8-1. Their slots go to beta stages if you have those on, otherwise to a second visit to a level already in the seed. Two fortresses go the same way, 7F2 and 8F1: they are not on the map at all, and their tiles go to a fort you have already beaten.",
+		tip: "Keeps the roughest levels out of the shuffle — 2-3, 5-3, 6-6, 7-5, 7-8 and 8-1. Their slots go to beta stages if you have those on, otherwise to a second visit to a level already in the seed. Two fortresses go the same way, 7F2 and 8F1: they are not on the map at all, and their tiles go to a second visit to another fortress in the seed, which you may or may not have beaten yet.",
 		group: "map", inFlagKey: true },
 	{ id: "deja_vu", type: "tri", options: OFF_DOUBLE_WILD, default: "off",
 		label: "Deja Vu", flavor: "Haven't we been here?",
