@@ -26,7 +26,7 @@ deploys.
 
 - **The Enemies section explains Off, Shuffle and Wild.** Piranhas, Cannons
   and HB Encounters move to a new Protected Pools section below it: their Wild
-  never mixes with the other classes, and the section says why.
+  never mixes with the other classes, and their tooltips say why.
 - **World 2's bro arena is rebuilt.** The block of sand bricks on the right,
   which enemies could end up inside and out of reach, is replaced by a floating
   row of bricks and a short column of wood blocks with an item in the top one.
