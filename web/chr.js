@@ -183,6 +183,29 @@ function renderMapTiles(canvas, romBytes, tileIds, cols, paletteRgb, clear) {
 	canvas.getContext("2d").putImageData(img, 0, 0);
 }
 
+// Render a whole world map (from wasm's `map_background_json`) at 1x: an 8x8
+// tile grid of CHR tile numbers, each drawn in its palette page. Fully opaque,
+// unlike the icons, since this is the map as the game shows it.
+export function renderMapBackground(canvas, romBytes, map) {
+	const cols = map.cols;
+	const rows = map.tiles.length / cols;
+	const pals = map.palettes.map(resolvePalette);
+	canvas.width = cols * 8;
+	canvas.height = rows * 8;
+	const img = new ImageData(canvas.width, canvas.height);
+	map.tiles.forEach((tid, i) => {
+		const pal = pals[map.pages[i]];
+		const ox = (i % cols) * 8;
+		const oy = Math.floor(i / cols) * 8;
+		for (let y = 0; y < 8; y++) {
+			for (let x = 0; x < 8; x++) {
+				img.data.set([...pal[tilePixel(romBytes, tid, x, y)], 255], ((oy + y) * canvas.width + ox + x) * 4);
+			}
+		}
+	});
+	canvas.getContext("2d").putImageData(img, 0, 0);
+}
+
 // Convenience: render an icon spec (from the schema) into a canvas.
 // spec = { tiles: [...row-major], cols?: 2, palette: [c0, c1, c2, c3], flipRight?, flipY?, over?, clear? }
 // `clear` marks a world-map tile and names its ground color; see renderMapTiles.
