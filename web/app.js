@@ -482,18 +482,24 @@ function refreshRomGraphics() {
 // Page background: one world's map from the player's own ROM (not a visual
 // patch's, and never a randomized one). The world is picked once per page
 // load; a new ROM redraws the same world. It is scaled by the smallest whole
-// number that covers the window, so pixels stay square at any size.
+// number that covers the window, so pixels stay square at any size, and shows
+// a random part of the map: `pageMapSpot` is how far across and down (0-1) the
+// window sits, picked with the world. Offsets are whole pixels, so the map's
+// pixel grid stays even.
 let pageMapWorld = null;
 let pageMapSize = null;
+const pageMapSpot = { x: Math.random(), y: Math.random() };
 
 function fitPageMap() {
 	const layer = document.getElementById("map-bg");
 	if (!layer || !pageMapSize) return;
-	const scale = Math.max(
-		Math.ceil(window.innerWidth / pageMapSize.w),
-		Math.ceil(window.innerHeight / pageMapSize.h),
-	);
+	const vw = window.innerWidth;
+	const vh = window.innerHeight;
+	const scale = Math.max(Math.ceil(vw / pageMapSize.w), Math.ceil(vh / pageMapSize.h));
+	const x = Math.round(pageMapSpot.x * (pageMapSize.w * scale - vw));
+	const y = Math.round(pageMapSpot.y * (pageMapSize.h * scale - vh));
 	layer.style.setProperty("--map-scale", scale);
+	layer.style.backgroundPosition = `${-x}px ${-y}px`;
 }
 window.addEventListener("resize", fitPageMap);
 

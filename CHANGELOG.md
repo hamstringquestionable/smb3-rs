@@ -12,8 +12,8 @@ deploys.
 ### Added
 
 - **A world map behind the page.** Once your ROM is loaded, the page background
-  shows one of its world maps, a different world on each visit, scaled up to
-  fill the window.
+  shows one of its world maps, a different world and a different part of it
+  on each visit, scaled up to fill the window.
 
 ## [2.4.0] - 2026-10-04
 

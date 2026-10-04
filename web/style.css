@@ -37,7 +37,8 @@ body {
 /* A world map from the player's ROM behind the two panels (renderPageMap in
    app.js), pinned while the page scrolls. A fixed layer rather than
    background-attachment: fixed, which iOS ignores. Whole-number scale only;
-   app.js sets it to the smallest that covers the window (fitPageMap). */
+   app.js sets it to the smallest that covers the window, and the position to
+   a random spot (fitPageMap). */
 #map-bg {
     --map-scale: 8;
     position: fixed;
