@@ -51,6 +51,15 @@ body {
     image-rendering: pixelated;
 }
 
+/* Dims the map slightly in the page's own navy, so it sits back behind the
+   panels. Raise the alpha to darken further. */
+#map-bg::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: rgba(12, 12, 30, 0.3);
+}
+
 .page-wrapper {
     display: flex;
     align-items: flex-start;
