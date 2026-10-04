@@ -410,7 +410,7 @@ export const SCHEMA = [
 		group: "map", inFlagKey: true },
 	{ id: "troll_pipes", type: "tri", options: ON_OFF_MAYBE, default: "on",
 		label: "Troll Pipes", flavor: "Looks like a pipe…",
-		tip: "Disguise one level per world (W2-W8) as a pipe. You can walk past freely, but pressing A loads the hidden level. Maybe: the seed secretly decides on or off, so you won't know until you play.",
+		tip: "Disguise up to one level per world (W2-W8) as a pipe. You can walk past freely, but pressing A loads the hidden level. Maybe: the seed secretly decides on or off, so you won't know until you play.",
 		icon: PIPE_TILE,
 		group: "map", inFlagKey: true },
 	{ id: "more_hammer_rocks", type: "tri", options: ON_OFF_MAYBE, default: "off",
