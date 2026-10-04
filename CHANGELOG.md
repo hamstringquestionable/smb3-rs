@@ -114,6 +114,8 @@ deploys.
 
 ### Fixed
 
+- **No Rotodiscs in place of 3F1's later Dry Bones.** The Dry Bones on
+  screens 5 and 7 of World 3's first fortress can no longer become a Rotodisc.
 - **Koopalings jump normally after their third stomp.** With Random Koopaling
   Stomps, a Koopaling that needed four or five stomps read its jump height and
   how often it jumps from the wrong part of the ROM after the third one, so it

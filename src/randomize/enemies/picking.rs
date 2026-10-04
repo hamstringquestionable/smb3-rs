@@ -124,6 +124,14 @@ pub(super) fn pick_replacement<R: Rng>(
                 (pick, Cow::Owned(fp))
             })
         }
+        Some(EntryProtection::ExcludeRotodiscs) => {
+            find_class_pool(entry.obj_id, modes).map(|pool| {
+                let fp: Vec<u8> =
+                    pool.slice(wild_pool).iter().copied().filter(|&id| !is_rotodisc(id)).collect();
+                let pick = pick_compatible(&fp, slot4, slot5, rng);
+                (pick, Cow::Owned(fp))
+            })
+        }
         _ => find_class_pool(entry.obj_id, modes).map(|pool| {
             let pick = match pool {
                 ClassPool::Wild => pick_compatible(wild_pool, slot4, slot5, rng),
