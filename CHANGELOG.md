@@ -116,6 +116,9 @@ deploys.
 
 - **No Rotodiscs in place of 3F1's later Dry Bones.** The Dry Bones on
   screens 5 and 7 of World 3's first fortress can no longer become a Rotodisc.
+- **No unfair hazard in place of a 6-6 Cheep Cheep.** The Green Cheep near
+  the bottom of screen 8 in 6-6's main section can no longer become a
+  hazard such as a Lava Lotus, Patooie or Thwomp.
 - **Koopalings jump normally after their third stomp.** With Random Koopaling
   Stomps, a Koopaling that needed four or five stomps read its jump height and
   how often it jumps from the wrong part of the ROM after the third one, so it

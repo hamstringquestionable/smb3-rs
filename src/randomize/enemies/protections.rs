@@ -146,10 +146,11 @@ const LEVEL_PROTECTIONS: &[LevelProtection] = &[
     },
     // --- Stompable-locked entries ---
     LevelProtection {
-        label: "6-6 sub-area (floor spikes — non-stompable swap would corner player)",
+        label: "6-6 sub-area (floor spikes — non-stompable swap would corner player; screen 8 floor Cheep must not become a hazard)",
         enemy_ptr: 0xC64B,
         walker_segment: WalkerSegmentRule::Default,
         entries: &[
+            EntryRule { offset: 0x0C698, rule: EntryProtection::ExcludeHazards }, // GreenCheep scr=8 col=13 row=15
             EntryRule { offset: 0x0C6A7, rule: EntryProtection::ForceStompable }, // Spike scr=10 col=0
             EntryRule { offset: 0x0C6AA, rule: EntryProtection::ForceStompable }, // Spike scr=10 col=6
             EntryRule { offset: 0x0C6AD, rule: EntryProtection::ForceStompable }, // Spike scr=10 col=4
