@@ -386,7 +386,7 @@ export const SCHEMA = [
 		group: "map", inFlagKey: true },
 	{ id: "hands_levels", type: "bool", default: true,
 		label: "Hand-Trap Levels", flavor: "It's a trap!",
-		tip: "Add visible hand-trap tiles. Walking onto one grabs you and pulls you into a level.",
+		tip: "Add visible hand-trap tiles. Walking onto one always grabs you and pulls you into a level.",
 		icon: HAND_TRAP,
 		group: "map", inFlagKey: true },
 	{ id: "swap_start_airship", type: "bool", default: false,
