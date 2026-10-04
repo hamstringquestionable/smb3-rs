@@ -9,6 +9,8 @@ deploys.
 
 ## [Unreleased]
 
+## [2.4.0] - 2026-10-04
+
 ### Added
 
 - **Stompable water enemies.** A new pill beside Wild on the Water enemies row
@@ -34,6 +36,25 @@ deploys.
 - **Desert wood and note item blocks are shuffled.** They were skipped by
   mistake; the four in World 2's levels and the new one in the bro arena now
   roll flower, leaf or star like everywhere else.
+
+### Fixed
+
+- **No Rotodiscs in place of 3F1's later Dry Bones.** The Dry Bones on
+  screens 5 and 7 of World 3's first fortress can no longer become a Rotodisc.
+- **No unfair hazard in place of a 6-6 Cheep Cheep.** The Green Cheep near
+  the bottom of screen 8 in 6-6's main section can no longer become a
+  hazard such as a Lava Lotus, Patooie or Thwomp.
+- **Koopalings jump normally after their third stomp.** With Random Koopaling
+  Stomps, a Koopaling that needed four or five stomps read its jump height and
+  how often it jumps from the wrong part of the ROM after the third one, so it
+  jumped far too often and sometimes "jumped" straight down. It now keeps its
+  third-stomp jumps (Fred's fix).
+- **A lock opens back into the path it was blocking.** Locks on sky paths
+  running up and down, island paths and bridge variants used to open into a
+  plain dirt path. A lock on an up-and-down sky path is also sky-coloured now,
+  rather than wearing the ground lock (#226).
+- **The ending montage draws World Maze hint locks as locks.** Numbered and
+  alternate-colour locks were drawn as trees on the credits mini-maps.
 
 ## [2.3.1] - 2026-09-30
 
@@ -117,22 +138,6 @@ deploys.
 
 ### Fixed
 
-- **No Rotodiscs in place of 3F1's later Dry Bones.** The Dry Bones on
-  screens 5 and 7 of World 3's first fortress can no longer become a Rotodisc.
-- **No unfair hazard in place of a 6-6 Cheep Cheep.** The Green Cheep near
-  the bottom of screen 8 in 6-6's main section can no longer become a
-  hazard such as a Lava Lotus, Patooie or Thwomp.
-- **Koopalings jump normally after their third stomp.** With Random Koopaling
-  Stomps, a Koopaling that needed four or five stomps read its jump height and
-  how often it jumps from the wrong part of the ROM after the third one, so it
-  jumped far too often and sometimes "jumped" straight down. It now keeps its
-  third-stomp jumps (Fred's fix).
-- **A lock opens back into the path it was blocking.** Locks on sky paths
-  running up and down, island paths and bridge variants used to open into a
-  plain dirt path. A lock on an up-and-down sky path is also sky-coloured now,
-  rather than wearing the ground lock (#226).
-- **The ending montage draws World Maze hint locks as locks.** Numbered and
-  alternate-colour locks were drawn as trees on the credits mini-maps.
 - **World Maze, two players: each player stays in their own world, on their own
   tile.** Take a telepad and your partner no longer gets dragged along — hand
   the turn over and the map changes to wherever they were standing, with their
