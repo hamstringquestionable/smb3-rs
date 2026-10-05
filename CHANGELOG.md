@@ -15,6 +15,21 @@ deploys.
   shows one of its world maps, a different world and a different part of it
   on each visit, scaled up to fill the window.
 
+### Changed
+
+- **World Maze tracker — a lock aimed at Dark Land is marked W8, not handed to
+  the Battleship.** Nothing on the map says which of the four opens it, so it
+  stays a free lock until you beat one and place its lock. Pinning more than
+  four locks on Dark Land is flagged.
+
+### Fixed
+
+- **World Maze tracker — a second lock opened from the same world no longer
+  vanishes.** Aiming a lock at a world that already had a fortress opening a
+  lock in that same world deleted the lock; it now adds the second fortress.
+- **World Maze tracker — + on Locks adds to the end of the row**, as it does
+  for fortresses and pads, rather than ahead of the fortresses' locks.
+
 ## [2.4.0] - 2026-10-04
 
 ### Added
