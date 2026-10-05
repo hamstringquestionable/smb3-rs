@@ -14,8 +14,9 @@ import init, {
 	apply_ips_patch,
 	version,
 } from "./pkg/smb3_rs.js";
-import { renderIcon as renderChrIcon, renderIconBox, renderMapBackground } from "./chr.js";
+import { renderIcon as renderChrIcon, renderIconBox, renderMapBackground, setFavicon } from "./chr.js";
 import { loadRom, saveRom, deleteCached } from "./rom-cache.js";
+import { Q_BLOCK } from "./icons.js";
 import {
 	renderOptions,
 	wireListeners,
@@ -477,6 +478,7 @@ function refreshRomGraphics() {
 	renderAllIcons();
 	renderTheEnd();
 	renderPageMap();
+	setFavicon(previewRom(), Q_BLOCK);
 }
 
 // Page background: one world's map from the player's own ROM (not a visual

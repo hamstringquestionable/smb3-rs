@@ -251,3 +251,14 @@ export function renderIconBox(canvas, romBytes, spec, box, maxScale) {
 	const dy = Math.floor((canvas.height - h * k) / 2);
 	ctx.drawImage(art, x0, y0, w, h, dx, dy, w * k, h * k);
 }
+
+// Point the page's tab icon at `spec`, drawn at 2x into a 32px square.
+// Pages ship `<link rel="icon" href="data:,">`: with no ROM there is nothing
+// to draw, and the empty data URL stops the browser asking for /favicon.ico.
+export function setFavicon(romBytes, spec) {
+	const link = document.querySelector("link[rel=icon]");
+	if (!link || !romBytes) return;
+	const canvas = document.createElement("canvas");
+	renderIconBox(canvas, romBytes, spec, 32, 2);
+	link.href = canvas.toDataURL("image/png");
+}

@@ -11,6 +11,8 @@ deploys.
 
 ### Added
 
+- **A ? block in the browser tab.** Once your ROM is loaded, the randomizer
+  and the World Maze tracker use a ? block from it as their tab icon.
 - **A world map behind the page.** Once your ROM is loaded, the page background
   shows one of its world maps, a different world and a different part of it
   on each visit, scaled up to fill the window.

@@ -60,3 +60,8 @@ const WAND = { tiles: [1982, 1983], cols: 1, palette: [0x0F, 0x28, 0x37, 0x03] }
 // The jewel's upper facets are the only pixels in color 3, so swapping that one
 // entry recolors the jewel alone: vanilla purple plus six others, one per wand.
 export const WANDS = [0x03, 0x16, 0x2A, 0x21, 0x27, 0x30, 0x14].map((c) => ({ ...WAND, palette: [0x0F, 0x28, 0x37, c] }));
+
+// The tab icon: a "?" block, Plains BG palette 1. Its quadrants are BG tiles
+// $98-$9B in the first frame of the level's animated pattern bank ($60 of
+// PT2_Anim); the other three frames are the block turning.
+export const Q_BLOCK = { tiles: [6168, 6170, 6169, 6171], cols: 2, palette: [0x0F, 0x0F, 0x36, 0x27] };
