@@ -244,8 +244,8 @@ pub(crate) const REMOVABLE_PAIRS: &[(u8, u8)] = &[
     // (`FORTRESS_TILES`), and [`ML_RANGE`]'s upper bound is what lets the row be
     // reached.
     (0x6A, 0x60), // large fortress    -> rubble
-    // The marked away fortress (`rom_data::TILE_FORTRESS_AWAY_MARKED`), the
-    // second away family under some-hints. Past page 3's M/L window for the
+    // The marked away fortress (`rom_data::TILE_FORTRESS_AWAY_MARKED`), every
+    // away fortress under some-hints. Past page 3's M/L window for the
     // same reason `$6A` is past page 1's, so this row is its whole reload path;
     // `away_family` gives it the alt fortress's crumble on the clear itself.
     (0xEC, 0xE3), // marked away fort  -> alt rubble
@@ -442,7 +442,7 @@ impl LockTiles {
 /// | Some | tan here, sky elsewhere | the nub, when elsewhere and `marked` |
 /// | Full | the path's own | the world digit, when elsewhere |
 ///
-/// `marked` is the away family of the lock's fortress
+/// `marked` is the nub flag of the lock's fortress
 /// (`LockHint::Elsewhere { marked }`). Only some-hints shows it: Full's digit
 /// already names the world, and owns the same corner.
 ///

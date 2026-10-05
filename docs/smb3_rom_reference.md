@@ -6037,7 +6037,7 @@ pool has 18 bytes.
 
 ### The marked away fortress `$EC` and the fortress-clear tile pick
 
-*(2026-10-02.)* Under some-hints, every other away fortress is `$EC` instead of
+*(2026-10-02; every one since 2026-10-05.)* Under some-hints, every away fortress is `$EC` instead of
 `$EB`, and its lock wears the same corner nub (`away_family.rs`). `$EC` is
 `$EB`'s quadrants with CHR `$CD` — the path-end nub vanilla uses as the
 lower-right of `$44`, `$66` and seven more — in the lower-right.

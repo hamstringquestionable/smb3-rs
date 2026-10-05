@@ -1,14 +1,18 @@
-//! **Away families: halve the fortresses a some-hints player has to try.**
+//! **The away nub: "apart" by shape, not only by colour.**
 //!
-//! Under some-hints an away lock only says "my fortress is in another world",
-//! and a maze seed has about ten such fortresses (measured: 61% of its 17). A
-//! player stuck at one was left to guess among all of them. This splits them in
-//! two: every other `Elsewhere` fortress wears a nub in its lower-right corner,
-//! and so does the lock it opens. A nubbed lock is opened by a nubbed fortress,
-//! a plain one by a plain one.
+//! Under some-hints a fortress and its lock say whether they are together by
+//! colour alone — tan here, the odd colour apart — and on some world
+//! palettes a colourblind player cannot tell the two apart (#325). So every
+//! `Elsewhere` fortress also wears a nub in its lower-right corner, and so
+//! does the lock it opens. The nub says nothing the colour does not; it says
+//! it twice.
 //!
-//! The *fact* is the maze's — `maze::stamp_into` alternates
-//! `LockHint::Elsewhere { marked }` across the away fortresses, consuming no
+//! (Until 2026-10-05 only every other away pair wore it, splitting them into
+//! two families to halve the fortresses to try. That narrowed the hint past
+//! what Some is meant to give, and left half the away pairs colour-only.)
+//!
+//! The *fact* is the maze's — `maze::stamp_into` sets
+//! `LockHint::Elsewhere { marked: true }` on every away fortress, consuming no
 //! RNG. The bytes are split three ways:
 //!
 //! * the fortress tile, [`rom_data::TILE_FORTRESS_AWAY_MARKED`] (`$EC`), stamped
@@ -315,8 +319,8 @@ mod tests {
             }
         }
         assert!(
-            pairs[0] > 0 && pairs[1] > 0,
-            "sampled {} plain and {} marked away pairs; both families must occur",
+            pairs[0] == 0 && pairs[1] > 0,
+            "sampled {} plain and {} marked away pairs; every away pair must wear the nub",
             pairs[0],
             pairs[1]
         );

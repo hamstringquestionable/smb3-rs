@@ -248,8 +248,8 @@ pub(crate) const TILE_FORTRESS: u8 = 0x67;
 /// `$E3`, the same as [`TILE_FORTRESS`]'s `$60`.
 pub(crate) const TILE_FORTRESS_AWAY: u8 = 0xEB;
 
-/// [`TILE_FORTRESS_AWAY`] with a nub in its lower-right corner: the other
-/// away family under some-hints (`LockHint::Elsewhere { marked: true }`). Its
+/// [`TILE_FORTRESS_AWAY`] with a nub in its lower-right corner: every away
+/// fortress under some-hints (`LockHint::Elsewhere { marked: true }`). Its
 /// lock wears the same nub. `$EC` is the first byte past page 3's M/L window
 /// (`lock_keys::ML_RANGE_UPPER`), so it reloads through the removable table
 /// like `$6A` rather than flipping to a Mario/Luigi panel; `away_family` owns

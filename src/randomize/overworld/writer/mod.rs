@@ -82,7 +82,7 @@ pub(crate) fn write_overworld<R: Rng>(
     // One allocation for every world: the art and the removable table exist once
     // in the ROM, and the maze swaps each world in against them.
     let mut lock_tiles = LockTiles::default();
-    // The away fortresses in the marked family. A lock can be in a different
+    // The marked (nubbed) away fortresses. A lock can be in a different
     // world from its fortress, so the writer collects them all before stamping
     // any lock; the fact itself is the fortress slot's `LockHint`.
     let marked_forts: HashSet<FortRef> = build

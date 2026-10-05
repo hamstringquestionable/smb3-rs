@@ -51,7 +51,7 @@ pub(super) fn write_tile_grid<R: Rng>(
         let tile = match hint {
             LockHint::OwnWorld => rom_data::TILE_FORTRESS,
             LockHint::World8 => rom_data::TILE_FORTRESS_W8,
-            // The second away family is a some-hints display only; see
+            // The away nub is a some-hints display only; see
             // `away_family`. Full names the world on the lock instead.
             LockHint::Elsewhere { marked: true } if hints == crate::HintMode::Partial => {
                 rom_data::TILE_FORTRESS_AWAY_MARKED
