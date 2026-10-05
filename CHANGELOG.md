@@ -9,30 +9,7 @@ deploys.
 
 ## [Unreleased]
 
-### Added
-
-- **A ? block in the browser tab.** Once your ROM is loaded, the randomizer
-  and the World Maze tracker use a ? block from it as their tab icon.
-- **A world map behind the page.** Once your ROM is loaded, the page background
-  shows one of its world maps, a different world and a different part of it
-  on each visit, scaled up to fill the window.
-
-### Changed
-
-- **World Maze tracker — a lock aimed at Dark Land is marked W8, not handed to
-  the Battleship.** Nothing on the map says which of the four opens it, so it
-  stays a free lock until you beat one and place its lock. Pinning more than
-  four locks on Dark Land is flagged.
-
-### Fixed
-
-- **World Maze tracker — a second lock opened from the same world no longer
-  vanishes.** Aiming a lock at a world that already had a fortress opening a
-  lock in that same world deleted the lock; it now adds the second fortress.
-- **World Maze tracker — + on Locks adds to the end of the row**, as it does
-  for fortresses and pads, rather than ahead of the fortresses' locks.
-
-## [2.4.0] - 2026-10-04
+## [2.4.0] - 2026-10-05
 
 ### Added
 
@@ -45,6 +22,11 @@ deploys.
 - **Away locks wear a nub on Some hints.** Every away lock, and every
   odd-colour fortress, now has a small round nub in the corner, so you can
   tell a pair is split across worlds by shape as well as by colour.
+- **A ? block in the browser tab.** Once your ROM is loaded, the randomizer
+  and the World Maze tracker use a ? block from it as their tab icon.
+- **A world map behind the page.** Once your ROM is loaded, the page background
+  shows one of its world maps, a different world and a different part of it
+  on each visit, scaled up to fill the window.
 
 ### Changed
 
@@ -58,6 +40,10 @@ deploys.
 - **Desert wood and note item blocks are shuffled.** They were skipped by
   mistake; the four in World 2's levels and the new one in the bro arena now
   roll flower, leaf or star like everywhere else.
+- **World Maze tracker — a lock aimed at Dark Land is marked W8, not handed to
+  the Battleship.** Nothing on the map says which of the four opens it, so it
+  stays a free lock until you beat one and place its lock. Pinning more than
+  four locks on Dark Land is flagged.
 
 ### Fixed
 
@@ -77,6 +63,11 @@ deploys.
   rather than wearing the ground lock (#226).
 - **The ending montage draws World Maze hint locks as locks.** Numbered and
   alternate-colour locks were drawn as trees on the credits mini-maps.
+- **World Maze tracker — a second lock opened from the same world no longer
+  vanishes.** Aiming a lock at a world that already had a fortress opening a
+  lock in that same world deleted the lock; it now adds the second fortress.
+- **World Maze tracker — + on Locks adds to the end of the row**, as it does
+  for fortresses and pads, rather than ahead of the fortresses' locks.
 
 ## [2.3.1] - 2026-09-30
 
