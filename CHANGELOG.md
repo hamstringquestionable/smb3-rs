@@ -40,10 +40,9 @@ deploys.
 - **Fireball hearts.** A new Cosmetic toggle turns every fireball into a heart:
   yours, the enemies', and the Fire Chomp's tail (MaCobra52's patch). Picked
   with Dr. Mario, it replaces that patch's fireballs.
-- **Paired away locks on Some hints.** About half the odd-colour fortresses
-  and the locks they open now share a small round nub in the corner, so a
-  nubbed lock is opened by a nubbed fortress and you have about half as many
-  fortresses to try.
+- **Away locks wear a nub on Some hints.** Every away lock, and every
+  odd-colour fortress, now has a small round nub in the corner, so you can
+  tell a pair is split across worlds by shape as well as by colour.
 
 ### Changed
 

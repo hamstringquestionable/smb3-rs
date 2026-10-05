@@ -94,10 +94,9 @@ pub(crate) enum LockHint {
     World8,
     /// The lock is in some other world.
     ///
-    /// `marked` splits these into two families so a player holding an away
-    /// lock has half as many fortresses to try: a marked fortress opens a
-    /// marked lock, an unmarked one an unmarked lock. The maze alternates it;
-    /// only some-hints shows it (see `rom_data::TILE_FORTRESS_AWAY_MARKED`).
+    /// `marked` puts a nub on the fortress and its lock, so "apart" reads by
+    /// shape as well as by colour. The maze marks every one; only some-hints
+    /// shows it (see `rom_data::TILE_FORTRESS_AWAY_MARKED`).
     Elsewhere { marked: bool },
 }
 

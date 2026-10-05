@@ -11,8 +11,7 @@ use crate::rom::Rom;
 use crate::{DejaVuMode, PiranhaMode};
 
 use crate::randomize::overworld::build::{
-    BuildResult, BuiltWorld, FortRef, LockHint, OverworldData, SlotKind, VANILLA_LEVEL_COUNT,
-    bfs_ordered,
+    BuildResult, BuiltWorld, LockHint, OverworldData, SlotKind, VANILLA_LEVEL_COUNT, bfs_ordered,
 };
 use crate::randomize::overworld::lock_keys::{LockEntry, LockTiles};
 use crate::randomize::overworld::node_catalog::NodeKind;
@@ -82,23 +81,6 @@ pub(crate) fn write_overworld<R: Rng>(
     // One allocation for every world: the art and the removable table exist once
     // in the ROM, and the maze swaps each world in against them.
     let mut lock_tiles = LockTiles::default();
-    // The away fortresses in the marked family. A lock can be in a different
-    // world from its fortress, so the writer collects them all before stamping
-    // any lock; the fact itself is the fortress slot's `LockHint`.
-    let marked_forts: HashSet<FortRef> = build
-        .worlds
-        .iter()
-        .enumerate()
-        .flat_map(|(wi, w)| {
-            w.slots
-                .iter()
-                .filter(|s| {
-                    s.kind == SlotKind::Fortress
-                        && s.lock_hint == LockHint::Elsewhere { marked: true }
-                })
-                .map(move |s| FortRef { world: wi, section: s.section })
-        })
-        .collect();
     for (wi, wa) in assignments.iter().enumerate() {
         let built = &build.worlds[wi];
         let sprite_mask = &sprite_masks[wi];
@@ -110,7 +92,6 @@ pub(crate) fn write_overworld<R: Rng>(
             data,
             sprite_mask,
             flags.hints,
-            &marked_forts,
             &mut lock_tiles,
             rng,
         ));
