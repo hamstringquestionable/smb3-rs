@@ -23,12 +23,14 @@
 //! * this module: `$EC`'s art and its crumble.
 //!
 //! Full hints never shows it (its world digit already names the fortress's
-//! world, and owns the same corner), and neither does Off. World 8's own
-//! fortresses (`$6A`) are a family of their own already and are untouched.
+//! world, and owns the same corner), and neither does Off. The beta
+//! fortress (`$6A`), whose lock is in World 8, keeps its own art — its shape
+//! already sets it apart — but the lock it opens is away, so it wears the nub.
 //!
-//! **To remove the feature:** make `stamp_into` always emit `marked: false`.
-//! No `$EC` is then stamped, [`apply`] writes nothing, and every lock asks for
-//! what it did before. The remaining code is inert.
+//! **To remove the feature:** make `stamp_into` always emit `marked: false`
+//! and `lock_keys::lock_request` never set `marked`. No `$EC` is then
+//! stamped, [`apply`] writes nothing, and every lock asks for what it did
+//! before. The remaining code is inert.
 
 use crate::randomize::rom_data::{self, Grid, PRG012_FILE_BASE, prg_bank_cpu_to_file};
 use crate::rom::Rom;
@@ -251,12 +253,13 @@ mod tests {
         crate::randomize_rom_with_overworld_capture(bytes, seed, &options, None).ok()
     }
 
-    /// **A marked fortress opens a marked lock, and only some-hints marks.**
+    /// **Every away fortress and every away lock wears the nub on some-hints.**
     ///
     /// Checked positionally on the written ROM against the maze's own pairing:
     /// every away fortress's cell wears `$EC` exactly when its hint is marked,
-    /// and the lock it opens wears [`MARK`] in its corner exactly when the
-    /// fortress does. A fortress under a World 8 army sprite has had its cell
+    /// and every lock wears [`MARK`] in its corner exactly when its fortress is
+    /// in another world — including a World 8 lock opened by a beta `$6A`
+    /// fortress, which keeps its own art. A fortress under a World 8 army sprite has had its cell
     /// blanked by the writer, as every hint there is — skipped, not failed.
     #[test]
     fn a_marked_fortress_opens_a_marked_lock() {
@@ -269,7 +272,7 @@ mod tests {
             assert_ne!(lr(&rom, plain), MARK, "{plain:#04X}'s corner is already the nub");
         }
 
-        let mut pairs = [0usize; 2];
+        let mut pairs = [0usize; 3];
         for seed in 0..seeds() {
             let Some((rom, build)) = build(&bytes, seed, crate::HintMode::Partial) else {
                 continue;
@@ -297,19 +300,23 @@ mod tests {
             }
             for (wi, w) in build.worlds.iter().enumerate() {
                 for lock in &w.locks {
-                    let Some(LockHint::Elsewhere { marked }) = hint.get(&lock.fort).copied() else {
-                        continue;
-                    };
+                    let away = lock.fort.world != wi;
                     let tile = grids[wi].get(lock.pos.0, lock.pos.1);
                     assert_eq!(
                         lr(&rom, tile) == MARK,
-                        marked,
-                        "seed {seed}: the W{} lock at {:?} ({tile:#04X}) disagrees with its \
-                         fortress, whose hint is marked={marked}",
+                        away,
+                        "seed {seed}: the W{} lock at {:?} ({tile:#04X}) opened by W{}'s \
+                         fortress (hint {:?}) — a lock wears the nub exactly when away",
                         wi + 1,
-                        lock.pos
+                        lock.pos,
+                        lock.fort.world + 1,
+                        hint.get(&lock.fort)
                     );
-                    pairs[usize::from(marked)] += 1;
+                    match hint.get(&lock.fort) {
+                        _ if !away => pairs[0] += 1,
+                        Some(LockHint::World8) => pairs[2] += 1,
+                        _ => pairs[1] += 1,
+                    }
                 }
             }
             if crate::randomize::overworld::lock_keys::tiles_on_map(&grids)
@@ -319,10 +326,11 @@ mod tests {
             }
         }
         assert!(
-            pairs[0] == 0 && pairs[1] > 0,
-            "sampled {} plain and {} marked away pairs; every away pair must wear the nub",
+            pairs.iter().all(|&n| n > 0),
+            "sampled {} local, {} elsewhere and {} beta-fortress locks; each case must occur",
             pairs[0],
-            pairs[1]
+            pairs[1],
+            pairs[2]
         );
     }
 

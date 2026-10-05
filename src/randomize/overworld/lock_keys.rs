@@ -439,12 +439,12 @@ impl LockTiles {
 /// | Hints | Colour | Corner |
 /// |---|---|---|
 /// | Off | the path's own | — |
-/// | Some | tan here, sky elsewhere | the nub, when elsewhere and `marked` |
+/// | Some | tan here, sky elsewhere | the nub, when elsewhere |
 /// | Full | the path's own | the world digit, when elsewhere |
 ///
-/// `marked` is the nub flag of the lock's fortress
-/// (`LockHint::Elsewhere { marked }`). Only some-hints shows it: Full's digit
-/// already names the world, and owns the same corner.
+/// The nub repeats the sky colour's "away" by shape, on every away lock —
+/// including a World 8 lock whose fortress is the beta `$6A`. Only some-hints
+/// shows it: Full's digit already names the world, and owns the same corner.
 ///
 /// **The reveal is `under` itself, with one exception:** a path the reload
 /// would treat as completable. Opening a lock sets its cell's completion bit,
@@ -456,7 +456,6 @@ pub(crate) fn lock_request(
     under: u8,
     away: bool,
     shown: usize,
-    marked: bool,
     hints: crate::HintMode,
 ) -> LockRequest {
     let path = if crate::randomize::overworld::build::is_completion_unsafe(under) {
@@ -470,7 +469,7 @@ pub(crate) fn lock_request(
         _ => LockColour::of_path(path),
     };
     let digit = (away && hints.numbers_locks()).then_some(shown);
-    let marked = away && marked && hints == crate::HintMode::Partial;
+    let marked = away && hints == crate::HintMode::Partial;
     LockRequest { path, colour, digit, marked }
 }
 
@@ -1436,7 +1435,7 @@ mod asm_checks {
     #[test]
     fn a_sky_vertical_lock_reveals_sky() {
         let mut tiles = LockTiles::default();
-        let r = lock_request(0xDB, false, 0, false, crate::HintMode::Off);
+        let r = lock_request(0xDB, false, 0, crate::HintMode::Off);
         assert_eq!(r, req(0xDB, LockColour::Sky, None));
         let tile = tiles.tile(r);
         assert!(SKY_POOL.contains(&tile), "{tile:#04X} is not a sky tile");
@@ -1464,7 +1463,7 @@ mod asm_checks {
     #[test]
     fn a_completable_path_reveals_the_plain_path() {
         assert!(crate::randomize::overworld::build::is_completion_unsafe(0xE6));
-        assert_eq!(lock_request(0xE6, false, 0, false, crate::HintMode::Off).path, 0x45);
+        assert_eq!(lock_request(0xE6, false, 0, crate::HintMode::Off).path, 0x45);
     }
 
     /// The mode table in [`lock_request`]'s doc comment, row by row.
@@ -1473,23 +1472,19 @@ mod asm_checks {
         use crate::HintMode::{Full, Off, Partial};
         let sky = LockColour::Sky;
         let tan = LockColour::Tan;
-        assert_eq!(lock_request(0xDA, false, 0, false, Off), req(0xDA, sky, None));
-        assert_eq!(lock_request(0xDA, false, 0, false, Partial), req(0xDA, tan, None));
-        assert_eq!(lock_request(0x45, true, 4, false, Partial), req(0x45, sky, None));
-        assert_eq!(lock_request(0xB3, true, 4, false, Partial), req(0xB3, sky, None));
-        assert_eq!(lock_request(0x45, true, 4, false, Full), req(0x45, tan, Some(4)));
-        assert_eq!(lock_request(0xDA, true, 4, false, Full), req(0xDA, sky, Some(4)));
-        assert_eq!(lock_request(0x45, false, 0, false, Full), req(0x45, tan, None));
+        assert_eq!(lock_request(0xDA, false, 0, Off), req(0xDA, sky, None));
+        assert_eq!(lock_request(0xDA, false, 0, Partial), req(0xDA, tan, None));
+        assert_eq!(lock_request(0x45, true, 4, Full), req(0x45, tan, Some(4)));
+        assert_eq!(lock_request(0xDA, true, 4, Full), req(0xDA, sky, Some(4)));
+        assert_eq!(lock_request(0x45, false, 0, Full), req(0x45, tan, None));
 
-        // The away family's nub: some-hints, away, and a marked fortress — all
-        // three, or nothing. Full's digit owns the corner, and a local lock
-        // has no family.
+        // The away nub: some-hints and away — both, or nothing. Full's digit
+        // owns the corner, and a local lock is tan instead.
         let nubbed = |path, colour| LockRequest { marked: true, ..req(path, colour, None) };
-        assert_eq!(lock_request(0x45, true, 4, true, Partial), nubbed(0x45, sky));
-        assert_eq!(lock_request(0xDA, true, 4, true, Partial), nubbed(0xDA, sky));
-        assert_eq!(lock_request(0x45, false, 0, true, Partial), req(0x45, tan, None));
-        assert_eq!(lock_request(0x45, true, 4, true, Full), req(0x45, tan, Some(4)));
-        assert_eq!(lock_request(0x45, true, 4, true, Off), req(0x45, tan, None));
+        assert_eq!(lock_request(0x45, true, 4, Partial), nubbed(0x45, sky));
+        assert_eq!(lock_request(0xDA, true, 4, Partial), nubbed(0xDA, sky));
+        assert_eq!(lock_request(0xB3, true, 4, Partial), nubbed(0xB3, sky));
+        assert_eq!(lock_request(0x45, true, 4, Off), req(0x45, tan, None));
     }
 
     /// **A nubbed lock is never answered by a vanilla tile, and never shares

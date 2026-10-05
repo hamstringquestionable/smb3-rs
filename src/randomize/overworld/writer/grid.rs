@@ -14,7 +14,6 @@ pub(super) fn write_tile_grid<R: Rng>(
     data: &OverworldData,
     sprite_mask: &HashSet<(usize, usize)>,
     hints: crate::HintMode,
-    marked_forts: &HashSet<FortRef>,
     lock_tiles: &mut lock_keys::LockTiles,
     rng: &mut R,
 ) -> Grid {
@@ -188,8 +187,7 @@ pub(super) fn write_tile_grid<R: Rng>(
         let under = grid.get(lock.pos.0, lock.pos.1);
         let away = lock.fort.world != wi;
         let shown = if away { lock_keys::shown_world(rom, lock.fort.world) } else { 0 };
-        let marked = marked_forts.contains(&lock.fort);
-        let tile = lock_tiles.tile(lock_keys::lock_request(under, away, shown, marked, hints));
+        let tile = lock_tiles.tile(lock_keys::lock_request(under, away, shown, hints));
         grid.set(lock.pos.0, lock.pos.1, tile);
     }
 
