@@ -640,7 +640,9 @@ body {
             <dd>Dashed: a lock you have seen but cannot yet pin on a fortress. Click
                 it to say what its colour tells you — here, or away — and with a
                 world number on it, aim the away one at that world to join it up
-                with a fortress there. There are seventeen
+                with a fortress there. Aimed at Dark Land it is marked W8 but
+                not given to any one of its four — nothing on the map says
+                which until you beat it. There are seventeen
                 locks and seventeen fortresses, one each, so a lock you cannot
                 account for means there is a fortress somewhere you have not
                 found — not necessarily in this world.</dd>
@@ -914,23 +916,28 @@ function takeLock(w, fort) {
 	fort.took = false;
 	if (target == null) return;
 	const locks = state.worlds[target].locks;
-	// A lock that says what the fortress says is the first choice, then one
-	// that says nothing. One that says the opposite is never this lock.
+	// A lock already pinned on this fortress's world (only Dark Land pins one
+	// without a fortress) is the first choice. Then a lock that says what the
+	// fortress says, then one that says nothing. One that says the opposite is
+	// never this lock.
 	const says = w === target ? "here" : "away";
 	const unpinned = hint => locks.findIndex(lock =>
 		lock.keyWorld == null && (lock.hint ?? "unknown") === hint);
-	const i = unpinned(says) >= 0 ? unpinned(says) : unpinned("unknown");
+	const pinned = locks.findIndex(lock => lock.keyWorld === w);
+	const i = pinned >= 0 ? pinned : unpinned(says) >= 0 ? unpinned(says) : unpinned("unknown");
 	if (i < 0) return;
 	fort.done = fort.done || locks[i].done;
+	// Remember the pin, so putting the lock back puts it back as it was.
+	fort.took = { keyWorld: locks[i].keyWorld ?? null };
 	locks.splice(i, 1);
-	fort.took = true;
 }
 
 function releaseLock(w, fort) {
 	const target = lockWorldOf(w, fort);
 	if (fort.took && target != null) {
 		state.worlds[target].locks.push({
-			id: id(), keyWorld: null, hint: w === target ? "here" : "away", done: false,
+			id: id(), keyWorld: fort.took.keyWorld ?? null,
+			hint: w === target ? "here" : "away", done: false,
 		});
 	}
 	fort.took = false;
@@ -959,13 +966,17 @@ function retarget(w, fort, change) {
 // A fortress that has not said where its lock is draws nothing yet. It has one
 // out there somewhere, and putting it in that fortress's own world is exactly
 // the inference that stopped being true.
+//
+// The free ones come last, so the + button's new lock lands at the end of the
+// row the way a new fortress or pad does.
 function locksIn(target) {
-	const out = state.worlds[target].locks.map(lock => ({ kind: "free", lock, world: target }));
+	const out = [];
 	state.worlds.forEach((world, w) => {
 		for (const fort of world.forts) {
 			if (lockWorldOf(w, fort) === target) out.push({ kind: "fort", fort, world: w });
 		}
 	});
+	for (const lock of state.worlds[target].locks) out.push({ kind: "free", lock, world: target });
 	return out;
 }
 
@@ -1050,6 +1061,14 @@ function problems() {
 				+ "ones standing here — together they cannot come to more than four."
 			: `${have} fortresses open a lock in ${worldName(w)}, which only has ${max}.`);
 	}
+	// Dark Land's four fortresses open four locks between them: the ones they
+	// have been placed on, plus the free locks pinned on Dark Land unnamed.
+	const fromW8 = state.worlds[W8].forts.filter(f => lockWorldOf(W8, f) != null).length
+		+ state.worlds.reduce((n, world) => n + world.locks.filter(l => l.keyWorld === W8).length, 0);
+	if (fromW8 > W8_FORTS.length) {
+		out.push(`${fromW8} locks are opened from ${DARK_LAND.name}, which only has `
+			+ `${W8_FORTS.length} fortresses — one of them is opened from somewhere else.`);
+	}
 	return out;
 }
 
@@ -1078,15 +1097,25 @@ function findPad(padId) {
 function claimKeyWorld(lockWorld, lock, keyWorld) {
 	lock.keyWorld = keyWorld;
 	if (keyWorld == null) return;
+	// Dark Land's four are already on the board, so the first `?` there would
+	// always be the Battleship — a guess dressed as a fact. Nothing on the map
+	// says which of the four opens a lock elsewhere (the army sprites cover the
+	// hint tile), so the lock just remembers Dark Land and stays a free chip
+	// until one of them is beaten and placed; `takeLock` then spends it.
+	if (keyWorld === W8) { lock.hint = "away"; return; }
 
 	const wanted = hintForLockIn(keyWorld, lockWorld);
 	const forts = state.worlds[keyWorld].forts;
 
 	// Already on the board, in one of the two shapes that can be this lock: a
-	// fortress that says exactly this, or one that has not said anything yet.
-	// A remote fortress still looking for its lock is the third.
-	let fort = forts.find(f => f.hint === wanted && lockWorldOf(keyWorld, f) === lockWorld)
-		?? forts.find(f => f.hint === "unknown")
+	// fortress that has not said anything yet, or a remote one still looking
+	// for its lock.
+	//
+	// **Never a fortress whose lock is already here.** That one draws its own
+	// chip in this world, so the free lock is a second lock and needs a second
+	// fortress — two fortresses in one world can both open locks in the same
+	// other world. Matching it used to swallow the free lock.
+	let fort = forts.find(f => f.hint === "unknown")
 		?? (wanted === "away" ? forts.find(f => f.hint === "away" && f.lockWorld == null) : null);
 
 	if (!fort) {
@@ -1104,8 +1133,8 @@ function claimKeyWorld(lockWorld, lock, keyWorld) {
 		flash(`Added a fortress to World ${keyWorld + 1} — that is what opens this lock.`);
 	}
 
-	// This free lock is the one the fortress takes, unless it already had one.
-	if (lockWorldOf(keyWorld, fort) == null) fort.took = true;
+	// None of those has a lock yet, so this free lock is the one it takes.
+	fort.took = true;
 	fort.hint = wanted;
 	fort.lockWorld = wanted === "away" ? lockWorld : null;
 	fort.done = fort.done || lock.done;
@@ -1720,12 +1749,22 @@ function renderFreeLock(w, lock) {
 			ev.stopPropagation();
 			const next = (LOCK_HINTS.indexOf(hint) + 1) % LOCK_HINTS.length;
 			lock.hint = LOCK_HINTS[next].id;
+			if (lock.hint !== "away") lock.keyWorld = null;
 			render();
 		},
 	}, ...face(ICONS[`lock-${hint.id}`], "🔒", hint.label)));
 	// Full hints stamp the world number on an "away" lock. Aiming this at that
 	// world is what joins the lock up with a fortress there.
-	if (hint.id === "away") {
+	if (hint.id === "away" && lock.keyWorld === W8) {
+		// Pinned on Dark Land without naming which of its four; see
+		// `claimKeyWorld`. Clicked, it goes back to asking.
+		chip.appendChild(el("button", {
+			class: faceClass("body"),
+			type: "button",
+			title: "Opened from Dark Land — which fortress, you learn by beating them. Click to unpin.",
+			onclick: ev => { ev.stopPropagation(); lock.keyWorld = null; render(); },
+		}, ...face(ICONS["fort-away"], "🏰", "W8")));
+	} else if (hint.id === "away") {
 		const active = aiming && aiming.kind === "key" && aiming.id === lock.id;
 		chip.appendChild(el("button", {
 			class: faceClass("body token") + (active ? " aiming-now" : ""),
