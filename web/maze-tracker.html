@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>World Maze Tracker</title>
+<link rel="icon" href="data:,">
 <link rel="stylesheet" href="style.css">
 <!-- Same trick index.html uses: the /beta/ deploy shares this file with the
      root site, so key the beta look on the URL path rather than on the branch.
@@ -666,9 +667,9 @@ body {
 </div>
 
 <script type="module">
-import { renderIcon } from "./chr.js";
+import { renderIcon, setFavicon } from "./chr.js";
 import { loadRom } from "./rom-cache.js";
-import { HINT_TILES, MAZE_TILES, W8_MILITARY, WORLD_TILES, WANDS } from "./icons.js";
+import { HINT_TILES, MAZE_TILES, Q_BLOCK, W8_MILITARY, WORLD_TILES, WANDS } from "./icons.js";
 
 // --- Vocabulary ---------------------------------------------------------
 
@@ -1911,6 +1912,7 @@ if (typeof indexedDB !== "undefined") {
 	loadRom().then(bytes => {
 		if (!bytes || bytes.length < ROM_BYTES) return;
 		rom = bytes;
+		setFavicon(rom, Q_BLOCK);
 		paintLegend();
 		render();
 	}).catch(() => { /* no cache, no art */ });
