@@ -6021,10 +6021,10 @@ Vanilla's four obstacle rows can reveal only `$45`, `$46`, `$DA` and `$B3`, so
 about 13% of locks used to open into the wrong tile — a bridge or an island
 path became plain ground. `lock_keys::LockTiles` now allocates one byte per
 distinct `(path, colour, digit, marked)` from page 1 `$6B`–`$7F` (tan) and page 3
-`$ED`–`$FE` (sky; `$EC` is the marked away fortress below, `$FF` a background
+`$EC`–`$FE` (sky; `$EB` is the away fortress, `$FF` a background
 tile), and each allocated byte reveals exactly the path it stands on.
 Allocation can never run out: a seed places at most 17 locks, and the smaller
-pool has 18 bytes.
+pool has 19 bytes.
 
 - **Page 2 has no free index for a lock**, so a lock on a page-2 path takes
   the colour it asked for in page 1 or 3, and the revealed path draws in that
@@ -6035,34 +6035,40 @@ pool has 18 bytes.
   window would come back as a Mario/Luigi panel on the next map load. `$E6` is
   the one that occurs; its locks reveal the plain `$45` instead.
 
-### The marked away fortress `$EC` and the fortress-clear tile pick
+### The away nub, and the fortress-clear tile pick
 
-*(2026-10-02; every one since 2026-10-05.)* Under some-hints, every away fortress is `$EC` instead of
-`$EB`, and its lock wears the same corner nub (`away_family.rs`). `$EC` is
-`$EB`'s quadrants with CHR `$CD` — the path-end nub vanilla uses as the
-lower-right of `$44`, `$66` and seven more — in the lower-right.
+*(2026-10-02; `$EB` itself since the hints unification, 2026-10-05.)* With
+hints on, every away fortress is `$EB` wearing CHR `$CD` in its lower-right
+quadrant: the path-end nub vanilla draws in the lower-right of `$44`, `$66`
+and seven more. Its lock wears the same nub unless a world digit owns that
+corner (`away_family.rs`). Writing the nub into `$EB`'s own metatile is one
+byte and needs nothing else: vanilla already crumbles, reloads and gates `$EB`
+as a fortress. `$EB` keeps vanilla art whenever hints are off, because there it
+is only a cosmetic pick.
 
-Three behaviours had to agree for it to act as a fortress:
+**The retired `$EC` design, kept for its findings.** The nub first lived on a
+separate tile, `$EC` (`$EB`'s quadrants plus the nub), which had to be taught
+everything `$EB` gets for free:
 
 - **Enterable and gating** come free: page 3's `Tile_AttrTable+4` threshold is
-  `$E9`, so `$EC` behaves like `$EB` at `$CDF8`, `$CEDC`, `$AA14` and `$B425`.
-  The last of those, unidentified before, is in the **hammer-bro march
-  landing test** (`PRG011_B415` onward): a bro whose landing tile is enterable
-  and whose `Map_March_Count` is `$20` has it raised to `$40` — more marching
-  — instead of landing straight away.
-- **Reload** goes through the removable table: `$EC` is the first byte past
-  page 3's M/L window (`ML_RANGE_UPPER[3]`), so it needs the row `$EC → $E3`,
-  exactly as `$6A` needs `$6A → $60`. That row fills the table: 7 terrain rows
-  plus at most 17 locks is 24 of 24.
+  `$E9`, so any tile at or above it behaves like `$EB` at `$CDF8`, `$CEDC`,
+  `$AA14` and `$B425`. The last of those, unidentified before, is in the
+  **hammer-bro march landing test** (`PRG011_B415` onward): a bro whose
+  landing tile is enterable and whose `Map_March_Count` is `$20` has it raised
+  to `$40` (more marching) instead of landing straight away.
+- **Reload** of a byte past page 3's M/L window (`ML_RANGE_UPPER[3]` = `$EC`)
+  goes through the removable table, so `$EC` needed its own row `$EC → $E3`,
+  as `$6A` needs `$6A → $60`. Retiring it returned that row and gave `$EC` back
+  to the sky lock pool.
 - **The clear itself** is a hardcoded pick at `PRG011_AA8D` (file `0x16A9D`),
   26 bytes after the tile's `PLA`: `CMP #$67`/`#$6A` → X = 8 (rubble `$60`),
   `CMP #$EB` → X = 9 (alt rubble `$E3`), each with its own copy of the crumble
   sound store (`LDA #$01 / STA $04F3`); anything else keeps the quadrant/player
   X and becomes an M/L panel via `Map_CompleteTile`. Nothing else in the ROM
-  branches into it. Rewritten in place to send all four fortress tiles to one
-  tail that derives X from the tile's top bit (`ASL A / LDA #$04 / ROL A /
-  TAX` → 8 or 9) and stores the sound once, which frees exactly the four bytes
-  `CMP #$EC / BNE` needs.
+  branches into it. It fits a fourth fortress tile in place: send all of them
+  to one tail that derives X from the tile's top bit (`ASL A / LDA #$04 / ROL A
+  / TAX` → 8 or 9) and store the sound once, which frees exactly the four bytes
+  a `CMP #$xx / BNE` needs. (`$EC` shipped that rewrite; it is vanilla again.)
 
 ### Duplicated and dead entries
 

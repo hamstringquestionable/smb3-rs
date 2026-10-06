@@ -92,12 +92,9 @@ pub(crate) enum LockHint {
     OwnWorld,
     /// The lock is in World 8: this fortress opens the way to the castle.
     World8,
-    /// The lock is in some other world.
-    ///
-    /// `marked` puts a nub on the fortress and its lock, so "apart" reads by
-    /// shape as well as by colour. The maze marks every one; only some-hints
-    /// shows it (see `rom_data::TILE_FORTRESS_AWAY_MARKED`).
-    Elsewhere { marked: bool },
+    /// The lock is in some other world. The fortress is `$EB`, which wears
+    /// the away nub as well as the alternate colour (see `maze::away_family`).
+    Elsewhere,
 }
 
 /// Stamp assigned slots onto a grid so `walk_map` sees them as nodes.

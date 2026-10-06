@@ -34,6 +34,34 @@ hashes they describe are gone; the reasoning is not.
 
 ## Entries
 
+### 2026-10-05 — unified hints: the nub moves onto `$EB` (feature/unified-hints)
+
+**Intended: the sky lock pool starts at `$EC` again, the exact inverse of the
+2026-10-02 entry below.** Some and Full hints now share one colour scheme, so
+every hinted away fortress is the nubbed one and the nub is drawn into `$EB`
+itself (`away_family.rs`). `$EC`, its removable row and the PRG011 crumble-pick
+rewrite are retired, and `lock_keys::SKY_POOL` is `$EC`–`$FE`. In standard
+mode, where the baseline runs, nothing is hinted; the only change is that every
+allocated sky lock tile is renumbered down by one byte.
+
+**What moved.** 11 of the 20 seeds: 1, 2, 4, 9, 10, 11, 13, 14, 16, 18 and 20,
+the same 11 the 2026-10-02 entry moved. The other nine hashes are unchanged.
+
+**How that was established.** Byte diff, `--patched-rom --no-palettes`, old tree
+against new, all 20 seeds in standard mode. Each moved seed changes exactly 11
+bytes: one grid cell `$ED → $EC`, the four art planes at `$EC` and `$ED` (8
+bytes), one `FS_MAP_REMOVABLE` row and one `FS_LOCK_MIRROR` row.
+
+The world maze on Some and on Full was diffed the same way over seeds 1–10.
+Every changed byte is in PRG012 (grids, metatile art, the removable table), the
+lock mirror at the end of PRG011, the 26-byte crumble pick at `PRG011_AA8D`
+(now back to vanilla) or the ending montage's redrawn maps
+(`credits::render_world_maps`, `0x32126`–`0x325E9`).
+
+`test_route_census` is not rerun: nothing the builder reads changed, the
+hints draw no RNG, and `is_completion_unsafe` treats `$EC` as an obstacle
+either way (a removable row before, a pool tile now).
+
 ### 2026-10-02 — away fortress families on Some hints (feature/away-fort-families)
 
 **Intended: the marked away fortress takes `$EC`, so the sky lock pool starts

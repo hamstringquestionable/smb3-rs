@@ -50,12 +50,9 @@ pub(super) fn write_tile_grid<R: Rng>(
         let tile = match hint {
             LockHint::OwnWorld => rom_data::TILE_FORTRESS,
             LockHint::World8 => rom_data::TILE_FORTRESS_W8,
-            // The away nub is a some-hints display only; see
-            // `away_family`. Full names the world on the lock instead.
-            LockHint::Elsewhere { marked: true } if hints == crate::HintMode::Partial => {
-                rom_data::TILE_FORTRESS_AWAY_MARKED
-            }
-            LockHint::Elsewhere { .. } => rom_data::TILE_FORTRESS_AWAY,
+            // Some and Full draw the same fortress; `away_family` gives this
+            // one the nub.
+            LockHint::Elsewhere => rom_data::TILE_FORTRESS_AWAY,
             LockHint::Unhinted => cosmetic,
         };
         grid.set(a.pos.0, a.pos.1, tile);
@@ -183,11 +180,19 @@ pub(super) fn write_tile_grid<R: Rng>(
     // byte is `lock_keys`' to allocate, since it owns the metatile art, the
     // removable pairing and the hammer rows that must agree with it. One
     // allocator spans all eight worlds — see `LockTiles`.
+    //
+    // **World 8 never shows a digit**, even on full hints: its away locks wear
+    // the nub, as on some-hints. Their fortresses are the beta `$6A`, which
+    // already says "World 8" from the other end.
+    let lock_hints = match hints {
+        crate::HintMode::Full if wi == rom_data::W8_IDX => crate::HintMode::Partial,
+        h => h,
+    };
     for lock in &built.locks {
         let under = grid.get(lock.pos.0, lock.pos.1);
         let away = lock.fort.world != wi;
         let shown = if away { lock_keys::shown_world(rom, lock.fort.world) } else { 0 };
-        let tile = lock_tiles.tile(lock_keys::lock_request(under, away, shown, hints));
+        let tile = lock_tiles.tile(lock_keys::lock_request(under, away, shown, lock_hints));
         grid.set(lock.pos.0, lock.pos.1, tile);
     }
 

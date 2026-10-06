@@ -2548,8 +2548,7 @@ fn a_fortress_tile_says_where_its_lock_is() {
                 } else if lock.world == W8_IDX {
                     (LockHint::World8, "its lock is in World 8", 2)
                 } else {
-                    // Every away fortress wears the nub.
-                    (LockHint::Elsewhere { marked: true }, "its lock is in another world", 1)
+                    (LockHint::Elsewhere, "its lock is in another world", 1)
                 };
                 assert_eq!(
                     slot.lock_hint,

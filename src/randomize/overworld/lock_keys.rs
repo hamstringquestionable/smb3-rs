@@ -244,11 +244,6 @@ pub(crate) const REMOVABLE_PAIRS: &[(u8, u8)] = &[
     // (`FORTRESS_TILES`), and [`ML_RANGE`]'s upper bound is what lets the row be
     // reached.
     (0x6A, 0x60), // large fortress    -> rubble
-    // The marked away fortress (`rom_data::TILE_FORTRESS_AWAY_MARKED`), every
-    // away fortress under some-hints. Past page 3's M/L window for the
-    // same reason `$6A` is past page 1's, so this row is its whole reload path;
-    // `away_family` gives it the alt fortress's crumble on the clear itself.
-    (0xEC, 0xE3), // marked away fort  -> alt rubble
 ];
 
 // --- Lock tiles: allocated per seed --------------------------------------
@@ -269,7 +264,7 @@ pub(crate) const REMOVABLE_PAIRS: &[(u8, u8)] = &[
 ///
 /// **Exhaustion is impossible, not unlikely.** A seed places at most 17 locks
 /// and each makes at most one request that can allocate, against 21 indices
-/// in [`TAN_POOL`] and 18 in [`SKY_POOL`].
+/// in [`TAN_POOL`] and 19 in [`SKY_POOL`].
 ///
 /// **The reveal is the path itself.** A lock on an island path, a bridge variant
 /// or a vertical sky path opens into exactly that tile. The fixed tables could
@@ -293,9 +288,9 @@ pub(crate) struct LockRequest {
     colour: LockColour,
     /// The world number to show, as the player sees it (1-8).
     digit: Option<usize>,
-    /// The away-family nub ([`away_family::MARK`]) in the lower-right corner,
+    /// The away nub ([`away_family::MARK`]) in the lower-right corner,
     /// matching its fortress's. Never set together with `digit`: both claim
-    /// that corner, and only some-hints asks for the nub.
+    /// that corner.
     marked: bool,
 }
 
@@ -335,11 +330,10 @@ struct Allocated {
 /// fortress, and nothing past it is defined. **Do not widen downward.**
 const TAN_POOL: std::ops::RangeInclusive<u8> = 0x6B..=0x7F;
 
-/// Page 3's undefined tail: `$EB` is the alt fortress, `$EC` its marked away
-/// family (`rom_data::TILE_FORTRESS_AWAY_MARKED`), and `$FF` is a background
-/// tile. **Do not widen in either direction.** 18 bytes, against at most 17
-/// locks.
-const SKY_POOL: std::ops::RangeInclusive<u8> = 0xED..=0xFE;
+/// Page 3's undefined tail: `$EB` is the alt fortress and `$FF` is a
+/// background tile. **Do not widen in either direction.** 19 bytes, against at
+/// most 17 locks.
+const SKY_POOL: std::ops::RangeInclusive<u8> = 0xEC..=0xFE;
 
 /// Is this byte one the allocator may hand out?
 ///
@@ -366,12 +360,12 @@ impl LockTiles {
     /// whose page differs from its path's draws the revealed path in the lock's
     /// colours until the next map reload. That happens to every lock on a page-2
     /// path (there is no page-2 lock to give it), to the water variants, and to
-    /// some-hints' alternate colour, where crossing the page *is* the message.
+    /// the hints' alternate colour, where crossing the page *is* the message.
     /// It is only ever a colour: the byte written to the grid is the path.
     ///
     /// # Panics
     ///
-    /// If a page runs out, which needs more than 18 distinct locks.
+    /// If a page runs out, which needs more than 19 distinct locks.
     pub(crate) fn tile(&mut self, req: LockRequest) -> u8 {
         let art = rom_data::gap_tile_for(req.path);
         let vanilla = req.digit.is_none()
@@ -440,11 +434,14 @@ impl LockTiles {
 /// |---|---|---|
 /// | Off | the path's own | — |
 /// | Some | tan here, sky elsewhere | the nub, when elsewhere |
-/// | Full | the path's own | the world digit, when elsewhere |
+/// | Full | tan here, sky elsewhere | the world digit, when elsewhere |
 ///
-/// The nub repeats the sky colour's "away" by shape, on every away lock —
-/// including a World 8 lock whose fortress is the beta `$6A`. Only some-hints
-/// shows it: Full's digit already names the world, and owns the same corner.
+/// **Some and Full share one colour scheme**, so a player moving between them
+/// reads the map the same way; Full only swaps the nub for the digit. The nub
+/// repeats the sky colour's "away" by shape for colour-blind players (#325);
+/// the digit is a shape of its own, and owns the same corner. World 8's locks
+/// ask with some-hints even on Full — the writer's call, see
+/// `overworld::writer::grid`.
 ///
 /// **The reveal is `under` itself, with one exception:** a path the reload
 /// would treat as completable. Opening a lock sets its cell's completion bit,
@@ -464,12 +461,12 @@ pub(crate) fn lock_request(
         under
     };
     let colour = match hints {
-        crate::HintMode::Partial if away => LockColour::Sky,
-        crate::HintMode::Partial => LockColour::Tan,
-        _ => LockColour::of_path(path),
+        crate::HintMode::Off => LockColour::of_path(path),
+        _ if away => LockColour::Sky,
+        _ => LockColour::Tan,
     };
     let digit = (away && hints.numbers_locks()).then_some(shown);
-    let marked = away && hints == crate::HintMode::Partial;
+    let marked = away && hints.hints_at_all() && digit.is_none();
     LockRequest { path, colour, digit, marked }
 }
 
@@ -1474,12 +1471,14 @@ mod asm_checks {
         let tan = LockColour::Tan;
         assert_eq!(lock_request(0xDA, false, 0, Off), req(0xDA, sky, None));
         assert_eq!(lock_request(0xDA, false, 0, Partial), req(0xDA, tan, None));
-        assert_eq!(lock_request(0x45, true, 4, Full), req(0x45, tan, Some(4)));
+        // Full colours as Some does, tan here and sky away, on every path.
+        assert_eq!(lock_request(0x45, true, 4, Full), req(0x45, sky, Some(4)));
         assert_eq!(lock_request(0xDA, true, 4, Full), req(0xDA, sky, Some(4)));
         assert_eq!(lock_request(0x45, false, 0, Full), req(0x45, tan, None));
+        assert_eq!(lock_request(0xDA, false, 0, Full), req(0xDA, tan, None));
 
-        // The away nub: some-hints and away — both, or nothing. Full's digit
-        // owns the corner, and a local lock is tan instead.
+        // The away nub: hints on and away, unless Full's digit owns the
+        // corner. A local lock is tan instead.
         let nubbed = |path, colour| LockRequest { marked: true, ..req(path, colour, None) };
         assert_eq!(lock_request(0x45, true, 4, Partial), nubbed(0x45, sky));
         assert_eq!(lock_request(0xDA, true, 4, Partial), nubbed(0xDA, sky));
@@ -1602,6 +1601,15 @@ mod asm_checks {
     }
 
     fn build(bytes: &[u8], seed: u64, world_maze: bool, hints: crate::HintMode) -> Option<Rom> {
+        build_capture(bytes, seed, world_maze, hints).map(|r| r.0)
+    }
+
+    fn build_capture(
+        bytes: &[u8],
+        seed: u64,
+        world_maze: bool,
+        hints: crate::HintMode,
+    ) -> Option<(Rom, crate::randomize::overworld::build::BuildResult)> {
         let options = crate::Options {
             world_maze,
             hints,
@@ -1609,7 +1617,21 @@ mod asm_checks {
             palette_themed: false,
             ..Default::default()
         };
-        crate::randomize_rom_with_overworld_capture(bytes, seed, &options, None).ok().map(|r| r.0)
+        crate::randomize_rom_with_overworld_capture(bytes, seed, &options, None).ok()
+    }
+
+    /// The away locks of a built maze, as `(lock's world, fortress's world,
+    /// cell)`.
+    fn away_locks(
+        build: &crate::randomize::overworld::build::BuildResult,
+    ) -> Vec<(usize, usize, (usize, usize))> {
+        let mut out = Vec::new();
+        for (wi, w) in build.worlds.iter().enumerate() {
+            for lock in w.locks.iter().filter(|l| l.fort.world != wi) {
+                out.push((wi, lock.fort.world, lock.pos));
+            }
+        }
+        out
     }
 
     /// **The digit is the world the player sees, not the internal index.**
@@ -1638,7 +1660,10 @@ mod asm_checks {
         };
         let mut shuffled_seeds = 0usize;
         for seed in 0..seeds() {
-            let Some(rom) = build(&bytes, seed, true, crate::HintMode::Full) else { continue };
+            let Some((rom, built)) = build_capture(&bytes, seed, true, crate::HintMode::Full)
+            else {
+                continue;
+            };
 
             let display: Vec<usize> = (0..8).map(|w| shown_world(&rom, w)).collect();
             assert_eq!(
@@ -1651,10 +1676,12 @@ mod asm_checks {
                 shuffled_seeds += 1;
             }
 
-            let mut want: Vec<usize> = decode_entries(&rom)
-                .iter()
-                .filter(|e| e.away)
-                .map(|e| display[e.key_world])
+            // World 8's away locks wear the nub instead, so neither side
+            // counts them; `world_8_never_shows_a_digit` covers that half.
+            let mut want: Vec<usize> = away_locks(&built)
+                .into_iter()
+                .filter(|&(wi, _, _)| wi != rom_data::W8_IDX)
+                .map(|(_, key_world, _)| display[key_world])
                 .collect();
             let mut got: Vec<usize> =
                 cells(&rom).into_iter().filter_map(|t| digit_of(&rom, t)).collect();
@@ -1691,7 +1718,10 @@ mod asm_checks {
         };
         let mut worst = 0usize;
         for seed in 0..seeds() {
-            let Some(rom) = build(&bytes, seed, true, crate::HintMode::Full) else { continue };
+            let Some((rom, built)) = build_capture(&bytes, seed, true, crate::HintMode::Full)
+            else {
+                continue;
+            };
             let rows = rows_on(&rom);
             worst = worst.max(rows.len());
 
@@ -1708,7 +1738,9 @@ mod asm_checks {
             // carries its number, so a lock without one is local — which is
             // what let the older map-object hint go. A stamp that silently
             // failed would make absence ambiguous, and nothing else would say.
-            let away = decode_entries(&rom).iter().filter(|e| e.away).count();
+            // World 8 is the exception: its away locks wear the nub.
+            let away =
+                away_locks(&built).iter().filter(|&&(wi, _, _)| wi != rom_data::W8_IDX).count();
             let numbered = cells.iter().filter(|&&t| digit_of(&rom, t).is_some()).count();
             assert_eq!(
                 numbered, away,
@@ -1718,9 +1750,51 @@ mod asm_checks {
         eprintln!("worst row count {worst}/{REMOVABLE_COUNT}");
     }
 
+    /// **On full hints, World 8 reads as some-hints:** no lock there shows a
+    /// digit, and every away one wears the nub. Its fortresses are the beta
+    /// `$6A`, which already says "World 8" from the other end.
+    #[test]
+    fn world_8_never_shows_a_digit() {
+        let Ok(bytes) = std::fs::read(ROM_PATH) else {
+            eprintln!("SKIP: requires the ROM");
+            return;
+        };
+        let lr = |rom: &Rom, t: u8| rom.read_byte(PRG012_FILE_BASE + 3 * 256 + t as usize);
+        let mut w8_away = 0usize;
+        for seed in 0..seeds().max(12) {
+            let Some((rom, built)) = build_capture(&bytes, seed, true, crate::HintMode::Full)
+            else {
+                continue;
+            };
+            let grids = rom_data::read_all_tile_grids(&rom);
+            let w8 = &grids[rom_data::W8_IDX];
+            for r in 0..w8.rows() {
+                for c in 0..w8.cols {
+                    let t = w8.get(r, c);
+                    assert_eq!(
+                        digit_of(&rom, t),
+                        None,
+                        "seed {seed}: W8 {:?} shows a digit",
+                        (r, c)
+                    );
+                }
+            }
+            for (wi, _, (r, c)) in away_locks(&built) {
+                let t = grids[wi].get(r, c);
+                if wi == rom_data::W8_IDX {
+                    w8_away += 1;
+                    assert_eq!(lr(&rom, t), away_family::MARK, "seed {seed}: W8 lock {t:#04X}");
+                } else {
+                    assert!(digit_of(&rom, t).is_some(), "seed {seed}: W{} lock {t:#04X}", wi + 1);
+                }
+            }
+        }
+        assert!(w8_away > 0, "no sampled seed had an away lock in World 8");
+    }
+
     /// **Every away lock wears the alternate colour, sky included.**
     ///
-    /// In some-hints mode a lock draws in sky when its key is elsewhere and in
+    /// With hints on a lock draws in sky when its key is elsewhere and in
     /// tan when it is here, so on the finished map a sky-coloured obstacle —
     /// `$E4` or a sky-pool tile — is exactly an away lock. Sky paths are the
     /// case that has gone wrong quietly before: their plain lock is already sky,
@@ -1738,15 +1812,20 @@ mod asm_checks {
         // BOTH sides of the sky split to occur or it proves nothing, and how
         // many seeds that takes is a property of the seed stream rather than of
         // this test.
-        for seed in 0..seeds().max(24) {
-            let Some(rom) = build(&bytes, seed, true, crate::HintMode::Partial) else { continue };
+        // Both hinted modes: Full colours exactly as Some does.
+        for (seed, hints) in (0..seeds().max(24))
+            .flat_map(|s| [(s, crate::HintMode::Partial), (s, crate::HintMode::Full)])
+        {
+            let Some(rom) = build(&bytes, seed, true, hints) else { continue };
             let rows = rows_on(&rom);
             let is_sky_path = |t: u8| matches!(rows.get(&t), Some(0xDA | 0xDB));
 
             let away = decode_entries(&rom).iter().filter(|e| e.away).count();
             let mut marked = 0usize;
             for t in cells(&rom) {
-                assert_eq!(digit_of(&rom, t), None, "seed {seed}: some hints stamped a digit");
+                if hints == crate::HintMode::Partial {
+                    assert_eq!(digit_of(&rom, t), None, "seed {seed}: some hints stamped a digit");
+                }
                 if t == 0xE4 || SKY_POOL.contains(&t) {
                     marked += 1;
                     sky_remote += usize::from(is_sky_path(t));
@@ -1756,7 +1835,7 @@ mod asm_checks {
             }
             assert_eq!(
                 marked, away,
-                "seed {seed}: {away} away locks but {marked} wearing the alternate colour"
+                "{hints:?} seed {seed}: {away} away locks but {marked} wearing the alternate colour"
             );
         }
         assert!(
