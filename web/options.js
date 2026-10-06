@@ -488,7 +488,7 @@ export const SCHEMA = [
 		mode: "maze" },
 	{ id: "hints", type: "tri", options: OFF_SOME_FULL, default: "some",
 		label: "Hints",
-		tip: "What the map gives away about which fortress opens which lock. On Some the colour is the mark: tan means a fortress and its lock are together in one world, the odd colour on either one means the two are apart, and the beta fortress opens a lock or bridge in World 8. The odd-colour ones also wear a small round nub in the corner, so you don't need to tell the colours apart. On Full the number is the mark instead — a lock wears the number of the world its fortress is in, and a lock with no number is local. Fortress designs read the same either way. On Off the designs are picked at random and say nothing. Hints never change the map, so the same seed has the same locks and fortresses whichever you pick.",
+		tip: "What the map gives away about which fortress opens which lock. On Some the colour is the mark: tan means a fortress and its lock are together in one world, the odd colour on either one means the two are apart, and the beta fortress opens a lock or bridge in World 8. The odd-colour ones also wear a small round nub in the corner, so you don't need to tell the colours apart. Full uses the same colours and fortresses, and an away lock shows the number of the world its fortress is in where the nub would be. World 8's locks stay as on Some. On Off the designs are picked at random and say nothing. Hints never change the map, so the same seed has the same locks and fortresses whichever you pick.",
 		icon: HINT_TILES,
 		group: "maze", inFlagKey: true,
 		mode: "maze" },

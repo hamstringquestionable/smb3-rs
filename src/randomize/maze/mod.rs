@@ -1212,8 +1212,7 @@ pub(crate) fn generate<R: Rng>(
 ///   43% at K=7), because sealing a lock can strand an airship the wand count
 ///   needs.
 ///
-/// Consumes no RNG — including the away-fortress nub, which every `Elsewhere`
-/// fortress wears.
+/// Consumes no RNG.
 pub(crate) fn stamp_into(build: &mut BuildResult, state: &GlobalState) {
     // The wand gate's masonry. `wand_gate::apply` installs the opener and its
     // hooks; the cell it stands on is a map tile like any other, and `W8`'s
@@ -1291,7 +1290,7 @@ pub(crate) fn stamp_into(build: &mut BuildResult, state: &GlobalState) {
             } else if lock.world == rom_data::W8_IDX {
                 LockHint::World8
             } else {
-                LockHint::Elsewhere { marked: true }
+                LockHint::Elsewhere
             };
         }
     }

@@ -155,7 +155,7 @@ fn randomize_inner(
     // 9-12. Write the map, then everything that reads the finished map.
     let written = stages::write_overworld(rom, options, &run, &build, &pickup, &catalog, &mut rng);
     let canoe_gated = stages::maze_rom(rom, options, maze, &written, progression.as_deref());
-    stages::locks(rom, &build, &written);
+    stages::locks(rom, &run, &build, &written);
     stages::after_the_map(rom, options, &written, progression.as_deref(), &mut rng);
 
     // 13-17. Bosses and quotes, engine patches, title screen, stamp.

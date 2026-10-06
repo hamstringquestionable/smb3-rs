@@ -9,6 +9,13 @@ deploys.
 
 ## [Unreleased]
 
+### Changed
+
+- **Full hints colour the map like Some.** A lock and fortress in the same
+  world are tan, and an away pair wears the odd colour, with the nub on the
+  fortress. Away locks still show their fortress's world number, except in
+  World 8, where they wear the nub as on Some.
+
 ## [2.4.0] - 2026-10-05
 
 ### Added
