@@ -246,11 +246,25 @@ const THEME_ISLAND: (u8, u8, u8, u8) = (0xAE, 0xB5, 0xAF, 0xB6);
 /// cell is unambiguous evidence that the cell is up in the clouds.
 const SKY_TILES: &[u8] = &[0xCE, 0xD0, 0xD2, 0xD7, 0xD9, 0xDA, 0xDB, 0xDC, 0xDD, 0xDE, 0xE4, 0xE9];
 
-/// Walkable tiles that only ever run along the narrow island sand strips.
+/// Island-strip paths whose **bottom** edge is water, so the cell below
+/// continues the strip and takes an island blank.
+///
+/// **The edge decides, not the tile.** A strip path is island on some sides
+/// and shore on others: `0xAB` is the strip's end piece, with shoreline art
+/// (`95 87`) along its bottom where the strip meets land, so the cell under it
+/// is land — vanilla only ever puts a node there (W4's pipe at (6,2) and Toad
+/// House at (8,20), which used to blank to water). An edge counts as water
+/// when both of its quadrants are island-blank art; see
+/// `island_edges_match_the_art`, which reads them from the ROM.
+///
 /// The water bridges (0xB2, 0xB3, 0xB8, 0xB9, 0xBA) are deliberately absent:
 /// vanilla runs standard land blanks alongside those, and 0xB3/0xB9/0xBA also
 /// appear in worlds with no islands at all.
-const ISLAND_PATHS: &[u8] = &[0xAA, 0xAB, 0xAC, 0xB0, 0xB1, 0xB7];
+const ISLAND_BELOW: &[u8] = &[0xAA, 0xAC, 0xB0];
+
+/// Island-strip paths whose **right** edge is water, so the cell to their
+/// right continues the strip. See [`ISLAND_BELOW`].
+const ISLAND_RIGHT: &[u8] = &[0xAC, 0xB0, 0xB7];
 
 /// Pick the right blank node tile based on neighboring path directions and
 /// the world/screen visual theme. If the tile is already a valid blank, it
@@ -285,7 +299,16 @@ pub(super) fn blank_tile_from_neighbors(
     let has_h = h_tile.is_some_and(|t| VALID_HORZ.contains(&t));
     let has_v = v_tile.is_some_and(|t| VALID_VERT.contains(&t));
 
-    let neighbor = has_h.then(|| h_tile.unwrap()).or_else(|| has_v.then(|| v_tile.unwrap()));
+    // The connecting path, with the strip paths whose edge facing this cell
+    // is water: its right edge for the left neighbor, its bottom for the one
+    // above.
+    let neighbor = if has_h {
+        h_tile.map(|t| (t, ISLAND_RIGHT))
+    } else if has_v {
+        v_tile.map(|t| (t, ISLAND_BELOW))
+    } else {
+        None
+    };
 
     let (h, v, hv, none) = if ISLAND_POSITIONS.contains(&(world_idx, row, col)) {
         THEME_ISLAND
@@ -304,17 +327,24 @@ pub(super) fn blank_tile_from_neighbors(
 /// Which visual theme a blank at `(row, col)` belongs to.
 ///
 /// The connecting path tile decides it when there is one — that is the tile
-/// the blank visually joins onto. With no path neighbor the cell is isolated,
+/// the blank visually joins onto. `path_neighbor` carries it with the strip
+/// paths whose edge facing this cell is water ([`ISLAND_BELOW`] or
+/// [`ISLAND_RIGHT`]). With no path neighbor the cell is isolated,
 /// so sniff all four neighbors for sky background instead: without that step
 /// the theme drops to land and stamps a green node in the middle of W5's sky
 /// page. Isolated cells never fall back to island — vanilla runs standard
 /// land blanks next to plenty of island paths, so the four-way sniff would
 /// over-fire; [`ISLAND_POSITIONS`] covers the cells that need it.
-fn theme_for(grid: &Grid, row: usize, col: usize, path_neighbor: Option<u8>) -> (u8, u8, u8, u8) {
-    if let Some(t) = path_neighbor {
+fn theme_for(
+    grid: &Grid,
+    row: usize,
+    col: usize,
+    path_neighbor: Option<(u8, &[u8])>,
+) -> (u8, u8, u8, u8) {
+    if let Some((t, island_edge)) = path_neighbor {
         return if SKY_TILES.contains(&t) {
             THEME_SKY
-        } else if ISLAND_PATHS.contains(&t) {
+        } else if island_edge.contains(&t) {
             THEME_ISLAND
         } else {
             THEME_STANDARD
@@ -711,6 +741,47 @@ mod tests {
             0xDD,
             "W5 (4,30) should produce sky v-tile via 0xE8 in VALID_VERT"
         );
+    }
+
+    /// **The island edge lists are the art.** For every strip path, an edge
+    /// is water exactly when both of its quadrants are ones the island blanks
+    /// are drawn from. Quadrant planes are stored UL, LL, UR, LR, so the
+    /// bottom edge is planes 1 and 3 and the right edge planes 2 and 3.
+    #[test]
+    fn island_edges_match_the_art() {
+        let rom = match load_rom() {
+            Some(r) => r,
+            None => return,
+        };
+        let quad =
+            |t: u8, p: usize| rom.read_byte(rom_data::PRG012_FILE_BASE + p * 256 + t as usize);
+        let (h, v, hv, none) = THEME_ISLAND;
+        let water: Vec<u8> = [h, v, hv, none]
+            .iter()
+            .flat_map(|&t| (0..4).map(move |p| (t, p)))
+            .map(|(t, p)| quad(t, p))
+            .collect();
+        let is_water =
+            |t: u8, planes: [usize; 2]| planes.iter().all(|&p| water.contains(&quad(t, p)));
+        for t in [0xAA, 0xAB, 0xAC, 0xB0, 0xB1, 0xB7] {
+            assert_eq!(ISLAND_BELOW.contains(&t), is_water(t, [1, 3]), "{t:#04X} bottom edge");
+            assert_eq!(ISLAND_RIGHT.contains(&t), is_water(t, [2, 3]), "{t:#04X} right edge");
+        }
+    }
+
+    /// The two cells under `0xAB` in W4 — the pipe at (6,2) and the Toad
+    /// House at (8,20) — blank to land, not to island water.
+    #[test]
+    fn a_cell_under_the_strip_end_is_land() {
+        let rom = match load_rom() {
+            Some(r) => r,
+            None => return,
+        };
+        let grid = rom_data::read_tile_grid(&rom, 3);
+        for (row, col) in [(6, 2), (8, 20)] {
+            assert_eq!(grid.get(row - 1, col), 0xAB, "W4 ({row},{col}) sits under the strip end");
+            assert_eq!(blank_tile_for(&grid, 3, row, col), 0x48, "W4 ({row},{col})");
+        }
     }
 
     #[test]

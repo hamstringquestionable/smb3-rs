@@ -16,6 +16,12 @@ deploys.
   fortress. Away locks still show their fortress's world number, except in
   World 8, where they wear the nub as on Some.
 
+### Fixed
+
+- **World 4's empty island spots are land again.** The spot two nodes below
+  the start and the Toad House spot on the bottom row drew as water when
+  nothing was placed there.
+
 ## [2.4.0] - 2026-10-05
 
 ### Added
