@@ -1,0 +1,368 @@
+//! Catalog build tests: count/shape invariants against the vanilla ROM plus a
+//! `--ignored` catalog dump for visual inspection.
+
+use std::collections::HashMap;
+
+use super::*;
+use crate::randomize::rom_data::{MAP_TILE_GRIDS, WORLDS};
+
+fn load_rom() -> Option<Rom> {
+    let data = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes").ok()?;
+    Rom::from_bytes(&data).ok()
+}
+
+#[test]
+fn test_total_count() {
+    let rom = match load_rom() {
+        Some(r) => r,
+        None => return,
+    };
+    let catalog = NodeCatalog::build(&rom, false);
+    let expected: usize = WORLDS.iter().map(|w| w.entry_count).sum();
+    assert_eq!(catalog.entries.len(), expected, "expected {expected} total entries");
+}
+
+#[test]
+fn test_kind_counts() {
+    let rom = match load_rom() {
+        Some(r) => r,
+        None => return,
+    };
+    let catalog = NodeCatalog::build(&rom, false);
+
+    let count = |pred: fn(&NodeKind) -> bool| -> usize {
+        catalog.entries.iter().filter(|e| pred(&e.kind)).count()
+    };
+
+    assert_eq!(count(|k| matches!(k, NodeKind::Fortress)), 17, "fortresses");
+    assert_eq!(count(|k| matches!(k, NodeKind::Airship)), 7, "airships");
+    assert_eq!(count(|k| matches!(k, NodeKind::Bowser)), 1, "bowser");
+    assert_eq!(count(|k| matches!(k, NodeKind::Start)), 8, "starts");
+    assert_eq!(count(|k| matches!(k, NodeKind::Pipe { .. })), 48, "pipe endpoints");
+}
+
+#[test]
+fn test_pipe_pairs_consistent() {
+    let rom = match load_rom() {
+        Some(r) => r,
+        None => return,
+    };
+    let catalog = NodeCatalog::build(&rom, false);
+
+    // Every dest_idx should appear exactly twice
+    let mut dest_counts: HashMap<usize, usize> = HashMap::new();
+    for e in &catalog.entries {
+        if let NodeKind::Pipe { dest_idx, .. } = &e.kind {
+            *dest_counts.entry(*dest_idx).or_insert(0) += 1;
+        }
+    }
+
+    for (&dest, &count) in &dest_counts {
+        assert_eq!(count, 2, "dest_idx {dest} should appear exactly twice, got {count}");
+    }
+    assert_eq!(dest_counts.len(), 24, "should have 24 unique dest indices");
+}
+
+#[test]
+fn test_names_non_empty() {
+    let rom = match load_rom() {
+        Some(r) => r,
+        None => return,
+    };
+    let catalog = NodeCatalog::build(&rom, false);
+
+    for e in &catalog.entries {
+        assert!(!e.name.is_empty(), "W{} entry {} has empty name", e.world_idx + 1, e.entry_idx,);
+    }
+}
+
+#[test]
+fn test_grid_positions_valid() {
+    let rom = match load_rom() {
+        Some(r) => r,
+        None => return,
+    };
+    let catalog = NodeCatalog::build(&rom, false);
+
+    for e in &catalog.entries {
+        let (row, col) = e.grid_pos;
+        let max_cols = MAP_TILE_GRIDS[e.world_idx].columns;
+        // Non-level entries may have row >= 9 (out of bounds) — that's fine,
+        // they're classified as HammerBro. But level-like entries must be valid.
+        if e.kind.is_level_like() {
+            assert!(
+                row < 9 && col < max_cols,
+                "W{} {} ({:?}) at ({},{}) is out of bounds (max cols {})",
+                e.world_idx + 1,
+                e.name,
+                e.kind,
+                row,
+                col,
+                max_cols,
+            );
+        }
+    }
+}
+
+#[test]
+fn test_level_entry_presence() {
+    let rom = match load_rom() {
+        Some(r) => r,
+        None => return,
+    };
+    let catalog = NodeCatalog::build(&rom, false);
+
+    for e in &catalog.entries {
+        if e.kind.is_level_like() {
+            assert!(
+                e.level_entry.is_some(),
+                "W{} {} ({:?}) should have level_entry",
+                e.world_idx + 1,
+                e.name,
+                e.kind,
+            );
+        }
+    }
+}
+
+/// Every catalogued fortress can be traced back to its Boom-Boom record.
+///
+/// The catalog no longer *carries* the offset — the fortress-FX rework retired
+/// the ordinal that needed it — but `crate::randomize::overworld::build::sources` still resolves
+/// one through the entry's `obj_ptr` to read vanilla's ordinals, and
+/// `lock_keys::apply` masks all 17. A fortress the pairing cannot name would
+/// leave a stale ordinal armed.
+#[test]
+fn test_fortress_boomboom_offsets() {
+    let rom = match load_rom() {
+        Some(r) => r,
+        None => return,
+    };
+    let catalog = NodeCatalog::build(&rom, false);
+
+    for e in &catalog.entries {
+        if !matches!(e.kind, NodeKind::Fortress) {
+            continue;
+        }
+        let le = e.level_entry.as_ref().expect("a fortress has level_entry");
+        let obj_ptr = ((le.obj_hi as u16) << 8) | le.obj_lo as u16;
+        assert!(
+            crate::randomize::rom_data::boomboom_y_offset_for_obj(obj_ptr).is_some(),
+            "W{} {} has no Boom-Boom record",
+            e.world_idx + 1,
+            e.name,
+        );
+    }
+}
+
+#[test]
+fn test_kind_totals_sum_to_340() {
+    let rom = match load_rom() {
+        Some(r) => r,
+        None => return,
+    };
+    let catalog = NodeCatalog::build(&rom, false);
+
+    // Aggregate counts plus the known vanilla fixed totals
+    // (17 fortresses, 48 pipes, 7 airships, 1 bowser, 8 starts)
+    // must cover all 340 pointer table entries.
+    let levels: usize =
+        catalog.entries.iter().filter(|e| matches!(e.kind, NodeKind::Level)).count();
+    let fixed: usize = catalog
+        .entries
+        .iter()
+        .filter(|e| {
+            matches!(
+                e.kind,
+                NodeKind::ToadHouse
+                    | NodeKind::BonusGame
+                    | NodeKind::HammerBro
+                    | NodeKind::MapObject
+            )
+        })
+        .count();
+
+    let total = levels + 17 + 48 + 7 + 1 + 8 + fixed;
+    assert_eq!(total, 340, "total should be 340, got {total}");
+}
+
+/// Print the full catalog for visual inspection.
+/// Run with: cargo test -- test_print_catalog --ignored --nocapture
+#[test]
+#[ignore]
+fn test_print_catalog() {
+    let rom = match load_rom() {
+        Some(r) => r,
+        None => {
+            eprintln!("ROM not found, skipping");
+            return;
+        }
+    };
+    let catalog = NodeCatalog::build(&rom, false);
+
+    let mut current_world = usize::MAX;
+    for e in &catalog.entries {
+        if e.world_idx != current_world {
+            current_world = e.world_idx;
+            eprintln!(
+                "\n=== World {} ({} entries) ===",
+                current_world + 1,
+                catalog.world(current_world).count(),
+            );
+        }
+
+        let kind_str = match &e.kind {
+            NodeKind::Level => "Level".to_string(),
+            NodeKind::Fortress => "Fortress".to_string(),
+            NodeKind::Pipe { dest_idx, .. } => format!("Pipe(dest={dest_idx})"),
+            NodeKind::Airship => "Airship".to_string(),
+            NodeKind::Bowser => "Bowser".to_string(),
+            NodeKind::Start => "Start".to_string(),
+            NodeKind::ToadHouse => "ToadHouse".to_string(),
+            NodeKind::BonusGame => "BonusGame".to_string(),
+            NodeKind::HammerBro => "HammerBro".to_string(),
+            NodeKind::MapObject => "MapObject".to_string(),
+        };
+
+        let entry_str = if let Some(le) = &e.level_entry {
+            let obj = (le.obj_hi as u16) << 8 | le.obj_lo as u16;
+            let lay = (le.lay_hi as u16) << 8 | le.lay_lo as u16;
+            format!("obj=${obj:04X} lay=${lay:04X} ts={}", le.tileset)
+        } else {
+            "—".to_string()
+        };
+
+        eprintln!(
+            "  [{:2}] {:8} ({:2},{:2})  tile=${:02X}  {}  {}",
+            e.entry_idx, e.name, e.grid_pos.0, e.grid_pos.1, e.tile, kind_str, entry_str,
+        );
+    }
+
+    // Summary
+    eprintln!("\n=== Summary ===");
+    type KindPredicate = (&'static str, fn(&NodeKind) -> bool);
+    let kind_names: &[KindPredicate] = &[
+        ("Level", |k| matches!(k, NodeKind::Level)),
+        ("Fortress", |k| matches!(k, NodeKind::Fortress)),
+        ("Pipe", |k| matches!(k, NodeKind::Pipe { .. })),
+        ("Airship", |k| matches!(k, NodeKind::Airship)),
+        ("Bowser", |k| matches!(k, NodeKind::Bowser)),
+        ("Start", |k| matches!(k, NodeKind::Start)),
+        ("ToadHouse", |k| matches!(k, NodeKind::ToadHouse)),
+        ("BonusGame", |k| matches!(k, NodeKind::BonusGame)),
+        ("HammerBro", |k| matches!(k, NodeKind::HammerBro)),
+        ("MapObject", |k| matches!(k, NodeKind::MapObject)),
+    ];
+    for (name, pred) in kind_names {
+        let c: usize = catalog.entries.iter().filter(|e| pred(&e.kind)).count();
+        eprintln!("  {name:12} {c}");
+    }
+    eprintln!("  Total:       {}", catalog.entries.len());
+}
+
+/// Every name in `FRIENDLIER_BLOCKED_LEVELS` must resolve, or the option
+/// silently blocks nothing. The list is written in catalog names (the ones
+/// `testrom --list` prints) precisely so it can be read against the game, and
+/// this is the guard that makes a typo fail loudly instead of quietly.
+///
+/// Chest and hand levels are barred outright: the player has to reach those to
+/// collect a one-off inventory item, so removing one from the pool would put
+/// the item out of reach entirely.
+#[test]
+fn friendlier_blocklist_resolves() {
+    let Some(rom) = load_rom() else {
+        eprintln!("reference ROM not present — skipping friendlier_blocklist_resolves");
+        return;
+    };
+    let catalog = NodeCatalog::build(&rom, false);
+
+    for &name in crate::randomize::rom_data::FRIENDLIER_BLOCKED_LEVELS {
+        let hits: Vec<&CatalogEntry> = catalog
+            .entries
+            .iter()
+            .filter(|e| e.name == name && matches!(e.kind, NodeKind::Level))
+            .collect();
+        assert_eq!(
+            hits.len(),
+            1,
+            "{name}: expected exactly one Level entry, found {} — typo, or the name is not a level",
+            hits.len(),
+        );
+        let e = hits[0];
+        assert!(
+            !crate::randomize::rom_data::is_chest_level(e.world_idx, e.entry_idx),
+            "{name} is a chest level — blocking it puts its inventory item out of reach",
+        );
+        assert!(
+            !crate::randomize::rom_data::is_hand_level(e.world_idx, e.entry_idx),
+            "{name} is a hand level — blocking it puts its item drop out of reach",
+        );
+    }
+}
+
+/// Same guard as `friendlier_blocklist_resolves`, for the blocked forts.
+///
+/// Worth its own test because the naming convention differs and that is the
+/// easy mistake: forts are `7F2` / `8F1` (from the ordinal suffix), with no
+/// dash, while levels are `7-8`. A misspelled entry never matches any pool
+/// member, so the fort silently stays required and nothing else complains.
+#[test]
+fn friendlier_blocked_forts_resolve() {
+    let Some(rom) = load_rom() else {
+        eprintln!("reference ROM not present — skipping friendlier_blocked_forts_resolve");
+        return;
+    };
+    let catalog = NodeCatalog::build(&rom, false);
+
+    for &name in crate::randomize::rom_data::FRIENDLIER_BLOCKED_FORTS {
+        let hits = catalog
+            .entries
+            .iter()
+            .filter(|e| e.name == name && matches!(e.kind, NodeKind::Fortress))
+            .count();
+        assert_eq!(
+            hits, 1,
+            "{name}: expected exactly one Fortress entry, found {hits} — typo, or not a fortress",
+        );
+    }
+}
+
+/// **Five Toad Houses hand over a fixed item; the other seventeen roll it.**
+///
+/// The split a key-placement pass rests on. A house's treasure type is the
+/// high byte of its object pointer and travels with the entry when it is
+/// dealt elsewhere, so a *fixed* house can be aimed at a cell and relied on to
+/// hand over what was written into it. A rolled house re-draws from a 3-wide
+/// window when the box is opened, which makes it no more dependable than an
+/// in-level chest the player can walk past.
+///
+/// See [`crate::randomize::rom_data::toad_house_reward_is_fixed`].
+#[test]
+fn toad_house_treasure_types_split_fixed_and_rolled() {
+    use crate::randomize::rom_data::{toad_house_reward_is_fixed, toad_house_treasure};
+
+    let rom = match load_rom() {
+        Some(r) => r,
+        None => return,
+    };
+    let catalog = NodeCatalog::build(&rom, false);
+
+    let mut fixed = 0usize;
+    let mut rolled = 0usize;
+    let mut by_type: HashMap<u8, usize> = HashMap::new();
+    for e in catalog.entries.iter().filter(|e| matches!(e.kind, NodeKind::ToadHouse)) {
+        let le = e.level_entry.as_ref().expect("a toad house entry carries level data");
+        let obj = (u16::from(le.obj_hi) << 8) | u16::from(le.obj_lo);
+        let treasure = toad_house_treasure(obj).expect("classified as a toad house");
+        *by_type.entry(treasure).or_default() += 1;
+        if toad_house_reward_is_fixed(treasure) {
+            fixed += 1;
+        } else {
+            rolled += 1;
+        }
+    }
+
+    assert_eq!(fixed + rolled, 22, "toad houses, by treasure type: {by_type:?}");
+    assert_eq!(fixed, 5, "fixed-reward houses (types 3/4/5): {by_type:?}");
+    assert_eq!(rolled, 17, "rolled-reward houses (types 6-9): {by_type:?}");
+}

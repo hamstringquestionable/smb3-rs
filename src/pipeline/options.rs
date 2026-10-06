@@ -1,0 +1,909 @@
+//! Randomizer configuration: the `Options` struct, its enums, and the serde
+//! defaults that back them.
+
+/// Sentinel: resolve to any random item (1–13).
+pub const ITEM_RANDOM: u8 = 14;
+
+/// Sentinel: resolve to any random item except Whistle (1–11, 13).
+pub const ITEM_RANDOM_NO_WHISTLE: u8 = 15;
+
+/// Sentinel: resolve to a random suit/powerup (1–6).
+pub const ITEM_RANDOM_SUIT_ONLY: u8 = 16;
+
+/// Sentinel: resolve to a random utility item — Cloud, Starman, Hammer, Music
+/// Box, and Whistle when whistles are kept.
+///
+/// Deliberately *not* the mechanical complement of [`ITEM_RANDOM_SUIT_ONLY`]:
+/// P-Wing and Anchor are not suits either, and are still excluded. The pool is
+/// "a helpful map or utility item to open with", not "everything left over".
+pub const ITEM_RANDOM_NO_SUITS: u8 = 17;
+
+/// Inventory items: (CLI name, item ID, display name). Single source for every
+/// `--starting-items` parser and run-summary printer across the binaries;
+/// extra spellings are handled as aliases in [`item_id`].
+pub const ITEMS: &[(&str, u8, &str)] = &[
+    ("mushroom", 0x01, "Mushroom"),
+    ("fire", 0x02, "Fire Flower"),
+    ("leaf", 0x03, "Super Leaf"),
+    ("frog", 0x04, "Frog Suit"),
+    ("tanooki", 0x05, "Tanooki Suit"),
+    ("hammer-suit", 0x06, "Hammer Suit"),
+    ("cloud", 0x07, "Cloud"),
+    ("p-wing", 0x08, "P-Wing"),
+    ("star", 0x09, "Starman"),
+    ("anchor", 0x0A, "Anchor"),
+    ("hammer", 0x0B, "Hammer"),
+    ("whistle", 0x0C, "Whistle"),
+    ("music-box", 0x0D, "Music Box"),
+    ("random", 0x0E, "Random"),
+    ("random-no-whistle", 0x0F, "Random (No Whistle)"),
+    ("random-suit-only", 0x10, "Random (Suit Only)"),
+    ("random-no-suits", 0x11, "Random (No Suits)"),
+];
+
+/// Look up a starting-item ID by CLI name (case-insensitive, with aliases).
+pub fn item_id(name: &str) -> Option<u8> {
+    let lower = name.to_lowercase();
+    let canonical = match lower.as_str() {
+        "fire-flower" | "fireflower" => "fire",
+        "frog-suit" => "frog",
+        "tanooki-suit" => "tanooki",
+        "hammersuit" => "hammer-suit",
+        "pwing" => "p-wing",
+        "starman" => "star",
+        "musicbox" => "music-box",
+        "random-suit" => "random-suit-only",
+        other => other,
+    };
+    ITEMS.iter().find(|&&(n, _, _)| n == canonical).map(|&(_, id, _)| id)
+}
+
+/// Display name for a starting-item ID.
+pub fn item_display_name(id: u8) -> &'static str {
+    ITEMS.iter().find(|&&(_, i, _)| i == id).map_or("?", |&(_, _, n)| n)
+}
+
+/// Returns default starting lives (5).
+fn default_starting_lives() -> u8 {
+    5
+}
+
+/// The four valid starting-lives counts (matches the flag-key encoding
+/// and the WASM pill-toggle options).
+pub const STARTING_LIVES_VALUES: [u8; 4] = [1, 5, 20, 99];
+
+/// Map a 2-bit flag-key index to the corresponding lives count.
+pub(super) fn idx_to_lives(idx: u8) -> u8 {
+    STARTING_LIVES_VALUES[(idx & 0x3) as usize]
+}
+
+/// Map a lives count to its 2-bit flag-key index. Non-canonical values
+/// are binned to the nearest canonical choice so CLI/JSON inputs that
+/// predate this layout still round-trip cleanly.
+pub(super) fn lives_to_idx(lives: u8) -> u8 {
+    match lives {
+        n if n <= 2 => 0,  // → 1
+        n if n <= 12 => 1, // → 5
+        n if n <= 59 => 2, // → 20
+        _ => 3,            // → 99
+    }
+}
+
+/// Returns default world count (7 — all worlds before Dark Land).
+fn default_world_count() -> u8 {
+    7
+}
+
+/// Wands the world maze's castle demands by default — see
+/// [`Options::maze_wands`] for the measurement that chose 3.
+pub(super) fn default_maze_wands() -> u8 {
+    crate::randomize::maze::DEFAULT_WANDS_REQUIRED
+}
+
+/// Per-class enemy randomization mode.
+///
+/// The `Specifier` derive gives this a 2-bit flag-key encoding in declaration
+/// order (`Off` = 0). Three variants in two bits leaves a dead fourth pattern,
+/// so the flag-key decoder reads it through the checked accessor and falls back
+/// to `Off` — see `flag_key.rs`.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
+    modular_bitfield::Specifier,
+)]
+#[bits = 2]
+#[serde(rename_all = "snake_case")]
+pub enum EnemyMode {
+    #[default]
+    Off,
+    Shuffle,
+    Wild,
+}
+
+fn default_shuffle() -> EnemyMode {
+    EnemyMode::Shuffle
+}
+
+fn default_off() -> EnemyMode {
+    EnemyMode::Off
+}
+
+/// Random Fire Flower mode (issue #22). Collecting an in-level Fire Flower
+/// grants a power state derived deterministically from the world and the
+/// flower's level position, instead of always Fire. `On` substitutes among the
+/// four big-form suits (Fire/Frog/Tanooki/Hammer); `Wild` adds the Small/Big
+/// downgrade outcomes.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
+    modular_bitfield::Specifier,
+)]
+#[bits = 2]
+#[serde(rename_all = "snake_case")]
+pub enum FireFlowerMode {
+    #[default]
+    Off,
+    On,
+    Wild,
+}
+
+/// Piranha shuffle mode. The two W7 piranha plant levels (7-P1/7-P2) are
+/// normally pinned to their vanilla map spots. `On` releases them into the
+/// global level pool and their plant sprites follow them to wherever they
+/// land. `Wild` also releases them (as plain numbered levels), and instead
+/// scatters plant sprites onto ~1 random level slot per world — stepping on
+/// a plant auto-starts the level under it, vanilla W7 style.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
+    modular_bitfield::Specifier,
+)]
+#[bits = 2]
+#[serde(rename_all = "snake_case")]
+pub enum PiranhaMode {
+    #[default]
+    Off,
+    On,
+    Wild,
+}
+
+/// How hard to stop the randomizer from *introducing* hazards.
+///
+/// A "hazard" is a member of the `HAZARDS` group — thwomps, Lava Lotus,
+/// Ptooie, nippers, Hot Foot, bros — the same set the curated
+/// `Exclude(HAZARDS)` entries use. The rule is additive-only in every mode: a
+/// hazard is only blocked where the slot's *vanilla* enemy wasn't the same
+/// category, so designed-in hazards survive and within-category shuffle (e.g.
+/// thwomp variants) still works. Nothing is ever removed from vanilla.
+///
+/// `Sparse` is the trainer rung: a level may gain the occasional hazard, never
+/// a wall of them. `All` blocks every introduction.
+///
+/// Only affects in-level enemy picks. Hammer Bro map encounters draw from
+/// their own curated pools (see `randomize_hb_wild_segment`) and are left
+/// alone, as are wild-injection chasers, which aren't in the taxonomy.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
+    modular_bitfield::Specifier,
+)]
+#[bits = 2]
+#[serde(rename_all = "snake_case")]
+pub enum HazardLimit {
+    /// Vanilla behavior — the randomizer may introduce hazards freely.
+    #[default]
+    Off,
+    /// At most `MAX_ADDED_HAZARDS_PER_SEGMENT` introduced hazard per room.
+    ///
+    /// Named `Sparse` rather than `Some` so it never reads as `Option::Some`
+    /// at a match site; the serde/CLI/web value stays "some".
+    #[serde(rename = "some")]
+    Sparse,
+    /// Never introduce a hazard.
+    All,
+}
+
+/// How many times a single level may appear on the finished map.
+///
+/// The writer deals levels out of a deck (see `assign_pool`), so this is deck
+/// surgery and nothing more: the map is already decided by the time it runs.
+///
+/// `Double` deals a second copy of every level, so any one of them can land on
+/// two tiles. `Wild` rebuilds the deck by drawing with replacement, so a level
+/// can land any number of times — or none at all.
+///
+/// Levels holding a one-off inventory item (the chest levels and the W8 hand
+/// rooms) are exempt in both modes: they are dealt exactly once, because a
+/// second copy would hand the same item out twice and no copy would put it out
+/// of reach.
+///
+/// (MaCobra52's idea.)
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
+    modular_bitfield::Specifier,
+)]
+#[bits = 2]
+#[serde(rename_all = "snake_case")]
+pub enum DejaVuMode {
+    /// Every level appears at most once — vanilla shuffle behavior.
+    #[default]
+    Off,
+    /// Two copies of each level in the deck; a level can appear twice.
+    Double,
+    /// Draw with replacement; a level can appear any number of times, or none.
+    Wild,
+}
+
+/// How much the world maze's map tells you about which fortress opens which
+/// lock. Inert outside the maze, where every lock is local and every fortress
+/// opens something in the world you are standing in.
+///
+/// # The three rungs
+///
+/// * **Off** — nothing is said. Fortresses wear one of their three designs at
+///   random, as they did before any of this, and locks are the plain tiles.
+/// * **Partial** (`some`) — a fortress's design says whether the lock it opens is in this
+///   world, another one, or World 8; and a lock in the alternate colour is one
+///   whose key is somewhere else. Two independent readings of the same fact,
+///   from either end.
+/// * **Full** — as Partial, and the lock carries the *number* of the world its
+///   fortress is in.
+///
+/// # Why the order is not the ladder
+///
+/// Declaration order is the flag-key wire format, and the key's whole
+/// compatibility story is that an unset field decodes as zero *and zero is the
+/// default* — see the `flag_key` module header. So `Partial` is declared first.
+/// [`HintMode::rung`] is the ladder; nothing should read the declaration order
+/// as one.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
+    modular_bitfield::Specifier,
+)]
+#[bits = 2]
+#[serde(rename_all = "snake_case")]
+pub enum HintMode {
+    /// Fortress designs, and a lock's colour says whether its key is local.
+    /// The default: it answers the question a player actually has without
+    /// handing them the whole map.
+    ///
+    /// Named `Partial` rather than `Some` so it never reads as `Option::Some`
+    /// at a match site — the same trick [`HazardLimit::Sparse`] plays. The
+    /// serde/CLI/web value stays "some".
+    #[default]
+    #[serde(rename = "some")]
+    Partial,
+    /// As Partial, and the lock carries the number of the world to go to.
+    Full,
+    /// No hints at all; fortress designs go back to being random.
+    Off,
+}
+
+impl HintMode {
+    /// Position on the ladder — 0 Off, 1 Some, 2 Full — so callers can ask
+    /// "at least Some" without caring that the encoding is in the other order.
+    fn rung(self) -> u8 {
+        match self {
+            HintMode::Off => 0,
+            HintMode::Partial => 1,
+            HintMode::Full => 2,
+        }
+    }
+
+    /// Does the map say anything at all about which fortress opens which lock?
+    pub(crate) fn hints_at_all(self) -> bool {
+        self.rung() >= HintMode::Partial.rung()
+    }
+
+    /// Do locks carry the world number, rather than only a colour?
+    pub(crate) fn numbers_locks(self) -> bool {
+        self == HintMode::Full
+    }
+}
+
+/// A level-wide chaser the wild-injection pass can seed into a level. The
+/// option is the *set* of these the player allowed — an empty set is off.
+///
+/// When more than one is allowed the pick is weighted toward the Angry Sun
+/// (see `SUN_INJECTION_WEIGHT`), the gentlest of the three.
+///
+/// Narrowing the set ought to inject into fewer levels — a candidate whose
+/// segment CHR can't fit the allowed chaser (or that already has one) is
+/// skipped rather than handed a different one. Measured, it doesn't: every
+/// combination lands 8-9 injections per seed over 20 seeds, and the gap
+/// between combinations is the same size as the gap between two runs of the
+/// *same* one, since each draws a different RNG stream. Run the
+/// `print_injection_counts` diagnostic before believing otherwise.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum WildChaser {
+    /// Angry Sun.
+    Sun,
+    /// Lakitu, the enemy-spawning variant.
+    Lakitu,
+    /// Big Bertha, the leaping eater — the "Boss Bass".
+    Bass,
+}
+
+impl WildChaser {
+    /// Every chaser, in the canonical order the flag key, the CLI and the web
+    /// pill all use. Decoding produces this order, so a round-trip normalizes.
+    pub const ALL: [WildChaser; 3] = [WildChaser::Sun, WildChaser::Lakitu, WildChaser::Bass];
+
+    /// The lowercase name used by the CLI, the web pill, and serde.
+    pub fn name(self) -> &'static str {
+        match self {
+            WildChaser::Sun => "sun",
+            WildChaser::Lakitu => "lakitu",
+            WildChaser::Bass => "bass",
+        }
+    }
+}
+
+/// Tri-state toggle for player-hidden flags: forced `Off`, forced `On`, or
+/// left to the seed (`Maybe`). A `Maybe` flag is resolved to a concrete
+/// on/off at generation time from a dedicated RNG substream (see
+/// [`Tri::resolve`]), so the same seed + same flags always produce the same
+/// ROM — the player just can't tell from the flag key which way a `Maybe`
+/// landed, so it can't be planned around.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
+    modular_bitfield::Specifier,
+)]
+#[bits = 2]
+#[serde(rename_all = "snake_case")]
+pub enum Tri {
+    #[default]
+    Off,
+    On,
+    Maybe,
+}
+
+impl Tri {
+    /// Collapse to a concrete bool. `Off`/`On` pass through; `Maybe` flips a
+    /// coin on the provided RNG.
+    pub(super) fn resolve<R: rand::Rng>(self, rng: &mut R) -> bool {
+        match self {
+            Tri::Off => false,
+            Tri::On => true,
+            Tri::Maybe => rng.random_bool(0.5),
+        }
+    }
+}
+
+fn default_tri_on() -> Tri {
+    Tri::On
+}
+
+/// Options controlling which randomizations to apply.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Options {
+    #[serde(default = "default_true")]
+    pub powerups: bool,
+    /// Player colors: recolor the character wardrobe (random or picked via
+    /// `player_color`). Off = vanilla outfits. Cosmetic — not in the flag key.
+    #[serde(default = "default_true")]
+    pub palettes: bool,
+    /// World colors: themed palette randomization of levels, enemies, and
+    /// overworld maps. Independent of `palettes`. Cosmetic — not encoded in
+    /// the flag key, so flipping this never changes level content.
+    #[serde(default)]
+    pub palette_themed: bool,
+    /// Player-chosen NES color byte anchoring the character wardrobe scheme
+    /// (Mario's body gets this color; Luigi and the power-up suits are derived
+    /// from it). Must be chromatic (hue nibble 1-C, value <= 0x3C). None =
+    /// random color. Cosmetic — not encoded in the flag key.
+    /// Only takes effect while `palettes` is on.
+    #[serde(default)]
+    pub player_color: Option<u8>,
+    /// Remove the full-screen palette-flash/fade animation (MaCobra52's
+    /// "Remove Flashing" patch) so photosensitive players aren't exposed to
+    /// the strobing. On by default. Accessibility / cosmetic — not encoded in
+    /// the flag key and consumes no RNG.
+    #[serde(default = "default_true")]
+    pub remove_flashing: bool,
+    /// Replace the king's rescue dialogue with a randomized quote. Off falls
+    /// back to vanilla's own king text — the module still draws its quotes from
+    /// the RNG either way and only skips the ROM writes, so the seed stream is
+    /// identical with this on or off. Cosmetic — not encoded in the flag key.
+    #[serde(default = "default_true")]
+    pub king_quotes: bool,
+    /// Redraw every fireball (Mario's, enemies', the Fire Chomp's tail) as a
+    /// heart (MaCobra52's "Change fireballs to hearts" patch). Written after
+    /// any visual patch, so it overrides one that redraws fireballs too (the
+    /// Dr. Mario reskins). Cosmetic — not encoded in the flag key, no RNG.
+    #[serde(default)]
+    pub fireball_hearts: bool,
+    #[serde(default)]
+    pub world_order: bool,
+    /// Number of worlds before Dark Land (0–7, default 7). Only read when
+    /// [`Options::world_order`] is on, since its table is the mechanism.
+    ///
+    /// **0 starts the game in Dark Land**, which is then the whole game and
+    /// displays as "WORLD 1". No airship stands before Bowser's castle at that
+    /// count, so no wand exists in the run.
+    ///
+    /// **Ignored when [`Options::world_maze`] is on**, which pins the spine to
+    /// all eight worlds: the web form greys the control out under the mode, and
+    /// `randomize_inner` makes that true of every other entry point. The flag
+    /// key still carries the player's value verbatim.
+    #[serde(default = "default_world_count")]
+    pub world_count: u8,
+    /// **World maze.** The eight world maps stop being a sequence and become
+    /// the rooms of one Metroidvania: telepads link them, a fortress can bust a
+    /// lock in another world, map progress survives leaving and coming back,
+    /// and the warp whistle becomes fast travel between worlds already visited.
+    /// Bowser's castle stays shut until [`Options::maze_wands`] wands are held.
+    ///
+    /// Forces `world_order` on — its table is what the airship spine reads, and
+    /// the wand counter chains through the routine it installs.
+    #[serde(default)]
+    pub world_maze: bool,
+    /// Wands the castle demands, 0–7. Only read when `world_maze` is on.
+    ///
+    /// **This is a floor, not a length dial** (`maze_wand_gate_sweep`, 40 seeds
+    /// per K): at 0 a telepad chain finishes some seeds in a *single level*; at
+    /// 3 the shortest run is 16 levels while the median is unchanged at 28. It
+    /// only starts costing the median at 6–7.
+    #[serde(default = "default_maze_wands")]
+    pub maze_wands: u8,
+    /// **Item gates.** A way forward can be shut until the player holds the item
+    /// that opens it, and the placement pass guarantees that item sits somewhere
+    /// they can reach without it. One switch for the whole class rather than one
+    /// per gate: the model already carries gates as data (`maze::Gate` and
+    /// `GateTarget`, keyed by `item_keys::Key`), so this only decides whether
+    /// that list is populated — see `maze::GlobalState::install_item_gates` for
+    /// which gates a run installs.
+    ///
+    /// **Today that list is the boats.** Canoes park one tile offshore and the
+    /// only way to call one alongside is an Anchor used from the inventory while
+    /// standing on a dock, which makes a stretch of water a door and the Anchor
+    /// its key; the Anchor also stops being `items::write_mystery_anchor`'s
+    /// surprise power-up, becoming permanent and dealt by Toad Houses as well.
+    /// Off, boats sit where vanilla parks them and any dock summons one for
+    /// free. The next gate kind — MiMaze's sealed cells — joins this option
+    /// rather than bringing one of its own.
+    ///
+    /// **Only read when `world_maze` is on.** In a fixed world order the player
+    /// cannot go back to a world they have left, so a key would have to sit in
+    /// front of its own gate — see `canoe_gate` for the whole argument.
+    #[serde(default)]
+    pub item_gates: bool,
+    #[serde(default)]
+    pub big_q_blocks: bool,
+    /// Shuffle airship levels across worlds 1-7.
+    #[serde(default = "default_true")]
+    pub shuffle_airships: bool,
+    /// Redistribute the wandering Hammer Bro encounters across all worlds
+    /// (random 1-3 per world, 15 total) instead of keeping their vanilla spots.
+    #[serde(default = "default_true")]
+    pub shuffle_hammer_bros: bool,
+    #[serde(default = "default_true")]
+    pub disable_autoscroll: bool,
+    /// Set starting lives for both Mario and Luigi (1–99).
+    #[serde(default = "default_starting_lives")]
+    pub starting_lives: u8,
+    /// Up to 3 items to start with in inventory (item IDs, e.g. 0x03 = Leaf).
+    #[serde(default)]
+    pub starting_items: Vec<u8>,
+    /// Randomize chest and reward items (Hammer Bros, Toad House, Princess letter, treasure chests).
+    #[serde(default = "default_true")]
+    pub chest_items: bool,
+    /// Remove warp whistles and replace with random items.
+    #[serde(default = "default_true")]
+    pub remove_whistles: bool,
+    /// Add extra hammer-breakable rocks: the W1 (6,5) decoration (between
+    /// hammer-bro 14 and toad house 20) and the W8 (3,37) screen-2 decoration.
+    /// Each becomes a horizontal path when broken/cleared. Off keeps the
+    /// vanilla non-removable rocks.
+    ///
+    /// Tri-state: `Maybe` lets the seed decide (hidden from the flag key).
+    #[serde(default)]
+    pub more_hammer_rocks: Tri,
+    /// `8s are Wild`: enable the W8 (Dark World) canoe on screen 0 and the
+    /// extra paths on screen 2. Off keeps W8 without the canoe shortcut.
+    /// (The screen-3 bridges are always present.)
+    ///
+    /// Tri-state: `Maybe` lets the seed decide (hidden from the flag key).
+    #[serde(default)]
+    pub eights_are_wild: Tri,
+    /// Clear cards instantly (no cutscene, no lives) when collecting one of each type.
+    #[serde(default = "default_true")]
+    pub card_speed_clear: bool,
+    /// Remove N-card (N-Spade) panels from the overworld map.
+    #[serde(default = "default_true")]
+    pub remove_n_cards: bool,
+    /// Skip the wand falling cutscene after defeating a Koopaling.
+    #[serde(default = "default_true")]
+    pub skip_wand_cutscene: bool,
+    /// Adjust hitboxes for Bowser and Koopalings so they're easier to hit.
+    #[serde(default = "default_true")]
+    pub adjust_boss_hitboxes: bool,
+    /// Randomize Koopaling stomp counts (1–5 hits each). The table is indexed
+    /// by `World_Num`, so the count belongs to the world, not the Koopaling:
+    /// under `random_koopalings` it stays put while the boss changes.
+    #[serde(default = "default_true")]
+    pub koopaling_hits: bool,
+    /// Randomize per-fortress Boom-Boom stomp counts (each gets 1–5 hits).
+    #[serde(default = "default_true")]
+    pub boomboom_hits: bool,
+    /// Make Koopalings vulnerable to thrown hammers (clears invulnerability flag).
+    #[serde(default)]
+    pub hammer_vulnerable_koopalings: bool,
+    /// Randomize which Koopaling appears in each world (shuffle boss identity).
+    #[serde(default)]
+    pub random_koopalings: bool,
+    /// Hammer item also breaks fortress lock tiles on the overworld map.
+    ///
+    /// Tri-state: `Maybe` lets the seed decide (hidden from the flag key).
+    #[serde(default)]
+    pub hammer_breaks_locks: Tri,
+    /// Hammer item also breaks water gap (bridge) tiles on the overworld map.
+    ///
+    /// Tri-state: `Maybe` lets the seed decide (hidden from the flag key).
+    #[serde(default)]
+    pub hammer_breaks_bridges: Tri,
+    /// Angry Sun begins swooping immediately on spawn instead of waiting
+    /// for the vanilla pre-attack delay. (MaCobra52's "Early Sun" patch.)
+    #[serde(default)]
+    pub early_sun: bool,
+    /// Bro encounters (Hammer / Boomerang / Heavy / Fire) start with a
+    /// 10-second clock instead of their level header's time setting.
+    #[serde(default)]
+    pub bro_battle_timer: bool,
+    /// Restrict wandering Hammer Bros to overworld path tiles by converting
+    /// the map-object landing-tile blacklist into a path-tile whitelist.
+    /// ("SMB3 - Limit Bro Movement" patch.)
+    #[serde(default)]
+    pub limit_bro_movement: bool,
+    /// Damage drops the player straight to Small Mario regardless of
+    /// current power-up, instead of demoting tier-by-tier. (MaCobra52's
+    /// "Japanese damage system (fixed)" patch.)
+    #[serde(default)]
+    pub japanese_damage: bool,
+    /// Toad / Mushroom Houses stay on the map after entering and can be
+    /// visited any number of times. (MaCobra52's "Infinite use Mushroom
+    /// Houses" patch.)
+    #[serde(default)]
+    pub infinite_mushroom_houses: bool,
+    /// Skip the entry-input-lock and shorten the exit transition when
+    /// using a Toad / Mushroom House. Combines MaCobra52's "Move Sooner
+    /// in Mushroom House (Instant)" and "Exit Mushroom House Faster"
+    /// patches under a single flag.
+    #[serde(default)]
+    pub fast_mushroom_house: bool,
+    /// Reduce tail-swipe slowdown so the Raccoon / Tanooki tail is
+    /// quicker to use mid-run. Bundles two compensating tweaks so the
+    /// faster tail doesn't break level design: raccoon flight time is
+    /// trimmed slightly (cancels a known 8-1 cheese the faster tail
+    /// enables) and the 7-6 fly-strat wall is lowered so the intended
+    /// route still clears at the new flight duration. (MaCobra52's
+    /// "Faster Tail Speed" patch.)
+    #[serde(default)]
+    pub faster_tail_speed: bool,
+    /// Game Over no longer wipes reserve inventory, world map progress,
+    /// or card state. (MaCobra52's "No Game Over Penalty" patch.)
+    #[serde(default)]
+    pub no_game_over_penalty: bool,
+    /// Permadeath challenge mode: nothing grants a 1-Up, and Game Over is
+    /// the end of the run rather than a menu offering a way back. (MaCobra52's
+    /// "No Extra Lives" + "No Continues" patches, bundled.)
+    #[serde(default)]
+    pub mariomon: bool,
+    /// Speed up Frog-Suit swimming and running. ("SMB3 - Faster Frog
+    /// (tail attack while swimming compatible)" — layers on top of the
+    /// always-on tail-attack-while-swimming routine.)
+    #[serde(default)]
+    pub faster_frog: bool,
+    /// A defeated Lakitu stays gone instead of returning two screens behind.
+    /// Vanilla never lets one die: it falls off the bottom and `ObjNorm_Lakitu`
+    /// re-seeds it. It is also exempt from off-screen deletion while alive, so
+    /// it holds one of the five general object slots for the whole level and
+    /// each Spiny Egg it throws takes another — starving the level's own
+    /// enemies, and pick-up-able ice blocks, of somewhere to spawn.
+    #[serde(default)]
+    pub lakitu_stays_down: bool,
+    /// Every level with a Big [?] pipe draws its bonus room from a pool of 19 —
+    /// the 11 vanilla rooms plus 8 in "Unused Level 5", an unreferenced level
+    /// otherwise reachable by nothing. Off by default: it changes where eleven
+    /// known rooms lead, which is a content change rather than a fix.
+    ///
+    /// 7-F1 is protected either way — whichever room it opens is forced to hold
+    /// a flight suit, because the level cannot be beaten without one.
+    #[serde(default)]
+    pub shuffle_big_q_rooms: bool,
+    /// Every 1-Up Mushroom is replaced with a Poison Mushroom that damages
+    /// the player instead of granting a life. (MaCobra52's "All 1UPs are
+    /// Poison Mushrooms" patch.) Off by default; a challenge option.
+    #[serde(default)]
+    pub poison_mushrooms: bool,
+    /// Power-ups behave like the modern Mario games: a Fire Flower or suit
+    /// grabbed as Small Mario grants its power without first becoming Big.
+    /// (MaCobra52's "Easy Power-up System" patch.)
+    #[serde(default)]
+    pub modern_powerups: bool,
+    /// Random Fire Flower (issue #22): an in-level Fire Flower grants a power
+    /// state derived deterministically from the world + the flower's level
+    /// position, instead of always Fire. `Off`/`On`/`Wild` (see
+    /// [`FireFlowerMode`]). The flower sprite is unchanged.
+    #[serde(default)]
+    pub fire_flower: FireFlowerMode,
+    /// When true, the 19 vanilla spade-game tiles are picked up by the overworld
+    /// builder and re-placed at random HammerBro slots, freeing their original
+    /// positions for level placement. When false, spade games stay at vanilla
+    /// positions (and the overworld builder leaves those tiles untouched).
+    #[serde(default = "default_true")]
+    pub shuffle_spade_games: bool,
+    /// When true, the 22 vanilla Toad Houses are picked up by the overworld
+    /// builder and re-placed at random HammerBro slots (cross-world, so W8
+    /// can receive one). Each entry preserves its vanilla obj_ptr, so reward
+    /// pool identity is unchanged. When false, Toad Houses stay at vanilla
+    /// positions.
+    #[serde(default = "default_true")]
+    pub shuffle_toad_houses: bool,
+    /// Replace ~10% of regular-level slots with visible hand-trap tiles (0xE6).
+    /// On arrival the player is grabbed (100%, no 50/50 roll) and pulled into
+    /// the underlying level. After completion, vanilla rewrites the tile to a
+    /// checkmark so subsequent visits don't re-grab.
+    #[serde(default = "default_true")]
+    pub hands_levels: bool,
+    /// Disguise exactly one regular-level slot per world W2-W8 as a pipe
+    /// (tile 0xBC). The player walks freely past the pipe; pressing A on
+    /// it loads the underlying level (no pipe-transit, no destination
+    /// table — uniform world-map dispatch enters the slot's pointer entry
+    /// like any level number tile).
+    ///
+    /// Tri-state: `Maybe` lets the seed decide (hidden from the flag key).
+    #[serde(default = "default_tri_on")]
+    pub troll_pipes: Tri,
+    /// Include ~9 unreferenced beta levels in the overworld shuffle pool.
+    #[serde(default)]
+    pub include_beta_stages: bool,
+    /// Antechamber shuffle: the ten levels that open with an entry area
+    /// piping into the level's interior (4-3, 5-2, 5-3, 6-6, 6-9, 7-1,
+    /// 7-4, 7-5, 7-6, 7-7) get their interiors randomly permuted, so one
+    /// level's entry pipe can drop into another's interior. The player
+    /// then finishes through that level's vanilla ending; map completion
+    /// still credits the tile they entered from.
+    ///
+    /// Tri-state: `Maybe` lets the seed decide (hidden from the flag key).
+    #[serde(default)]
+    pub antechamber_shuffle: Tri,
+    /// Piranha shuffle: release the two W7 piranha plant levels into the
+    /// level pool. `On` = plant sprites follow the levels; `Wild` = plants
+    /// scatter onto ~1 random level slot per world instead (see
+    /// [`PiranhaMode`]).
+    #[serde(default)]
+    pub piranha_shuffle: PiranhaMode,
+    /// Per-world (W1-W7) coin flip: when on, each world independently rolls
+    /// to swap Mario's start tile with the airship/castle tile. Mario spawns
+    /// at the vanilla airship coords; the level objective lives at the
+    /// vanilla start coords. W8 (Bowser's castle) never swaps.
+    #[serde(default)]
+    pub swap_start_airship: bool,
+    /// Cosmetic: every inventory item displays as the Anchor sprite while
+    /// keeping its original behavior. Covers the world-map reserve grid,
+    /// Toad House chests, in-level treasure boxes, and the Princess letter
+    /// cutscene.
+    #[serde(default)]
+    pub anchor_visuals: bool,
+    // --- Per-class enemy tri-state toggles ---
+    /// Ground-walking enemies (Goomba, Spiny, Spike, etc.)
+    #[serde(default = "default_shuffle")]
+    pub ground: EnemyMode,
+    /// Shell-producing enemies (Koopa, Buzzy Beetle, etc.)
+    #[serde(default = "default_shuffle")]
+    pub shell: EnemyMode,
+    /// Flying/hopping enemies (Paratroopa, Paragoomba, etc.)
+    #[serde(default = "default_shuffle")]
+    pub flying: EnemyMode,
+    /// Piranha plant variants (upward + ceiling)
+    #[serde(default = "default_shuffle")]
+    pub piranhas: EnemyMode,
+    /// Ghost house enemies (Boo, Hot Foot)
+    #[serde(default = "default_shuffle")]
+    pub ghosts: EnemyMode,
+    /// Thwomp movement variants
+    #[serde(default = "default_off")]
+    pub thwomps: EnemyMode,
+    /// Rotodisc rotation variants
+    #[serde(default = "default_off")]
+    pub rotodiscs: EnemyMode,
+    /// Cannon fire — Shuffle stays within sub-class (LEFT-firing, RIGHT-firing,
+    /// or BILLS = regular/homing Bullet Bills). Wild merges all cfire IDs
+    /// (incl. goomba pipes and bob-omb launchers) so any cfire can become any
+    /// other; rocky wrench / 4-way / laser remain fixed.
+    #[serde(default = "default_off")]
+    pub cannons: EnemyMode,
+    /// Water enemies (Blooper, Big Bertha, etc.)
+    #[serde(default = "default_shuffle")]
+    pub water: EnemyMode,
+    /// Swimming water enemies (Bloopers, Cheeps) can be stomped from dry land.
+    /// Independent of `water`; the web page only offers it beside Wild.
+    #[serde(default)]
+    pub water_stomp: bool,
+    /// Hammer/Boomerang/Fire/Heavy Bros (only in non-HB segments)
+    #[serde(default = "default_shuffle")]
+    pub bros: EnemyMode,
+    /// All enemies in Hammer Bro encounter segments
+    #[serde(default = "default_off")]
+    pub hb_encounters: EnemyMode,
+    /// How hard to stop the class swaps from introducing a hazard the level
+    /// wasn't designed with. See [`HazardLimit`].
+    #[serde(default)]
+    pub limit_hazards: HazardLimit,
+    /// Hold the harshest levels out of the shuffle pool, refilling it with
+    /// beta stages (when they are on) and then with duplicates of the levels
+    /// that remain. See `FRIENDLIER_BLOCKED_LEVELS` for the list.
+    ///
+    /// It has a fortress half too, `FRIENDLIER_BLOCKED_FORTS`: 7F2 and 8F1 are
+    /// held out of the fortress deck the same way, so they do not appear on the
+    /// map at all, and their tiles take a second visit to a fortress that
+    /// stayed.
+    #[serde(default)]
+    pub friendlier_levels: bool,
+    /// How many times one level may appear on the map. See [`DejaVuMode`].
+    #[serde(default)]
+    pub deja_vu: DejaVuMode,
+    /// How much the world maze's map says about which fortress opens which
+    /// lock. See [`HintMode`]. Inert outside the maze.
+    #[serde(default)]
+    pub hints: HintMode,
+    /// Deja Vu counts fortresses too. A modifier on [`Options::deja_vu`]
+    /// rather than an option of its own: it is ignored when that is off, and
+    /// takes its mode from it when it is on.
+    ///
+    /// It redeals the fortress deck exactly as `deja_vu` redeals the level
+    /// deck — `Double` builds a bag of two copies of each and deals it without
+    /// replacement, `Wild` draws with replacement — so a fortress can take two
+    /// tiles, or none. 1-F is the one card that is seeded into every deal and
+    /// never a source: it holds the warp whistle, and it is the one fortress
+    /// whose secret exit skips Boom-Boom, so a copy could land on a lock it can
+    /// never open.
+    #[serde(default)]
+    pub deja_vu_forts: bool,
+    /// Which level-wide chasers may be seeded into a fraction of real levels
+    /// (CHR-compatible). Empty = off. See [`WildChaser`].
+    #[serde(default)]
+    pub wild_injections: Vec<WildChaser>,
+    /// Skip the SMB3 (USA) iNES header / page-count / size checks so that
+    /// modded or translated ROMs can be loaded. When true, the title-screen
+    /// seed hash is also skipped because its hooks rely on vanilla offsets.
+    /// Not encoded in the flag key — a property of the input ROM, not the
+    /// randomization seed.
+    #[serde(default)]
+    pub skip_rom_validation: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+impl Default for Options {
+    fn default() -> Self {
+        Options {
+            powerups: true,
+            palettes: true,
+            palette_themed: false,
+            player_color: None,
+            remove_flashing: true,
+            king_quotes: true,
+            fireball_hearts: false,
+            world_order: false,
+            world_count: default_world_count(),
+            world_maze: false,
+            maze_wands: default_maze_wands(),
+            item_gates: false,
+            big_q_blocks: false,
+            shuffle_airships: true,
+            shuffle_hammer_bros: true,
+            disable_autoscroll: true,
+            chest_items: true,
+            remove_whistles: true,
+            more_hammer_rocks: Tri::Off,
+            eights_are_wild: Tri::Off,
+            card_speed_clear: true,
+            remove_n_cards: true,
+            skip_wand_cutscene: true,
+            adjust_boss_hitboxes: true,
+            koopaling_hits: true,
+            boomboom_hits: true,
+            hammer_vulnerable_koopalings: false,
+            random_koopalings: false,
+            include_beta_stages: false,
+            antechamber_shuffle: Tri::Off,
+            piranha_shuffle: PiranhaMode::Off,
+            hammer_breaks_locks: Tri::Off,
+            hammer_breaks_bridges: Tri::Off,
+            early_sun: false,
+            bro_battle_timer: false,
+            limit_bro_movement: false,
+            japanese_damage: false,
+            infinite_mushroom_houses: false,
+            fast_mushroom_house: false,
+            faster_tail_speed: false,
+            no_game_over_penalty: false,
+            mariomon: false,
+            faster_frog: false,
+            lakitu_stays_down: false,
+            shuffle_big_q_rooms: false,
+            poison_mushrooms: false,
+            modern_powerups: false,
+            fire_flower: FireFlowerMode::Off,
+            shuffle_spade_games: true,
+            shuffle_toad_houses: true,
+            hands_levels: true,
+            troll_pipes: Tri::On,
+            swap_start_airship: false,
+            anchor_visuals: false,
+            ground: EnemyMode::Shuffle,
+            shell: EnemyMode::Shuffle,
+            flying: EnemyMode::Shuffle,
+            piranhas: EnemyMode::Shuffle,
+            ghosts: EnemyMode::Shuffle,
+            thwomps: EnemyMode::Off,
+            rotodiscs: EnemyMode::Off,
+            cannons: EnemyMode::Off,
+            water: EnemyMode::Shuffle,
+            water_stomp: false,
+            bros: EnemyMode::Shuffle,
+            hb_encounters: EnemyMode::Off,
+            limit_hazards: HazardLimit::Off,
+            friendlier_levels: false,
+            deja_vu: DejaVuMode::Off,
+            deja_vu_forts: false,
+            hints: HintMode::Partial,
+            wild_injections: Vec::new(),
+            starting_lives: default_starting_lives(),
+            starting_items: Vec::new(),
+            skip_rom_validation: false,
+        }
+    }
+}

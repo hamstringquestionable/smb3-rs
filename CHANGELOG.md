@@ -9,6 +9,66 @@ deploys.
 
 ## [Unreleased]
 
+## [2.4.0] - 2026-10-05
+
+### Added
+
+- **Stompable water enemies.** A new pill beside Wild on the Water enemies row
+  lets you stomp Bloopers and Cheep Cheeps when you're out of the water. In the
+  water they still can't be stomped, and Lava Lotus still hurts.
+- **Fireball hearts.** A new Cosmetic toggle turns every fireball into a heart:
+  yours, the enemies', and the Fire Chomp's tail (MaCobra52's patch). Picked
+  with Dr. Mario, it replaces that patch's fireballs.
+- **Away locks wear a nub on Some hints.** Every away lock, and every
+  odd-colour fortress, now has a small round nub in the corner, so you can
+  tell a pair is split across worlds by shape as well as by colour.
+- **A ? block in the browser tab.** Once your ROM is loaded, the randomizer
+  and the World Maze tracker use a ? block from it as their tab icon.
+- **A world map behind the page.** Once your ROM is loaded, the page background
+  shows one of its world maps, a different world and a different part of it
+  on each visit, scaled up to fill the window.
+
+### Changed
+
+- **The Enemies section explains Off, Shuffle and Wild.** Piranhas, Cannons
+  and HB Encounters move to a new Protected Pools section below it: their Wild
+  never mixes with the other classes, and their tooltips say why.
+- **World 2's bro arena is rebuilt.** The block of sand bricks on the right,
+  which enemies could end up inside and out of reach, is replaced by a floating
+  row of bricks and a short column of wood blocks with an item in the top one.
+  On every seed.
+- **Desert wood and note item blocks are shuffled.** They were skipped by
+  mistake; the four in World 2's levels and the new one in the bro arena now
+  roll flower, leaf or star like everywhere else.
+- **World Maze tracker — a lock aimed at Dark Land is marked W8, not handed to
+  the Battleship.** Nothing on the map says which of the four opens it, so it
+  stays a free lock until you beat one and place its lock. Pinning more than
+  four locks on Dark Land is flagged.
+
+### Fixed
+
+- **No Rotodiscs in place of 3F1's later Dry Bones.** The Dry Bones on
+  screens 5 and 7 of World 3's first fortress can no longer become a Rotodisc.
+- **No unfair hazard in place of a 6-6 Cheep Cheep.** The Green Cheep near
+  the bottom of screen 8 in 6-6's main section can no longer become a
+  hazard such as a Lava Lotus, Patooie or Thwomp.
+- **Koopalings jump normally after their third stomp.** With Random Koopaling
+  Stomps, a Koopaling that needed four or five stomps read its jump height and
+  how often it jumps from the wrong part of the ROM after the third one, so it
+  jumped far too often and sometimes "jumped" straight down. It now keeps its
+  third-stomp jumps (Fred's fix).
+- **A lock opens back into the path it was blocking.** Locks on sky paths
+  running up and down, island paths and bridge variants used to open into a
+  plain dirt path. A lock on an up-and-down sky path is also sky-coloured now,
+  rather than wearing the ground lock (#226).
+- **The ending montage draws World Maze hint locks as locks.** Numbered and
+  alternate-colour locks were drawn as trees on the credits mini-maps.
+- **World Maze tracker — a second lock opened from the same world no longer
+  vanishes.** Aiming a lock at a world that already had a fortress opening a
+  lock in that same world deleted the lock; it now adds the second fortress.
+- **World Maze tracker — + on Locks adds to the end of the row**, as it does
+  for fortresses and pads, rather than ahead of the fortresses' locks.
+
 ## [2.3.1] - 2026-09-30
 
 ### Added

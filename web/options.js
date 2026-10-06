@@ -118,7 +118,19 @@ export const GROUPS = [
 		// root one, with no build-time knowledge of which it is.
 		link: { href: "maze-tracker.html", label: "Open the World Maze tracker →" } },
 	{ id: "map", label: "Map" },
-	{ id: "enemies", label: "Enemies" },
+	{ id: "enemies", label: "Enemies",
+		// A small key instead of a `note`: three modes read better as rows.
+		noteRows: [
+			["Off", "Vanilla enemies."],
+			["Shuffle", "Each enemy only swaps with others of its own class."],
+			["Wild", "Every class set to Wild mixes into one shared pool."],
+		] },
+	// Classes whose Wild stays within their own family. Piranhas and cannons
+	// are hidden until they pop up or fire, so in open ground they would hit
+	// out of nowhere; Hammer Bro battle rooms are closed, so a wrong enemy
+	// could leave the player stuck. See `build_wild_pool` in class_modes.rs.
+	{ id: "enemies_protected", label: "Protected Pools",
+		note: "These never join the shared Wild pool. Wild here only mixes within the same family." },
 	{ id: "bosses", label: "Bosses" },
 	{ id: "items", label: "Items & Pickups" },
 	{ id: "player", label: "Player" },
@@ -386,7 +398,7 @@ export const SCHEMA = [
 		group: "map", inFlagKey: true },
 	{ id: "hands_levels", type: "bool", default: true,
 		label: "Hand-Trap Levels", flavor: "It's a trap!",
-		tip: "Add visible hand-trap tiles. Walking onto one grabs you and pulls you into a level.",
+		tip: "Add visible hand-trap tiles. Walking onto one always grabs you and pulls you into a level.",
 		icon: HAND_TRAP,
 		group: "map", inFlagKey: true },
 	{ id: "swap_start_airship", type: "bool", default: false,
@@ -410,7 +422,7 @@ export const SCHEMA = [
 		group: "map", inFlagKey: true },
 	{ id: "troll_pipes", type: "tri", options: ON_OFF_MAYBE, default: "on",
 		label: "Troll Pipes", flavor: "Looks like a pipe…",
-		tip: "Disguise one level per world (W2-W8) as a pipe. You can walk past freely, but pressing A loads the hidden level. Maybe: the seed secretly decides on or off, so you won't know until you play.",
+		tip: "Disguise up to one level per world (W2-W8) as a pipe. You can walk past freely, but pressing A loads the hidden level. Maybe: the seed secretly decides on or off, so you won't know until you play.",
 		icon: PIPE_TILE,
 		group: "map", inFlagKey: true },
 	{ id: "more_hammer_rocks", type: "tri", options: ON_OFF_MAYBE, default: "off",
@@ -444,10 +456,10 @@ export const SCHEMA = [
 		icon: WORLD_TILES,
 		group: "map", inFlagKey: true,
 		// The maze reads this table as its airship spine, so it cannot run
-		// without it — see `randomizer::randomize_inner`.
+		// without it — see `pipeline::randomize_inner`.
 		forcedInMaze: true },
 	// Standard-only: the maze uses all eight worlds, so it pins this to 7 (see
-	// `randomizer::randomize_inner`) and the row greys out under the mode.
+	// `pipeline::stages::world_order_and_shuffles`) and the row greys out under the mode.
 	{ id: "world_count", type: "tri", numeric: true,
 		options: [0,1,2,3,4,5,6,7].map(n => ({ value: n, label: String(n) })),
 		default: 7,
@@ -476,7 +488,7 @@ export const SCHEMA = [
 		mode: "maze" },
 	{ id: "hints", type: "tri", options: OFF_SOME_FULL, default: "some",
 		label: "Hints",
-		tip: "What the map gives away about which fortress opens which lock. On Some the colour is the mark: tan means a fortress and its lock are together in one world, the odd colour on either one means the two are apart, and the beta fortress opens a lock or bridge in World 8. On Full the number is the mark instead — a lock wears the number of the world its fortress is in, and a lock with no number is local. Fortress designs read the same either way. On Off the designs are picked at random and say nothing. Hints never change the map, so the same seed has the same locks and fortresses whichever you pick.",
+		tip: "What the map gives away about which fortress opens which lock. On Some the colour is the mark: tan means a fortress and its lock are together in one world, the odd colour on either one means the two are apart, and the beta fortress opens a lock or bridge in World 8. The odd-colour ones also wear a small round nub in the corner, so you don't need to tell the colours apart. On Full the number is the mark instead — a lock wears the number of the world its fortress is in, and a lock with no number is local. Fortress designs read the same either way. On Off the designs are picked at random and say nothing. Hints never change the map, so the same seed has the same locks and fortresses whichever you pick.",
 		icon: HINT_TILES,
 		group: "maze", inFlagKey: true,
 		mode: "maze" },
@@ -504,9 +516,9 @@ export const SCHEMA = [
 		group: "enemies", inFlagKey: true },
 	{ id: "piranhas", type: "tri", options: TRI, default: "shuffle",
 		label: "Piranhas",
-		tip: "Piranha plant variants (upward and ceiling)",
+		tip: "Piranha plant variants. Wild also mixes in Rocky Wrench and fire jets. Kept out of the shared Wild pool, since a plant out in the open would pop up out of nowhere.",
 		icon: [GREEN_PIRANHA, RED_PIRANHA, GREEN_FIRE_PIRANHA, VENUS_FIRE_TRAP],
-		group: "enemies", inFlagKey: true },
+		group: "enemies_protected", inFlagKey: true },
 	{ id: "ghosts", type: "tri", options: TRI, default: "shuffle",
 		label: "Ghosts",
 		tip: "Ghost house enemies (Boo, Hot Foot)",
@@ -524,14 +536,22 @@ export const SCHEMA = [
 		group: "enemies", inFlagKey: true },
 	{ id: "cannons", type: "tri", options: TRI, default: "off",
 		label: "Cannons",
-		tip: "Cannons, Bullet Bill launchers, goomba pipes, and bob-omb launchers. Shuffle keeps fire direction; Wild lets any cannon become any other.",
+		tip: "Cannons, Bullet Bill launchers, goomba pipes, and bob-omb launchers. Shuffle keeps fire direction; Wild lets any cannon become any other. Kept out of the shared Wild pool, since their shots would come out of nowhere.",
 		icon: CANNON,
-		group: "enemies", inFlagKey: true },
+		group: "enemies_protected", inFlagKey: true },
 	{ id: "water", type: "tri", options: TRI, default: "shuffle",
 		label: "Water",
 		tip: "Water enemies (Blooper, Big Bertha, etc.)",
 		icon: [BLOOPER, MINI_CHEEP, BOSS_BASS, GREEN_CHEEP, RED_CHEEP, ORANGE_CHEEP, LAVA_LOTUS],
 		group: "enemies", inFlagKey: true },
+	// The ROM side doesn't care about the water mode; the page only offers the
+	// pill beside Wild, the one mode that puts swimmers on land.
+	{ id: "water_stomp", type: "bool", default: false, pillOf: "water",
+		label: "Stompable", flavorWhenOn: "Superior Competition Friendly Mode",
+		summaryLabel: "Water (stompable)",
+		tip: "Bloopers and Cheep Cheeps can be stomped when you're out of the water.",
+		group: "enemies", inFlagKey: true,
+		enabledWhen: { water: "wild" }, hideWhenDisabled: true },
 	{ id: "bros", type: "tri", options: TRI, default: "shuffle",
 		label: "Bros",
 		tip: "Hammer / Boomerang / Fire Bros inside levels",
@@ -539,12 +559,12 @@ export const SCHEMA = [
 		group: "enemies", inFlagKey: true },
 	{ id: "hb_encounters", type: "tri", options: TRI, default: "off",
 		label: "HB Encounters",
-		tip: "All enemies in overworld Hammer Bro mini-battles",
+		tip: "Every enemy in the map's Hammer Bro battles. Most battle rooms keep you in until they're clear, so Wild only uses enemies you can always beat.",
 		icon: MAP_HAMMER_BRO,
-		group: "enemies", inFlagKey: true },
+		group: "enemies_protected", inFlagKey: true },
 	{ id: "friendlier_levels", type: "bool", default: false,
 		label: "Friendlier Levels",
-		tip: "Keeps the roughest levels out of the shuffle — 2-3, 5-3, 6-6, 7-5, 7-8 and 8-1. Their slots go to beta stages if you have those on, otherwise to a second visit to a level already in the seed. Two fortresses go the same way, 7F2 and 8F1: they are not on the map at all, and their tiles go to a fort you have already beaten.",
+		tip: "Keeps the roughest levels out of the shuffle — 2-3, 5-3, 6-6, 7-5, 7-8 and 8-1. Their slots go to beta stages if you have those on, otherwise to a second visit to a level already in the seed. Two fortresses go the same way, 7F2 and 8F1: they are not on the map at all, and their tiles go to a second visit to another fortress in the seed, which you may or may not have beaten yet.",
 		group: "map", inFlagKey: true },
 	{ id: "deja_vu", type: "tri", options: OFF_DOUBLE_WILD, default: "off",
 		label: "Deja Vu", flavor: "Haven't we been here?",
@@ -737,6 +757,14 @@ export const SCHEMA = [
 	{ id: "remove_flashing", type: "bool", default: true,
 		label: "Remove flashing",
 		tip: "Stop the full-screen flashing and fading effects. On by default so the game is safer for players sensitive to flashing lights.",
+		credit: { name: "MaCobra52", url: "https://github.com/macobra52" },
+		group: "cosmetic", inFlagKey: false },
+	{ id: "fireball_hearts", type: "bool", default: false,
+		label: "Fireball hearts",
+		// Only beside a re-skin whose own fireballs these hearts replace.
+		warnWhenOn: "Replaces Dr. Mario's fireballs",
+		warnWithVisualPatch: ["dr_mario", "dr_mario_viruses"],
+		tip: "Every fireball becomes a heart: yours, the enemies', and the Fire Chomp's tail. Picked with Dr. Mario, this replaces that patch's fireballs.",
 		credit: { name: "MaCobra52", url: "https://github.com/macobra52" },
 		group: "cosmetic", inFlagKey: false },
 	{ id: "king_quotes", type: "bool", default: true,
@@ -1422,6 +1450,13 @@ function renderBool(entry) {
 	}
 	const btn = tipBtn(entry);
 	if (btn) wrap.appendChild(btn);
+	if (entry.warnWhenOn) {
+		// The maze's amber badge: a warning about the choice, not a joke.
+		// Shown only while it applies (see `applyPillFlavors`).
+		wrap.appendChild(el("span", {
+			class: "opt-badge", id: `${domId(entry.id)}-warn`, hidden: true,
+		}, entry.warnWhenOn));
+	}
 	const group = el("div", { class: "pill-group" });
 	for (const opt of BOOL_OPTIONS) {
 		const inputId = `${domId(entry.id)}-${opt.value}`;
@@ -1441,6 +1476,14 @@ function renderTri(entry) {
 	const icon = iconCanvas(entry);
 	if (icon) wrap.appendChild(icon);
 	wrap.appendChild(document.createTextNode(entry.label));
+	// A pill's flavor shows on its host's label, only while the pill is lit
+	// (see `applyPillFlavors`).
+	for (const flag of pillFlagsFor(entry)) {
+		if (!flag.flavorWhenOn) continue;
+		wrap.appendChild(el("span", {
+			class: "option-flavor", id: `${domId(flag.id)}-flavor`, hidden: !flag.default,
+		}, flag.flavorWhenOn));
+	}
 	const btn = tipBtn(entry);
 	if (btn) wrap.appendChild(btn);
 	const group = el("div", { class: "pill-group" });
@@ -1692,6 +1735,10 @@ export function renderOptions(rootEl, hosts = {}) {
 		if (group.note) {
 			fieldset.appendChild(el("p", { class: "note group-note" }, group.note));
 		}
+		if (group.noteRows) {
+			fieldset.appendChild(el("dl", { class: "note group-note note-rows" },
+				...group.noteRows.flatMap(([term, text]) => [el("dt", {}, term), el("dd", {}, text)])));
+		}
 		if (group.link) {
 			fieldset.appendChild(el("p", { class: "note group-note" },
 				el("a", { href: group.link.href }, group.link.label)));
@@ -1916,6 +1963,26 @@ export function applyEnabledWhen() {
 	// maze pins World Order on, which is what un-greys the row beside it), and
 	// an option the mode has made inert must stay greyed whatever its host says.
 	applyModeStates();
+	applyPillFlavors();
+}
+
+// A pill's `flavorWhenOn` shows while the pill is lit. A row's `warnWhenOn`
+// shows while the row is on and, with `warnWithVisualPatch`, only while one of
+// those re-skins is picked. The visual-patch radio is app.js's, so app.js calls
+// this when it changes.
+export function applyPillFlavors() {
+	const visualPatch = document.querySelector('input[name="visual-patch"]:checked')?.value ?? "";
+	for (const entry of SCHEMA) {
+		if (entry.flavorWhenOn) {
+			const span = document.getElementById(`${domId(entry.id)}-flavor`);
+			if (span) span.hidden = !readValue(entry);
+		}
+		if (entry.warnWhenOn) {
+			const span = document.getElementById(`${domId(entry.id)}-warn`);
+			const patchOk = !entry.warnWithVisualPatch || entry.warnWithVisualPatch.includes(visualPatch);
+			if (span) span.hidden = !(readValue(entry) && patchOk);
+		}
+	}
 }
 
 function applyEntryEnabled(entry, enabled) {
@@ -1928,6 +1995,12 @@ function applyEntryEnabled(entry, enabled) {
 			// Its wrapper is the host's pill group — greying that out would
 			// grey out the choice it rides on. Only its own label dims.
 			elNode.nextElementSibling?.classList.toggle("pill-disabled", !enabled);
+			// Some pills only mean anything beside one host value, and are
+			// shown only there rather than greyed everywhere else.
+			if (entry.hideWhenDisabled) {
+				elNode.hidden = !enabled;
+				if (elNode.nextElementSibling) elNode.nextElementSibling.hidden = !enabled;
+			}
 			continue;
 		}
 		// Walk up to the row that wraps the whole option — its label, or the

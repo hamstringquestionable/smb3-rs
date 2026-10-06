@@ -3,16 +3,16 @@
 use super::*;
 
 pub(super) struct ClassModes {
-    pub(super) ground: EnemyMode,
+    ground: EnemyMode,
     pub(super) shell: EnemyMode,
-    pub(super) flying: EnemyMode,
+    flying: EnemyMode,
     pub(super) piranhas: EnemyMode,
-    pub(super) ghosts: EnemyMode,
-    pub(super) thwomps: EnemyMode,
-    pub(super) rotodiscs: EnemyMode,
-    pub(super) cannons: EnemyMode,
-    pub(super) water: EnemyMode,
-    pub(super) bros: EnemyMode,
+    ghosts: EnemyMode,
+    thwomps: EnemyMode,
+    rotodiscs: EnemyMode,
+    cannons: EnemyMode,
+    water: EnemyMode,
+    bros: EnemyMode,
 }
 
 /// Return the wild swap pool that would be in effect for the given Options
@@ -55,6 +55,9 @@ impl ClassModes {
         // cfire, they are self-contained in Wild mode: a piranha slot swaps
         // only within piranha-kind (standard + Rocky Wrench, or ceiling), and
         // no other class can ever turn into a piranha. See find_class_pool.
+        // The reason is the same as cfire's (1) below: a plant is hidden
+        // until it pops up, so one placed in open ground hits the player out
+        // of nowhere.
         if self.ghosts == EnemyMode::Wild {
             pool.extend_from_slice(GHOST_ENEMIES);
         }
@@ -87,9 +90,9 @@ impl ClassModes {
         //    flooding mechanism no longer exists. Reason (1) alone is
         //    enough to keep cfire out.
         //
-        // Net semantic: cfire can still transform INTO other wild enemies,
-        // but other classes never swap TO cfire — total cfire count stays
-        // ≤ vanilla and projectile emitters only appear where Nintendo put
+        // Net semantic: cfire swaps only with cfire (`find_class_pool` gives
+        // it ALL_CANNONS, never the wild pool), so the cfire count never exceeds
+        // vanilla and projectile emitters only appear where Nintendo put
         // them.
         if self.water == EnemyMode::Wild {
             pool.extend_from_slice(WATER_ENEMIES);
@@ -142,7 +145,7 @@ impl ClassPool {
 /// enemies (koopas are $4F/+5) from Boom-Boom rooms, and the shell-vs-boss
 /// interaction is wanted gameplay. Boom-Booms sit alone in their arenas in
 /// almost every level, so the CHR risk is accepted.
-pub(super) fn should_precommit(obj_id: u8, modes: &ClassModes) -> bool {
+fn should_precommit(obj_id: u8, modes: &ClassModes) -> bool {
     match find_class_pool(obj_id, modes) {
         None => !BOOMBOOM_IDS.contains(&obj_id),
         Some(ClassPool::Wild) => false,

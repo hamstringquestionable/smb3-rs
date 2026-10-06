@@ -71,8 +71,29 @@ pub fn apply_ips_patch(rom: &[u8], patch: &[u8]) -> Result<Vec<u8>, JsError> {
 #[wasm_bindgen]
 pub fn seed_hash_json(rom: &[u8], seed: u64, options_json: &str) -> Result<String, JsError> {
     let options: Options = parse_options(options_json)?;
-    let preview = crate::randomize::title_screen::seed_hash_preview(rom, seed, &options);
+    let preview = crate::randomize::cosmetic::title_screen::seed_hash_preview(rom, seed, &options);
     serde_json::to_string(&preview).map_err(|e| JsError::new(&format!("Serialize error: {e}")))
+}
+
+/// How many worlds [`map_background_json`] can draw.
+#[wasm_bindgen]
+pub fn map_background_worlds() -> usize {
+    crate::randomize::cosmetic::map_background::world_count()
+}
+
+/// World `world`'s map (0-based), read from `rom`, for the page background.
+/// JSON: `{"cols":n,"tiles":[..],"pages":[..],"palettes":[[..4],..4]}` — an
+/// 8×8 tile grid, row-major, of absolute CHR tile numbers and palette pages,
+/// plus the world's four map palettes as NES colour indices.
+#[wasm_bindgen]
+pub fn map_background_json(rom: &[u8], world: usize) -> Result<String, JsError> {
+    if world >= map_background_worlds() {
+        return Err(JsError::new(&format!("No world {world}")));
+    }
+    let rom = crate::rom::Rom::from_bytes_lax(rom, true)
+        .map_err(|e| JsError::new(&format!("Invalid ROM: {e}")))?;
+    let map = crate::randomize::cosmetic::map_background::map_background(&rom, world);
+    serde_json::to_string(&map).map_err(|e| JsError::new(&format!("Serialize error: {e}")))
 }
 
 fn parse_options(json: &str) -> Result<Options, JsError> {

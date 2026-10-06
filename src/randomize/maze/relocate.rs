@@ -3,7 +3,7 @@
 //! ## What it is for
 //!
 //! The per-world builder places **one lock per fortress, in that fortress's own
-//! world** (`overworld_build::locks`), so every world shows the player exactly
+//! world** (`crate::randomize::overworld::build::locks`), so every world shows the player exactly
 //! as many fortresses as it shows locks. The key-assignment fill already breaks
 //! the *dependency* — 76% of locks end up opened by a fortress somewhere else —
 //! but it never moves a node, so the **counts** still match and the map still
@@ -69,10 +69,10 @@ use std::collections::HashMap;
 use rand::Rng;
 use rand::seq::IndexedRandom;
 
-use super::super::overworld_build::SlotKind;
 use super::super::rom_data::W8_IDX;
 use super::walk::MazePos;
 use super::{FortRef, GlobalState};
+use crate::randomize::overworld::build::SlotKind;
 
 /// What one exchange moved, for the census and the spoiler log.
 // Reason: production needs only that the exchange happened; all three fields
@@ -82,25 +82,25 @@ use super::{FortRef, GlobalState};
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Relocation {
     /// Where the fortress was, and which world it left.
-    pub from: MazePos,
+    pub(crate) from: MazePos,
     /// Where it went, and the world that gained it.
-    pub to: MazePos,
+    pub(crate) to: MazePos,
     /// The sphere both ends sit in — equal by construction.
-    pub sphere: usize,
+    pub(crate) sphere: usize,
 }
 
 /// What the pass did.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct RelocateReport {
     /// Exchanges rolled for this seed: [`MIN_SWAPS`]..=[`MAX_SWAPS`].
-    pub wanted: usize,
-    pub moves: Vec<Relocation>,
+    wanted: usize,
+    pub(crate) moves: Vec<Relocation>,
     /// Eligible (fortress, level) pairs before the first exchange — the supply.
     /// Zero means the pass could do nothing, which a census should notice
     /// rather than read as "it chose not to".
     // Reason: a census output, and the census is its only reader.
     #[allow(dead_code)]
-    pub pairs: usize,
+    pub(crate) pairs: usize,
 }
 
 impl RelocateReport {
@@ -110,21 +110,21 @@ impl RelocateReport {
 }
 
 /// Fewest exchanges a seed makes.
-pub(crate) const MIN_SWAPS: usize = 1;
+const MIN_SWAPS: usize = 1;
 
 /// Most exchanges a seed makes.
 ///
 /// Small on purpose. Each exchange decouples the lock and fortress counts of
 /// **two** worlds, so two already touches half the map; past that the fortress
 /// distribution stops looking like a map someone laid out and starts looking
-/// like a shuffle, which is the thing `overworld_build` spends its whole
+/// like a shuffle, which is the thing `overworld::build` spends its whole
 /// shaping loop avoiding.
-pub(crate) const MAX_SWAPS: usize = 2;
+const MAX_SWAPS: usize = 2;
 
 /// The next free fortress id in a world.
 ///
 /// Ids only have to be unique within their world — they pair a fortress with
-/// its lock and carry no ordering (`overworld_build::forts`) — so counting up
+/// its lock and carry no ordering (`crate::randomize::overworld::build::forts`) — so counting up
 /// from the highest in use is enough. It leaves holes in the numbering when a
 /// world loses a fortress, which the writer handles: `assign_pool` walks
 /// `0..section_count` and *looks up* the slot rather than assuming one exists.

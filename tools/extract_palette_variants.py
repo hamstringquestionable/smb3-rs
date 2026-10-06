@@ -6,7 +6,7 @@ start, compare vanilla vs. Recolored bytes, and print a ready-to-paste
 `VariantGroup { offset, variants: &[[vanilla], [recolored]]}` entry for
 every quartet that Recolored changed.
 
-Used to seed `src/randomize/palette_variants.rs` with the Recolored variant
+Used to seed `src/randomize/cosmetic/palette_variants.rs` with the Recolored variant
 at every known-changed position. Hand-added alternates (curated, from other
 palette hacks) are appended to each entry's `variants` list after the fact.
 

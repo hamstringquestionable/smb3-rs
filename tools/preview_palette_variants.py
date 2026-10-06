@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render every VariantGroup in src/randomize/palette_variants.rs as HTML swatches.
+"""Render every VariantGroup in src/randomize/cosmetic/palette_variants.rs as HTML swatches.
 
 Parses the Rust source (so hand-added alternates show up too) and emits a
 static HTML page with one card per VariantGroup: offset, then one row of
@@ -17,7 +17,7 @@ import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-SRC = ROOT / "src/randomize/palette_variants.rs"
+SRC = ROOT / "src/randomize/cosmetic/palette_variants.rs"
 OUT = ROOT / "palette_variants_preview.html"
 
 # FirebrandX Nostalgia-FBX palette, community-standard NES → sRGB.

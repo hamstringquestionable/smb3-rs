@@ -188,6 +188,11 @@ struct Cli {
     #[arg(long)]
     vanilla_king_quotes: bool,
 
+    /// Turn every fireball into a heart (MaCobra52). Cosmetic; not in the
+    /// flag key. Overrides a --sprite-patch that redraws fireballs too.
+    #[arg(long)]
+    fireball_hearts: bool,
+
     /// Recolor levels, enemies, and world maps with a random theme (world
     /// colors). Independent of player colors.
     /// Cosmetic; not encoded in the flag key.
@@ -394,9 +399,9 @@ struct Cli {
     #[arg(long)]
     no_hands_levels: bool,
 
-    /// Troll-pipe level slots (one regular level per world W2-W8 disguised as a
-    /// pipe tile): off, on, or maybe (the seed decides, hidden from the flag
-    /// key). Default: on.
+    /// Troll-pipe level slots (up to one regular level per world W2-W8
+    /// disguised as a pipe tile): off, on, or maybe (the seed decides, hidden
+    /// from the flag key). Default: on.
     #[arg(long, default_value = "on", value_parser = parse_tri)]
     troll_pipes: Tri,
 
@@ -451,6 +456,10 @@ struct Cli {
     /// Water enemies: off, shuffle, or wild (default: shuffle)
     #[arg(long, default_value = "shuffle", value_parser = parse_enemy_mode)]
     water: EnemyMode,
+
+    /// Swimming water enemies (Bloopers, Cheeps) can be stomped from dry land
+    #[arg(long)]
+    water_stomp: bool,
 
     /// Hammer/Boomerang/Fire Bros: off, shuffle, or wild (default: shuffle)
     #[arg(long, default_value = "shuffle", value_parser = parse_enemy_mode)]
@@ -591,6 +600,10 @@ fn build_options(cli: &Cli) -> Options {
                 if cli.vanilla_king_quotes {
                     opts.king_quotes = false;
                 }
+                // And fireball_hearts — cosmetic, absent from the key.
+                if cli.fireball_hearts {
+                    opts.fireball_hearts = true;
+                }
                 // Same for skip_rom_validation — a property of the input ROM.
                 if cli.skip_rom_validation {
                     opts.skip_rom_validation = true;
@@ -610,6 +623,7 @@ fn build_options(cli: &Cli) -> Options {
             player_color: cli.player_color,
             remove_flashing: !cli.keep_flashing,
             king_quotes: !cli.vanilla_king_quotes,
+            fireball_hearts: cli.fireball_hearts,
             // The maze reads `world_order`'s table as its airship spine and
             // chains the wand counter through the routine it installs, so it
             // cannot run without it.
@@ -669,6 +683,7 @@ fn build_options(cli: &Cli) -> Options {
             rotodiscs: cli.rotodiscs,
             cannons: cli.cannons,
             water: cli.water,
+            water_stomp: cli.water_stomp,
             bros: cli.bros,
             hb_encounters: cli.hb_encounters,
             limit_hazards: cli.limit_hazards,
@@ -701,6 +716,7 @@ fn print_summary(options: &Options, seed: u64, output_path: &std::path::Path) {
     eprintln!("  World colors: {}", if options.palette_themed { "themed" } else { "vanilla" });
     eprintln!("  Remove flashing: {}", if options.remove_flashing { "on" } else { "off" });
     eprintln!("  King quotes: {}", if options.king_quotes { "random" } else { "vanilla" });
+    eprintln!("  Fireballs: {}", if options.fireball_hearts { "hearts" } else { "vanilla" });
     eprintln!("  Enemies:  {}", if options.any_enemies_active() { "on" } else { "off" });
     eprintln!(
         "  Limit hazards: {}",

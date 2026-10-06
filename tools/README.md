@@ -46,7 +46,7 @@ these working.
 | Tool | Status | Notes |
 |------|--------|-------|
 | `rom_map.py` | OK | **30 commits** — the workhorse. Generates `rom_map.json`; also `--level <name>`, `--tile <byte>`, `--numbered`, `--walk`, `--progression`, `--check`. |
-| `gen_palette_variants.py` | **rewrites source** | Regenerates `src/randomize/palette_variants.rs` from the Recolored IPS + vanilla ROM. Check `git diff` after running. |
+| `gen_palette_variants.py` | **rewrites source** | Regenerates `src/randomize/cosmetic/palette_variants.rs` from the Recolored IPS + vanilla ROM. Check `git diff` after running. |
 | `extract_palette_variants.py` | OK | Feeds the above — extracts quartet-level `VariantGroup` entries. |
 | `add_variant_family.py` | **rewrites source** | Appends a hue-family-tinted variant to every `VariantGroup`. |
 | `gen_visual_previews.py` | OK **[PIL]** | Regenerates `web/assets/visual-previews/*.png`, shipped in the web app. |
@@ -74,7 +74,7 @@ Written once because they were written well.
 
 `preview_palette_pools.py` and `preview_palette_variants.py` write HTML into the
 repo root (untracked — delete after use). `gen_palette_variants.py` and
-`add_variant_family.py` rewrite `src/randomize/palette_variants.rs`; check
+`add_variant_family.py` rewrite `src/randomize/cosmetic/palette_variants.rs`; check
 `git diff` after running either.
 
 ## Playtest ROMs

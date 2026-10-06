@@ -154,17 +154,17 @@ impl fmt::Display for RomError {
 /// Use `changes()` for anything that means "overwrote". Counting covered bytes
 /// as overwrites reported 178 collisions on a default seed where 36 were real.
 #[derive(Clone, Debug)]
-pub struct WriteRecord {
-    pub offset: usize,
-    pub len: usize,
-    pub old_bytes: Vec<u8>,
-    pub new_bytes: Vec<u8>,
-    pub tag: String,
+pub(crate) struct WriteRecord {
+    pub(crate) offset: usize,
+    pub(crate) len: usize,
+    old_bytes: Vec<u8>,
+    new_bytes: Vec<u8>,
+    pub(crate) tag: String,
 }
 
 impl WriteRecord {
     /// The bytes this write actually changed, as `(offset, old, new)`.
-    pub fn changes(&self) -> impl Iterator<Item = (usize, u8, u8)> + '_ {
+    pub(crate) fn changes(&self) -> impl Iterator<Item = (usize, u8, u8)> + '_ {
         (0..self.len)
             .filter(|&i| self.old_bytes[i] != self.new_bytes[i])
             .map(move |i| (self.offset + i, self.old_bytes[i], self.new_bytes[i]))
@@ -173,7 +173,7 @@ impl WriteRecord {
     /// How many bytes this write changed. Equals `len` for a write that moved
     /// every byte it touched; less when a range write restated bytes it found
     /// already correct.
-    pub fn changed_len(&self) -> usize {
+    fn changed_len(&self) -> usize {
         (0..self.len).filter(|&i| self.old_bytes[i] != self.new_bytes[i]).count()
     }
 }
@@ -184,17 +184,16 @@ pub struct Header {
     pub prg_pages: u8,
     pub chr_pages: u8,
     pub mapper: u8,
-    pub mirroring_horizontal: bool,
 }
 
 /// A loaded NES ROM with original bytes preserved for diffing.
 #[derive(Clone)]
 pub struct Rom {
-    pub original: Vec<u8>,
+    pub(crate) original: Vec<u8>,
     pub data: Vec<u8>,
     pub header: Header,
     /// True when a synthetic iNES header was prepended (unheadered input ROM).
-    pub header_synthesized: bool,
+    header_synthesized: bool,
     /// The bytes as the user supplied them, when they were a Rev 0 (PRG0) dump
     /// that load-time conversion turned into Rev 1. `original` holds the
     /// converted Rev 1 bytes in that case, so this is the only place the input
@@ -216,7 +215,7 @@ impl Rom {
         Self::from_bytes_lax(bytes, false)
     }
 
-    /// Like [`from_bytes`], but optionally skips the SMB3 (USA Rev 1) layout
+    /// Like [`Self::from_bytes`], but optionally skips the SMB3 (USA Rev 1) layout
     /// checks (iNES magic, PRG/CHR page counts, exact size).
     ///
     /// The minimum-size check (16 bytes for the iNES header) is always
@@ -331,9 +330,7 @@ impl Rom {
         };
 
         let mapper = (flags6 >> 4) | (flags7 & 0xF0);
-        let mirroring_horizontal = (flags6 & 0x01) == 0;
-
-        let header = Header { prg_pages, chr_pages, mapper, mirroring_horizontal };
+        let header = Header { prg_pages, chr_pages, mapper };
 
         Ok(Rom {
             original: rom_bytes.clone(),
@@ -358,7 +355,7 @@ impl Rom {
     /// (the free-space scan above all) is asking "what does vanilla look
     /// like?" and the answer has to be Rev 1. Use
     /// [`ips_baseline_bytes`](Self::ips_baseline_bytes) for the other question.
-    pub fn original_bytes(&self) -> &[u8] {
+    fn original_bytes(&self) -> &[u8] {
         if self.header_synthesized { &self.original[HEADER_SIZE..] } else { &self.original }
     }
 
@@ -383,7 +380,7 @@ impl Rom {
 
     /// True when the supplied ROM was a Rev 0 (PRG0) dump that load-time
     /// conversion turned into Rev 1. Callers surface this to the user.
-    pub fn converted_from_prg0(&self) -> bool {
+    pub(crate) fn converted_from_prg0(&self) -> bool {
         self.prg0_source.is_some()
     }
 
@@ -427,11 +424,11 @@ impl Rom {
         Ok(())
     }
 
-    pub fn read_byte(&self, offset: usize) -> u8 {
+    pub(crate) fn read_byte(&self, offset: usize) -> u8 {
         self.data[offset]
     }
 
-    pub fn write_byte(&mut self, offset: usize, val: u8) {
+    pub(crate) fn write_byte(&mut self, offset: usize, val: u8) {
         let old = self.data[offset];
         if old != val {
             let tag = self.current_tag();
@@ -450,7 +447,7 @@ impl Rom {
         &self.data[start..start + len]
     }
 
-    pub fn write_range(&mut self, start: usize, data: &[u8]) {
+    pub(crate) fn write_range(&mut self, start: usize, data: &[u8]) {
         let old = self.data[start..start + data.len()].to_vec();
         if old != data {
             let tag = self.current_tag();
@@ -473,18 +470,18 @@ impl Rom {
     /// Takes `&str` rather than `&'static str` so a tag can name something only
     /// known at runtime — `apply_ips_patch` labels a patch by filename, which is
     /// what makes a collision between two applied patches legible.
-    pub fn set_tag(&mut self, tag: &str) {
+    pub(crate) fn set_tag(&mut self, tag: &str) {
         self.tag_stack.clear();
         self.tag_stack.push(tag.to_string());
     }
 
     /// Push a sub-tag onto the stack for hierarchical tagging within a module.
-    pub fn push_tag(&mut self, tag: &str) {
+    pub(crate) fn push_tag(&mut self, tag: &str) {
         self.tag_stack.push(tag.to_string());
     }
 
     /// Pop the most recent sub-tag from the stack.
-    pub fn pop_tag(&mut self) {
+    pub(crate) fn pop_tag(&mut self) {
         self.tag_stack.pop();
     }
 
@@ -495,27 +492,31 @@ impl Rom {
     // --- Write log queries ---
 
     /// Returns the full ordered write log.
-    pub fn write_log(&self) -> &[WriteRecord] {
+    #[cfg(test)]
+    pub(crate) fn write_log(&self) -> &[WriteRecord] {
         &self.write_log
     }
 
     /// Returns all write records overlapping the byte range `[start, end)`.
-    pub fn writes_in_range(&self, start: usize, end: usize) -> Vec<&WriteRecord> {
+    pub(crate) fn writes_in_range(&self, start: usize, end: usize) -> Vec<&WriteRecord> {
         self.write_log.iter().filter(|r| r.offset < end && r.offset + r.len > start).collect()
     }
 
     /// Returns all write records whose tag starts with `prefix`.
-    pub fn writes_by_tag(&self, prefix: &str) -> Vec<&WriteRecord> {
+    #[cfg(test)]
+    pub(crate) fn writes_by_tag(&self, prefix: &str) -> Vec<&WriteRecord> {
         self.write_log.iter().filter(|r| r.tag.starts_with(prefix)).collect()
     }
 
     /// Returns all write records covering a specific byte offset.
-    pub fn writes_at(&self, offset: usize) -> Vec<&WriteRecord> {
+    #[cfg(test)]
+    fn writes_at(&self, offset: usize) -> Vec<&WriteRecord> {
         self.write_log.iter().filter(|r| offset >= r.offset && offset < r.offset + r.len).collect()
     }
 
     /// Returns true if any write record overlaps the byte range `[start, end)`.
-    pub fn has_writes_in_range(&self, start: usize, end: usize) -> bool {
+    #[cfg(test)]
+    fn has_writes_in_range(&self, start: usize, end: usize) -> bool {
         self.write_log.iter().any(|r| r.offset < end && r.offset + r.len > start)
     }
 
@@ -530,7 +531,7 @@ impl Rom {
     /// report not worth reading.
     ///
     /// Note this compares only the *top-level* tag, so passes within one family
-    /// (`koopalings/y_clamp` against `koopalings/random_hits`) are invisible to
+    /// (`koopalings/x_clamp` against `koopalings/random_hits`) are invisible to
     /// each other here. Query full tags with [`writes_in_range`](Self::writes_in_range)
     /// for that.
     pub fn find_collisions(&self) -> Vec<(usize, String, String)> {
@@ -723,7 +724,6 @@ mod tests {
         assert_eq!(rom.header.prg_pages, 16);
         assert_eq!(rom.header.chr_pages, 16);
         assert_eq!(rom.header.mapper, 4);
-        assert!(rom.header.mirroring_horizontal);
     }
 
     #[test]

@@ -165,8 +165,8 @@ PRG_OFFSET = 0x10       # after 16-byte iNES header
 
 # Level data regions by tileset (file offset ranges + extra-byte dispatch info)
 # From powerups.rs / rom_data.rs::LEVEL_DATA_REGIONS.
-# `randomize_note_wood` mirrors the Rust struct field — in TS2 / TS9 the same
-# group-2 byte2 shapes map to bridge / desert decoration tiles instead of
+# `randomize_note_wood` mirrors the Rust struct field — in TS2 the same
+# group-2 byte2 shapes map to bridge / decoration tiles instead of
 # note/wood powerups, so they must not be flagged or shuffled.
 LEVEL_DATA_REGIONS = [
     {
@@ -228,7 +228,7 @@ LEVEL_DATA_REGIONS = [
         "start": 0x28F36,
         "end": 0x2A005,
         "extra_byte_dispatches": {10, 11, 12, 13, 35, 36, 37, 38, 39, 40, 41, 42},
-        "randomize_note_wood": False,  # shapes 1-5 = palms/cacti in TS9
+        "randomize_note_wood": True,
     },
     {
         "name": "Dungeon (TS2)",
@@ -695,8 +695,8 @@ def parse_level_commands(rom, offset, region):
             # munchers / invis blocks) — see POWER_NAMES.
             # Group 2 (0x40): byte2 1..3 = note blocks (flower/leaf/star),
             # byte2 4..6 = wood blocks (flower/leaf/star). These are powerups
-            # *only* in regions where `randomize_note_wood` is true (in TS2/TS9
-            # the same shapes are bridges / desert decorations).
+            # *only* in regions where `randomize_note_wood` is true (in TS2
+            # the same shapes are bridges / decorations).
             if group == 1 and 16 <= fixed_idx < 16 + len(LL_POWER_BLOCKS):
                 power_idx = fixed_idx - 16
                 cmd["powerup"] = True
@@ -1993,14 +1993,15 @@ def render_numbered_map(rom, world_idx, pipe_pairs, traverse_rocks=False):
 
     # Derive level names from tiles, with fortress numbering
     grid_for_tiles = read_tile_grid(rom, world_idx)
-    # Count forts that will get default "NF" name (not overridden)
-    total_forts = sum(1 for pos in ordered_nodes
-                      if pos in node_number
-                      and node_number[pos][1]["type"] == "fortress"
-                      and (world_idx, node_number[pos][1]["index"])
-                          not in LEVEL_NAME_OVERRIDES)
+    # Forts that get the default "NF" name (not overridden), numbered by
+    # pointer-table entry index like the Rust NodeCatalog — not BFS order.
+    fort_idxs = sorted(node_number[pos][1]["index"] for pos in ordered_nodes
+                       if pos in node_number
+                       and node_number[pos][1]["type"] == "fortress"
+                       and (world_idx, node_number[pos][1]["index"])
+                           not in LEVEL_NAME_OVERRIDES)
+    fort_ord = {ei: i + 1 for i, ei in enumerate(fort_idxs)}
     entry_names = {}  # pos -> name string
-    fort_count = 0
     for pos in ordered_nodes:
         if pos not in node_number:
             continue
@@ -2010,9 +2011,8 @@ def render_numbered_map(rom, world_idx, pipe_pairs, traverse_rocks=False):
         name = derive_level_name(world_idx, entry["index"], entry["type"], tile)
         # Number fortresses: NF if single, NF1/NF2/... if multiple
         if name and name.endswith("F") and len(name) <= 2:
-            fort_count += 1
-            if total_forts > 1:
-                name = f"{name}{fort_count}"
+            if len(fort_idxs) > 1:
+                name = f"{name}{fort_ord[entry['index']]}"
         entry_names[pos] = name
     final_nodes = steps[-1]["nodes"]
     final_paths = steps[-1]["path_tiles"]
@@ -2581,19 +2581,20 @@ def resolve_level_name(rom, query):
             if name:
                 world_entries.append((name, entry, pos, tile))
 
-        # Number fortresses if multiple
+        # Number fortresses if multiple. Order by pointer-table entry index,
+        # as the Rust NodeCatalog does (node_catalog/naming.rs) — not by
+        # (row, col), which puts a later-screen fort on a higher row first
+        # and swaps vanilla 3F1/3F2 and 4F1/4F2.
         fort_entries = [(n, e, p, t) for n, e, p, t in world_entries
                         if n.endswith("F") and len(n) <= 2]
         if len(fort_entries) > 1:
-            numbered = []
-            for idx, (n, e, p, t) in enumerate(world_entries):
-                if n.endswith("F") and len(n) <= 2:
-                    count = sum(1 for nn, _, _, _ in world_entries[:idx + 1]
-                                if nn.endswith("F") and len(nn) <= 2)
-                    numbered.append((f"{n}{count}", e, p, t))
-                else:
-                    numbered.append((n, e, p, t))
-            world_entries = numbered
+            fort_ord = {id(e): i + 1 for i, (_, e, _, _) in enumerate(
+                sorted(fort_entries, key=lambda x: x[1]["index"]))}
+            world_entries = [
+                (f"{n}{fort_ord[id(e)]}", e, p, t) if id(e) in fort_ord
+                else (n, e, p, t)
+                for n, e, p, t in world_entries
+            ]
 
         for name, entry, pos, tile in world_entries:
             all_names.append((name.upper(), wi, entry, name))

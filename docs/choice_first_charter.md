@@ -508,7 +508,7 @@ distinct near-optimal route (identity = level-set), drops dominated superset
 detours, and calls a world *choiceful* when ≥2 routes sit within 3 points.
 
 **Pipeline** (per world), as of the 2026-07-30 session and still current —
-`overworld_build/mod.rs`'s own module doc is the authority: `Connectivity`
+`overworld/build/mod.rs`'s own module doc is the authority: `Connectivity`
 (bridge islands with pipe pairs) → `Levels` → `Forts` → `Locks` → `Shaping`
 (the diagnosis-driven improvement loop) → `SparePipes` (the full vanilla pipe
 budget is always spent; the guard steers where), the whole thing wrapped in

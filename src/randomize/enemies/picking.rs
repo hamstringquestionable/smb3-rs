@@ -9,7 +9,7 @@ use super::*;
 /// (0); fire jets self-position differently, so they carry an offset: the upward
 /// jet sits `FIREJET_UP_Y_RISE` rows higher (−), the downward jet
 /// `FIREJET_DOWN_Y_DROP` rows lower (+). See `swap_enemy`.
-pub(super) fn piranha_pool_y_offset(id: u8) -> i8 {
+fn piranha_pool_y_offset(id: u8) -> i8 {
     match id {
         FIREJET_UP => -(FIREJET_UP_Y_RISE as i8),
         FIREJET_DOWN => FIREJET_DOWN_Y_DROP as i8,
@@ -79,7 +79,7 @@ pub(super) fn pick_bucket_first<R: Rng>(
 /// (CHR-aware) pick, then filter through the placement constraints before
 /// committing. Applying the constraints uniformly — instead of only in the
 /// wild-swap branch — is what makes the bertha cap (and the giant-red /
-/// piranha-hazard guards) cover the Force*/ExcludeHazards paths too.
+/// piranha-hazard guards) cover the Force*/Exclude paths too.
 pub(super) fn pick_replacement<R: Rng>(
     entry: &SegmentEntry,
     protection: Option<EntryProtection>,
@@ -92,7 +92,7 @@ pub(super) fn pick_replacement<R: Rng>(
     let (slot4, slot5) = chr.local;
     let (seg4, seg5) = chr.segment;
     // Base pool + primary pick. A pool-replacing protection
-    // (ForceShell/TankBro/Stompable/ExcludeHazards) chooses the pool;
+    // (ForceShell/TankBro/Stompable/Exclude) chooses the pool;
     // otherwise it's the normal class pool, picked via the
     // wild/piranha/plain strategy. `None` => no swap for this entry.
     let picked: Option<(Option<u8>, Cow<[u8]>)> = match protection {
@@ -109,16 +109,15 @@ pub(super) fn pick_replacement<R: Rng>(
             let pick = pick_compatible(&sp, slot4, slot5, rng);
             (pick, Cow::Owned(sp))
         }),
-        Some(EntryProtection::ExcludeHazards) => {
+        Some(EntryProtection::Exclude(group)) => {
             find_class_pool(entry.obj_id, modes).map(|pool| {
-                // Drop hazards, but keep any of the same category as the
-                // vanilla enemy here (additive-only: don't strip a
-                // designed-in hazard, only block introducing a new one).
+                // Additive-only: an enemy sharing an ID list with the vanilla
+                // enemy here survives (see `Group::excludes`).
                 let fp: Vec<u8> = pool
                     .slice(wild_pool)
                     .iter()
                     .copied()
-                    .filter(|&id| !hazard_excluded(id, entry.obj_id))
+                    .filter(|&id| !group.excludes(id, entry.obj_id))
                     .collect();
                 let pick = pick_compatible(&fp, slot4, slot5, rng);
                 (pick, Cow::Owned(fp))
@@ -161,10 +160,10 @@ pub(super) fn pick_replacement<R: Rng>(
         // follows the player into all of them (see CHASER_IDS).
         let chaser_clash = CHASER_IDS.contains(&id) && !is_chr_compatible(id, seg4, seg5);
         // This segment's hazard budget is spent (always, under HazardLimit::All).
-        // Additive-only, exactly like the curated ExcludeHazards entries: a
+        // Additive-only, exactly like the curated Exclude entries: a
         // hazard sharing the vanilla enemy's category is still allowed, so
         // designed-in hazards survive and thwomp-variant shuffle keeps working.
-        let added_hazard = limits.hazard_cap_full && hazard_excluded(id, entry.obj_id);
+        let added_hazard = limits.hazard_cap_full && HAZARDS.excludes(id, entry.obj_id);
         !(over_cap || bad_giant || chaser_clash || hb_rewritten || added_hazard)
     };
     // (A piranha slot can't become a hazard: the piranha pools are

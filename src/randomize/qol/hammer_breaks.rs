@@ -1,9 +1,6 @@
 //! Hammer item also breaks fortress locks / water-gap bridges.
 
-use crate::randomize::lock_keys;
-use crate::randomize::rom_data::{
-    self, FS_HAMMER_LOCKS, FS_HAMMER_TABLES, Grid, prg_bank_file_to_cpu,
-};
+use crate::randomize::rom_data::{self, FS_HAMMER_LOCKS, FS_HAMMER_TABLES, prg_bank_file_to_cpu};
 use crate::rom::Rom;
 
 // Make the hammer item also break fortress lock tiles and/or water-gap
@@ -14,7 +11,7 @@ use crate::rom::Rom;
 // matches rock tiles $51–$52. We replace this with a JSR to a table-driven
 // subroutine in PRG026 free space whose tables are built per run: the 2 rock
 // tiles are always present, `locks` adds the 3 fortress lock tiles plus every
-// numbered lock standing on the finished map, and `bridges` adds the water gap
+// lock tile the seed allocated, and `bridges` adds the water gap
 // lock (0x9D → 0xB3). A vanilla-shaped map gives 2–6 entries; a world-maze map
 // can reach 23, which is why the tables have their own allocation.
 //
@@ -39,41 +36,42 @@ const HAMMER_LOCKS_SUB_CPU: u16 = prg_bank_file_to_cpu(26, FS_HAMMER_LOCKS);
 /// Bytes reserved for the three parallel tables; must match the registry row.
 const HAMMER_TABLES_RESERVED: usize = 96;
 
-/// Append every numbered lock standing on the finished map, of one kind.
+/// Append the seed's allocated lock tiles, of one kind.
 ///
-/// **Or the hammer refuses exactly the locks that carry a hint.** Those tiles
-/// are `lock_keys`' invention rather than vanilla's, so `LOCK_TILES` does not
-/// name them; they are taken from the finished map instead, the same way the
-/// removable table is.
-fn push_numbered(
-    grids: &[Grid],
+/// **Or the hammer refuses exactly the locks the allocator made.** Those tiles
+/// are `lock_keys`' per-seed invention, so `LOCK_TILES` does not name them;
+/// `allocated` is the allocator's own `(tile, revealed path)` record, the same
+/// one the removable table is built from.
+///
+/// Both facts the hammer needs come from the reveal: a lock that opens into a
+/// bridge is a water gap, and one that opens into a vertical path takes the
+/// vertical animation — the same `1` the plain vertical lock uses.
+fn push_allocated(
+    allocated: &[(u8, u8)],
     water: bool,
     breakable: &mut Vec<u8>,
     replace: &mut Vec<u8>,
     tilefix: &mut Vec<u8>,
 ) {
-    let present = lock_keys::tiles_on_map(grids);
-    for tile in 0..=255u8 {
-        if !present[tile as usize] || lock_keys::numbered_lock_is_water(tile) != water {
+    for &(tile, revealed) in allocated {
+        if (revealed == rom_data::BRIDGE_TILE) != water {
             continue;
         }
-        if let Some((revealed, anim)) = lock_keys::numbered_lock(tile) {
-            // Belt and braces: `numbered_lock` already declines vanilla's own
-            // lock tiles, so this cannot fire today. It stays because being
-            // wrong costs a duplicate row, and removing it costs finding out the
-            // hard way that some future family overlaps vanilla's again.
-            debug_assert!(
-                !rom_data::LOCK_TILES.contains(&tile) && tile != rom_data::WATER_GAP_TILE,
-                "{tile:#04X} is both a vanilla lock and a hint tile"
-            );
-            breakable.push(tile);
-            replace.push(revealed);
-            tilefix.push(anim);
-        }
+        breakable.push(tile);
+        replace.push(revealed);
+        tilefix.push(u8::from(rom_data::VALID_VERT.contains(&revealed)));
     }
 }
 
-pub(crate) fn hammer_breaks_tiles(rom: &mut Rom, locks: bool, bridges: bool, grids: &[Grid]) {
+/// `allocated` is the seed's allocated lock tiles as `(tile, revealed path)`:
+/// `LockTiles::pairs` from a run, or `lock_keys::allocated_pairs_on_rom` for a
+/// ROM this run did not write.
+pub(crate) fn hammer_breaks_tiles(
+    rom: &mut Rom,
+    locks: bool,
+    bridges: bool,
+    allocated: &[(u8, u8)],
+) {
     // Build tables dynamically based on which flags are set.
     // Always include rocks (2 entries), then conditionally add locks (3) and bridge (1).
     let mut breakable: Vec<u8> = vec![0x51, 0x52]; // rocks
@@ -91,7 +89,7 @@ pub(crate) fn hammer_breaks_tiles(rom: &mut Rom, locks: bool, bridges: bool, gri
         }
         tilefix.extend_from_slice(&[0x01, 0x00, 0x00]);
 
-        push_numbered(grids, false, &mut breakable, &mut replace, &mut tilefix);
+        push_allocated(allocated, false, &mut breakable, &mut replace, &mut tilefix);
     }
     if bridges {
         breakable.push(rom_data::WATER_GAP_TILE);
@@ -101,10 +99,10 @@ pub(crate) fn hammer_breaks_tiles(rom: &mut Rom, locks: bool, bridges: bool, gri
         );
         tilefix.push(0x00);
 
-        // A numbered water gap is still a water gap: it belongs to this switch,
+        // An allocated water gap is still a water gap: it belongs to this switch,
         // not the lock one, or turning locks on would quietly start breaking
         // bridges.
-        push_numbered(grids, true, &mut breakable, &mut replace, &mut tilefix);
+        push_allocated(allocated, true, &mut breakable, &mut replace, &mut tilefix);
     }
 
     let table_len = breakable.len();
@@ -206,10 +204,9 @@ mod tests {
             return (vec![], vec![], vec![]);
         };
         let mut rom = crate::rom::Rom::from_bytes_lax(&bytes, true).unwrap();
-        let grids = rom_data::read_all_tile_grids(&rom);
-        hammer_breaks_tiles(&mut rom, locks, bridges, &grids);
+        hammer_breaks_tiles(&mut rom, locks, bridges, &[]);
 
-        // A vanilla ROM carries no numbered locks, so the table is the classic
+        // A vanilla ROM carries no allocated locks, so the table is the classic
         // rocks/locks/bridge shape — which is exactly what makes it a fair pin
         // for the literals these replaced.
         let n = 2 + if locks { 3 } else { 0 } + usize::from(bridges);
@@ -251,15 +248,15 @@ mod tests {
         assert_eq!(tilefix, vec![0x00, 0x01, 0x01, 0x00, 0x00, 0x00]);
     }
 
-    /// **Every numbered lock on the map is breakable.**
+    /// **Every allocated lock on the map is breakable, under the right switch.**
     ///
-    /// The regression this exists for: the numbered tiles are `lock_keys`'
-    /// invention, so `rom_data::LOCK_TILES` does not name them, and a table
-    /// built only from that list left the hammer refusing precisely the locks
-    /// that carry a hint. Nothing else would have caught it — the plain-lock
-    /// tests above pass on a vanilla ROM, which has no numbered locks in it.
+    /// The regression this exists for: allocated tiles are `lock_keys`'
+    /// per-seed invention, so `rom_data::LOCK_TILES` does not name them, and a
+    /// table built only from that list left the hammer refusing precisely the
+    /// locks that carry a hint. Nothing else would have caught it — the
+    /// plain-lock tests above pass on a vanilla ROM, which has none.
     #[test]
-    fn the_hammer_breaks_numbered_locks_too() {
+    fn the_hammer_breaks_allocated_locks_too() {
         let Ok(bytes) = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes") else {
             eprintln!("SKIP: requires the ROM");
             return;
@@ -284,41 +281,36 @@ mod tests {
             rom.read_range(FS_HAMMER_TABLES, n).to_vec()
         };
 
-        // Both hint modes, because they stamp different tile families and the
-        // hammer has to know both. It knew only one of them once already.
+        // Both hint modes, because they allocate different tiles and the hammer
+        // has to know both. It knew only one family once already.
         for hints in [crate::HintMode::Full, crate::HintMode::Partial] {
             let rom = build(crate::Tri::On, crate::Tri::Off, hints);
-            let present = lock_keys::tiles_on_map(&rom_data::read_all_tile_grids(&rom));
-            let numbered: Vec<u8> = (0..=255u8)
-                .filter(|&t| present[t as usize] && lock_keys::numbered_lock(t).is_some())
-                .collect();
+            let allocated = crate::randomize::overworld::lock_keys::allocated_pairs_on_rom(&rom);
+            let water = |revealed: u8| revealed == rom_data::BRIDGE_TILE;
             assert!(
-                !numbered.is_empty(),
-                "{hints:?}: seed 5 has no hint locks, so this proves nothing"
+                !allocated.is_empty(),
+                "{hints:?}: seed 5 has no allocated locks, so this proves nothing"
             );
             assert!(
-                numbered.iter().any(|&t| lock_keys::numbered_lock_is_water(t)),
-                "{hints:?}: seed 5 has no hint water gap, so the split below proves nothing"
+                allocated.iter().any(|&(_, r)| water(r)),
+                "{hints:?}: seed 5 has no allocated water gap, so the split below proves nothing"
             );
 
             // Locks on, bridges off: the path locks break, the water gaps do not.
             // Giving a bridge gap a digit must not move it onto the other switch.
             let table = breakable(&rom);
-            for &tile in &numbered {
-                let water = lock_keys::numbered_lock_is_water(tile);
+            for &(tile, revealed) in &allocated {
                 assert_eq!(
                     table.contains(&tile),
-                    !water,
-                    "numbered {} {tile:#04X}: breakable={}, expected {}",
-                    if water { "water gap" } else { "lock" },
+                    !water(revealed),
+                    "allocated {tile:#04X} -> {revealed:#04X}: breakable={}",
                     table.contains(&tile),
-                    !water
                 );
             }
 
-            // Both on: everything numbered breaks.
+            // Both on: everything allocated breaks.
             let table = breakable(&build(crate::Tri::On, crate::Tri::On, hints));
-            for &tile in &numbered {
+            for &(tile, _) in &allocated {
                 assert!(table.contains(&tile), "{tile:#04X} unbreakable with both switches on");
             }
         }

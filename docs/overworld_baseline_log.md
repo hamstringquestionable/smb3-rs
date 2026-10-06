@@ -34,6 +34,105 @@ hashes they describe are gone; the reasoning is not.
 
 ## Entries
 
+### 2026-10-02 — away fortress families on Some hints (feature/away-fort-families)
+
+**Intended: the marked away fortress takes `$EC`, so the sky lock pool starts
+one byte later.** Under some-hints every other away fortress becomes `$EC` and
+its lock wears a corner nub (`away_family.rs`). `$EC` was the first byte of
+`lock_keys::SKY_POOL`, which is now `$ED`–`$FE`. In standard mode, where the
+baseline runs, nothing is marked. The only change is that every allocated sky
+lock tile is renumbered up by one byte.
+
+**What moved.** 11 of the 20 seeds: 1, 2, 4, 9, 10, 11, 13, 14, 16, 18 and 20,
+the ones with an allocated sky lock.
+
+**How that was established.** Byte diff, `--patched-rom --no-palettes`, old tree
+against new, all 20 seeds in standard mode. Every changed byte falls in one of
+four lock-owned regions:
+
+- 11 grid cells, each going from `n` to `n + 1` within the old pool;
+- the metatile art at those indices (88 bytes);
+- `FS_MAP_REMOVABLE` (11 bytes);
+- `FS_LOCK_MIRROR` (11 bytes).
+
+No pointer table, lock entry, level, enemy or item byte moved.
+
+The world maze on Some was diffed the same way over seeds 1–10. Every changed
+byte is in those four regions, the 26-byte crumble pick at `PRG011_AA8D` (file
+`0x16A9D`), or the ending montage's redrawn maps (`credits::render_world_maps`,
+`0x32126`–`0x325E9`). The grid changes are the intended ones: 37 `$EB → $EC`
+fortresses, and locks renumbered or newly nubbed (three plain `$E4` sky locks
+became allocated nubbed tiles).
+
+`test_route_census` is not rerun because nothing the builder reads changed:
+`stamp_into`'s alternation draws no RNG, and `is_completion_unsafe` answers the
+same for every byte. `$EC` left the pool but joined `REMOVABLE_PAIRS`, so it is
+still an obstacle.
+
+### 2026-09-30 — lock tiles are allocated per seed (#309, feature/lock-tile-allocator)
+
+**Intended: lock tile bytes move; no map, pointer or pipe byte does.** The
+fixed lock-tile tables in `lock_keys.rs` are replaced by a per-seed allocator,
+and a lock now opens into the exact path it stands on. In standard mode that
+changes every lock on a vertical sky path (`$DB`, #226) and on a page-2 path
+(`$AA`/`$AB`/`$AC`/`$B0`/`$B7`/`$B8`/`$B9`/`$BA`). Each of those used to wear
+`$54`/`$56` and reveal a plain ground path, and now takes an allocated byte that
+reveals itself. That is about 13% of locks (200-seed census of the tile under
+each lock), so most seeds have at least one.
+
+**What moved.** 19 of the 20 seeds. Seed 12 has no such lock, and its hash is
+unchanged.
+
+**How that was established.** Byte diff, `--patched-rom --no-palettes`, old tree
+against new, seeds 1, 8, 12 and 16 in standard mode and 1, 8, 12 and 16 in the
+world maze. Every changed byte falls in one of four lock-owned regions: the lock
+cells of the tile grids, the metatile art at the allocated indices, the
+removable table (`FS_MAP_REMOVABLE`) and its PRG011 mirror (`FS_LOCK_MIRROR`).
+Seed 12 is byte-identical across the whole ROM, and no level, enemy, item or
+king-quote byte moved in any seed, so the RNG stream did not shift.
+
+In the maze the ending montage also changed: `credits::render_world_maps` now
+draws an allocated lock as the padlock or water gap whose art it copies. Before,
+every hint tile fell to the `$3F` terrain entry of its lookup table.
+
+`test_route_census` at 1000 seeds is unchanged figure for figure. The only
+builder-visible change is `is_completion_unsafe` treating the whole of both
+pools as obstacles, which adds `$7C`–`$7F`, bytes no map places.
+
+### 2026-09-30 — desert note/wood item blocks join the shuffle (feature/desert-bro-arena)
+
+**Intended: an RNG-stream shift, not a builder change.** `LEVEL_DATA_REGIONS`'
+desert row had `randomize_note_wood: false` on a misreading of the tileset's
+generator table (see `docs/smb3_rom_reference.md`, "Group 2 Fixed-Size"). It is
+now `true`, so `powerups::randomize` makes five more draws on the main stream —
+four vanilla blocks in World 2's levels and the item block in the rebuilt bro
+arena — and it runs ahead of the overworld builder.
+
+**What moved.** 11 of the 20 seeds (1, 4, 5, 6, 11, 15-20). The other nine keep
+their overworld.
+
+**How that was established.**
+
+- The always-on arena rebuild landed in the same branch first and left this
+  baseline green; the test went red only when the region flag flipped.
+- `rng.get_word_pos()` probed with the flag on and off, seeds 1 and 2: the
+  position after `powerups` is 243 against 238 in both seeds — the five draws.
+  At the builder's entry seed 1 is at 1379 against 1370 and is re-dealt; seed 2
+  is at 1375 both ways, the stages in between having drawn five fewer words,
+  and its map is untouched.
+- Byte diff of the same two seeds (`--patched-rom --no-palettes`): seed 2
+  differs only in level data from the desert region onward and in enemy data,
+  773 bytes, none of them map, pointer-table or pipe bytes. Seed 1 differs in
+  those and in its map grids and pointer tables, as a re-deal does.
+
+Why the intervening stages re-align in some seeds was not pursued; it is how
+the stream already behaved, not something this change introduced.
+
+**The route census cannot see this change**, and was not used as evidence for
+it: `test_route_census` drives the builder directly from its own per-seed
+generator and never runs `powerups`. Run on this tree at 1000 seeds it reads
+2.591 routes/world, 5.51% linear, 0.30% below floor.
+
 ### 2026-09-24 — the item tables roll before the overworld (feature/anchor-canoe)
 
 **Intended, and a re-capture of a re-capture.** The reorder landed first on the

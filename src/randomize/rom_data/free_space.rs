@@ -39,10 +39,10 @@ use crate::rom::Rom;
 /// then have their item byte randomized by another — and is the place to say
 /// so, not a licence to let an unrelated pass wander in.
 pub struct FreeSpaceAlloc {
-    pub offset: usize,
-    pub size: usize,
-    pub owners: &'static [&'static str],
-    pub label: &'static str,
+    pub(crate) offset: usize,
+    pub(crate) size: usize,
+    pub(crate) owners: &'static [&'static str],
+    pub(crate) label: &'static str,
 }
 
 /// Shorthand so registry rows stay one line each.
@@ -421,16 +421,17 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
     ),
     // PRG001 (file 0x02010, CPU $A000–$BFFF)
     fs(0x0382A, 23, &["koopalings"], "koopa_hits: subroutine + defeat JMP + threshold table"),
-    fs(0x03841, 13, &["koopalings"], "koopa_collision_guard: skip collision bitmap during invuln"),
-    fs(0x0384E, 16, &["koopalings"], "koopa_vram_clear: clear VRAM buffer on defeat"),
+    fs(0x03841, 13, &["koopalings"], "koopa_collision_guard: no hurt just after a stomp"),
+    fs(0x0384E, 16, &["koopalings"], "bowser_door_buffer_clear: empty graphics buffer at the door"),
     fs(
         0x0385E,
         12,
         &["koopalings"],
         "koopa_fire_preset: set stomp counter from threshold table for fireball defeat",
     ),
-    fs(0x03FD0, 22, &["koopalings"], "koopa_y_clamp: clamp Koopaling Y position to screen"),
+    fs(0x03FD0, 22, &["koopalings"], "koopa_x_clamp: keep the Koopaling's X on screen"),
     fs(0x03FE6, 36, &["fire_flower"], "position-hash suit routine + pool table"),
+    fs(0x0400A, 6, &["koopalings"], "koopa_jump_base: Koopaling_JumpYVelsBase for hit counts 0-5"),
     fs(
         0x02713,
         17,
@@ -565,7 +566,7 @@ pub(crate) const FS_MAZE_VISITED: usize = 0x155EC;
 pub(crate) const FS_MAZE_GAMEOVER: usize = 0x1562C;
 
 /// The flag key + seed stamp: `"S3R"`, a length byte, the flag-key bytes and
-/// the seed. **This is not new** — `randomizer::STAMP_OFFSET` has written here
+/// the seed. **This is not new** — `pipeline::STAMP_OFFSET` has written here
 /// since long before the registry existed, with no row to say so, which is
 /// exactly how the world-maze wand gate came to be sited on top of it. Sized
 /// for the largest flag key the format can produce (3 magic + 1 length + up to
@@ -983,35 +984,44 @@ pub(crate) const KOOPA_HITS_SUB_CPU: u16 = 0xB81A;
 /// CPU address of the threshold table: $A000 + (0x0383A - 0x02010) = $B82A
 pub(crate) const KOOPA_HITS_TABLE_CPU: u16 = 0xB82A;
 
-// Koopaling collision guard — skip collision bitmap update during invulnerability.
-// Source: Fred's Koopaling fixes.
+// Koopaling collision guard — bounce instead of Player_GetHurt for ~16 frames
+// after a stomp. Source: Fred. See `koopalings::koopaling_collision_guard`.
 pub(crate) const FS_KOOPA_COLLISION_GUARD: usize = 0x03841; // 13 bytes
 
 pub(crate) const KOOPA_COLLISION_GUARD_CPU: u16 = 0xB831; // $A000 + (0x03841 - 0x02010)
 
-// Koopaling defeat VRAM buffer clear — zero $0300/$0301 on defeat to prevent
-// stale PPU writes during wand/king transition in non-native worlds.
-// Source: Fred's Koopaling fixes.
-pub(crate) const FS_KOOPA_VRAM_CLEAR: usize = 0x0384E; // 16 bytes
+// Bowser final-door graphics-buffer clear — empty $0300/$0301 each frame of the
+// door scene, where Graphics_Queue = 6 keeps the buffer from being flushed.
+// Source: Fred. See `koopalings::bowser_door_buffer_clear`.
+pub(crate) const FS_BOWSER_DOOR_BUFFER_CLEAR: usize = 0x0384E; // 16 bytes
 
-pub(crate) const KOOPA_VRAM_CLEAR_CPU: u16 = 0xB83E; // $A000 + (0x0384E - 0x02010)
+pub(crate) const BOWSER_DOOR_BUFFER_CLEAR_CPU: u16 = 0xB83E; // $A000 + (0x0384E - 0x02010)
 
-// Koopaling Y-position clamp — keep bouncing Koopalings on screen in non-native rooms.
-// Source: Fred's Koopaling fixes.
-pub(crate) const FS_KOOPA_Y_CLAMP: usize = 0x03FD0; // 22 bytes
+// Koopaling X clamp — keeps the Koopaling's X inside $08-$E7 on frames 0-3
+// ($91 is Objects_X; ported as a "Y clamp"). Source: Fred.
+// See `koopalings::koopaling_x_clamp`.
+pub(crate) const FS_KOOPA_X_CLAMP: usize = 0x03FD0; // 22 bytes
 
-pub(crate) const KOOPA_Y_CLAMP_CPU: u16 = 0xBFC0; // $A000 + (0x03FD0 - 0x02010)
+pub(crate) const KOOPA_X_CLAMP_CPU: u16 = 0xBFC0; // $A000 + (0x03FD0 - 0x02010)
 
 // Random Fire Flower (issue #22) — injected routine that derives the granted
 // power state from a seed-derived salt (the shuffled starting world) + the
 // current World_Num + the level layout pointer + the flower's screen number,
 // instead of the vanilla hardcoded Fire. Sits in the PRG001 bank-end gap right
-// after koopa_y_clamp (which ends at 0x3FE6). Up to 36 bytes: 26-byte routine +
+// after koopa_x_clamp (which ends at 0x3FE6). Up to 36 bytes: 26-byte routine +
 // a 4- or 6-byte pool table. ObjHit_FireFlower runs with PRG001 banked at
 // $A000, so the JSR from the hook is bank-local.
 pub(crate) const FS_FIRE_FLOWER: usize = 0x03FE6;
 
 pub(crate) const FIRE_FLOWER_SUB_CPU: u16 = 0xBFD6; // $A000 + (0x03FE6 - 0x02010)
+
+// Koopaling jump-base table, extended from vanilla's 3 entries (hit counts
+// 0-2) to 6 so a Koopaling taking more than 3 stomps stays in bounds. Data
+// only; the last 6 bytes of PRG001, after FS_FIRE_FLOWER's reservation.
+// `prg001.asm` ends "Rest of ROM bank was empty". 6 reserved, 6 used.
+pub(crate) const FS_KOOPA_JUMP_BASE: usize = 0x0400A;
+
+pub(crate) const KOOPA_JUMP_BASE_CPU: u16 = 0xBFFA; // $A000 + (0x0400A - 0x02010)
 
 // Poison Mushroom object (ID $0A) — Init + Hit override stubs written over the
 // dead vanilla Obj0A handler region ($A703-$A77D, never spawned by any level or
@@ -1138,24 +1148,24 @@ fn tag_owns(tag: &str, owner: &str) -> bool {
 
 /// What one allocation actually received during a run.
 pub struct AllocUsage {
-    pub alloc: &'static FreeSpaceAlloc,
+    pub(crate) alloc: &'static FreeSpaceAlloc,
     /// Bytes inside the region that the run changed.
-    pub changed: usize,
+    changed: usize,
     /// Region start through the last changed byte — the number that belongs in
     /// a `// N reserved, M used` comment. Zero when nothing was written.
-    pub used: usize,
+    pub(crate) used: usize,
     /// Tags that wrote here without owning the region, and how many bytes each
     /// wrote. Any entry is a bug: either the owner is wrong or the module is.
-    pub foreign: Vec<(String, usize)>,
+    pub(crate) foreign: Vec<(String, usize)>,
     /// Writes crossing the region boundary: (offset, len, tag). A write
     /// starting inside and ending past the end is an overrun; one starting
     /// before is an encroachment from outside.
-    pub overruns: Vec<(usize, usize, String)>,
+    pub(crate) overruns: Vec<(usize, usize, String)>,
 }
 
 impl AllocUsage {
     /// True when this allocation is in a state the registry does not describe.
-    pub fn is_problem(&self) -> bool {
+    pub(crate) fn is_problem(&self) -> bool {
         !self.foreign.is_empty() || !self.overruns.is_empty()
     }
 }
@@ -1206,8 +1216,8 @@ const MIN_FILLER_RUN: usize = 8;
 /// One unclaimed run of `$FF` filler: a place a patch could go.
 #[derive(Clone, Copy)]
 pub struct Gap {
-    pub offset: usize,
-    pub len: usize,
+    pub(crate) offset: usize,
+    pub(crate) len: usize,
 }
 
 /// Unclaimed filler in one PRG bank, measured against the vanilla ROM.
@@ -1217,31 +1227,31 @@ pub struct Gap {
 /// that, and the totals below carry caveats a gap does not (see
 /// [`free_space_map`]).
 pub struct BankFree {
-    pub bank: usize,
+    bank: usize,
     /// Bytes reserved by [`FREE_SPACE_ALLOCATIONS`] in this bank.
-    pub allocated: usize,
+    allocated: usize,
     /// Unclaimed `$FF` runs, largest first. Candidates, not confirmations:
     /// filler that nothing has *claimed* may still be data something *reads*.
     /// Verify a gap against the disassembly once, then record it as a registry
     /// row and it never needs checking again.
-    pub gaps: Vec<Gap>,
+    pub(crate) gaps: Vec<Gap>,
     /// `$FF` filler outside every allocation. An aggregate — useful for "is
     /// this bank roomy", never for "does my patch fit".
-    pub free_ff: usize,
+    free_ff: usize,
     /// `$00` runs outside every allocation. Reported apart from `free_ff`
     /// because zeroed *data* looks identical to zero padding — treat this
     /// column as a candidate list, not as available space.
-    pub free_00: usize,
+    free_00: usize,
 }
 
 impl BankFree {
     /// Largest single unclaimed `$FF` run, or 0.
-    pub fn largest_gap(&self) -> usize {
+    fn largest_gap(&self) -> usize {
         self.gaps.first().map_or(0, |g| g.len)
     }
 
     /// Where the largest run starts, or 0 when there is none.
-    pub fn largest_gap_at(&self) -> usize {
+    fn largest_gap_at(&self) -> usize {
         self.gaps.first().map_or(0, |g| g.offset)
     }
 }
@@ -1546,9 +1556,10 @@ mod free_space_tests {
             (FS_MARCH_VETO, "FS_MARCH_VETO"),
             (FS_KOOPA_HITS_SUB, "FS_KOOPA_HITS_SUB"),
             (FS_KOOPA_COLLISION_GUARD, "FS_KOOPA_COLLISION_GUARD"),
-            (FS_KOOPA_VRAM_CLEAR, "FS_KOOPA_VRAM_CLEAR"),
+            (FS_BOWSER_DOOR_BUFFER_CLEAR, "FS_BOWSER_DOOR_BUFFER_CLEAR"),
+            (FS_KOOPA_JUMP_BASE, "FS_KOOPA_JUMP_BASE"),
             (FS_KOOPA_FIRE_PRESET, "FS_KOOPA_FIRE_PRESET"),
-            (FS_KOOPA_Y_CLAMP, "FS_KOOPA_Y_CLAMP"),
+            (FS_KOOPA_X_CLAMP, "FS_KOOPA_X_CLAMP"),
             (FS_FIRE_FLOWER, "FS_FIRE_FLOWER"),
             (FS_POISON_MUSHROOM, "FS_POISON_MUSHROOM"),
             (FS_POISON_HOOK, "FS_POISON_HOOK"),

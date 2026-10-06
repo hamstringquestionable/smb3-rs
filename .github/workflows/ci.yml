@@ -70,6 +70,14 @@ jobs:
       - name: Clippy — wasm target (deny warnings)
         run: cargo clippy --lib --target wasm32-unknown-unknown -- -D warnings
 
+      # Broken intra-doc links are invisible to clippy. Built with private items
+      # because that is how these docs are read; the one lint that only makes
+      # sense for published API docs is allowed in lib.rs, with its reason.
+      - name: Rustdoc (deny warnings)
+        run: cargo doc --no-deps --document-private-items
+        env:
+          RUSTDOCFLAGS: -D warnings
+
       - name: Build
         run: cargo build --all-targets
 
@@ -197,10 +205,14 @@ jobs:
           # exactly the window this exists for.
           # Bot-only — the app fetches the ROOT manifest even on /beta/
           # (deployBase(), web/app.js), so no `current`/`versions` here.
+          # src/randomizer/ became src/pipeline/; main keeps the old path
+          # until the next release, so try both.
+          FKV_SRC=beta-src/src/pipeline/flag_key.rs
+          if [ ! -f "$FKV_SRC" ]; then FKV_SRC=beta-src/src/randomizer/flag_key.rs; fi
           FKV=$(sed -n 's/.*FLAG_KEY_VERSION: u8 = \([0-9]*\).*/\1/p' \
-                  beta-src/src/randomizer/flag_key.rs | head -1)
+                  "$FKV_SRC" | head -1)
           if [ -z "$FKV" ]; then
-            echo "::error::Could not read FLAG_KEY_VERSION from beta-src/src/randomizer/flag_key.rs."
+            echo "::error::Could not read FLAG_KEY_VERSION from $FKV_SRC."
             echo "::error::If the constant was renamed or moved, update this step to match."
             exit 1
           fi
@@ -298,10 +310,14 @@ jobs:
           # main-src is the honest source. In the window where main is ahead of
           # the archive these disagree, and each is still right about its own
           # question.
+          # src/randomizer/ became src/pipeline/; main keeps the old path
+          # until the next release, so try both.
+          FKV_SRC=main-src/src/pipeline/flag_key.rs
+          if [ ! -f "$FKV_SRC" ]; then FKV_SRC=main-src/src/randomizer/flag_key.rs; fi
           FKV=$(sed -n 's/.*FLAG_KEY_VERSION: u8 = \([0-9]*\).*/\1/p' \
-                  main-src/src/randomizer/flag_key.rs | head -1)
+                  "$FKV_SRC" | head -1)
           if [ -z "$FKV" ]; then
-            echo "::error::Could not read FLAG_KEY_VERSION from src/randomizer/flag_key.rs."
+            echo "::error::Could not read FLAG_KEY_VERSION from $FKV_SRC."
             echo "::error::If the constant was renamed or moved, update this step to match."
             exit 1
           fi

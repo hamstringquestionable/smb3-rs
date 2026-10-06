@@ -11,16 +11,16 @@ use std::borrow::Cow;
 use rand::Rng;
 use rand::seq::IndexedRandom;
 
-use crate::randomize::enemy_protections::{
+use crate::pipeline::{EnemyMode, HazardLimit, Options, WildChaser};
+use crate::randomize::enemies::protections::{
     EntryProtection, WalkerSegmentRule, entry_protection_at, rewrites_hammer_bro,
     walker_segment_rule_at,
 };
+use crate::randomize::levels::segment_writer::{self, SegmentEntry as WriterEntry, SortMode};
 use crate::randomize::rom_data::{
     ENEMY_DATA_END, ENEMY_DATA_START, HAMMER_BRO_ID, HB_NEEDS_SHELL_ENEMIES, LEVEL_DATA_REGIONS,
     STOMPABLE_ENEMIES, TREASURE_BOX_APPEAR,
 };
-use crate::randomize::segment_writer::{self, SegmentEntry as WriterEntry, SortMode};
-use crate::randomizer::{EnemyMode, HazardLimit, Options, WildChaser};
 use crate::rom::Rom;
 
 mod class_modes;
@@ -29,6 +29,14 @@ mod picking;
 mod segments;
 mod sprite_bank;
 mod tables;
+
+// Which entries the swap pass must leave alone, and why.
+mod protections;
+
+// --- Enemy and boss behaviour patches, applied outside the swap pass ---
+pub(crate) mod koopalings;
+pub(crate) mod stomp_fairness;
+pub(crate) mod water_stomp;
 
 use class_modes::*;
 use injection::*;
@@ -49,7 +57,7 @@ mod tests;
 /// object IDs that belong to a known enemy class. Position bytes and all
 /// special objects (end-level cards, pipes, platforms, bosses, powerups,
 /// autoscroll triggers, cannons, etc.) are never modified.
-pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R, opts: &Options) {
+pub(crate) fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R, opts: &Options) {
     randomize_object_data(rom, rng, false, opts);
 }
 
@@ -59,7 +67,7 @@ pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R, opts: &Options) {
 /// Nothing is exempt. 7-F1 needs flight, but which room its pipe opens is drawn
 /// per seed by `big_q_rooms`, which runs after this and forces *that* room's
 /// block — so the guarantee does not depend on any offset being skipped here.
-pub fn randomize_big_q_blocks<R: Rng>(rom: &mut Rom, rng: &mut R) {
+pub(crate) fn randomize_big_q_blocks<R: Rng>(rom: &mut Rom, rng: &mut R) {
     // All enemy classes off — only Big ? Blocks get randomized
     let no_flags = Options {
         ground: EnemyMode::Off,
@@ -90,10 +98,11 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
     // "ghost" segment that swallows the next real segment's page byte +
     // first entry). Translated from ROM file offsets to local-buffer
     // indices so the walker can jump past them.
-    let skip_ranges: Vec<core::ops::Range<usize>> = super::autoscroll::SPOILED_SEGMENT_RANGES
-        .iter()
-        .map(|r| (r.start - ENEMY_DATA_START)..(r.end - ENEMY_DATA_START))
-        .collect();
+    let skip_ranges: Vec<core::ops::Range<usize>> =
+        crate::randomize::levels::autoscroll::SPOILED_SEGMENT_RANGES
+            .iter()
+            .map(|r| (r.start - ENEMY_DATA_START)..(r.end - ENEMY_DATA_START))
+            .collect();
     let in_skip_range = |idx: usize| -> Option<usize> {
         skip_ranges.iter().find(|r| r.contains(&idx)).map(|r| r.end)
     };
@@ -322,7 +331,7 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
                 }
                 // Same predicate `keep` blocks on, so under All this never
                 // fires and under Sparse it spends the segment's one budget.
-                if hazard_excluded(chosen, entry.obj_id) {
+                if HAZARDS.excludes(chosen, entry.obj_id) {
                     added_hazards = added_hazards.saturating_add(1);
                 }
                 swap_enemy(&mut data, entry.data_index, chosen);

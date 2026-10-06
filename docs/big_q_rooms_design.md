@@ -20,7 +20,7 @@ bank swap works, the block is collectable, and the pipe returns to 5-2. Palette
 
 ## What is built in the randomizer
 
-`randomize/big_q_rooms.rs` — every host draws from the 19-room pool when
+`randomize/levels/big_q_rooms.rs` — every host draws from the 19-room pool when
 `shuffle_big_q_rooms` is set. `qol/big_q.rs` grew the slot-seeding halves and
 the four payload tables the pass fills in.
 
@@ -89,7 +89,7 @@ space there. Unused Level 5 carries none and needs 3 bytes per room.
   it shifts the stream for everything downstream and rebaselines any pinned
   output. With it off, `vanilla_assignments()` draws nothing and writes nothing,
   so that arm is byte-identical to a build without the feature. Place the pass
-  deliberately in `randomizer/mod.rs`, not wherever is handy.
+  deliberately in `pipeline/stages.rs`, not wherever is handy.
 
 - **Block contents stay entirely `big_q_blocks`'s job** (2026-08-27). The eight
   Unused Level 5 blocks are all Tanooki Suits in the ROM, and they *are* already

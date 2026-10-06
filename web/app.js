@@ -9,16 +9,20 @@ import init, {
 	flag_key_fields_json,
 	default_options_json,
 	seed_hash_json,
+	map_background_json,
+	map_background_worlds,
 	apply_ips_patch,
 	version,
 } from "./pkg/smb3_rs.js";
-import { renderIcon as renderChrIcon, renderIconBox } from "./chr.js";
+import { renderIcon as renderChrIcon, renderIconBox, renderMapBackground, setFavicon } from "./chr.js";
 import { loadRom, saveRom, deleteCached } from "./rom-cache.js";
+import { Q_BLOCK } from "./icons.js";
 import {
 	renderOptions,
 	wireListeners,
 	applyEnabledWhen,
 	applyRowStates,
+	applyPillFlavors,
 	getOptionsJson,
 	getChangedFields,
 	formatValue,
@@ -341,6 +345,7 @@ function renderVisualPatchPills() {
 			saveSettings();
 			updateVisualPatchAccent();
 			updateVisualPatchCredit();
+			applyPillFlavors(); // some flavors depend on the re-skin
 			refreshRomGraphics(); // the re-skin may change the CHR art
 		});
 		const label = document.createElement("label");
@@ -472,6 +477,50 @@ function refreshRomGraphics() {
 	updateSeedHash();
 	renderAllIcons();
 	renderTheEnd();
+	renderPageMap();
+	setFavicon(previewRom(), Q_BLOCK);
+}
+
+// Page background: one world's map from the player's own ROM (not a visual
+// patch's, and never a randomized one). The world is picked once per page
+// load; a new ROM redraws the same world. It is scaled by the smallest whole
+// number that covers the window, so pixels stay square at any size, and shows
+// a random part of the map: `pageMapSpot` is how far across and down (0-1) the
+// window sits, picked with the world. Offsets are whole pixels, so the map's
+// pixel grid stays even.
+let pageMapWorld = null;
+let pageMapSize = null;
+const pageMapSpot = { x: Math.random(), y: Math.random() };
+
+function fitPageMap() {
+	const layer = document.getElementById("map-bg");
+	if (!layer || !pageMapSize) return;
+	const vw = window.innerWidth;
+	const vh = window.innerHeight;
+	const scale = Math.max(Math.ceil(vw / pageMapSize.w), Math.ceil(vh / pageMapSize.h));
+	const x = Math.round(pageMapSpot.x * (pageMapSize.w * scale - vw));
+	const y = Math.round(pageMapSpot.y * (pageMapSize.h * scale - vh));
+	layer.style.setProperty("--map-scale", scale);
+	layer.style.backgroundPosition = `${-x}px ${-y}px`;
+}
+window.addEventListener("resize", fitPageMap);
+
+function renderPageMap() {
+	const layer = document.getElementById("map-bg");
+	if (!layer || !romBytes) return;
+	try {
+		pageMapWorld ??= Math.floor(Math.random() * map_background_worlds());
+		const map = JSON.parse(map_background_json(romBytes, pageMapWorld));
+		const canvas = document.createElement("canvas");
+		renderMapBackground(canvas, romBytes, map);
+		pageMapSize = { w: canvas.width, h: canvas.height };
+		layer.style.setProperty("--map-w", `${canvas.width}px`);
+		layer.style.backgroundImage = `url(${canvas.toDataURL()})`;
+		fitPageMap();
+		layer.hidden = false;
+	} catch (_) {
+		layer.hidden = true;
+	}
 }
 
 // Footer sign-off: "THE END" from the ending sequence, CHR page $1B. Not an

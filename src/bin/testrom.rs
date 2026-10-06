@@ -10,7 +10,7 @@ use std::process;
 use clap::Parser;
 
 use smb3_rs::Options;
-use smb3_rs::testrom::{self, Base, EnemyOverride, Placement, TestRomSpec};
+use smb3_rs::testrom::{self, Base, EnemyOverride, LayoutOverride, Placement, Reskin, TestRomSpec};
 
 const DEFAULT_ROM: &str = "roms/Super Mario Bros. 3 (USA) (Rev 1).nes";
 const DEFAULT_PRACTICE_IPS: &str = "patches/smb3practice_SE.ips";
@@ -63,7 +63,9 @@ struct Cli {
     output: PathBuf,
 
     /// Level(s) to park on numbered tiles, in order: "6F1", or "3:8B" to pick
-    /// the tile. Names are case-insensitive and dashes are optional.
+    /// the tile. Names are case-insensitive and dashes are optional. Append
+    /// "@ts10" to show the level under another tileset (its layout is copied
+    /// into that tileset's bank), or "@raw13" to change the tileset byte alone.
     #[arg(short, long, num_args = 1..)]
     place: Vec<String>,
 
@@ -185,12 +187,24 @@ struct Cli {
     #[arg(long)]
     hammer_bridges: bool,
 
+    /// Let Mario stomp swimming water enemies (Bloopers, Cheeps) from dry land.
+    #[arg(long)]
+    water_stomp: bool,
+
     /// Overwrite one enemy slot outright, as "PTR:SLOT:ID" in hex, e.g.
     /// "DA0F:1:66" to put a downward water current in the Coin Ship fight's
     /// second slot. Repeatable. Use to see what an object actually does in a
     /// room the randomizer's pools would never put it in.
-    #[arg(long, value_name = "PTR:SLOT:ID")]
+    /// Append ":COL:ROW" (hex) to move the slot as well.
+    #[arg(long, value_name = "PTR:SLOT:ID[:COL:ROW]")]
     set_enemy: Vec<String>,
+
+    /// Overwrite layout bytes of a level, as "NAME:OFFSET:HEX", e.g.
+    /// "2HB1:36:360814360A07". OFFSET is decimal, counted from the start of
+    /// the layout (its 9-byte header is 0-8). Repeatable. Use to try different
+    /// generator commands in a room.
+    #[arg(long, value_name = "NAME:OFFSET:HEX")]
+    set_layout: Vec<String>,
 
     /// Open "Unused Level 5" -- the unreferenced test level holding eight Big
     /// [?] Block rooms -- from every Big [?] pipe in the game, landing 5-2's
@@ -245,40 +259,85 @@ fn die(msg: impl std::fmt::Display) -> ! {
     process::exit(1);
 }
 
-/// Parse a `--place` item: `"6F1"` or `"3:6F1"` (tile number : level name).
+/// Parse a `--place` item: `"6F1"`, `"3:6F1"` (tile number : level name), and
+/// an optional tileset override suffix — `"1HB1@ts10"` copies the layout into
+/// tileset 10's bank, `"4HB1@raw13"` changes the tileset byte alone.
 fn parse_placement(spec: &str) -> Result<Placement, String> {
-    match spec.split_once(':') {
+    let (rest, reskin) = match spec.split_once('@') {
+        Some((rest, suffix)) => {
+            let bad = || format!("bad tileset override in {spec:?} (expected @ts10 or @raw13)");
+            let suffix = suffix.trim().to_lowercase();
+            let reskin = if let Some(n) = suffix.strip_prefix("ts") {
+                Reskin::Copy(n.parse().map_err(|_| bad())?)
+            } else if let Some(n) = suffix.strip_prefix("raw") {
+                Reskin::Raw(n.parse().map_err(|_| bad())?)
+            } else {
+                return Err(bad());
+            };
+            (rest, Some(reskin))
+        }
+        None => (spec, None),
+    };
+    match rest.split_once(':') {
         Some((slot, level)) => {
             let slot: u8 = slot
                 .trim()
                 .parse()
                 .map_err(|_| format!("bad tile number in {spec:?} (expected e.g. 3:8B)"))?;
-            Ok(Placement { level: level.trim().to_string(), slot: Some(slot) })
+            Ok(Placement { level: level.trim().to_string(), slot: Some(slot), reskin })
         }
-        None => Ok(Placement { level: spec.trim().to_string(), slot: None }),
+        None => Ok(Placement { level: rest.trim().to_string(), slot: None, reskin }),
     }
 }
 
-/// Parse a `--set-enemy` item: `"DA0F:1:66"` — enemy pointer, slot, object ID.
-/// Pointer and ID are hex (a leading `0x` is accepted); the slot is decimal.
+/// Parse a `--set-enemy` item: `"DA0F:1:66"` — enemy pointer, slot, object ID
+/// — optionally followed by `":0B:14"`, a new column and row.
+/// Everything is hex (a leading `0x` is accepted) except the slot, in decimal.
 fn parse_set_enemy(spec: &str) -> Result<EnemyOverride, String> {
     fn hex(s: &str) -> &str {
         s.trim().trim_start_matches("0x").trim_start_matches("0X")
     }
-    let bad = || format!("bad --set-enemy {spec:?} (expected PTR:SLOT:ID, e.g. DA0F:1:66)");
-    let mut parts = spec.split(':');
-    let (p, s, i) = match (parts.next(), parts.next(), parts.next(), parts.next()) {
-        (Some(p), Some(s), Some(i), None) => (p, s, i),
+    let bad =
+        || format!("bad --set-enemy {spec:?} (expected PTR:SLOT:ID[:COL:ROW], e.g. DA0F:1:66)");
+    let byte = |s: &str| u8::from_str_radix(hex(s), 16).map_err(|_| bad());
+    let parts: Vec<&str> = spec.split(':').collect();
+    let pos = match parts.len() {
+        3 => None,
+        5 => Some((byte(parts[3])?, byte(parts[4])?)),
         _ => return Err(bad()),
     };
-    let enemy_ptr = u16::from_str_radix(hex(p), 16).map_err(|_| bad())?;
+    let enemy_ptr = u16::from_str_radix(hex(parts[0]), 16).map_err(|_| bad())?;
     if !(0xC000..=0xDFFF).contains(&enemy_ptr) {
         return Err(format!("enemy pointer ${enemy_ptr:04X} is outside $C000-$DFFF"));
     }
     Ok(EnemyOverride {
         enemy_ptr,
-        slot: s.trim().parse().map_err(|_| bad())?,
-        id: u8::from_str_radix(hex(i), 16).map_err(|_| bad())?,
+        slot: parts[1].trim().parse().map_err(|_| bad())?,
+        id: byte(parts[2])?,
+        pos,
+    })
+}
+
+/// Parse a `--set-layout` item: `"2HB1:36:360814360A07"` — level name, decimal
+/// byte offset into its layout, and the hex bytes to write there.
+fn parse_set_layout(spec: &str) -> Result<LayoutOverride, String> {
+    let bad = || format!("bad --set-layout {spec:?} (expected NAME:OFFSET:HEX, e.g. 2HB1:36:3608)");
+    let mut parts = spec.rsplitn(3, ':');
+    let (hex, offset, level) = match (parts.next(), parts.next(), parts.next()) {
+        (Some(h), Some(o), Some(l)) => (h.trim(), o, l),
+        _ => return Err(bad()),
+    };
+    if hex.is_empty() || hex.len() % 2 != 0 {
+        return Err(bad());
+    }
+    let bytes = (0..hex.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).map_err(|_| bad()))
+        .collect::<Result<Vec<u8>, String>>()?;
+    Ok(LayoutOverride {
+        level: level.trim().to_string(),
+        offset: offset.trim().parse().map_err(|_| bad())?,
+        bytes,
     })
 }
 
@@ -404,6 +463,9 @@ fn main() {
     let set_enemies: Vec<EnemyOverride> =
         cli.set_enemy.iter().map(|s| parse_set_enemy(s).unwrap_or_else(|e| die(e))).collect();
 
+    let set_layouts: Vec<LayoutOverride> =
+        cli.set_layout.iter().map(|s| parse_set_layout(s).unwrap_or_else(|e| die(e))).collect();
+
     let starting_items: Vec<u8> = cli
         .starting_items
         .iter()
@@ -457,12 +519,14 @@ fn main() {
         canoe_gate: cli.canoe_gate,
         hammer_breaks_locks: cli.hammer_locks,
         hammer_breaks_bridges: cli.hammer_bridges,
+        water_stomp: cli.water_stomp,
         include_beta: cli.beta,
         big_q_unused5: cli.bigq_unused5,
         big_q_palette: Some(cli.bigq_palette),
         big_q_notes,
         big_q_aim,
         set_enemies,
+        set_layouts,
     };
 
     let built = testrom::build(&vanilla, &spec).unwrap_or_else(|e| die(e));

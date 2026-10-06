@@ -61,6 +61,26 @@ MMC3 maps two switchable 8 KB banks + two fixed banks:
 |-------|------|----------|
 | 0x40010–0x6000F | 128 KB | All graphics tile data (sprites + backgrounds) |
 
+### Fireball Sprites
+
+Every fireball (Mario's, enemy fireballs, the Fire Chomp's tail) draws as the
+8x16 pair `$65`/`$67` (tiles `$64`–`$67`, `$1640`). Those four tiles exist in two
+sprite CHR pages, 1K pages `$04` (file 0x41250) and `$3C` (file 0x4F250), so a
+redraw has to write both. The spin is not animation frames: it is the same two
+tiles cycled through four attribute frames `01 01 C1 C1` (`SPR_PAL1`, then
+`SPR_PAL1 | SPR_HFLIP | SPR_VFLIP`). Three tables, each the 4-byte pattern table
+followed by the 4-byte attribute table:
+
+| Table | Bank | File (attributes) | CPU |
+|---|---|---|---|
+| `FireChompTail_Attributes` | PRG003 | 0x07ADF | `$BACF` |
+| `PlayerFireball_FlipBits` | PRG007 | 0x0E32B | `$A31B` |
+| `Fireball_Attributes` (enemy fireballs) | PRG007 | 0x0FA04 | `$B9F4` |
+
+MaCobra52's fireballs-to-hearts patch (`qol::apply_fireball_hearts`) redraws the
+tiles and clears the flip bits on the last two frames, since a heart cannot be
+flipped. The Dr. Mario reskins also redraw these tiles.
+
 ---
 
 ## Level Data
@@ -319,10 +339,19 @@ The canonical example is 1-3's "wood-block-with-leaf" at file offset **0x1EE95**
 
 **Exceptions** (`randomize_note_wood: false` regions):
 - **TS2 (Dungeon):** shapes 1-2 = `CCBridge`, shapes 3-7 = `TopDecoBlocks` decorations.
-- **TS9 (Desert):** shapes 1-5 = palms / cacti decorations.
 
-In these tilesets the dispatch produces non-powerup tiles, so swapping byte2 would
+In that tileset the dispatch produces non-powerup tiles, so swapping byte2 would
 corrupt level geometry.
+
+**TS9 (Desert) was listed here until 2026-09-30, wrongly.** The note that its
+shapes 1-5 were "palms / cacti" confused group 2 with group 0, where the desert
+tree (shape 4) and cloud (shape `$0A`) live. `LeveLoad_FixedSizeGen_TS9`
+(`prg020.asm`) sends indices 33-38 to `LoadLevel_PowerBlock` like every other
+tileset, vanilla desert levels carry four such blocks (shapes 1, 2 and two 5s),
+and on an emulator all six shapes draw as a note or wood block in the desert
+bro arena, with wood shapes 4/5/6 giving a mushroom, a mushroom and a star to
+small Mario when bumped. The stray desert tiles once blamed on this were the
+level-region bank overrun (issue #34).
 
 #### Variable-Size Generators
 
@@ -854,7 +883,7 @@ FF               ; terminator
 
 **All 5 `OBJ_TREASURESET` chests in the vanilla ROM** (item byte offsets,
 randomized by `items::randomize` via a hardcoded `TREASURE_CHEST_OFFSETS` list in
-`src/randomize/items.rs` — no auto-discovery):
+`src/randomize/items/mod.rs` — no auto-discovery):
 
 | Y-byte offset | Sub-area enemy_ptr | Vanilla item | Where |
 |--------------|-------------------|--------------|-------|
@@ -1210,7 +1239,7 @@ Tight vanilla X gaps where naive ±2 jitter could break sort order:
 
 Enemy data segments are the level loader's input — entries within a
 segment must stay in ascending X order or activation timing breaks.
-SMB3-RS routes all segment edits through `src/randomize/segment_writer.rs`
+SMB3-RS routes all segment edits through `src/randomize/levels/segment_writer.rs`
 which sorts by X, validates count and X-collision invariants, and
 writes back. Per-level "composer" modules (`bowser_castle.rs`,
 `podoboo_gauntlet.rs`, etc.) build a full proposed entry list and pass
@@ -1416,7 +1445,7 @@ Source: `smb3.asm` from the [Southbird disassembly](https://github.com/captainso
 
 Object group 0 (IDs $00–$23, dispatched from PRG001, CPU $A000–$BFFF, file offset = CPU − $A000 + 0x2010) contains seven leftover objects with live handlers but no name in the Southbird disassembly: **$01, $02, $04, $05, $0A, $1A, $1C**. All seven are fully repurposable (verified 2026-08-02).
 
-> **$0A is now taken**: `src/randomize/poison_mushroom.rs` (the
+> **$0A is now taken**: `src/randomize/items/poison_mushroom.rs` (the
 > `--poison-mushrooms` flag) installs the Poison Mushroom trap object there
 > (upside-down 1-Up sprite, hurts on touch). It **reuses the 1-Up's Norm
 > handler** (`ObjNorm_PUp1UpMush` at $A77E) and adds only a 17-byte Init+Hit
@@ -2679,7 +2708,7 @@ What about HANDTRAP's grab and PIPE's transit-pipe behavior?
   loads a transit level whose `OBJ_PIPEWAYCONTROLLER` reads the pipe-destination tables
   in PRG002). On a regular-level slot, stamping `0xBC` produces a pipe-look tile that
   enters the underlying regular level on A — no transit, no destination lookup. This is
-  exactly what `troll_pipes` exploits (`src/randomize/troll_pipes.rs`).
+  exactly what `troll_pipes` exploits (`src/randomize/overworld/troll_pipes.rs`).
 
 The 11 parallel bytes at `0x14DCA` may be vestigial dev-time data, may be consumed by
 some other code path entirely, or may have been a planned-but-cut dispatch mechanism.
@@ -2983,7 +3012,7 @@ the hook site. Relevant object RAM: `Map_Object_ActY` `$0500`, `ActX` `$050F`,
 `ActXH` `$051E`, `Map_Object_Data` (march direction) `$052D`,
 `Map_March_Count` `$053C`.
 
-**Randomizer hook (march veto,** `overworld_writer/march_veto.rs`**):** the
+**Randomizer hook (march veto,** `overworld/writer/march_veto.rs`**):** the
 `JSR $B43B` at `$B3FD` is replaced with a JSR to a trampoline in PRG011 free
 space (`FS_MARCH_VETO`, file `0x17D70` / CPU `$BD60`; 59-byte routine +
 8-byte per-world offset table + 40-byte address list). It computes the
@@ -3067,6 +3096,40 @@ blast** (everyone else). Moving the ring *behavior* to another identity (the thr
 CMP sites) requires also moving the ring page: `qol::random_koopalings` rewrites
 `KoopalingPatSet5` so `0x4A` follows the ring identity, `0x48` stays on Lemmy, and all
 others get `0x37`. Without it the new ring boss loads `0x37` and the ring renders garbled.
+
+### The Airship Room Chain (W1-W7)
+
+Each `AIRSHIP_ENTRIES` row (the dock tile) enters four rooms. Each room's level
+header begins with the next room's layout and enemy pointers (bytes 0-1, 2-3), so
+the chain is data, not code. Layout / enemy-stream CPU pointers, vanilla:
+
+| World | King's room | Anchor intro (3 scr) | Airship | Koopaling arena |
+|-------|-------------|----------------------|---------|-----------------|
+| W1 | `$A837/$D2AF` | `$AC29/$D69C` | `$ADB7/$D6EA` | `$BA02/$D9E6` |
+| W2 | `$A7E7/$D2AF` | `$ABF7/$D69C` | `$AEAB/$D71C` | `$BA4B/$D9EB` |
+| W3 | `$A7F7/$D2AF` | `$AC10/$D69C` | `$B009/$D757` | `$BAA0/$D9F0` |
+| W4 | `$A807/$D2AF` | `$B425/$D69C` | `$B13A/$D798` | `$AC42/$D6A1` |
+| W5 | `$A817/$D2AF` | `$B43E/$D69C` | `$AC97/$D6A6` | `$BAF5/$D9F5` |
+| W6 | `$A827/$D2AF` | `$B457/$D69C` | `$B2B3/$D7E5` | `$BB4A/$D9FA` |
+| W7 | `$A847/$D2AF` | `$B470/$D69C` | `$B489/$D814` | `$BBBA/$D9FF` |
+
+Verified against the W1 headers: king's room `29 AC 9C D6`, anchor intro
+`B7 AD EA D6`, airship `02 BA E6 D9`.
+
+- **The king's room only chains onward while the HELP bubble stands** (see
+  `docs/world_maze_design.md` → "The king rescue"). `$D2AF` is one
+  `OBJ_TOADANDKING`, shared by all seven.
+- **Autoscroll removal (the default) skips the first two rooms.** It repoints each
+  dock row straight at that world's airship (`levels/autoscroll.rs`). The airship
+  shuffle runs after it and permutes those repointed rows, so the airship and its
+  arena move together.
+- **The Koopaling does not move with the arena.** The arena stream holds one
+  generic Koopaling object, whose identity is read at run time from `World_Num`
+  (`$0727`), or from `$7EEA` when `random_koopalings` is on (see "Map_Unused7EEA"
+  above). `World_Num` is the internal world, not the displayed one, so World
+  Order shuffles the order you meet the Koopalings in but keeps each one on its
+  map. The Koopaling stomp-count table is also indexed by `$0727`, so the count
+  belongs to the world.
 
 ### Airship Travel Data
 
@@ -3197,7 +3260,7 @@ load LevelLayouts pointer into `Level_LayPtr_AddrL/H` → bank-switch via
 > from-scratch, position-keyed routine that occupies this very address range as
 > `FS_FORTRESS_FX` (537 bytes at `0x147CD`). There are no FX slots to index, no
 > `FortressFX_W1–W8`, and no `FortressFXBase_ByWorld` in an output ROM.
-> **What the randomizer does today: `src/randomize/lock_keys.rs` and
+> **What the randomizer does today: `src/randomize/overworld/lock_keys.rs` and
 > `docs/fx_table_redesign.md`.** The screen-check patch this section describes
 > at file `0x15554` is likewise gone — that run now holds `FS_LOCK_ENTRIES`, the
 > new position-keyed lock table, and the check is inline in a routine we own.
@@ -3773,7 +3836,7 @@ Tiles that block the row 8 fallthrough (completion-unsafe at row 7):
 - Removable: `$51, $52, $54, $67, $EB, $E4, $56, $9D`
 
 **Randomizer constraints:** one source of truth, `WorldState::row78_barred`
-(`overworld_build/state.rs`), read by `legal_blanks`, `lock_candidates` and the
+(`overworld/build/state.rs`), read by `legal_blanks`, `lock_candidates` and the
 hammer-bro fill. It bars the partner cell of all **three** things that claim
 the shared bit:
 
@@ -3787,7 +3850,7 @@ the shared bit:
   fortress at `(8, 6)` that could never show beaten, and a lock there would
   have grown back on reload.
 
-`row78_completion_bit_is_never_double_claimed` (`overworld_writer/tests.rs`)
+`row78_completion_bit_is_never_double_claimed` (`overworld/writer/tests.rs`)
 asserts it on the *written* ROM, where terrain, content and locks are finally
 the same kind of thing — the view the engine has. The check needs both rows
 completion-unsafe: a Hammer Bro rides a plain path tile the pass never touches,
@@ -3991,7 +4054,7 @@ so showing the worlds in a different order is a pure permutation of these tables
 - **Finale:** world 7 (Dark Land) is always shown last; the "THE END" sprite
   card and P-Wing-for-everybody reset follow.
 
-`src/randomize/credits.rs` reorders this montage to follow the World Order
+`src/randomize/cosmetic/credits.rs` reorders this montage to follow the World Order
 progression (permuting the tables above), redraws each mini-map from the
 randomized overworld grid, **and** rewrites each scene's "WORLD n" caption digit
 to its montage position (so the first-shown world reads "WORLD 1"). It only
@@ -4076,7 +4139,7 @@ Tanooki/Mushroom/Leaf.
 
 ### The 2-Player Vs Challenge — 339 bytes RECLAIMED in PRG030
 
-**Retired 2026-09-27 by `randomize/two_player_vs.rs`, unconditionally on every
+**Retired 2026-09-27 by `randomize/qol/two_player_vs.rs`, unconditionally on every
 seed.** Both runs below are now free and **unclaimed** — the first feature that
 needs them adds its own `FS_*` row, exactly the way `FS_FORTRESS_FX` works,
 because neither run is `$FF` and `--free-space` cannot see either of them. Check
@@ -4676,6 +4739,24 @@ at `$A7C4` (`LDA $A3,X / ADD #$01 / ... / CMP $9A,X`).
 
 Same wild+other-wild gate as the visibility patch above.
 
+### Stompability: `OA3_NOTSTOMPABLE` and the in-water gate (PRG000)
+
+Whether landing on an object stomps it or hurts Mario is bit 5 (`$20`) of its
+`ObjectGroup_Attributes3` byte. Group N (IDs `N*$24 ..`) lives in PRG00(N+1),
+and every group bank `.org`s the table at `$A120`, so the file offset is
+`0x10 + (N+1)*0x2000 + 0x120 + id % $24`.
+
+The shared stomp test (`prg000.asm` `PRG000_D253`, ~CPU `$D253`) runs the
+height band and fall checks first, then tests **`Player_InWater` before the
+attribute bit**: a swimming Mario is hurt by everything, whatever the bit says.
+So clearing the bit only changes dry-land contact. Kuribo's shoe and the statue
+bypass both checks.
+
+`water_stomp.rs` clears it on `$48 $61 $62 $63 $6A $77 $88`. Playtested
+2026-09-30: Bloopers and the baby Cheep do go through this shared path (no
+private hurt routine), and all seven kick off-screen via
+`OA2_NOSHELLORSQUASH`. Lava Lotus (`$67`) keeps the bit by choice.
+
 ### Koopaling Stomp Threshold (PRG001)
 
 The Koopalings (object ID `$0E`) use `Objects_Var4` (zero-page `$7F–$83`, indexed by
@@ -4852,6 +4933,56 @@ never be cleared by jumping, but a shell does kill it. It therefore sits in
 room — the 1-enemy rooms (including the 8-Tank) draw from the stompable pool
 alone and never see one.
 
+### Bro Arenas Are Tileset Programs, Not Skins
+
+A bro encounter is a pointer-table entry — tileset, layout pointer, enemy
+pointer — and vanilla has arenas in six tilesets (1, 3, 9, 11, 12, 13). Two
+facts decide what can be done with them:
+
+- **The tileset picks the bank the layout pointer resolves in**
+  (`PAGE_A000_ByTileset`). Changing the tileset byte alone keeps the layout
+  only between tilesets that share a bank: 5/11/13 (PRG019), 4/12 (PRG017),
+  6/7/8 (PRG018).
+- **The generator tables are per bank**, so a layout copied into another bank
+  is decoded by a different set of routines. The shared block-run generators
+  (`32 07 16`, the brick rows most arenas carry) mean the same thing nearly
+  everywhere; the floor and scenery commands do not.
+
+Measured 2026-09-30 by copying 9 arenas into 13 tilesets and entering each on
+an emulator (117 combos): 39 loaded with no floor, 20 reset the game, 15 hung
+or failed a walk across the room, 11 did not fit their bank's filler, and of
+the 32 that held a floor 9 were the untouched originals. A byte-only same-bank
+swap keeps the arena's own graphics page, so it is a recolour with tile
+glitches — only the W4 giant arena as tileset 5 came out clean. Reskinning an
+arena means authoring one in the target tileset's own commands.
+
+`testrom --place NAME@tsN` (copy) and `NAME@rawN` (byte only) reproduce any of
+these.
+
+#### The desert arena (`$B1F6`, tileset 9, file `0x29206`)
+
+Eleven 3-byte commands after the header, 43 bytes with the terminator, and no
+slack after it. The ground is not a command — tileset 9 preloads it, top at
+row `$1A`.
+
+| Offset | Bytes | Meaning |
+|---|---|---|
+| 9, 12, 15 | `11 04 0A` `11 0C 0A` `14 0A 0A` | clouds |
+| 18, 21, 24 | `16 00 04` `16 05 04` `16 0D 04` | palm trees (top three tiles wide, centred one column right) |
+| 27, 30, 33 | `79 00 20` `79 02 23` `79 07 20` | cactus runs |
+| 36, 39 | `18 09 62` `19 09 62` | two stacked rows of three sand bricks |
+
+Both enemy streams (`$D14D` one bro, `$D142` two) put slot 0 at column `$0B`,
+row `$16` — on top of the sand bricks.
+
+`qol::rebuild_desert_bro_arena` rewrites offsets 30-41 on every seed: a brick
+row (`36 08 14`), and a three-block wood column at column 4 whose top block
+holds a leaf (`39 04 40` `38 04 40` `57 04 05`), and moves slot 0 to `(0A, 14)`.
+The desert tileset has no vertical block run, so each block of a column is its
+own command; the two cactus runs are what pays for it. The top block is a
+normal group-2 wood item block, so `powerups.rs` shuffles it among flower,
+leaf and star.
+
 ### `BattleEnemy_ByEnterID` Overrun — a Hammer Bro is a Placeholder
 
 **In any room with `Level_Event = 7` (i.e. whose enemy data contains
@@ -4901,7 +5032,7 @@ two treasure-box rooms reached by a non-bro map object — the Coin Ship
 (`$DA0F`) and the 8-Tank sub-area (`$DA29`) — use a literal `$82` instead.
 
 The randomizer enforces this generically in `rewrites_hammer_bro`
-(`enemy_protections.rs`), keyed off the existing `HAMMER_BRO_OBJ_PTRS`. It replaced a
+(`enemies/protections.rs`), keyed off the existing `HAMMER_BRO_OBJ_PTRS`. It replaced a
 hand-curated `ForceTankBro` row on the 8-Tank sub-area that was labelled
 "HammerBro fails to spawn in ts=10" — a misdiagnosis. The tileset was never
 the cause; index 14 yields `OBJ_WARPHIDE`, which is invisible, and that is
@@ -4952,8 +5083,8 @@ of wild mode settings. Current protected levels:
 
 Some enemies are unfair to *introduce* at a forced or narrow spot — unstompable
 or continuous threats that block a path or can't be avoided. The randomizer
-groups them into a hazard taxonomy (6 categories, 18 IDs) and filters them out of
-the swap pool at curated `ExcludeHazards` offsets:
+groups them into the `HAZARDS` exclusion group (6 ID lists, 18 IDs) and filters
+them out of the swap pool at curated `Exclude(HAZARDS)` offsets:
 
 | Category | IDs |
 |----------|-----|
@@ -4964,13 +5095,17 @@ the swap pool at curated `ExcludeHazards` offsets:
 | Hot Foot | 0x30, 0x45 |
 | Hammer Bro | 0x81, 0x82, 0x86, 0x87 |
 
-**Additive-only (vanilla exception):** at an `ExcludeHazards` offset a hazard is
-excluded *unless the vanilla enemy there was the same category*, so within-category
+**Additive-only (vanilla exception):** at an `Exclude` offset an enemy is
+excluded *unless the vanilla enemy there sits in the same ID list*, so within-list
 shuffle (e.g. Thwomp variants) still works and a designed-in hazard is never
-stripped — only *introducing* a new hazard category is blocked. See
-`hazard_excluded` / `HAZARD_CATEGORIES` in `enemies/tables.rs`.
+stripped — only *introducing* one is blocked.
 
-Current `ExcludeHazards` levels (`enemy_protections.rs`):
+`Exclude` takes any `Group` (`enemies/tables.rs`): a group is either a list of
+IDs or a union of other groups, so a rule can name `HAZARDS`, `ROTODISCS` (every
+single and dual variant), a single ID (`Group::Ids(&[0x2A])`), or a mix
+(`Group::Any(&[HAZARDS, ROTODISCS])`).
+
+Current `Exclude(HAZARDS)` levels (`enemies/protections.rs`):
 - **7F2** Boom-Boom sub-area (0xD45C): tight boss arena
 - **7-5** sub-area (0xC171): open field — floor hazards unfair
 - **β4** sub-area (0xC7A7): narrow corridor on the Buzzy Beetle path
@@ -4980,7 +5115,7 @@ Current `ExcludeHazards` levels (`enemy_protections.rs`):
 Piranha-pipe slots are *not* listed: the piranha pools (`PIRANHAS_WILD` /
 `PIRANHASC_WILD`) are self-contained and hold no hazards, so a pipe lip can't
 become one through the pool. The `enemy_invariant_baseline` test verifies both
-this and the `ExcludeHazards` filter over many seeds.
+this and the `Exclude` filter over many seeds.
 
 ### Player Physics
 
@@ -5223,7 +5358,7 @@ Each entry represents a 16x16 metatile column on the world map.
 
 Vanilla SMB3 leaves the 1P/2P select menu silent (the only title-screen music is the brief intro cutscene snippet, which the seed-hash patch skips). To add menu music, the intro-skip routine in PRG031 free space appends `LDA #music / STA $04F5` after setting `Title_State = 6`. The music engine picks up the change on the next frame and loops the track for as long as the player stays on the menu; pressing Start advances to the world map, which queues its own music as normal.
 
-The track is chosen deterministically from the seed via a curated 16-entry table (world map themes 1–9, plus level themes 0x10/0x20/0x30/0x40/0x60/0x80/0x90). See `src/randomize/title_screen.rs::MENU_MUSIC_TRACKS` and `pick_menu_music`. When `starting_items` is active it overwrites the lives-init hook, so `qol::write_starting_items` mirrors the same `STA $04F5` inside its own trampoline.
+The track is chosen deterministically from the seed via a curated 16-entry table (world map themes 1–9, plus level themes 0x10/0x20/0x30/0x40/0x60/0x80/0x90). See `src/randomize/cosmetic/title_screen.rs::MENU_MUSIC_TRACKS` and `pick_menu_music`. When `starting_items` is active it overwrites the lives-init hook, so `qol::write_starting_items` mirrors the same `STA $04F5` inside its own trampoline.
 
 ### Title Menu Input Loop (PRG024) — and the B-to-mute hook
 
@@ -5642,6 +5777,33 @@ Per-world variation on the map is **palette only** (`Map_Tile_ColorSets`); no
 per-world BG bank swap exists. Map object *sprites* are a different set, pages
 `$20-$23`.
 
+**The lower half of that CHR animates.** *(Measured 2026-10-02.)* The table
+above is only frame 0. `Map_DoAnimations` (`prg011.asm:4894`) rewrites
+`PatTable_BankSel` (the 2 KB bank behind CHR indices `$00-$7F`) on a per-world
+timer (`Map_AnimSpeeds`). It cycles through `Map_AnimCHRROM`: `$14, $70, $72,
+$74`. The upper half, `$80-$FF` (`PatTable_BankSel+1 = $16`), never changes.
+
+- **111 of the 128 lower-half tiles differ between frames.** That includes every
+  quadrant of the spiral `$5F` (`$60-$63`), the large fortress `$6A`
+  (`$64-$67`) and W8's `$61` (`$50-$53`). The 17 that hold still across all
+  four banks include `$68-$6B` (measured by comparing the four banks byte for
+  byte).
+- **World 5 and the W8 final screen are frozen on frame 0**: `Map_DoAnimations`
+  loads Y = 0 for both and skips the timer.
+- **A new metatile built from lower-half CHR animates whether you want it to or
+  not**, and one that mixes halves animates only in those quadrants.
+  `patch_metatile_6a_freeze` exists because `$6A` needed to stand still. When
+  composing a tile from borrowed quadrants, prefer `$80-$FF`.
+
+**Map palette 0 is the same in every world: `$0F $0F $30 $3C`.** The first
+four bytes of every `PalSet_Maps` row (`prg027.asm:1460`) are identical, so
+page `$00-$3F` tiles (the level panels) do not take a world's colours.
+**Index 1 is `$0F`, the same black as the background**, which leaves three
+visible colours: black, white and light cyan. Art painted in index 1 (fort
+walls, the castle base `$C9`) goes solid black in page 0. A page-0 copy of a
+page-1 or page-3 building therefore reads as a silhouette, not a recolour,
+which ruled page 0 out for the away-fortress variant (2026-10-02).
+
 **Unused capacity, measured against all eight world grids:**
 
 - 139 of the 256 tile bytes appear in some world's grid; **117 are unused**.
@@ -5840,6 +6002,67 @@ variant is a new row rather than a per-instance field.
 - **All three lock tiles are the same graphic.** `$54`, `$56` and `$E4` share
   CHR quadrants `B6 B7 B8 B9`; `$54` and `$56` are pixel- *and* palette-identical
   and differ only in what they reveal. `$E4` differs only by palette page.
+
+### What locks actually stand on, and why the lock tiles are allocated per seed
+
+*(Measured 2026-09-30, #309.)* The tile under every lock the overworld writer
+stamped, over 200 seeds of each mode (3,400 locks per mode):
+
+| under the lock | standard | maze | page |
+|---|---|---|---|
+| `$45` / `$46` ground | 2,129 | 2,157 | 1 |
+| `$B3` bridge | 776 | 758 | 2 |
+| `$DB` sky vertical | 131 | 115 | 3 |
+| `$B7` `$AA` `$AC` `$AB` `$B0` `$B8` `$B9` `$BA` | 277 | 253 | 2 |
+| `$E6` hand trap path | 45 | 50 | 3 |
+| `$DA` sky horizontal | 42 | 67 | 3 |
+
+Vanilla's four obstacle rows can reveal only `$45`, `$46`, `$DA` and `$B3`, so
+about 13% of locks used to open into the wrong tile — a bridge or an island
+path became plain ground. `lock_keys::LockTiles` now allocates one byte per
+distinct `(path, colour, digit, marked)` from page 1 `$6B`–`$7F` (tan) and page 3
+`$ED`–`$FE` (sky; `$EC` is the marked away fortress below, `$FF` a background
+tile), and each allocated byte reveals exactly the path it stands on.
+Allocation can never run out: a seed places at most 17 locks, and the smaller
+pool has 18 bytes.
+
+- **Page 2 has no free index for a lock**, so a lock on a page-2 path takes
+  the colour it asked for in page 1 or 3, and the revealed path draws in that
+  palette until the next map reload. `$80`/`$81` are the runtime completion
+  panels, and `$B6` is the island blank tile (`THEME_ISLAND`), not a leftover.
+- **A completable tile must never be revealed.** Opening a lock sets its cell's
+  completion bit, so a revealed tile in `Map_Completable_Tiles` or a page's M/L
+  window would come back as a Mario/Luigi panel on the next map load. `$E6` is
+  the one that occurs; its locks reveal the plain `$45` instead.
+
+### The marked away fortress `$EC` and the fortress-clear tile pick
+
+*(2026-10-02; every one since 2026-10-05.)* Under some-hints, every away fortress is `$EC` instead of
+`$EB`, and its lock wears the same corner nub (`away_family.rs`). `$EC` is
+`$EB`'s quadrants with CHR `$CD` — the path-end nub vanilla uses as the
+lower-right of `$44`, `$66` and seven more — in the lower-right.
+
+Three behaviours had to agree for it to act as a fortress:
+
+- **Enterable and gating** come free: page 3's `Tile_AttrTable+4` threshold is
+  `$E9`, so `$EC` behaves like `$EB` at `$CDF8`, `$CEDC`, `$AA14` and `$B425`.
+  The last of those, unidentified before, is in the **hammer-bro march
+  landing test** (`PRG011_B415` onward): a bro whose landing tile is enterable
+  and whose `Map_March_Count` is `$20` has it raised to `$40` — more marching
+  — instead of landing straight away.
+- **Reload** goes through the removable table: `$EC` is the first byte past
+  page 3's M/L window (`ML_RANGE_UPPER[3]`), so it needs the row `$EC → $E3`,
+  exactly as `$6A` needs `$6A → $60`. That row fills the table: 7 terrain rows
+  plus at most 17 locks is 24 of 24.
+- **The clear itself** is a hardcoded pick at `PRG011_AA8D` (file `0x16A9D`),
+  26 bytes after the tile's `PLA`: `CMP #$67`/`#$6A` → X = 8 (rubble `$60`),
+  `CMP #$EB` → X = 9 (alt rubble `$E3`), each with its own copy of the crumble
+  sound store (`LDA #$01 / STA $04F3`); anything else keeps the quadrant/player
+  X and becomes an M/L panel via `Map_CompleteTile`. Nothing else in the ROM
+  branches into it. Rewritten in place to send all four fortress tiles to one
+  tail that derives X from the tile's top bit (`ASL A / LDA #$04 / ROL A /
+  TAX` → 8 or 9) and stores the sound once, which frees exactly the four bytes
+  `CMP #$EC / BNE` needs.
 
 ### Duplicated and dead entries
 

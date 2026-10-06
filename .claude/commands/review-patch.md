@@ -32,7 +32,7 @@ So for the patch under review, check only what the tests cannot:
   (`tools/offset_dups.py` catches the general case)
 - The registry row's `owners` names the write-log tag this patch writes under.
   If the patch is emitted by a larger pass it needs its own `push_tag` — see
-  `march_veto` / `fx_screen_check` in `overworld_writer/mod.rs` — or its bytes
+  `march_veto` / `fx_screen_check` in `overworld/writer/mod.rs` — or its bytes
   are attributed to the whole pass and the audit cannot tell them apart
 - The reserved size leaves sensible headroom, and any `// N reserved, M used`
   comment matches. `--write-log` prints measured usage per allocation. It counts
@@ -87,7 +87,7 @@ Flag if the patch writes to any of these ranges:
 ### 5. Ordering Concerns
 
 - If the patch touches pointer tables or airship entries, check ordering
-  relative to autoscroll and overworld builder in `randomizer/mod.rs`
+  relative to autoscroll and overworld builder in `pipeline/stages.rs`
 - Autoscroll MUST run before overworld builder (writes to hardcoded vanilla
   offsets that get displaced by `resort_pointer_table`)
 

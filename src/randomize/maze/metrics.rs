@@ -11,7 +11,7 @@
 //!
 //! * [`completion_cost`] — how many levels and fortresses a play-through
 //!   actually beats. This is the headline: the length of the game.
-//! * [`required_levels`] — how many levels the player has **no choice** about,
+//! * `required_levels` (test-only) — how many levels the player has **no choice** about,
 //!   in the strict sense that removing one makes the game unwinnable. This is
 //!   the mandatory core; everything else is a route decision.
 //!
@@ -19,24 +19,24 @@
 
 use std::collections::HashSet;
 
-use super::super::overworld_build::SlotKind;
 use super::walk::{MazePos, walk_maze, walk_maze_cost};
 use super::{FortRef, GlobalState};
+use crate::randomize::overworld::build::SlotKind;
 
 /// A play-through's price, in content beaten.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct CompletionCost {
     /// Levels and fortresses beaten on the way to the castle.
-    pub content: usize,
+    pub(crate) content: usize,
     /// How many of those were fortresses — the keys, as opposed to the road.
-    pub forts: usize,
+    pub(crate) forts: usize,
     /// Fortresses the run had to beat that were NOT on the direct route: the
     /// detours the lock/key structure forced.
-    pub detours: usize,
+    pub(crate) detours: usize,
     /// Airships the run had to clear purely to satisfy the wand gate.
-    pub wand_detours: usize,
+    pub(crate) wand_detours: usize,
     /// False when the castle was never reached.
-    pub reached: bool,
+    pub(crate) reached: bool,
 }
 
 /// Simulate a player who beats exactly what they must.

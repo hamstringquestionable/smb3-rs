@@ -4,8 +4,8 @@
 //! # Why this exists
 //!
 //! Before this module, "which bytes are locks" was written out independently in
-//! four places (`overworld_pickup`'s FX-slot assertion, `qol::hammer_breaks`'s
-//! breakable table, `overworld_helpers::gap_tile_for`, and `testrom`'s unlock
+//! four places (`overworld::pickup`'s FX-slot assertion, `qol::hammer_breaks`'s
+//! breakable table, `crate::randomize::overworld::helpers::gap_tile_for`, and `testrom`'s unlock
 //! table). Each answered a slightly different question inline, so none was
 //! obviously the authority and any of them could drift.
 //!
@@ -65,7 +65,7 @@ pub(crate) fn is_water_gap(tile: u8) -> bool {
 /// it, removed again by a fortress-clear FX. Locks and the water gap both
 /// qualify.
 ///
-/// Use this where a site treats all four identically — `overworld_pickup`'s
+/// Use this where a site treats all four identically — `overworld::pickup`'s
 /// `test_no_fx_gaps_remain` is the current consumer. Use [`is_lock`] where the
 /// water gap must be excluded, as `qol::hammer_breaks` does.
 // Reason: only a test consumes this today, so the lib build sees it as dead.
@@ -91,7 +91,7 @@ pub(crate) fn is_gap_tile(tile: u8) -> bool {
 /// one. Kept for completeness of the classification; do not expect a change to
 /// it to move any output. (Verified: dropping it left all 20 baseline seeds
 /// byte-identical.)
-pub(crate) fn is_vertical_path(tile: u8) -> bool {
+fn is_vertical_path(tile: u8) -> bool {
     matches!(tile, 0x46 | 0xAA | 0xAB | 0xB0 | 0xB1 | 0xDB | 0xBA)
 }
 
@@ -140,10 +140,10 @@ pub(crate) fn path_for_gap_tile(tile: u8) -> Option<u8> {
 
 /// Lowest numbered-level tile. Level number = `tile - 2`.
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) const NUMBERED_TILE_LO: u8 = 0x03;
+const NUMBERED_TILE_LO: u8 = 0x03;
 /// Highest numbered-level tile.
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) const NUMBERED_TILE_HI: u8 = 0x0F;
+const NUMBERED_TILE_HI: u8 = 0x0F;
 
 /// A numbered action level (`0x03..=0x0F`, level number = `tile - 2`).
 #[cfg(not(target_arch = "wasm32"))]
@@ -151,10 +151,10 @@ pub(crate) fn is_numbered_level(tile: u8) -> bool {
     (NUMBERED_TILE_LO..=NUMBERED_TILE_HI).contains(&tile)
 }
 
-/// A fortress tile (any of the three variants).
+/// A fortress tile (any of the four variants).
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn is_fortress(tile: u8) -> bool {
-    FORTRESS_TILES.contains(&tile)
+    FORTRESS_TILES.contains(&tile) || tile == super::TILE_FORTRESS_AWAY_MARKED
 }
 
 #[cfg(test)]
@@ -219,6 +219,7 @@ mod tests {
         for t in FORTRESS_TILES {
             assert!(is_fortress(t));
         }
+        assert!(is_fortress(super::super::TILE_FORTRESS_AWAY_MARKED));
         assert!(!is_fortress(0x45));
     }
 

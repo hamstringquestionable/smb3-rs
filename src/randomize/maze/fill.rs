@@ -88,23 +88,23 @@ const PROPOSALS_PER_LOCK: usize = 8;
 /// What the fill did, for the census and the spoiler log.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct FillReport {
-    pub proposed: usize,
+    proposed: usize,
     /// Swaps rejected because they made the maze unsolvable.
-    pub rejected_unsolvable: usize,
+    rejected_unsolvable: usize,
     /// Swaps rejected because they moved the objective the wrong way.
-    pub rejected_objective: usize,
-    pub accepted: usize,
+    rejected_objective: usize,
+    accepted: usize,
     /// Locks whose fort ended up in another world.
-    pub foreign_locks: usize,
+    pub(crate) foreign_locks: usize,
     /// Spine distance between a foreign lock and its fort, summed.
-    pub foreign_span: usize,
+    foreign_span: usize,
     /// Gates the constructive fill assigned, and how many locks there were.
-    pub built: usize,
-    pub locks: usize,
+    built: usize,
+    locks: usize,
 
     /// The constructive fill could not place every gate, so the swap search
     /// produced the assignment instead.
-    pub fell_back: bool,
+    fell_back: bool,
 }
 
 /// The fallback: permute the builder's assignment by swapping pairs.
@@ -235,14 +235,14 @@ fn swap_search<R: Rng>(
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub(crate) struct Sealable {
     /// Locks the maze agrees can be left shut forever, once the pass is done.
-    pub kept: usize,
+    pub(crate) kept: usize,
     /// How many were asked for.
-    pub wanted: usize,
+    wanted: usize,
     /// Locks **removed** to get there — the gate becomes open path and its
     /// fortress opens nothing. That costs the map-legibility rule (a fortress
     /// whose beat says nothing) on the rare seed, and buys back the only
     /// failure a maze cannot recover from.
-    pub opened: usize,
+    pub(crate) opened: usize,
 }
 
 impl Sealable {
@@ -264,7 +264,7 @@ impl Sealable {
 /// 7F2 or 8F1 as well can ask for more.
 ///
 /// **The builder guarantees this and the maze breaks it.**
-/// `overworld_build::ensure_secret_exit_safe` leaves N safe locks behind; the
+/// `crate::randomize::overworld::build::ensure_secret_exit_safe` leaves N safe locks behind; the
 /// fill then permutes the fort/lock pairing, which can invalidate every one of
 /// them. Restoring it here is what makes the maze a transformer that preserves
 /// the contract it was handed rather than one that quietly voids it.

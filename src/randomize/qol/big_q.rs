@@ -116,10 +116,10 @@ const OFF_SCAN: usize = 0x53;
 const OFF_HI: usize = 0x6C;
 const OFF_LO: usize = 0x79;
 pub(crate) const OFF_ROOM: usize = 0x86;
-pub(crate) const OFF_ARR_Y: usize = 0x93;
+const OFF_ARR_Y: usize = 0x93;
 pub(crate) const OFF_ARR_X: usize = 0xA0;
-pub(crate) const OFF_RET_Y: usize = 0xAD;
-pub(crate) const OFF_RET_X: usize = 0xBA;
+const OFF_RET_Y: usize = 0xAD;
+const OFF_RET_X: usize = 0xBA;
 const BIG_Q_ROUTINE_LEN: usize = 0xC7; // 199
 
 // Zero page / RAM the routine touches.
@@ -130,7 +130,7 @@ const JCT_XLH_START: u16 = 0x7F64; // 16-byte slot array
 /// `JMP PRG026_AA8A` at the tail of the Big ? exit path (`PRG026_AA5A`), which
 /// runs only when leaving a bonus room. Swapping this 3-byte jump for a jump
 /// into our own routine displaces whole instructions and needs no NOP padding.
-pub(crate) const BIG_Q_EXIT_HOOK: usize = 0x34A84;
+const BIG_Q_EXIT_HOOK: usize = 0x34A84;
 const BIG_Q_EXIT_RETURN: u16 = 0xAA8A;
 
 /// Build the PRG026 Big ? Block lookup + slot-seeding routine.
@@ -260,7 +260,7 @@ fn build_routine_with(rooms: &[u8; 13], arrive: &[(u8, u8); 13], ret: &[(u8, u8)
 
 /// Patch Big ? Block bonus room selection to use level identity instead of
 /// World_Num, and seed the spawn slots from our own tables.
-pub fn fix_big_q_block_rooms(rom: &mut Rom) {
+pub(crate) fn fix_big_q_block_rooms(rom: &mut Rom) {
     // Part A: PRG030 save trampoline (saves $65/$66 before W8 overwrite)
     rom.write_range(BIG_Q_PRG030_HOOK, &BIG_Q_PRG030_JMP);
     rom.write_range(BIG_Q_PRG030_OFFSET, &BIG_Q_PRG030_ROUTINE);

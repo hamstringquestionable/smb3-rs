@@ -35,29 +35,78 @@ use rand::Rng;
 
 use std::collections::{HashMap, HashSet};
 
-use super::item_keys::Key;
-use super::map_walker::walk_reachable_blocked;
-use super::overworld_build::{
+use super::rom_data::{self, Grid, Pos};
+use crate::randomize::maze::item_keys::Key;
+use crate::randomize::overworld::build::{
     BuildResult, FortRef, LockHint, SlotKind, WorldState, from_built, stamp_slots,
 };
-use super::rom_data::{self, Grid, Pos};
+use crate::randomize::overworld::map_walker::walk_reachable_blocked;
 use walk::{MazePos, MazeWorld, walk_maze};
 
-pub(crate) mod fill;
+// --- The generator: a model pass over the builder's result, no ROM writes ---
+mod fill;
 pub(crate) mod graph;
-/// How long a generated maze is, in levels.
-///
-/// It began as a measurement instrument and [`CONTENT_FLOOR`] promoted it:
-/// [`generate`] now prices every deal with [`metrics::completion_cost`] and
-/// redeals the short ones, so this runs on the shipping path. The rest of the
-/// module is still census-only.
-pub(crate) mod metrics;
-pub(crate) mod relocate;
-pub(crate) mod roles;
+// How long a generated maze is, in levels.
+//
+// It began as a measurement instrument and [`CONTENT_FLOOR`] promoted it:
+// [`generate`] now prices every deal with [`metrics::completion_cost`] and
+// redeals the short ones, so this runs on the shipping path. The rest of the
+// module is still census-only.
+mod metrics;
+mod relocate;
+mod roles;
 #[cfg(test)]
 mod tests;
-pub(crate) mod walk;
+mod walk;
 pub(crate) mod writer;
+
+// --- The ROM side: engine patches the mode installs after the writer ---
+// World-maze phase 1: the packed per-world completion-bit storage the
+// two-world swap in [`world_persist`] has to become. Reached on both targets:
+// `randomize_inner` applies it whenever `world_maze` is set, and the web app
+// offers that option.
+pub(crate) mod completion_bits;
+// World-maze: map objects a world has already lost stay lost. `Map_Init`
+// rebuilds all nine of a world's object slots from ROM on every entry, so
+// without this a beaten Hammer Bro is standing there again when you come back.
+mod map_objects;
+// The world maze's state map, in the cartridge WRAM SMB3 already carries —
+// the one place its SRAM addresses are decided. Not battery-backed: nothing
+// sets the iNES battery bit, so this survives a reset, not a power-off.
+mod maze_state;
+// Two players, two worlds: in the maze each player keeps the world they are
+// standing in, and the turn hand-over carries the map with it. One-player mode
+// never reaches the new path. Its SRAM byte pair is [`maze_state`]'s.
+pub(crate) mod player_worlds;
+// The world maze's goal gate: a wall on World 8's bridge that stands until
+// the player holds K of the seven wands, plus the counter that the wands are
+// counted in. See `docs/world_maze_design.md`, "The wand gate".
+pub(crate) mod wand_gate;
+pub(crate) mod wand_readout;
+// World-maze persistence: a world you leave is the world you come back to.
+// Applied by `randomize_inner` on both targets whenever `world_maze` is set —
+// it was `testrom`-only while the mode was still a POC.
+pub(crate) mod world_persist;
+// World-maze fast travel: the warp whistle hops between worlds the player has
+// already stood on the start tile of. Its SRAM map is [`maze_state`]'s.
+pub(crate) mod world_travel;
+
+// --- Item gates: keys, where they go, and the canoe gate they open ---
+// Don't hand the player a second Anchor when it is a permanent key.
+pub(crate) mod anchor_dedup;
+// The canoe as a lock and the Anchor as its key: boats park out of reach and
+// only an anchor used from the inventory, while standing on a dock, calls one
+// alongside. World-maze only — in a fixed world order the key would have to
+// sit in front of its own lock.
+pub(crate) mod canoe_gate;
+mod item_keys;
+pub(crate) mod key_placement;
+pub(crate) mod key_sites;
+
+// --- Hints ---
+// Under some-hints, every other away fortress and the lock it opens share a
+// corner nub, halving the fortresses a stuck player has to try.
+pub(crate) mod away_family;
 
 /// A directed edge the engine can traverse repeatedly.
 #[derive(Clone, Copy, Debug)]
@@ -72,9 +121,9 @@ pub(crate) enum MazeEdge {
 
 /// A lock in the maze. Unlike `LockAssignment` its fort may live in any world.
 #[derive(Clone, Debug)]
-pub(crate) struct MazeLock {
-    pub world: usize,
-    pub pos: Pos,
+struct MazeLock {
+    world: usize,
+    pos: Pos,
     /// The fort that opens it.
     ///
     /// `None` means **the lock is not installed** — the tile is left as open
@@ -82,7 +131,7 @@ pub(crate) struct MazeLock {
     /// thing the generator must never produce, and making the empty case the
     /// harmless one means a half-finished fill degrades to a more open maze
     /// rather than an unwinnable one.
-    pub fort: Option<FortRef>,
+    fort: Option<FortRef>,
 }
 
 /// The airship order every null-model measurement uses: worlds in ROM order.
@@ -101,12 +150,12 @@ pub(crate) struct MazeLock {
 ///
 /// **No shipped run produces one today.** `world_count` used to reach this
 /// (`world_order` returns a shorter order below 7), but the mode now pins it to
-/// 7 in `randomizer::randomize_inner`, and the web form greys that control out
+/// 7 in `pipeline::stages::world_order_and_shuffles`, and the web form greys that control out
 /// under the mode. The capability is kept here, and censuses still exercise
 /// short spines, so re-exposing it is a UI decision rather than a generator
 /// change.
 #[cfg(test)]
-pub(crate) const IDENTITY_SPINE: [usize; 8] = [0, 1, 2, 3, 4, 5, 6, 7];
+const IDENTITY_SPINE: [usize; 8] = [0, 1, 2, 3, 4, 5, 6, 7];
 
 /// Wands the castle demands by default, of the 7 airships.
 ///
@@ -170,7 +219,7 @@ pub(crate) const DEFAULT_WANDS_REQUIRED: u8 = 3;
 /// floor: a rejected deal is redrawn from the whole distribution, so it lands
 /// at a typical length. That is why the floor moves K=0's minimum from 2 to 14
 /// while the median moves only 23 → 25, and the maximum not at all.
-pub(crate) const CONTENT_FLOOR: usize = 14;
+const CONTENT_FLOOR: usize = 14;
 
 /// How many deals [`generate`] will pay for before keeping the best it saw.
 ///
@@ -180,7 +229,7 @@ pub(crate) const CONTENT_FLOOR: usize = 14;
 /// 6 deals in 300 seeds; 8 leaves margin without letting a pathological grid
 /// spend 100 ms of a WASM budget that is already tight (a deal costs ~9.5 ms in
 /// the browser, measured).
-pub(crate) const MAX_DEALS: usize = 8;
+const MAX_DEALS: usize = 8;
 
 /// What a gate stands in front of.
 ///
@@ -205,8 +254,8 @@ pub(crate) enum GateTarget {
 /// whichever block they bump. The canoe needs one.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub(crate) struct Gate {
-    pub target: GateTarget,
-    pub needs: Vec<Key>,
+    pub(crate) target: GateTarget,
+    needs: Vec<Key>,
 }
 
 /// A cell that hands a key over when the player reaches it.
@@ -218,25 +267,25 @@ pub(crate) struct Gate {
 /// neither does a rolled Toad House (it re-draws from a 3-wide window when the
 /// box is opened — see `rom_data::toad_house_reward_is_fixed`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) struct KeySource {
-    pub pos: MazePos,
-    pub key: Key,
+struct KeySource {
+    pos: MazePos,
+    key: Key,
 }
 
 /// Eight worlds and the edges between them. A thin wrapper: the per-world
 /// state is the existing [`WorldState`], untouched.
 pub(crate) struct GlobalState {
-    pub worlds: Vec<WorldState>,
-    pub edges: Vec<MazeEdge>,
-    pub locks: Vec<MazeLock>,
-    pub start: MazePos,
-    pub goal: MazePos,
+    worlds: Vec<WorldState>,
+    edges: Vec<MazeEdge>,
+    locks: Vec<MazeLock>,
+    start: MazePos,
+    goal: MazePos,
     /// Which worlds the spine names. **A world off the spine is not part of
     /// the game**, exactly as `world_count` means in standard mode: it is still
     /// built, still on the ROM and still full of content, but nothing requires
     /// it and its fortresses are not counted against solvability. If a telepad
     /// happens to land there, that content is a bonus.
-    pub in_maze: [bool; 8],
+    in_maze: [bool; 8],
     /// Cells no pad may stand on: the home tiles of the wandering Hammer Bros
     /// the build *redistributed*. `TILE_TELEPAD` is in
     /// `Map_Object_Forbid_LandingTiles`, so a marching bro cannot land on a
@@ -249,19 +298,19 @@ pub(crate) struct GlobalState {
     /// home — the unshuffled bros, the W7 plants, the canoe, the W8 army —
     /// is in `WorldState::fixed` instead, which `pad_sites` screens against
     /// in both of its pools (#274).
-    pub reserved: HashSet<MazePos>,
+    reserved: HashSet<MazePos>,
     /// K of 7 — the difficulty dial, and [`Self::spheres`] gates on it: the
     /// goal does not count as reached until K wands are collectable, which is
     /// exact because the gate cell is the only way into the castle.
-    pub wands_required: u8,
+    wands_required: u8,
     /// Things sealed until their keys are found. **Empty unless a placement
     /// pass installed some**, and with it empty [`Self::spheres`] takes its old
     /// shape exactly — same walk, same rounds, same answers — so no existing
     /// seed moves.
-    pub gates: Vec<Gate>,
+    pub(crate) gates: Vec<Gate>,
     /// Cells that hand a key over. Empty alongside `gates`: a gate with no
     /// source is a wall, which is only ever what a *counterfactual* wants.
-    pub sources: Vec<KeySource>,
+    sources: Vec<KeySource>,
 }
 
 impl GlobalState {
@@ -269,7 +318,7 @@ impl GlobalState {
     ///
     /// Locks keep the fort the per-world builder paired them with — that is
     /// the null model: no key-assignment fill, so every lock stays local.
-    pub(crate) fn from_build(result: &BuildResult, spine: &[usize], wands_required: u8) -> Self {
+    fn from_build(result: &BuildResult, spine: &[usize], wands_required: u8) -> Self {
         assert!(spine.len() >= 2, "a spine needs a start and a castle");
         let worlds: Vec<WorldState> = result.worlds.iter().map(from_built).collect();
         for (i, w) in worlds.iter().enumerate() {
@@ -324,12 +373,12 @@ impl GlobalState {
 
     /// Add telepads. Each pad tile owns one arrival row, so the count is
     /// bounded by [`graph::PAD_BUDGET`].
-    pub(crate) fn add_pads(&mut self, pads: Vec<MazeEdge>) {
+    fn add_pads(&mut self, pads: Vec<MazeEdge>) {
         self.edges.extend(pads);
     }
 
     /// Every pad in the maze, as `(from, to)`.
-    pub(crate) fn pad_edges(&self) -> Vec<(MazePos, MazePos)> {
+    fn pad_edges(&self) -> Vec<(MazePos, MazePos)> {
         self.edges
             .iter()
             .filter_map(|e| match *e {
@@ -344,7 +393,7 @@ impl GlobalState {
     /// The spine resolves here rather than at construction because it is
     /// stated in worlds, not cells: it leaves the source world's target tile
     /// and lands on the destination's start tile.
-    pub(crate) fn links(&self) -> Vec<(MazePos, MazePos)> {
+    fn links(&self) -> Vec<(MazePos, MazePos)> {
         let mut out = Vec::new();
         for edge in &self.edges {
             match *edge {
@@ -363,7 +412,7 @@ impl GlobalState {
 
     /// The airship tiles that grant a wand: every spine world except the last,
     /// which holds the castle.
-    pub(crate) fn wand_tiles(&self) -> Vec<MazePos> {
+    fn wand_tiles(&self) -> Vec<MazePos> {
         self.edges
             .iter()
             .filter_map(|e| match *e {
@@ -412,9 +461,9 @@ impl GlobalState {
     ///
     /// `blocked` cells are walled off AFTER stamping, which is what makes
     /// "would the game still be winnable without this level?" a one-line
-    /// question (see [`metrics::required_levels`]). Any `BACKGROUND_TILES`
+    /// question (see `metrics::required_levels`). Any `BACKGROUND_TILES`
     /// member reads as a wall to the walker; the value never reaches the ROM.
-    pub(crate) fn base_grids(&self, blocked: &HashSet<MazePos>) -> Vec<Grid> {
+    fn base_grids(&self, blocked: &HashSet<MazePos>) -> Vec<Grid> {
         self.worlds
             .iter()
             .map(|w| {
@@ -434,13 +483,13 @@ impl GlobalState {
     /// sequence of these, one per fort set, and they have to agree about what a
     /// given set of beaten forts makes walkable. The constructive fill steps
     /// through the same sequence a third time.
-    pub(crate) fn shut_locks(&self, open: &HashSet<FortRef>) -> Vec<HashSet<Pos>> {
+    fn shut_locks(&self, open: &HashSet<FortRef>) -> Vec<HashSet<Pos>> {
         self.shut_locks_sealed(open, None)
     }
 
-    /// [`Self::locked_grids`] with one lock held shut whatever opens it — the
+    /// [`Self::shut_locks`] with one lock held shut whatever opens it — the
     /// counterfactual [`Self::winnable_with_lock_sealed`] asks.
-    pub(crate) fn shut_locks_sealed(
+    fn shut_locks_sealed(
         &self,
         open: &HashSet<FortRef>,
         sealed: Option<usize>,
@@ -468,7 +517,7 @@ impl GlobalState {
     /// `found` is what the player is holding. It decides which canoe gates are
     /// still shut; with no gates installed it is consulted for nothing, so
     /// passing an empty set there is exact rather than conservative.
-    pub(crate) fn view<'a>(
+    fn view<'a>(
         &'a self,
         grids: &'a [Grid],
         shut: &'a [HashSet<Pos>],
@@ -510,13 +559,13 @@ impl GlobalState {
     /// A key found in a round opens gates without a fort being beaten, so the
     /// loop carries two accumulators now. Both only ever grow, so the old
     /// termination argument is unchanged.
-    pub(crate) fn spheres(&self) -> Spheres {
+    fn spheres(&self) -> Spheres {
         self.spheres_with_blocked(&HashSet::new())
     }
 
     /// The fixpoint with some cells walled off — the counterfactual
-    /// [`metrics::required_levels`] asks 62 times per seed.
-    pub(crate) fn spheres_with_blocked(&self, blocked: &HashSet<MazePos>) -> Spheres {
+    /// `metrics::required_levels` asks 62 times per seed.
+    fn spheres_with_blocked(&self, blocked: &HashSet<MazePos>) -> Spheres {
         self.spheres_inner(blocked, None).0
     }
 
@@ -528,7 +577,7 @@ impl GlobalState {
     /// gate the key opens, which is the circularity to avoid. Placing from
     /// here rather than placing-then-checking is what makes a key unable to
     /// land behind its own gate at all, at any number of gates.
-    pub(crate) fn spheres_and_reach(&self) -> (Spheres, walk::MazeReach) {
+    fn spheres_and_reach(&self) -> (Spheres, walk::MazeReach) {
         self.spheres_inner(&HashSet::new(), None)
     }
 
@@ -538,7 +587,7 @@ impl GlobalState {
     /// placement pass will: install gates, then ask the ordinary question.
     /// There is no solver mode to switch on — that is the point of gates
     /// being data.
-    pub(crate) fn gate_every_canoe(&mut self, needs: Key) {
+    fn gate_every_canoe(&mut self, needs: Key) {
         self.gates = (0..self.worlds.len())
             .map(|wi| Gate { target: GateTarget::Canoe(wi), needs: vec![needs] })
             .collect();
@@ -551,7 +600,7 @@ impl GlobalState {
     /// nowhere else on the model side: `key_sites`, `key_placement` and the
     /// walker all read `gates` as data and neither know nor care what is in it.
     /// The ROM side is the half that cannot be generic, since each target needs
-    /// its own patch; `randomize_inner` derives those per target, and a new
+    /// its own patch; `pipeline::stages::maze_model` derives those per target, and a new
     /// `GateTarget` variant makes that derivation fail to compile until its
     /// patch is wired.
     ///
@@ -678,7 +727,7 @@ impl GlobalState {
     ///
     /// The wand gate is still honoured: `goal_sphere` is only set once `K`
     /// wands are collectable, so this asks "reachable *and* enterable".
-    pub(crate) fn winnable_with_lock_sealed(&self, lock: usize) -> bool {
+    fn winnable_with_lock_sealed(&self, lock: usize) -> bool {
         self.spheres_inner(&HashSet::new(), Some(lock)).0.goal_sphere.is_some()
     }
 
@@ -687,12 +736,12 @@ impl GlobalState {
     /// comes into reach? K = 0 (a pure maze) makes it vacuous, which is the
     /// null model's setting.
     #[cfg(test)]
-    pub(crate) fn wands_are_collectable(&self, spheres: &Spheres) -> bool {
+    fn wands_are_collectable(&self, spheres: &Spheres) -> bool {
         spheres.wands_at_goal >= self.wands_required as usize
     }
 
     /// This world's reserved cells, as plain positions.
-    pub(crate) fn reserved_in(&self, world: usize) -> HashSet<Pos> {
+    fn reserved_in(&self, world: usize) -> HashSet<Pos> {
         self.reserved.iter().filter(|(w, _)| *w == world).map(|&(_, p)| p).collect()
     }
 
@@ -703,7 +752,7 @@ impl GlobalState {
     /// deposit the player on a start tile, so a start region they can leave
     /// certifies all three.
     ///
-    /// It is deliberately weaker than [`Self::start_region_has_exit`], and the
+    /// It is deliberately weaker than `Self::start_region_has_exit`, and the
     /// difference is the point. The charter asked for an exit reachable with
     /// **zero keys**; that is stricter than safety needs, because a fortress
     /// inside the start region is a key the player can go and get. What
@@ -716,7 +765,7 @@ impl GlobalState {
     /// the safe one: a lock the key-assignment fill paired with a foreign fort
     /// can never be opened from inside, and a player arriving for the first
     /// time has beaten nothing here.
-    pub(crate) fn start_region_escapable(&self, world: usize) -> bool {
+    fn start_region_escapable(&self, world: usize) -> bool {
         let w = &self.worlds[world];
         let mut base = w.grid.clone();
         stamp_slots(&mut base, &w.slots);
@@ -779,7 +828,7 @@ impl GlobalState {
     /// whether the player can get OUT of where they were just deposited, using
     /// nothing they have not already got.
     #[cfg(test)]
-    pub(crate) fn start_region_has_exit(&self, world: usize) -> bool {
+    fn start_region_has_exit(&self, world: usize) -> bool {
         let w = &self.worlds[world];
         let mut g = w.grid.clone();
         stamp_slots(&mut g, &w.slots);
@@ -797,22 +846,22 @@ impl GlobalState {
 // Reason: production reads only `Spheres::solvable`, for the fallback guard in
 // `generate`. Everything else is the spoiler log and the census surface, whose
 // only reader is the test harness — the same shape, and the same reason, as
-// `overworld_build::PhaseReport`.
+// `crate::randomize::overworld::build::PhaseReport`.
 #[allow(dead_code)]
 #[derive(Clone, Debug)]
-pub(crate) struct Sphere {
+struct Sphere {
     /// Content that became reachable this round (see [`GlobalState::content`]).
-    pub reached: Vec<MazePos>,
+    reached: Vec<MazePos>,
     /// Fortresses beatable on entry to this sphere.
-    pub beaten: Vec<FortRef>,
+    beaten: Vec<FortRef>,
     /// Indices into `GlobalState::locks` that those fortresses open.
-    pub opened: Vec<usize>,
+    opened: Vec<usize>,
     /// Gates openable on entry — the global choice metric. Width 1 is a
     /// corridor; width >= 2 is a real decision. The direct analogue, one level
     /// up, of the per-world builder's "at least 2 routes in the choice band".
-    pub width: usize,
+    width: usize,
     /// Wands collectable by the end of this sphere (cumulative).
-    pub wands: usize,
+    wands: usize,
 }
 
 /// The fixpoint's output: a spoiler log, not a bool.
@@ -820,23 +869,23 @@ pub(crate) struct Sphere {
 // reads, and the rest is what makes a failure diagnosable.
 #[allow(dead_code)]
 #[derive(Clone, Debug)]
-pub(crate) struct Spheres {
+struct Spheres {
     /// The castle is reachable AND every fortress is beatable. A fort the
     /// fixpoint never reaches is content sealed out of the game, which fails
     /// invariant 1 just as squarely as an unreachable castle.
-    pub solvable: bool,
-    pub spheres: Vec<Sphere>,
-    pub unbeaten: Vec<FortRef>,
+    solvable: bool,
+    spheres: Vec<Sphere>,
+    unbeaten: Vec<FortRef>,
     /// The sphere in which the castle first became reachable.
-    pub goal_sphere: Option<usize>,
+    goal_sphere: Option<usize>,
     /// Wands collectable before the castle came into reach — what a K-of-7
     /// gate would have to be satisfied by.
-    pub wands_at_goal: usize,
+    wands_at_goal: usize,
     /// Every key the player can collect. A gate whose `needs` are not all in
     /// here is one the run came to rest in front of.
     // Reason: the placement pass is the reader, and lands next.
     #[cfg_attr(not(test), allow(dead_code))]
-    pub found: HashSet<Key>,
+    found: HashSet<Key>,
 }
 
 impl Spheres {
@@ -846,7 +895,7 @@ impl Spheres {
     /// it and a `debug_assert!` type-checks its arguments in every profile. In
     /// release the call sits inside `if false` and the whole thing — this
     /// function included — is eliminated, so the binary does not carry it.
-    pub(crate) fn spoiler(&self) -> String {
+    fn spoiler(&self) -> String {
         let mut out = String::new();
         for (i, s) in self.spheres.iter().enumerate() {
             let forts: Vec<String> =
@@ -881,29 +930,29 @@ impl Spheres {
 // Reason: production reads only `spheres`, for the solvability guard in
 // `generate`; the rest is the census and spoiler surface and the test harness
 // is its only reader. Same shape, and the same reason, as
-// `overworld_build::PhaseReport`.
+// `crate::randomize::overworld::build::PhaseReport`.
 #[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(crate) struct GenReport {
-    pub spheres: Spheres,
+    spheres: Spheres,
     /// How many locks can be left shut forever, against how many the writer
     /// asked for — see [`fill::keep_n_sealable`].
-    pub sealable: fill::Sealable,
-    pub fill: fill::FillReport,
-    pub pads: Vec<graph::PlacedPad>,
+    sealable: fill::Sealable,
+    fill: fill::FillReport,
+    pads: Vec<graph::PlacedPad>,
     /// Worlds whose start region cannot be escaped with what the player
     /// carries on arrival. **Must be empty**: each one is a seed that can
     /// strand a player.
-    pub unsafe_worlds: Vec<usize>,
+    unsafe_worlds: Vec<usize>,
     /// Deals this seed paid for, 1..=[`MAX_DEALS`]. Anything above 1 is the
     /// content floor rejecting a short maze.
-    pub deals: usize,
+    deals: usize,
     /// What the kept deal priced at, in levels and fortresses beaten. Below
     /// [`CONTENT_FLOOR`] only when [`MAX_DEALS`] ran out.
-    pub content: usize,
+    content: usize,
     /// Fortresses moved into another world — see [`relocate`]. Empty when the
     /// spine-alone fallback fired.
-    pub relocated: relocate::RelocateReport,
+    relocated: relocate::RelocateReport,
 }
 
 /// One deal of the maze layer: everything [`generate`] draws in a single
@@ -1145,14 +1194,14 @@ pub(crate) fn generate<R: Rng>(
 /// a ROM patch laid over grids the writer had already committed, which is what
 /// made the ordering in `randomize_inner` load-bearing and forced later steps
 /// to read the cartridge back to discover what had happened. As model edits
-/// they are picked up by `overworld_writer::grid`, which starts from
+/// they are picked up by `crate::randomize::overworld::writer::grid`, which starts from
 /// `built.grid.clone()` and stamps on top, so one write pass emits the finished
 /// map and nothing has to re-derive it afterwards.
 ///
 /// Three things travel:
 ///
 /// * **Pad tiles.** The cell keeps its pointer-table entry; that entry becomes
-///   unreachable, which is why [`roles::pad_sites`] only ever offers Hammer Bro
+///   unreachable, which is why `roles::pad_sites` only ever offers Hammer Bro
 ///   filler slots and bare blanks.
 /// * **Uninstalled locks** ([`MazeLock::fort`] `== None`) are dropped, so the
 ///   writer never stamps a `gap_tile` there and the path tile underneath
@@ -1163,7 +1212,8 @@ pub(crate) fn generate<R: Rng>(
 ///   43% at K=7), because sealing a lock can strand an airship the wand count
 ///   needs.
 ///
-/// Consumes no RNG.
+/// Consumes no RNG — including the away-fortress nub, which every `Elsewhere`
+/// fortress wears.
 pub(crate) fn stamp_into(build: &mut BuildResult, state: &GlobalState) {
     // The wand gate's masonry. `wand_gate::apply` installs the opener and its
     // hooks; the cell it stands on is a map tile like any other, and `W8`'s
@@ -1241,7 +1291,7 @@ pub(crate) fn stamp_into(build: &mut BuildResult, state: &GlobalState) {
             } else if lock.world == rom_data::W8_IDX {
                 LockHint::World8
             } else {
-                LockHint::Elsewhere
+                LockHint::Elsewhere { marked: true }
             };
         }
     }

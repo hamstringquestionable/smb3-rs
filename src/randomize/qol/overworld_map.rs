@@ -35,7 +35,7 @@ const W1_HAMMER_ROCK_OFFSET: usize = 0x1861F;
 
 /// Remove the W2 secret-path, W3 boat-path, and W4 pipe-shortcut rocks,
 /// replacing each with a horizontal path tile.
-pub fn remove_rocks(rom: &mut Rom) {
+pub(crate) fn remove_rocks(rom: &mut Rom) {
     for offset in [W2_SECRET_ROCK, W3_BOAT_ROCK, W4_PIPE_ROCK] {
         rom.write_byte(offset, 0x45);
     }
@@ -137,7 +137,7 @@ const W8_CANOE_PATH_EDITS: &[(usize, usize, u8)] = &[
 const W1_SHORTCUT_ROCK: (usize, usize) = (5, 8);
 const W1_SHORTCUT_STUB: (usize, usize, u8) = (6, 8, 0x4A);
 
-/// Write the W1 shortcut (see [`W1_SHORTCUT_EDITS`]). The tiles go down
+/// Write the W1 shortcut (see [`W1_SHORTCUT_ROCK`] and [`W1_SHORTCUT_STUB`]). The tiles go down
 /// unconditionally; `breakable` only decides whether the rock can be opened.
 ///
 /// `0x52` (breakable, opens to `0x46`) and `0x53` (permanent wall) are
@@ -156,7 +156,7 @@ const W1_SHORTCUT_STUB: (usize, usize, u8) = (6, 8, 0x4A);
 /// Must run before the overworld builder reads the map, so the builder prices
 /// a breakable rock into its route analysis — and, when it isn't breakable,
 /// sees a plain wall.
-pub fn apply_w1_shortcut(rom: &mut Rom, breakable: bool) {
+pub(crate) fn apply_w1_shortcut(rom: &mut Rom, breakable: bool) {
     let (rock_row, rock_col) = W1_SHORTCUT_ROCK;
     let rock = if breakable { 0x52 } else { 0x53 };
     rom.write_byte(map_tile_offset(0, rock_row, rock_col), rock);
@@ -183,12 +183,12 @@ const W8_WATER_EDITS: &[(usize, usize, u8)] = &[
 /// alternating with the nodes between them. Each is an ordinary lockable path
 /// tile, so a lock landing on one shows as a water gap (`gap_tile_for`:
 /// `0xB3 -> 0x9D`) that its fortress rebuilds — the "bridge out" the builder
-/// deals per seed (`overworld_build::locks`). Single source of truth: the
+/// deals per seed (`crate::randomize::overworld::build::locks`). Single source of truth: the
 /// builder reads these positions rather than repeating the coordinates.
 ///
 /// All five are stamped as bridges in every mode. In WORLD-MAZE mode only,
 /// the last of them — `rom_data::W8_WAND_GATE_POS` at (5,59) — is held out
-/// of the deal by `overworld_build::locks::free_bridge_spans`, because the
+/// of the deal by `crate::randomize::overworld::build::locks::free_bridge_spans`, because the
 /// maze writes its wand gate over that cell after the build. It stays stamped
 /// here either way: the corridor looks the same, and the gate goes down last,
 /// over the finished map.
@@ -198,7 +198,7 @@ pub(crate) const W8_BRIDGE_COLS: [usize; 5] = [51, 53, 55, 57, 59];
 /// Apply the always-on W8 screen-3 water + bridge approach (see
 /// [`W8_WATER_EDITS`] and [`W8_BRIDGE_COLS`]). Independent of the `8s are
 /// Wild` option.
-pub fn apply_w8_bridges(rom: &mut Rom) {
+pub(crate) fn apply_w8_bridges(rom: &mut Rom) {
     for &(row, col, tile) in W8_WATER_EDITS {
         rom.write_byte(map_tile_offset(7, row, col), tile);
     }
@@ -209,7 +209,7 @@ pub fn apply_w8_bridges(rom: &mut Rom) {
 
 /// Apply the W8 canoe docks + extra paths and place the canoe sprite (see
 /// [`W8_CANOE_PATH_EDITS`]). Gated behind the `8s are Wild` option.
-pub fn apply_w8_canoe_and_paths(rom: &mut Rom) {
+pub(crate) fn apply_w8_canoe_and_paths(rom: &mut Rom) {
     for &(row, col, tile) in W8_CANOE_PATH_EDITS {
         rom.write_byte(map_tile_offset(7, row, col), tile);
     }
@@ -235,7 +235,7 @@ pub fn apply_w8_canoe_and_paths(rom: &mut Rom) {
 /// The W1 (5,8) shortcut rock is also gated by this option, but it lives in
 /// [`apply_w1_shortcut`] — its tiles are written either way so the map gives
 /// nothing away, and only the rock's breakability follows the flag.
-pub fn make_hammer_rocks(rom: &mut Rom) {
+pub(crate) fn make_hammer_rocks(rom: &mut Rom) {
     rom.write_byte(W1_HAMMER_ROCK_OFFSET, 0x51);
     rom.write_byte(map_tile_offset(7, 3, 37), 0x51);
 }
@@ -246,12 +246,12 @@ pub fn make_hammer_rocks(rom: &mut Rom) {
 /// Original IPS: 3 bytes at 0x016C90 → LDA #$07; NOP.
 const N_CARD_OFFSET: usize = 0x016C90;
 
-pub fn remove_n_cards(rom: &mut Rom) {
+pub(crate) fn remove_n_cards(rom: &mut Rom) {
     rom.write_range(N_CARD_OFFSET, &[0xA9, 0x07, 0xEA]);
 }
 
 /// Replace W3 drawbridge tiles with normal path tiles and NOP the toggle code.
-pub fn fix_w3_drawbridges(rom: &mut Rom) {
+pub(crate) fn fix_w3_drawbridges(rom: &mut Rom) {
     for (offset, tile) in W3_DRAWBRIDGE_TILES {
         rom.write_byte(offset, tile);
     }

@@ -1029,7 +1029,7 @@ struct PlacementStats {
     giant_reds_placed: u64,
     /// Segment-instances (seed × segment) where the bertha cap was exceeded.
     /// Hard invariant: the predicate pipeline applies MAX_BERTHA_PER_SEGMENT
-    /// to every pick (including the Force*/ExcludeHazards paths that used to
+    /// to every pick (including the Force*/Exclude paths that used to
     /// bypass it), so this must stay 0 — any nonzero count is a violation.
     bertha_cap_exceeded: u64,
     max_berthas_in_seg: u8,
@@ -1057,7 +1057,7 @@ fn injectable_offsets(
     vanilla: &[u8],
     modes: &ClassModes,
 ) -> std::collections::HashSet<usize> {
-    use crate::randomize::node_catalog::{NodeCatalog, NodeKind};
+    use crate::randomize::overworld::node_catalog::{NodeCatalog, NodeKind};
     use crate::randomize::rom_data::enemy_ptr_to_file_offset;
     let mut set = std::collections::HashSet::new();
     let catalog = NodeCatalog::build(base, false);
@@ -1114,7 +1114,7 @@ fn check_invariants(
     // Same spoiled-range skips the randomizer uses, so segment boundaries
     // (and per-segment bertha counts) line up exactly.
     let skip_ranges: Vec<core::ops::Range<usize>> =
-        crate::randomize::autoscroll::SPOILED_SEGMENT_RANGES
+        crate::randomize::levels::autoscroll::SPOILED_SEGMENT_RANGES
             .iter()
             .map(|r| (r.start - ENEMY_DATA_START)..(r.end - ENEMY_DATA_START))
             .collect();
@@ -1203,7 +1203,7 @@ fn check_invariants(
             // `keep`, and an injectable slot's `orig` is the vanilla enemy
             // rather than the injected id, so measuring it against `orig`
             // would be meaningless. Chasers aren't hazards anyway.
-            if hazard_excluded(new, orig) {
+            if HAZARDS.excludes(new, orig) {
                 stats.hazards_added += 1;
                 hazards_added_in_seg = hazards_added_in_seg.saturating_add(1);
                 if opts.limit_hazards == HazardLimit::All {
@@ -1226,8 +1226,8 @@ fn check_invariants(
                 Some(EntryProtection::ForceStompable) if !STOMPABLE_ENEMIES.contains(&new) => {
                     bad("ForceStompable but result not stompable".into());
                 }
-                Some(EntryProtection::ExcludeHazards) if hazard_excluded(new, orig) => {
-                    bad("ExcludeHazards but introduced a new hazard category".into());
+                Some(EntryProtection::Exclude(group)) if group.excludes(new, orig) => {
+                    bad("Exclude but introduced an excluded enemy".into());
                 }
                 _ => {}
             }
@@ -1252,9 +1252,10 @@ fn check_invariants(
 
             // --- A piranha slot must never become a hazard (the runtime
             // guard was removed; this verifies the piranha pools' self-
-            // containment achieves it). ---
+            // containment achieves it). A piranha is not itself a hazard,
+            // so the vanilla exception never applies here. ---
             if (PIRANHAS.contains(&orig) || PIRANHASC.contains(&orig))
-                && hazard_category(new).is_some()
+                && HAZARDS.excludes(new, orig)
             {
                 bad("piranha slot replaced by a hazard".into());
             }
@@ -1296,7 +1297,7 @@ fn check_invariants(
         }
 
         // Bertha cap: hard invariant now that the predicate pipeline applies
-        // it to every pick (it used to be bypassed by the Force*/ExcludeHazards
+        // it to every pick (it used to be bypassed by the Force*/Exclude
         // branches — see PlacementStats::bertha_cap_exceeded).
         stats.max_berthas_in_seg = stats.max_berthas_in_seg.max(bertha_in_seg);
         if bertha_in_seg > MAX_BERTHA_PER_SEGMENT {
@@ -1725,7 +1726,7 @@ fn test_cannons_wild_respects_slot5_pin() {
 /// level is never given a chaser it already has (the 2-Quicksand double).
 #[test]
 fn wild_injection_rework_guarantees() {
-    use crate::randomize::node_catalog::{NodeCatalog, NodeKind};
+    use crate::randomize::overworld::node_catalog::{NodeCatalog, NodeKind};
     const INJ: [u8; 2] = [0x83, 0xAF]; // Lakitu + Angry Sun (Boss Bass dropped)
 
     let Some(base) = load_reference_rom() else {
@@ -1858,7 +1859,7 @@ fn first_enemy_idx(obj_ptr: u16, data: &[u8]) -> Option<usize> {
 /// ordinary swap can put one here too. Compare two runs that differ only in
 /// the injection pool to isolate it.
 fn injected_chaser_counts(base: &Rom, opts: &Options, seeds: u64) -> [u32; 3] {
-    use crate::randomize::node_catalog::NodeCatalog;
+    use crate::randomize::overworld::node_catalog::NodeCatalog;
 
     let len = ENEMY_DATA_END - ENEMY_DATA_START;
     let vanilla = base.read_range(ENEMY_DATA_START, len).to_vec();
@@ -1996,7 +1997,7 @@ fn wild_injection_bass_survives_water_wild() {
 /// not always stuck at the (harder) low inherited height.
 #[test]
 fn wild_injected_lakitu_height_varies() {
-    use crate::randomize::node_catalog::NodeCatalog;
+    use crate::randomize::overworld::node_catalog::NodeCatalog;
     const LAKITU: u8 = 0x83;
 
     let Some(base) = load_reference_rom() else {
@@ -2048,7 +2049,7 @@ fn wild_injected_lakitu_height_varies() {
 /// Lakitu, and both must occur.
 #[test]
 fn wild_injection_favors_sun() {
-    use crate::randomize::node_catalog::NodeCatalog;
+    use crate::randomize::overworld::node_catalog::NodeCatalog;
 
     let Some(base) = load_reference_rom() else {
         eprintln!("reference ROM not present — skipping wild_injection_favors_sun");

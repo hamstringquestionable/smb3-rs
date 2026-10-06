@@ -1,10 +1,32 @@
+//! SMB3 randomizer: a vanilla ROM in, a randomized ROM or IPS patch out.
+//!
+//! Every entry point funnels through [`randomize_rom_with_patches`]:
+//!
+//! 1. [`Rom::from_bytes_lax`] validates the input (unless `skip_rom_validation`)
+//!    and converts a Rev 0 ROM to Rev 1.
+//! 2. Optional visual IPS patches are applied, *after* that conversion.
+//! 3. [`pipeline::randomize`] runs the randomizer. `pipeline/mod.rs` is the
+//!    table of contents for everything it does, in order.
+//! 4. [`generate_patch`] diffs the result against the bytes the user supplied
+//!    into an IPS patch; [`generate_patched_rom`] returns the whole ROM.
+
+// Reason: this lint protects readers of published API docs, where private
+// pages do not exist. This crate's docs are only ever read internally, built
+// with `--document-private-items` (CI does exactly that), and there a link to a
+// `pub(crate)` item resolves. Every other rustdoc lint stays fatal in CI.
+#![allow(rustdoc::private_intra_doc_links)]
+// A `pub` item nothing outside the crate can reach should say `pub(crate)`.
+// CI's `-D warnings` makes this fatal. It cannot see a `pub` item that IS
+// reachable but unused outside, nor a `pub(crate)` that could be private.
+#![warn(unreachable_pub)]
+
 pub mod ips;
+pub mod pipeline;
 pub mod randomize;
-pub mod randomizer;
 pub mod rom;
 
-/// Playtest ROM assembly. Native-only: it exists to serve the CLI and has no
-/// role in the web build, which never needs a ROM the randomizer wouldn't make.
+// Playtest ROM assembly. Native-only: it exists to serve the CLI and has no
+// role in the web build, which never needs a ROM the randomizer wouldn't make.
 #[cfg(not(target_arch = "wasm32"))]
 pub mod testrom;
 
@@ -14,7 +36,7 @@ pub mod wasm;
 use rom::Rom;
 
 pub use ips::apply_ips_patch;
-pub use randomizer::{
+pub use pipeline::{
     DejaVuMode, EnemyMode, FireFlowerMode, HazardLimit, HintMode, ITEM_RANDOM,
     ITEM_RANDOM_NO_WHISTLE, ITEM_RANDOM_SUIT_ONLY, ITEMS, Options, PiranhaMode,
     STARTING_LIVES_VALUES, Tri, WildChaser, current_flag_key_version, flag_key_fields,
@@ -93,7 +115,7 @@ pub fn randomize_rom_with_patches(
     for (tag, patch) in visual_patches {
         rom.apply_ips_patch(patch, tag)?;
     }
-    randomizer::randomize(&mut rom, seed, options);
+    pipeline::randomize(&mut rom, seed, options);
     Ok(rom)
 }
 
@@ -133,14 +155,14 @@ pub(crate) fn randomize_rom_with_overworld_capture(
     seed: u64,
     options: &Options,
     visual_patch: Option<&[u8]>,
-) -> Result<(Rom, randomize::overworld_build::BuildResult), String> {
+) -> Result<(Rom, randomize::overworld::build::BuildResult), String> {
     let mut rom =
         Rom::from_bytes_lax(rom_data, options.skip_rom_validation).map_err(|e| e.to_string())?;
     if let Some(patch) = visual_patch {
         rom.apply_ips_patch(patch, "visual_patch")?;
     }
-    let mut capture: Option<randomize::overworld_build::BuildResult> = None;
-    randomizer::randomize_with_overworld_capture(&mut rom, seed, options, &mut capture);
+    let mut capture: Option<randomize::overworld::build::BuildResult> = None;
+    pipeline::randomize_with_overworld_capture(&mut rom, seed, options, &mut capture);
     let build = capture.ok_or_else(|| "overworld capture not populated".to_string())?;
     Ok((rom, build))
 }

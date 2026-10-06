@@ -28,7 +28,7 @@
 
 use std::collections::HashSet;
 
-use crate::randomize::node_catalog::{NodeCatalog, NodeKind};
+use crate::randomize::overworld::node_catalog::{NodeCatalog, NodeKind};
 use crate::randomize::rom_data::{enemy_ptr_to_file_offset, has_enemy_id};
 
 use super::*;

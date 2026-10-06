@@ -47,7 +47,7 @@ pub(crate) const W8_IDX: usize = 7;
 /// This const is therefore PRIVATE: the only way to read it is
 /// [`active_canoe_edges`], which applies both the world filter and the flag
 /// gate. A new consumer that needs canoe edges cannot bypass that gate.
-pub(crate) const CANOE_EDGES: &[(usize, TeleportEdge)] = &[
+const CANOE_EDGES: &[(usize, TeleportEdge)] = &[
     // W3: mainland dock (6,20) → two island docks.
     (2, ((6, 20), (5, 24))), // mainland dock → island 1
     (2, ((6, 20), (0, 32))), // mainland dock → island 2
@@ -91,14 +91,14 @@ pub(crate) fn active_canoe_edges(world_idx: usize, eights_are_wild: bool) -> Vec
 /// LoadLevel_GetLayoutByte, LL_GetLayoutByte_AndBackup, LL21_InitLongRun,
 /// or equivalent are 4-byte.
 pub(crate) struct LevelDataRegion {
-    pub start: usize,
-    pub end: usize,
-    pub extra_byte_dispatches: &'static [u8],
+    pub(crate) start: usize,
+    pub(crate) end: usize,
+    extra_byte_dispatches: &'static [u8],
     /// Whether group 2 fixed-size shapes 1-6 are note/wood powerups in this
     /// tileset. In most tilesets they are, but in TS2 (Dungeon) shapes 1-2 map
     /// to CCBridge and shapes 3-7 map to TopDecoBlocks — swapping them would
     /// corrupt level geometry.
-    pub randomize_note_wood: bool,
+    pub(crate) randomize_note_wood: bool,
 }
 
 impl LevelDataRegion {
@@ -107,7 +107,7 @@ impl LevelDataRegion {
     /// dispatch reads an extra byte. Every level-stream walker (powerups,
     /// enemy entry points) must step with this — a re-derived copy of the
     /// formula is how parsers drift out of alignment.
-    pub fn command_size(&self, b0: u8, b2: u8) -> usize {
+    pub(crate) fn command_size(&self, b0: u8, b2: u8) -> usize {
         if (b2 & 0xF0) == 0 {
             return 3; // fixed-size generator
         }
@@ -205,7 +205,7 @@ pub(crate) const LEVEL_DATA_REGIONS: &[LevelDataRegion] = &[
             10, 11, 12, 13, // DiagRect variants
             35, 36, 37, 38, 39, 40, 41, 42, // TopDecoBlocks
         ],
-        randomize_note_wood: false, // shapes 1-5 = desert decorations (palms, cacti) in TS9
+        randomize_note_wood: true,
     },
     LevelDataRegion {
         // Dungeon (TS2)
@@ -248,6 +248,17 @@ pub(crate) const TILE_FORTRESS: u8 = 0x67;
 /// `$E3`, the same as [`TILE_FORTRESS`]'s `$60`.
 pub(crate) const TILE_FORTRESS_AWAY: u8 = 0xEB;
 
+/// [`TILE_FORTRESS_AWAY`] with a nub in its lower-right corner: every away
+/// fortress under some-hints (`LockHint::Elsewhere { marked: true }`). Its
+/// lock wears the same nub. `$EC` is the first byte past page 3's M/L window
+/// (`lock_keys::ML_RANGE_UPPER`), so it reloads through the removable table
+/// like `$6A` rather than flipping to a Mario/Luigi panel; `away_family` owns
+/// its art and its crumble.
+///
+/// Deliberately **not** in [`FORTRESS_TILES`]: that list is also the
+/// hints-off cosmetic pick, and a marked fortress must only ever mean one thing.
+pub(crate) const TILE_FORTRESS_AWAY_MARKED: u8 = 0xEC;
+
 /// Fortress whose lock is in World 8 — the ones that open the way to the
 /// castle. In neither tile registry, so it comes back wearing the completion
 /// marker rather than rubble; it still claims a completion bit.
@@ -259,7 +270,7 @@ pub(crate) const TILE_FORTRESS_W8: u8 = 0x6A;
 ///
 /// With map hints off the writer picks among these at random, purely for
 /// variety. With hints on the choice carries meaning — see
-/// `overworld_build::LockHint`.
+/// `crate::randomize::overworld::build::LockHint`.
 pub(crate) const FORTRESS_TILES: [u8; 3] = [TILE_FORTRESS, TILE_FORTRESS_AWAY, TILE_FORTRESS_W8];
 
 /// Airship dock tile ID.
@@ -403,7 +414,7 @@ pub(crate) const WAND_GATE_TILE: u8 = 0xE2;
 /// vanilla grid, because the builder may rewrite the terrain around it.
 ///
 /// The cell is on the bridge row. `qol::apply_w8_bridges` stamps it like every
-/// other span, and in maze mode `overworld_build::locks` holds it out of the
+/// other span, and in maze mode `crate::randomize::overworld::build::locks` holds it out of the
 /// bridge deal so a lock cannot claim the same tile — standard mode is
 /// unchanged and still deals all five. The gate itself is written last, over
 /// the finished map.
@@ -488,7 +499,7 @@ pub(crate) const MAP_COMPLETE_BITS: [u8; 8] = [0x80, 0x40, 0x20, 0x10, 0x08, 0x0
 ///   excluded from the regular-level pool by other mechanisms. They are
 ///   listed here for completeness so future consumers can rely on the
 ///   list being a full enumeration of chest-bearing levels.
-pub(crate) const CHEST_LEVELS: &[(usize, usize, &str)] = &[
+const CHEST_LEVELS: &[(usize, usize, &str)] = &[
     (0, 11, "1F (Warp Whistle)"),
     (2, 29, "3-7 (Cloud)"),
     (4, 5, "5-1 (Music Box)"),
@@ -590,10 +601,10 @@ pub(crate) const DEST_TO_WORLD: &[(u8, usize)] = &[
 
 /// Per-world map tile grid info.
 pub(crate) struct MapGridInfo {
-    pub file_offset: usize,
-    pub columns: usize,
+    pub(crate) file_offset: usize,
+    pub(crate) columns: usize,
     #[allow(dead_code)]
-    pub screens: usize,
+    pub(crate) screens: usize,
 }
 
 pub(crate) const MAP_TILE_GRIDS: [MapGridInfo; 8] = [
@@ -609,8 +620,8 @@ pub(crate) const MAP_TILE_GRIDS: [MapGridInfo; 8] = [
 
 /// Pointer table locations per world.
 pub(crate) struct WorldTables {
-    pub rowtype_offset: usize,
-    pub entry_count: usize,
+    pub(crate) rowtype_offset: usize,
+    pub(crate) entry_count: usize,
 }
 
 pub(crate) const WORLDS: [WorldTables; 8] = [
@@ -682,12 +693,12 @@ pub(crate) const FORTRESS_1F_OBJ_PTR: u16 = 0xD32B;
 /// Test-only since the fortress-FX rework: production no longer needs to reach
 /// one fortress's Boom-Boom record, because `lock_keys::apply` masks the spawn
 /// Y-nibble of all 17 unconditionally. What is left is the vanilla-layout
-/// reference reader in `overworld_build::sources`.
+/// reference reader in `crate::randomize::overworld::build::sources`.
 /// The obj_ptr identifies the fortress level's enemy data stream in PRG006.
 /// After level shuffle, the obj_ptr at a slot still points to the same enemy
 /// data — only the pointer table entries move, not the data itself.
 #[cfg(test)]
-pub(crate) const VANILLA_FORTRESS_OBJ_PTRS: [u16; 17] = [
+const VANILLA_FORTRESS_OBJ_PTRS: [u16; 17] = [
     0xD32B, // W1[11]
     0xD222, // W2[13]
     0xD393, // W3[13]
@@ -867,7 +878,7 @@ pub(crate) const HB_NEEDS_SHELL_ENEMIES: &[u8] = &[
 ];
 
 /// Specific (obj_ptr, tileset) pairs to exclude from the HB cycling pool.
-/// W3[41] has lay=0xB3E7 with tileset 3, but the layout is designed for tileset 1
+/// `W3[41]` has lay=0xB3E7 with tileset 3, but the layout is designed for tileset 1
 /// (17 other entries with the same layout use tileset 1). Loading it with tileset 3
 /// causes garbled background graphics.
 pub(crate) const HB_EXCLUDE_ENTRIES: &[(u16, u8)] = &[
@@ -876,7 +887,7 @@ pub(crate) const HB_EXCLUDE_ENTRIES: &[(u16, u8)] = &[
 
 /// Map-object sprite slots per world. Slot 0 always holds a fixed non-HB
 /// marker and slot 1 is the airship's in W1-W7; see
-/// [`first_usable_map_obj_slot`](super::first_usable_map_obj_slot).
+/// `rom_data::first_usable_map_obj_slot`.
 pub(crate) const MAP_OBJ_SLOTS: usize = 9;
 
 /// Master pointer table for Map_List_Object_Ys (8 words, one per world).
@@ -903,11 +914,11 @@ pub(crate) const MAP_OBJ_ENTRY_LINKS: &[(usize, usize, usize)] = &[
 /// Data that travels with a level when shuffled.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct LevelEntry {
-    pub tileset: u8,
-    pub obj_lo: u8,
-    pub obj_hi: u8,
-    pub lay_lo: u8,
-    pub lay_hi: u8,
+    pub(crate) tileset: u8,
+    pub(crate) obj_lo: u8,
+    pub(crate) obj_hi: u8,
+    pub(crate) lay_lo: u8,
+    pub(crate) lay_hi: u8,
 }
 
 /// Levels the engine reaches without going through a world pointer table, so
@@ -936,12 +947,12 @@ pub(crate) const UNLISTED_LEVELS: &[(&str, LevelEntry)] = &[(
 /// `include_beta_stages` is enabled. The `obj_ptr` is borrowed from a
 /// compatible vanilla level (beta layouts have no canonical enemy pairing).
 pub(crate) struct BetaLevel {
-    pub tileset: u8,
-    pub obj_lo: u8,
-    pub obj_hi: u8,
-    pub lay_lo: u8,
-    pub lay_hi: u8,
-    pub name: &'static str,
+    pub(crate) tileset: u8,
+    pub(crate) obj_lo: u8,
+    pub(crate) obj_hi: u8,
+    pub(crate) lay_lo: u8,
+    pub(crate) lay_hi: u8,
+    pub(crate) name: &'static str,
 }
 
 /// Nine unreferenced beta levels found in the level data banks.
@@ -1164,15 +1175,15 @@ pub(crate) const UNUSED5_VANILLA_BGPAL: u8 = 6;
 /// Where one of vanilla's 17 fortress-FX slots points.
 ///
 /// Read from the *source* ROM only. The randomizer no longer writes these
-/// tables — `lock_keys` replaced them — but `overworld_pickup` still asks
+/// tables — `lock_keys` replaced them — but `overworld::pickup` still asks
 /// vanilla which cells are lock gaps so it can open them before placement.
 ///
 /// The slot's stored replacement tile is deliberately not carried: what a gap
 /// opens to is derived from the tile standing on it (`path_for_gap_tile`), and
 /// vanilla has one slot where the two disagree. See `open_fx_gaps`.
 pub(crate) struct FxSlot {
-    pub grid_row: usize,
-    pub grid_col: usize,
+    pub(crate) grid_row: usize,
+    pub(crate) grid_col: usize,
 }
 
 #[cfg(test)]
