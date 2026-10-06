@@ -66,16 +66,15 @@ fn sweep_is_deterministic() {
 /// dated entry to `docs/overworld_baseline_log.md` in the same commit saying
 /// what moved and how you established it — never to make a red test green.
 ///
-/// Recaptured 2026-10-05 for the unified hints (the away nub moved onto `$EB`,
-/// so the sky lock pool starts at `$EC` again) — see
-/// `docs/overworld_baseline_log.md`.
+/// Recaptured 2026-10-06 for the island-edge blank fix (W4's cells under the
+/// strip end `0xAB` blank to land) — see `docs/overworld_baseline_log.md`.
 #[rustfmt::skip]
 const BASELINE: [u64; SEEDS as usize] = [
-    0x22BBA06D8E91D03A, 0xF5F415B7A3C76E89, 0x129E7299CF077B22, 0xF1BE679407295D03,
-    0xE57D2832DE0FF75E, 0xF18DFCBECC766B7C, 0x3C41C71E1B5DE551, 0x0FD05393E03659D8,
-    0xD378B8A867FF5869, 0x030F73444E92EE8F, 0x6047588DDF788502, 0x00F3E1D03563047D,
-    0x573C7993313C061E, 0x0DBB2E7B134AF16F, 0xF4DBFD343FF60EB6, 0xED49C525E8D794E0,
-    0x321396F0D72DC3C7, 0x7388B2C107147F06, 0xC75E529DC2A73AF6, 0x8CC9D1B1A1DA7C75,
+    0xF2F51030B5EBE18A, 0xDF9E6BB7382B6F41, 0x3ED44B476C7D28C3, 0xF1BE679407295D03,
+    0xE57D2832DE0FF75E, 0x8D01E3EAC3C63659, 0x3C41C71E1B5DE551, 0xEA47E6185EE9E045,
+    0x5F63448F5843225C, 0x298833353AE328D7, 0x8AAA707A26A3C64B, 0xF68E172E9BC273C0,
+    0x573C7993313C061E, 0x33DE5F7EAF29FF6E, 0xFF11913115AFB546, 0xA092365D9C285B10,
+    0xA695EEDEF43C5B32, 0x941EA05F3F65EE73, 0xD17FBFDFEA84ECE6, 0x8CC9D1B1A1DA7C75,
 ];
 
 #[test]

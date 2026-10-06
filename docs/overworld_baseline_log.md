@@ -34,6 +34,32 @@ hashes they describe are gone; the reasoning is not.
 
 ## Entries
 
+### 2026-10-06 — island-edge blanks: W4's cells under `0xAB` (fix/w4-island-blank)
+
+**Intended: a blank takes the island theme only when the strip path's edge
+facing it is water.** `pickup::ISLAND_PATHS` treated each strip path as island
+on every side; it is now `ISLAND_BELOW` / `ISLAND_RIGHT`, one per edge, pinned
+to the quadrant art by `island_edges_match_the_art`. `0xAB`, the strip's end
+piece, has shoreline along its bottom, so the cell under it is land. In vanilla
+that is always a node: W4's pipe at (6,2) and Toad House at (8,20), which used
+to blank to island water `0xB5` whenever the randomizer left them empty.
+
+**What moved.** 15 of the 20 seeds: 1, 2, 3, 6, 8, 9, 10, 11, 12, 14, 15, 16,
+17, 18 and 19 — the ones that leave one or both of those cells empty.
+
+**How that was established.** Byte diff, `--patched-rom --no-palettes`, old tree
+against new, all 20 seeds, measured both before and after rebasing onto the
+unified-hints change below (the same bytes either way). Every changed byte is
+one of:
+
+- `0x1897F`, W4 (6,2), `B5 → 48` (11 seeds);
+- `0x18A31`, W4 (8,20), `B5 → 48` (10 seeds);
+- the ending montage's W4 mini-map (`0x3232D`–`0x3235E`), the same cells'
+  mini-tile `4C → 63`.
+
+`test_route_census` is not rerun: `0xB5` and `0x48` are both vertical blanks
+with the same walk behaviour, and no other byte moved.
+
 ### 2026-10-05 — unified hints: the nub moves onto `$EB` (feature/unified-hints)
 
 **Intended: the sky lock pool starts at `$EC` again, the exact inverse of the
