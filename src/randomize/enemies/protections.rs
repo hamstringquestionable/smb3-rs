@@ -301,6 +301,17 @@ const LEVEL_PROTECTIONS: &[LevelProtection] = &[
             EntryRule { offset: 0x0D3CE, rule: EntryProtection::Exclude(ROTODISCS) }, // DryBones scr=7 col=13
         ],
     },
+    // --- Thwomp-variant exclusions ---
+    LevelProtection {
+        label: "5F1 (screen 1 Rotodisc must not become a standard dropping Thwomp)",
+        enemy_ptr: 0xD3D0,
+        walker_segment: WalkerSegmentRule::Default,
+        entries: &[
+            // OBJ_THWOMP (standard drop) only; the other five variants stay
+            // allowed. Only reachable with Thwomps and Rotodiscs both Wild.
+            EntryRule { offset: 0x0D3E7, rule: EntryProtection::Exclude(Group::Ids(&[0x8A])) }, // RotodiscCCW scr=1 col=1
+        ],
+    },
     // --- Hammer Bro encounters (walker uses HB modes; injection skips) ---
     LevelProtection {
         label: "W1 Hammer Bro",
@@ -422,6 +433,27 @@ mod tests {
                     entry.offset
                 );
             }
+        }
+    }
+
+    /// The 5F1 slot is the screen-1 Rotodisc in this level's stream, and only
+    /// the standard drop Thwomp is kept out of it.
+    #[test]
+    fn the_5f1_rotodisc_excludes_only_the_drop_thwomp() {
+        let Ok(rom) = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes") else {
+            eprintln!("SKIP: requires the ROM");
+            return;
+        };
+        assert_eq!(enemy_ptr_to_file_offset(0xD3D0), 0x0D3E0, "5F1's stream starts here");
+        let vanilla = rom[0x0D3E7];
+        assert_eq!(vanilla, 0x5B, "RotodiscCCW at 0x0D3E7");
+
+        let Some(EntryProtection::Exclude(group)) = entry_protection_at(0x0D3E7) else {
+            panic!("0x0D3E7 carries no exclusion");
+        };
+        assert!(group.excludes(0x8A, vanilla), "the drop Thwomp must be excluded");
+        for variant in 0x8B..=0x8F {
+            assert!(!group.excludes(variant, vanilla), "{variant:#04X} must stay allowed");
         }
     }
 
