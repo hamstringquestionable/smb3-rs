@@ -21,6 +21,9 @@ deploys.
 - **World 4's empty island spots are land again.** The spot two nodes below
   the start and the Toad House spot on the bottom row drew as water when
   nothing was placed there.
+- **World 5's first fortress no longer drops a Thwomp on screen 1.** With
+  Rotodiscs and Thwomps both on Wild, the first Rotodisc could become a
+  standard dropping Thwomp; the other Thwomp kinds can still appear there.
 
 ## [2.4.0] - 2026-10-05
 
