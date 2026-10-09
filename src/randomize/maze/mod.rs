@@ -57,6 +57,15 @@ mod relocate;
 mod roles;
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+thread_local! {
+    /// The last maze the pipeline generated on this thread, so a census can
+    /// measure the maze a real seed and flag key produce rather than one built
+    /// by its own harness. Filled by `pipeline::stages::maze_model`.
+    pub(crate) static LAST_MAZE: std::cell::RefCell<Option<GlobalState>> =
+        const { std::cell::RefCell::new(None) };
+}
 mod walk;
 pub(crate) mod writer;
 
@@ -274,6 +283,7 @@ struct KeySource {
 
 /// Eight worlds and the edges between them. A thin wrapper: the per-world
 /// state is the existing [`WorldState`], untouched.
+#[cfg_attr(test, derive(Clone))]
 pub(crate) struct GlobalState {
     worlds: Vec<WorldState>,
     edges: Vec<MazeEdge>,
