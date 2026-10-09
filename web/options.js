@@ -752,7 +752,7 @@ export const SCHEMA = [
 		enabledWhen: { palettes: true }, indent: true },
 	{ id: "palette_themed", type: "bool", default: false,
 		label: "World colors",
-		tip: "Recolor levels, enemies, and world maps with a random color theme. Brightness stays the same, so everything stays easy to see.",
+		tip: "Recolor levels, enemies, and world maps. Each kind of level gets its own color theme.",
 		group: "cosmetic", inFlagKey: false },
 	{ id: "remove_flashing", type: "bool", default: true,
 		label: "Remove flashing",

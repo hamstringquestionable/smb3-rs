@@ -21,9 +21,11 @@ deploys.
   no wands required (1 in 30 with three), and none are under 10.
 - **The Hammer suit takes your player colour.** Its white parts become a light
   tint of your colour and its black parts a dark tint.
-- **World colours shift one tileset at a time.** Each map and level style now
-  gets its own shift. Previously the shifts were grouped by guessed palette
-  regions, so one map could share another style's shift.
+- **World colours give each kind of level one whole colour scheme.** Each map
+  and level style now gets a single scheme (classic, Recolored or Tuscan) and
+  its own small hue shift. Before, every group of four colours picked its
+  scheme separately, so one screen could mix all three, and the shifts were
+  grouped by guessed palette regions.
 
 ### Fixed
 
