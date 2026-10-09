@@ -8,9 +8,9 @@ FAMILIES here and rerun; don't hand-edit the Rust file.
 
 Layout (verified against the ROM, see docs/smb3_rom_reference.md → "Palette
 Sets"): the 16 `PalSet_*` sets of PRG027 sit back to back from 0x36BE2, 192
-bytes each, and every 4-byte sub-palette starts at 0x36BE2 + 4n. Two player
-palette tables follow the `Palette_By_Tileset` pointer table, each on its own
-4-byte grid.
+bytes each, and every 4-byte sub-palette starts at 0x36BE2 + 4n. The player
+palette tables after `Palette_By_Tileset` are wardrobe, not world colors: the
+player-color scheme in `palettes.rs` owns them.
 
 For each aligned quartet in a region:
   - Recolored changed it → a VariantGroup: vanilla, Recolored, then each family's
@@ -20,8 +20,9 @@ For each aligned quartet in a region:
 
 Never covered:
   - 0x377E2-0x37807 `Palette_By_Tileset` — painting it crashes the loader.
-  - 0x37820-0x3782A `Map_PlayerPalFix` + `InitPal_Per_MapPowerup` — the
-    second is palette INDICES (00-08), which hue rotation would corrupt.
+  - 0x37808-0x3784E the player palette tables (bonus game, map suits) and
+    `InitPal_Per_MapPowerup`, palette INDICES (00-08) that hue rotation would
+    corrupt.
   - 0x3784F+ `Setup_PalData` code.
   - 0x33046-0x335xx — Recolored restructured this stream (insertions).
 
@@ -70,11 +71,6 @@ PALSETS = [
 REGIONS = [
     (name, label, PALSET_BASE + i * PALSET_SIZE, PALSET_BASE + (i + 1) * PALSET_SIZE)
     for i, (name, label) in enumerate(PALSETS)
-] + [
-    ("BONUS_PLAYER_VARIANTS", "BonusGame_PlayerPal (Mario/Luigi in the bonus games)",
-        0x37808, 0x37820),
-    ("MAP_SUIT_VARIANTS", "InitPals_Per_MapPUp (map player palette per suit)",
-        0x3782B, 0x3784F),
 ]
 
 
@@ -121,10 +117,10 @@ HEADER = """\
 //! byte picks.
 //!
 //! Layout: one table per `PalSet_*` set of PRG027 (192 bytes each from 0x36BE2;
-//! sub-palettes start at 0x36BE2 + 4n), plus the two player palette tables after
-//! `Palette_By_Tileset`. See `docs/smb3_rom_reference.md` → "Palette Sets".
-//! Never covered: `Palette_By_Tileset` (0x377E2-0x37807, painting it crashes the
-//! loader) and `InitPal_Per_MapPowerup` (0x37822-0x3782A, palette indices).
+//! sub-palettes start at 0x36BE2 + 4n). See `docs/smb3_rom_reference.md` →
+//! "Palette Sets". Never covered: `Palette_By_Tileset` (0x377E2-0x37807,
+//! painting it crashes the loader), and the player palette tables after it,
+//! which belong to the player-color scheme in `palettes.rs`.
 //!
 //! Every table carries `#[rustfmt::skip]`: the compact four-line-per-group
 //! layout is what keeps a palette table readable, and what `git diff` after a

@@ -54,7 +54,14 @@ fn generate_patched_rom_layers_visual_patch_then_randomization() {
     // Visual-patch bytes must still be present in the final ROM.
     assert_eq!(patched[16 + 0x326AE], 0x22, "Blue palette byte 1 (visual)");
     assert_eq!(patched[16 + 0x33178], 0x22, "Blue palette byte 10 (visual)");
-    assert_eq!(patched[16 + 0x37838], 0x16, "Red highlight in PRG027 (visual)");
+    // Except the wardrobe, which player colors recolor ON TOP of a reskin:
+    // the patch's red highlight is Mario's red (0x16) in the map suit table,
+    // so it follows the pick exactly like Mario's in-level body does.
+    assert_eq!(
+        patched[16 + 0x37838],
+        patched[0x10539 + 1],
+        "Red highlight in PRG027 follows the player color"
+    );
 
     // And randomization must have actually run (output differs from a
     // visual-only patch). Compare against the visual-only baseline.

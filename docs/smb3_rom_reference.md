@@ -2385,6 +2385,29 @@ garbage address, which is the crash the earlier probes hit and recorded as a
 | 0x3782B–0x3784E | `$B81B` | `InitPals_Per_MapPUp` | Map player palette per suit, 9 × 4 B |
 | 0x3784F– | `$B83F` | `Setup_PalData` | Code (the `$AD` at 0x3784F is `LDA $070A`) |
 
+#### The Player's Colors Outside Levels (verified 2026-10-09)
+
+The in-level suit palettes (see *Character Palettes*) are not the only copy.
+The map and the bonus games draw the Player from five more tables, and a
+player-color change has to reach all of them or the map shows different
+colors from the level:
+
+| Table | File | Layout | Loaded when |
+|---|---|---|---|
+| `InitPals_Per_MapPUp` (PRG027) | 0x3782B | 9 × `[FF, body, face, accent]`, by map power-up, shared by Mario and Luigi | the map is drawn (`Setup_PalData` tail) |
+| `Map_PlayerPalFix` (PRG027) | 0x37820 | `[Mario, Luigi]` body | same |
+| `InvItem_PerPowerUp_Palette` / `…2` (PRG026) | 0x3457F / 0x345A3 | Mario's then Luigi's 9 × `[body, face, accent, FF]`; Luigi's P-Wing entry has no `FF` | an item is used on the map |
+| `Map_PostJC_PUpPP1` / `PUpPML` / `PUpPP2` (PRG010) | 0x14DCA / 0x14DD1 / 0x14DD3 | 7 bodies, `[Mario, Luigi]` bodies, 7 accents | Judgem's Cloud wears off |
+| `BonusGame_PlayerPal` (PRG027) | 0x37808 | Mario then Luigi, each `[0F, body, 30, face]` + `[0F, body, 30, accent]`; a third pair follows | the bonus games |
+
+The shared map table only holds Mario's red. Two places swap Luigi's green
+in: `CMP #$16 / BNE` at **0x378FF** (map load) and **0x14E5D** (after
+Judgem's Cloud). If a suit's body byte is `$16`, they load `Map_PlayerPalFix`
+/ `PUpPML` indexed by `Player_Current` instead. So the `CMP` operand must
+equal whatever Mario's body byte is; when the table changes and the operand
+doesn't, Luigi wears Mario's colors on the map. `palettes.rs`'s
+`apply_map_wardrobe` rewrites both operands with the tables for that reason.
+
 > **Note**: opening the inventory triggers a palette re-upload that reverts
 > level-screen palettes to vanilla mid-frame, then restores them on close
 > (observed in probe runs).
