@@ -11,10 +11,10 @@
 //! byte picks.
 //!
 //! Layout: one table per `PalSet_*` set of PRG027 (192 bytes each from 0x36BE2;
-//! sub-palettes start at 0x36BE2 + 4n), plus the two player palette tables after
-//! `Palette_By_Tileset`. See `docs/smb3_rom_reference.md` → "Palette Sets".
-//! Never covered: `Palette_By_Tileset` (0x377E2-0x37807, painting it crashes the
-//! loader) and `InitPal_Per_MapPowerup` (0x37822-0x3782A, palette indices).
+//! sub-palettes start at 0x36BE2 + 4n). See `docs/smb3_rom_reference.md` →
+//! "Palette Sets". Never covered: `Palette_By_Tileset` (0x377E2-0x37807,
+//! painting it crashes the loader), and the player palette tables after it,
+//! which belong to the player-color scheme in `palettes.rs`.
 //!
 //! Every table carries `#[rustfmt::skip]`: the compact four-line-per-group
 //! layout is what keeps a palette table readable, and what `git diff` after a
@@ -1899,67 +1899,6 @@ pub(crate) const BONUS_VARIANTS: &[VariantGroup] = &[
 ];
 
 // --------------------------------------------------------------------------
-// BonusGame_PlayerPal (Mario/Luigi in the bonus games): 0x37808-0x3781f
-// 3 sub-palettes changed by Recolored.
-// --------------------------------------------------------------------------
-
-#[rustfmt::skip]
-pub(crate) const BONUS_PLAYER_VARIANTS: &[VariantGroup] = &[
-    VariantGroup { offset: 0x37808, variants: &[
-        [0x0F, 0x16, 0x30, 0x36],  // vanilla
-        [0x0F, 0x16, 0x30, 0x37],  // recolored
-    ]},
-    VariantGroup { offset: 0x3780C, variants: &[
-        [0x0F, 0x16, 0x30, 0x21],  // vanilla
-        [0x0F, 0x16, 0x30, 0x12],  // recolored
-        [0x0F, 0x16, 0x30, 0x22],  // tuscan
-    ]},
-    VariantGroup { offset: 0x37810, variants: &[
-        [0x0F, 0x1A, 0x30, 0x36],  // vanilla
-        [0x0F, 0x1A, 0x30, 0x37],  // recolored
-        [0x0F, 0x1C, 0x30, 0x36],  // tuscan
-    ]},
-];
-
-// --------------------------------------------------------------------------
-// InitPals_Per_MapPUp (map player palette per suit): 0x3782b-0x3784e
-// 7 sub-palettes changed by Recolored.
-// --------------------------------------------------------------------------
-
-#[rustfmt::skip]
-pub(crate) const MAP_SUIT_VARIANTS: &[VariantGroup] = &[
-    VariantGroup { offset: 0x3782B, variants: &[
-        [0xFF, 0x16, 0x36, 0x0F],  // vanilla
-        [0xFF, 0x16, 0x37, 0x06],  // recolored
-    ]},
-    VariantGroup { offset: 0x3782F, variants: &[
-        [0xFF, 0x16, 0x36, 0x0F],  // vanilla
-        [0xFF, 0x16, 0x37, 0x06],  // recolored
-    ]},
-    VariantGroup { offset: 0x37833, variants: &[
-        [0xFF, 0x27, 0x36, 0x16],  // vanilla
-        [0xFF, 0x30, 0x37, 0x17],  // recolored
-    ]},
-    VariantGroup { offset: 0x37837, variants: &[
-        [0xFF, 0x16, 0x36, 0x0F],  // vanilla
-        [0xFF, 0x16, 0x37, 0x06],  // recolored
-    ]},
-    VariantGroup { offset: 0x3783B, variants: &[
-        [0xFF, 0x2A, 0x36, 0x0F],  // vanilla
-        [0xFF, 0x2A, 0x37, 0x1A],  // recolored
-        [0xFF, 0x2C, 0x36, 0x0F],  // tuscan
-    ]},
-    VariantGroup { offset: 0x37843, variants: &[
-        [0xFF, 0x30, 0x36, 0x0F],  // vanilla
-        [0xFF, 0x30, 0x38, 0x08],  // recolored
-    ]},
-    VariantGroup { offset: 0x3784B, variants: &[
-        [0xFF, 0x16, 0x36, 0x0F],  // vanilla
-        [0xFF, 0x16, 0x37, 0x06],  // recolored
-    ]},
-];
-
-// --------------------------------------------------------------------------
 // Rotate-only quartets: sub-palettes Recolored left at vanilla that hold
 // chromatic bytes. Never variant-swapped, but hue-rotated with their theme
 // group so a kept-vanilla green can't clash with rotated neighbours.
@@ -2033,8 +1972,4 @@ pub(crate) const ROTATE_ONLY_QUARTETS: &[usize] = &[
     0x37746, 0x3774A, 0x3774E, 0x3775E, 0x3776E, 0x3777E, 0x3778E, 0x3779E,
     0x377A6, 0x377AA, 0x377B2, 0x377B6, 0x377BA, 0x377BE, 0x377C6, 0x377CA,
     0x377CE, 0x377D6, 0x377DA, 0x377DE,
-    // BonusGame_PlayerPal (Mario/Luigi in the bonus games) (3)
-    0x37814, 0x37818, 0x3781C,
-    // InitPals_Per_MapPUp (map player palette per suit) (2)
-    0x3783F, 0x37847,
 ];

@@ -2,10 +2,10 @@ use rand::Rng;
 use rand::seq::IndexedRandom;
 
 use crate::randomize::cosmetic::palette_variants::{
-    AIRSHIP_VARIANTS, BONUS_PLAYER_VARIANTS, BONUS_VARIANTS, DESERT_VARIANTS, FORT_VARIANTS,
-    GIANT_VARIANTS, HIGH_UP_VARIANTS, HILLS_UNDER_VARIANTS, ICE_VARIANTS, MAP_SUIT_VARIANTS,
-    MAPS_VARIANTS, PIPE_MAZE_VARIANTS, PLAINS_VARIANTS, PLANT_VARIANTS, ROTATE_ONLY_QUARTETS,
-    SKY_VARIANTS, TOAD_VARIANTS, TWO_P_VS_VARIANTS, VariantGroup, WATER_VARIANTS,
+    AIRSHIP_VARIANTS, BONUS_VARIANTS, DESERT_VARIANTS, FORT_VARIANTS, GIANT_VARIANTS,
+    HIGH_UP_VARIANTS, HILLS_UNDER_VARIANTS, ICE_VARIANTS, MAPS_VARIANTS, PIPE_MAZE_VARIANTS,
+    PLAINS_VARIANTS, PLANT_VARIANTS, ROTATE_ONLY_QUARTETS, SKY_VARIANTS, TOAD_VARIANTS,
+    TWO_P_VS_VARIANTS, VariantGroup, WATER_VARIANTS,
 };
 use crate::rom::Rom;
 
@@ -109,12 +109,101 @@ fn apply_player_scheme(rom: &mut Rom, anchor: u8) {
     let hue = anchor & 0x0F;
     rom.write_byte(HAMMER_SUIT + 1, 0x30 | hue);
     rom.write_byte(HAMMER_SUIT + 3, hue);
+
+    apply_map_wardrobe(rom, current_body, anchor, delta);
 }
 
 /// Hammer suit quartet, `[00, white 0x30, face, black 0x0F]` in vanilla.
 /// Has no chromatic suit byte, so `apply_player_scheme` tints it from the
 /// pick rather than rotating it.
 const HAMMER_SUIT: usize = PALETTE_RANGES[5].0;
+
+// The wardrobe outside a level. `PALETTE_RANGES` only dresses the Player
+// inside levels; these tables draw them on the map and in the bonus games,
+// so they must follow the same scheme or the map shows other colors.
+// Verified against the Rev 1 ROM; see `docs/smb3_rom_reference.md` →
+// "Palette Sets".
+
+/// `InitPals_Per_MapPUp` (PRG027): 9 × `[FF, body, face, accent]`, one per map
+/// power-up, shared by Mario and Luigi. Loaded when the map is drawn.
+const MAP_SUIT_PALS: usize = 0x3782B;
+/// `Map_PlayerPalFix` (PRG027): `[Mario body, Luigi body]`.
+const MAP_PLAYER_FIX: usize = 0x37820;
+/// `InvItem_PerPowerUp_Palette` / `…Palette2` (PRG026): Mario's then Luigi's
+/// 9 × `[body, face, accent, FF]`, loaded when an item is used on the map.
+/// Luigi's last entry has no `FF`, which is never written.
+const ITEM_SUIT_PALS: [usize; 2] = [0x3457F, 0x345A3];
+/// `Map_PostJC_PUpPP1` / `PUpPML` / `PUpPP2` (PRG010): 7 bodies, `[Mario,
+/// Luigi]` bodies, 7 accents. Loaded after Judgem's Cloud wears off.
+const JC_BODY: usize = 0x14DCA;
+const JC_PLAYER_FIX: usize = 0x14DD1;
+const JC_ACCENT: usize = 0x14DD3;
+/// `BonusGame_PlayerPal` (PRG027): Mario then Luigi, each `[0F, body, 30,
+/// face]` + `[0F, body, 30, accent]`. The third pair after them is left alone.
+const BONUS_PLAYER_PALS: usize = 0x37808;
+/// The map power-up number of the Hammer suit.
+const HAMMER_POWER: usize = 6;
+/// Two `CMP #$16 / BNE` sites (PRG027 map load, PRG010 after Judgem's Cloud)
+/// that swap Luigi's body in when a suit's body is Mario's red. The operand
+/// at +1 must equal Mario's body in the tables above, or Luigi wears Mario's
+/// colors on the map.
+const LUIGI_SWAP_CMPS: [usize; 2] = [0x378FF, 0x14E5D];
+
+/// Recolor the map and bonus-game wardrobe with the scheme
+/// `apply_player_scheme` used in levels: a body byte equal to Mario's base
+/// color `base` becomes the exact pick, every other body and accent byte
+/// rotates by `delta`, faces never move, and the Hammer suit takes the tint.
+///
+/// The `CMP` operands go through the same body rule as the table entries,
+/// so the Luigi swap keeps matching whatever Mario's body became. Only the
+/// immediate operand changes; each site is checked for `C9 __ D0` first.
+fn apply_map_wardrobe(rom: &mut Rom, base: u8, anchor: u8, delta: u8) {
+    let body = |b: u8| if b == base { anchor } else { rotate_hue(b, delta) };
+    let accent = |b: u8| rotate_hue(b, delta);
+    let tint = (0x30 | (anchor & 0x0F), anchor & 0x0F);
+    let recolor = |rom: &mut Rom, at: usize, f: &dyn Fn(u8) -> u8| {
+        let b = rom.read_byte(at);
+        rom.write_byte(at, f(b));
+    };
+
+    // `(body offset, accent offset, is the Hammer suit)` per power-up entry.
+    let mut suits: Vec<(usize, usize, bool)> = Vec::new();
+    for i in 0..9 {
+        let q = MAP_SUIT_PALS + 4 * i;
+        suits.push((q + 1, q + 3, i == HAMMER_POWER));
+        for table in ITEM_SUIT_PALS {
+            let q = table + 4 * i;
+            suits.push((q, q + 2, i == HAMMER_POWER));
+        }
+    }
+    for i in 0..7 {
+        suits.push((JC_BODY + i, JC_ACCENT + i, i == HAMMER_POWER));
+    }
+    for (body_at, accent_at, hammer) in suits {
+        if hammer {
+            rom.write_byte(body_at, tint.0);
+            rom.write_byte(accent_at, tint.1);
+        } else {
+            recolor(rom, body_at, &body);
+            recolor(rom, accent_at, &accent);
+        }
+    }
+
+    for at in [MAP_PLAYER_FIX, MAP_PLAYER_FIX + 1, JC_PLAYER_FIX, JC_PLAYER_FIX + 1] {
+        recolor(rom, at, &body);
+    }
+    for player in 0..2 {
+        let at = BONUS_PLAYER_PALS + 8 * player;
+        recolor(rom, at + 1, &body);
+        recolor(rom, at + 5, &body);
+        recolor(rom, at + 7, &accent);
+    }
+    for at in LUIGI_SWAP_CMPS {
+        if rom.read_byte(at) == 0xC9 && rom.read_byte(at + 2) == 0xD0 {
+            recolor(rom, at + 1, &body);
+        }
+    }
+}
 
 /// All variant-group regions applied by `randomize_themed`, in write order.
 const THEMED_REGIONS: &[&[VariantGroup]] = &[
@@ -134,8 +223,6 @@ const THEMED_REGIONS: &[&[VariantGroup]] = &[
     SKY_VARIANTS,
     TWO_P_VS_VARIANTS,
     BONUS_VARIANTS,
-    BONUS_PLAYER_VARIANTS,
-    MAP_SUIT_VARIANTS,
 ];
 
 /// A context-aware theme group: a set of palette regions that paint the same
@@ -165,12 +252,7 @@ struct ThemeGroup {
 ///   readings) but NOT +2 (magenta sky territory);
 /// - every other set stays within ±1.
 const THEME_GROUPS: &[ThemeGroup] = &[
-    ThemeGroup {
-        name: "maps",
-        // PalSet_Maps + the map player palette per suit (InitPals_Per_MapPUp)
-        ranges: &[(0x36BE2, 0x36CA2), (0x3782B, 0x3784F)],
-        shifts: &[0, 1, 11],
-    },
+    ThemeGroup { name: "maps", ranges: &[(0x36BE2, 0x36CA2)], shifts: &[0, 1, 11] },
     ThemeGroup { name: "plains", ranges: &[(0x36CA2, 0x36D62)], shifts: &[0, 1, 11, 10] },
     ThemeGroup { name: "fortress", ranges: &[(0x36D62, 0x36E22)], shifts: &[0, 1, 11] },
     ThemeGroup { name: "hills/underground", ranges: &[(0x36E22, 0x36EE2)], shifts: &[0, 1, 11] },
@@ -185,12 +267,7 @@ const THEME_GROUPS: &[ThemeGroup] = &[
     ThemeGroup { name: "ice", ranges: &[(0x374E2, 0x375A2)], shifts: &[0, 1, 11] },
     ThemeGroup { name: "sky", ranges: &[(0x375A2, 0x37662)], shifts: &[0, 1, 11] },
     ThemeGroup { name: "2p vs", ranges: &[(0x37662, 0x37722)], shifts: &[0, 1, 11] },
-    ThemeGroup {
-        name: "bonus",
-        // PalSet_Bonus + the bonus games' player palettes (BonusGame_PlayerPal)
-        ranges: &[(0x37722, 0x377E2), (0x37808, 0x37820)],
-        shifts: &[0, 1, 11],
-    },
+    ThemeGroup { name: "bonus", ranges: &[(0x37722, 0x377E2)], shifts: &[0, 1, 11] },
 ];
 
 /// Look up the theme-group index owning a file offset. Every curated offset
@@ -224,9 +301,8 @@ fn theme_group_for(offset: usize) -> Option<usize> {
 ///    (> 0x3C, 0xFF skip markers) pass through untouched.
 ///
 /// Coverage: every sub-palette Recolored changed across the 16 `PalSet_*`
-/// sets plus the bonus-game and map-suit player palettes, never touching
-/// `Palette_By_Tileset` (0x377E2-0x37807) or the suit-index table at
-/// 0x37822-0x3782A. Sub-palettes Recolored kept at vanilla but which hold
+/// sets, never touching `Palette_By_Tileset` (0x377E2-0x37807) or the
+/// wardrobe tables after it, which `apply_player_scheme` owns. Sub-palettes Recolored kept at vanilla but which hold
 /// chromatic bytes are in `ROTATE_ONLY_QUARTETS`: they never variant-swap,
 /// but they DO hue-rotate, so a kept-vanilla green can't clash with rotated
 /// colors on the same screen.
@@ -633,8 +709,6 @@ mod tests {
         // each covered range and check them after running the randomizer.
         const REGIONS: &[(usize, usize, u8)] = &[
             (0x36BE2, 0x377E2, 0x40), // the 16 PalSet_* sets
-            (0x37808, 0x37820, 0x50), // BonusGame_PlayerPal
-            (0x3782B, 0x3784F, 0x60), // InitPals_Per_MapPUp
         ];
 
         let mut rom = make_test_rom();
@@ -707,22 +781,167 @@ mod tests {
         );
     }
 
+    /// The vanilla wardrobe outside levels, as `(file offset, bytes)`: the
+    /// bonus-game and map tables in PRG027, the item tables in PRG026, the
+    /// post-Judgem's-Cloud tables in PRG010, and the two `CMP #$16 / BNE`
+    /// Luigi-swap sites.
+    const VANILLA_MAP_WARDROBE: &[(usize, &[u8])] = &[
+        (
+            0x37808, // BonusGame_PlayerPal, Map_PlayerPalFix, InitPal_Per_MapPowerup, InitPals
+            &[
+                0x0F, 0x16, 0x30, 0x36, 0x0F, 0x16, 0x30, 0x21, 0x0F, 0x1A, 0x30, 0x36, 0x0F, 0x1A,
+                0x30, 0x31, 0x0F, 0x30, 0x30, 0x36, 0x0F, 0x30, 0x30, 0x17, 0x16, 0x1A, 0x00, 0x01,
+                0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0xFF, 0x16, 0x36, 0x0F, 0xFF, 0x16, 0x36,
+                0x0F, 0xFF, 0x27, 0x36, 0x16, 0xFF, 0x16, 0x36, 0x0F, 0xFF, 0x2A, 0x36, 0x0F, 0xFF,
+                0x17, 0x36, 0x0F, 0xFF, 0x30, 0x36, 0x0F, 0xFF, 0x30, 0x36, 0x0F, 0xFF, 0x16, 0x36,
+                0x0F,
+            ],
+        ),
+        (
+            0x3457F, // InvItem_PerPowerUp_Palette (Mario) + ...Palette2 (Luigi)
+            &[
+                0x16, 0x36, 0x0F, 0xFF, 0x16, 0x36, 0x0F, 0xFF, 0x27, 0x36, 0x16, 0xFF, 0x16, 0x36,
+                0x0F, 0xFF, 0x2A, 0x36, 0x0F, 0xFF, 0x17, 0x36, 0x0F, 0xFF, 0x30, 0x36, 0x0F, 0xFF,
+                0x30, 0x36, 0x0F, 0xFF, 0x16, 0x36, 0x0F, 0xFF, 0x1A, 0x36, 0x0F, 0xFF, 0x1A, 0x36,
+                0x0F, 0xFF, 0x27, 0x36, 0x16, 0xFF, 0x1A, 0x36, 0x0F, 0xFF, 0x2A, 0x36, 0x0F, 0xFF,
+                0x17, 0x36, 0x0F, 0xFF, 0x30, 0x36, 0x0F, 0xFF, 0x30, 0x36, 0x0F, 0xFF, 0x1A, 0x36,
+                0x0F,
+            ],
+        ),
+        (
+            0x14DCA, // Map_PostJC_PUpPP1, PUpPML, PUpPP2
+            &[
+                0x16, 0x16, 0x27, 0x16, 0x2A, 0x17, 0x30, 0x16, 0x1A, 0x0F, 0x0F, 0x16, 0x0F, 0x0F,
+                0x0F, 0x0F,
+            ],
+        ),
+        (0x378FF, &[0xC9, 0x16, 0xD0]),
+        (0x14E5D, &[0xC9, 0x16, 0xD0]),
+    ];
+
+    fn make_full_wardrobe_rom() -> Rom {
+        let mut rom = make_wardrobe_rom();
+        for &(offset, bytes) in VANILLA_MAP_WARDROBE {
+            rom.write_range(offset, bytes);
+        }
+        rom
+    }
+
     #[test]
-    fn themed_does_not_touch_map_suit_indices() {
-        // 0x37820-0x3782A is `Map_PlayerPalFix` (Mario/Luigi map color) then
-        // `InitPal_Per_MapPowerup`, which holds palette INDICES 00-08. Those
-        // look chromatic to `rotate_hue`, so a rotated index would hand a suit
-        // another suit's palette, or (P-Wing 08 -> 09) read past the table into
-        // `Setup_PalData`'s code. Use the real bytes, not >= 0x40 canaries.
-        const VANILLA: [u8; 11] =
-            [0x16, 0x1A, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08];
+    fn map_wardrobe_offsets_match_the_rom() {
+        // The fixture above was typed from the disassembly; this pins it,
+        // every offset and both `CMP` sites against the real ROM. Skipped
+        // where the ROM is absent, like the other ROM-backed tests.
+        let Ok(rom) = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes") else {
+            eprintln!("SKIP: requires the ROM, which is not included in the repo");
+            return;
+        };
+        for &(offset, bytes) in VANILLA_MAP_WARDROBE {
+            assert_eq!(&rom[offset..offset + bytes.len()], bytes, "at {offset:#07x}");
+        }
+    }
+
+    #[test]
+    fn themed_leaves_the_wardrobe_alone() {
+        // The player tables after `Palette_By_Tileset` belong to the
+        // player-color scheme. World colors used to rotate them, which broke
+        // two things: `InitPal_Per_MapPowerup` holds palette INDICES 00-08
+        // (P-Wing 08 -> 09 read `Setup_PalData`'s code as colors), and
+        // rotating Mario's 0x16 in `InitPals_Per_MapPUp` stopped the map's
+        // `CMP #$16` from swapping Luigi in, so Luigi wore Mario's colors.
+        let (offset, vanilla) = VANILLA_MAP_WARDROBE[0];
         for seed in 0u64..32 {
             let mut rom = make_test_rom();
-            rom.write_range(0x37820, &VANILLA);
+            rom.write_range(offset, vanilla);
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
             randomize_themed(&mut rom, &mut rng);
-            assert_eq!(rom.read_range(0x37820, 11), &VANILLA[..], "seed {seed}");
+            assert_eq!(rom.read_range(offset, vanilla.len()), vanilla, "seed {seed}");
         }
+    }
+
+    #[test]
+    fn map_wardrobe_follows_the_pick() {
+        // Anchor blue 0x12 (delta 8 from vanilla red): the map dresses Mario
+        // exactly like the level does.
+        let mut rom = make_full_wardrobe_rom();
+        apply_player_scheme(&mut rom, 0x12);
+        let luigi = rotate_hue(0x1A, 8);
+
+        // Map load: Mario's base body is the pick, Fire rotates, the Hammer
+        // suit takes the tint, faces stay, Judgem's Cloud stays white.
+        let suit = |i: usize| rom.read_range(MAP_SUIT_PALS + 4 * i + 1, 3).to_vec();
+        assert_eq!(suit(0), [0x12, 0x36, 0x0F]);
+        assert_eq!(suit(2), [rotate_hue(0x27, 8), 0x36, 0x12]);
+        assert_eq!(suit(HAMMER_POWER), [0x32, 0x36, 0x02]);
+        assert_eq!(suit(7), [0x30, 0x36, 0x0F]);
+        assert_eq!(rom.read_range(MAP_PLAYER_FIX, 2), &[0x12, luigi]);
+
+        // Items on the map: Mario's and Luigi's own tables.
+        assert_eq!(rom.read_byte(ITEM_SUIT_PALS[0]), 0x12);
+        assert_eq!(rom.read_byte(ITEM_SUIT_PALS[1]), luigi);
+        assert_eq!(rom.read_range(ITEM_SUIT_PALS[1] + 4 * HAMMER_POWER, 3), &[0x32, 0x36, 0x02]);
+
+        // After Judgem's Cloud, and the bonus games.
+        assert_eq!(rom.read_byte(JC_BODY), 0x12);
+        assert_eq!(rom.read_byte(JC_BODY + HAMMER_POWER), 0x32);
+        assert_eq!(rom.read_byte(JC_ACCENT + HAMMER_POWER), 0x02);
+        assert_eq!(rom.read_range(JC_PLAYER_FIX, 2), &[0x12, luigi]);
+        assert_eq!(rom.read_range(BONUS_PLAYER_PALS, 4), &[0x0F, 0x12, 0x30, 0x36]);
+        assert_eq!(rom.read_byte(BONUS_PLAYER_PALS + 9), luigi);
+    }
+
+    #[test]
+    fn luigi_swap_matches_mario_for_every_pick() {
+        // Both `CMP #$16` sites must compare against whatever Mario's body
+        // became, or Luigi wears Mario's colors on the map. Luigi's own body
+        // must never equal it, or Mario would get Luigi's.
+        for row in 0u8..4 {
+            for hue in 1u8..=0x0C {
+                let anchor = (row << 4) | hue;
+                let mut rom = make_full_wardrobe_rom();
+                apply_player_scheme(&mut rom, anchor);
+                let map_cmp = rom.read_byte(LUIGI_SWAP_CMPS[0] + 1);
+                let jc_cmp = rom.read_byte(LUIGI_SWAP_CMPS[1] + 1);
+                assert_eq!(map_cmp, rom.read_byte(MAP_SUIT_PALS + 1), "map load, {anchor:#04x}");
+                assert_eq!(jc_cmp, rom.read_byte(JC_BODY), "Judgem's Cloud, {anchor:#04x}");
+                assert_ne!(rom.read_byte(MAP_PLAYER_FIX + 1), map_cmp, "{anchor:#04x}");
+                assert_ne!(rom.read_byte(JC_PLAYER_FIX + 1), jc_cmp, "{anchor:#04x}");
+            }
+        }
+    }
+
+    #[test]
+    fn map_wardrobe_vanilla_anchor_changes_only_the_hammer_suit() {
+        let mut rom = make_full_wardrobe_rom();
+        apply_player_scheme(&mut rom, 0x16);
+        let hammer: Vec<usize> = vec![
+            MAP_SUIT_PALS + 4 * HAMMER_POWER + 1,
+            MAP_SUIT_PALS + 4 * HAMMER_POWER + 3,
+            ITEM_SUIT_PALS[0] + 4 * HAMMER_POWER,
+            ITEM_SUIT_PALS[0] + 4 * HAMMER_POWER + 2,
+            ITEM_SUIT_PALS[1] + 4 * HAMMER_POWER,
+            ITEM_SUIT_PALS[1] + 4 * HAMMER_POWER + 2,
+            JC_BODY + HAMMER_POWER,
+            JC_ACCENT + HAMMER_POWER,
+        ];
+        for &(offset, bytes) in VANILLA_MAP_WARDROBE {
+            for (k, &vb) in bytes.iter().enumerate() {
+                if !hammer.contains(&(offset + k)) {
+                    assert_eq!(rom.read_byte(offset + k), vb, "changed at {:#07x}", offset + k);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn luigi_swap_operand_needs_its_cmp() {
+        // The operand is only rewritten where the ROM really holds
+        // `CMP #imm / BNE`; anything else is left byte-for-byte.
+        let mut rom = make_full_wardrobe_rom();
+        rom.write_range(LUIGI_SWAP_CMPS[0], &[0xA9, 0x16, 0xD0]); // LDA #$16, not CMP
+        apply_player_scheme(&mut rom, 0x12);
+        assert_eq!(rom.read_byte(LUIGI_SWAP_CMPS[0] + 1), 0x16);
+        assert_eq!(rom.read_byte(LUIGI_SWAP_CMPS[1] + 1), 0x12);
     }
 
     #[test]
@@ -744,16 +963,10 @@ mod tests {
 
     #[test]
     fn curated_offsets_sit_on_the_sub_palette_grid() {
-        // Every PalSet sub-palette starts at 0x36BE2 + 4n; the player palette
-        // tables after the pointer table have their own grids (0x37808,
-        // 0x3782B). A group off its grid straddles two sub-palettes, so
-        // independent picks could mix vanilla and Recolored halves of one.
-        let on_grid = |o: usize| match o {
-            0x36BE2..0x377E2 => (o - 0x36BE2).is_multiple_of(4),
-            0x37808..0x37820 => (o - 0x37808).is_multiple_of(4),
-            0x3782B..0x3784F => (o - 0x3782B).is_multiple_of(4),
-            _ => false,
-        };
+        // Every PalSet sub-palette starts at 0x36BE2 + 4n. A group off the
+        // grid straddles two sub-palettes, so independent picks could mix
+        // vanilla and Recolored halves of one.
+        let on_grid = |o: usize| (0x36BE2..0x377E2).contains(&o) && (o - 0x36BE2).is_multiple_of(4);
         for group in all_variant_groups() {
             assert!(on_grid(group.offset), "variant group {:#07x} off grid", group.offset);
         }

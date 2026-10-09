@@ -32,6 +32,10 @@ deploys.
 - **World colours no longer mix two palettes in one colour group.** Every
   swapped group of four colours was offset by two, so one group could end up
   half vanilla and half Recolored.
+- **Player colours now show on the map and in the bonus games.** Before, the
+  map drew Mario in vanilla or world-shifted colours whatever you picked.
+- **Luigi keeps his colours on the map with World colours on.** The world
+  shift could turn Luigi into Mario on the map.
 - **World colours no longer scramble the map's suit palettes.** They could
   change which palette a suit used on the map, and could give the P-Wing
   garbage colours.
