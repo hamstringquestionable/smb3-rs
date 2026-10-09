@@ -588,6 +588,56 @@ the generator's cost, one global fixpoint per lock, and a deal about to be
 discarded does not need repairing. `MAX_DEALS` bounds the tail; because the loop
 keeps the best deal seen, exhausting it degrades length rather than failing.
 
+### 2026-10: the floor measures the shortest route, not a lazy run
+
+Everything above priced a maze with `completion_cost`, a "lazy" player who beats
+the **cheapest** reachable fort whenever the castle is locked off, needed or
+not. `maze_route_census` (`maze/tests.rs`) can now measure the real thing — the
+shortest route, as a minimal set of levels, forts and airships, proven exact on
+most seeds — and the lazy number turned out to be mostly detours:
+
+- over 1,000 seeds it tracked the exact shortest route only loosely (r ≈ 0.6),
+  and a lazy score of 34 sat on a seed whose shortest route was 8;
+- against 34 real beta maze races (racetime.gg, from 2026-09-14, regenerated
+  with the current build) it predicted the winner's time at **r = 0.28**. The
+  shortest route predicted it at **r = 0.69**; winners average ~1.3 minutes
+  per item on it.
+
+So the floor now prices a deal with `metrics::shortest_lower_bound`: an
+optimistic estimate of the shortest route that is never above the truth. It is
+a single Dijkstra in which a lock edge arrives at `max(cost so far, cost of its
+fort)`, re-solved until fort costs settle, with K wand airships as a second
+target. It tracks the exact shortest at r = 0.78 (K=3) / 0.84 (K=0), the
+winner's time at r = 0.63, and costs **0.12 ms against the lazy run's 1.2 ms**.
+`completion_cost` is test-only now.
+
+**`CONTENT_FLOOR = 10`, counting levels, forts and airships** (airships take time
+and have to be played). Being a lower bound, "estimate ≥ 10" guarantees no seed's
+shortest route is under 10. The owner's target was the rest: short runs are fun
+while they stay uncommon, about 1 in 10 under 14. Measured on 1,000 seeds each,
+against the old floor:
+
+| | K=0 old | K=0 new | K=3 old | K=3 new |
+|---|---|---|---|---|
+| shortest route < 14 | 23.6% | **13.4%** | 5.8% | **3.4%** |
+| shortest route < 10 | 3.8% | **0%** | 0% | **0%** |
+| shortest min / median | 4 / 17 | 10 / 18 | 10 / 18 | 11 / 19 |
+| mean deals | ~1.22 | 1.53 | ~1.1 | 1.39 |
+
+A projection from seeds dealt under the old floor said 10% under 14 at K=0; the
+real 13% is higher because the lazy floor had been filtering some short deals
+on its own. Accepted as is. The extra redeals cost nothing measurable: WASM
+`generate_patch`, 100 seeds, maze on, median 76.2 → 75.4 ms at K=0 and
+76.2 → 74.3 ms at K=3 — the cheaper check pays for them.
+
+**Race fairness was looked at and deliberately left alone.** Route counts per
+seed range from a handful to well over a thousand, and the typical random route
+is usually 1–3 items over the shortest, but neither tracked the spread of
+finishing times in a race; level length, travel and deaths dominate that. A
+seed where the lazy run sits far above the shortest (gap ≥ 10) does show the
+median finisher ~7 minutes behind the winner against ~2–3 otherwise — a weak
+signal on a small sample, and not something the generator should steer.
+
 ### How the baselines get made
 
 No knob below has a measured value, and none can until something exists to

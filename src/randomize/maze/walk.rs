@@ -1,7 +1,7 @@
 //! The cross-world walkers.
 //!
 //! Two of them, sharing one move expansion: [`walk_maze`] answers "what can be
-//! reached", [`walk_maze_cost`] answers "at what price" — the price being the
+//! reached", `walk_maze_cost` (test-only) answers "at what price" — the price being the
 //! number of levels and fortresses that have to be beaten on the way, which is
 //! how the mode answers "how many levels does it take to finish this game".
 //!
@@ -30,6 +30,7 @@
 //!   into, so activation is re-tested after each pass until it stops changing.
 //!   Enabling a canoe only ever grows the reachable set, so it is monotone.
 
+#[cfg(test)]
 use std::collections::BinaryHeap;
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -89,7 +90,7 @@ pub(crate) struct MazeWorld<'a> {
 pub(crate) struct MazeReach {
     per_world: Vec<Vec<bool>>,
     cols: Vec<usize>,
-    /// Which worlds' canoes ended up usable — handed to [`walk_maze_cost`] so
+    /// Which worlds' canoes ended up usable — handed to `walk_maze_cost` so
     /// it does not have to re-derive the fixpoint, which is the only reader.
     #[cfg_attr(not(test), allow(dead_code))]
     canoe_on: Vec<bool>,
@@ -112,15 +113,16 @@ impl MazeReach {
 /// Minimum cost to reach each cell, in whatever unit the cost function
 /// charges. Unreachable cells are absent.
 ///
-/// Shared with [`walk_maze_cost`]. Pricing a maze in levels began as a census
-/// question and is now one a shipped run asks too: `maze::generate` redeals a
-/// maze that prices below `maze::CONTENT_FLOOR`.
+/// Shared with [`walk_maze_cost`]. Test-only since 2026-10: the content floor
+/// prices a maze with `metrics::ShortestBound` instead.
+#[cfg(test)]
 pub(crate) struct MazeCost {
     per_world: Vec<Vec<u32>>,
     prev: Vec<Vec<Option<MazePos>>>,
     cols: Vec<usize>,
 }
 
+#[cfg(test)]
 impl MazeCost {
     pub(crate) fn get(&self, (world, (r, c)): MazePos) -> Option<u32> {
         match self.per_world[world][r * self.cols[world] + c] {
@@ -324,6 +326,7 @@ pub(crate) fn walk_maze(
 /// Dijkstra rather than BFS because the graph is mostly zero-weight; the grids
 /// are 9x64 so the heap is never the expensive part. Canoe state is taken from
 /// a prior [`walk_maze`] so the fixpoint is not paid twice.
+#[cfg(test)]
 pub(crate) fn walk_maze_cost(
     worlds: &[MazeWorld],
     links: &[(MazePos, MazePos)],

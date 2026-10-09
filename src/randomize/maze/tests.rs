@@ -2604,7 +2604,7 @@ fn a_shipped_maze_clears_the_content_floor() {
             let (_, state, report) = generated(&raw, seed, &knobs, k);
             assert!(
                 report.content >= super::CONTENT_FLOOR || report.deals == super::MAX_DEALS,
-                "seed {seed} K={k} shipped {} levels after only {} deals\n{}",
+                "seed {seed} K={k} shipped a shortest-route bound of {} after only {} deals\n{}",
                 report.content,
                 report.deals,
                 report.spheres.spoiler()
@@ -2624,10 +2624,11 @@ fn a_shipped_maze_clears_the_content_floor() {
                 report.spheres.spoiler()
             );
             if report.deals < super::MAX_DEALS {
+                let bound = super::metrics::shortest_lower_bound(&state).unwrap_or(0);
                 assert_eq!(
-                    cost.content, report.content,
-                    "seed {seed} K={k}: report says {} but the shipped maze prices at {}",
-                    report.content, cost.content
+                    bound, report.content,
+                    "seed {seed} K={k}: report says {} but the shipped maze prices at {bound}",
+                    report.content
                 );
             }
             if report.deals == super::MAX_DEALS && report.content < super::CONTENT_FLOOR {
@@ -3615,11 +3616,11 @@ struct RouteModel<'a> {
     links: Vec<(MazePos, MazePos)>,
     /// Slots stamped, nothing walled: what the path tiles between cells are.
     open_grids: Vec<Grid>,
-    // The estimate's move graph, built once.
-    offset: Vec<usize>,
-    edges: Vec<Vec<(usize, Option<super::FortRef>)>>,
-    fort_cells: Vec<(super::FortRef, usize)>,
-    played_cell: Vec<Option<usize>>,
+    /// The floor's own estimate (`metrics::ShortestBound`), so the census and
+    /// the generator can never disagree about it.
+    bound: super::metrics::ShortestBound,
+    /// Flat cell index → the played item standing there.
+    played_cell: std::collections::HashMap<usize, usize>,
 }
 
 impl<'a> RouteModel<'a> {
@@ -3656,71 +3657,13 @@ impl<'a> RouteModel<'a> {
         let open_grids = state.base_grids(&HashSet::new());
         let links = state.links();
 
-        // The estimate's move graph: the walker's 2-tile steps over valid path
-        // tiles, pipes, every canoe, the directed links, nothing out of an
-        // airship or castle. A step across a lock remembers the lock's fort.
-        let mut offset = Vec::new();
-        let mut cells = 0;
-        for g in &open_grids {
-            offset.push(cells);
-            cells += g.rows() * g.cols;
-        }
-        let idx = |(w, (r, c)): MazePos| offset[w] + r * open_grids[w].cols + c;
-        let lock_fort: std::collections::HashMap<MazePos, super::FortRef> =
-            state.locks.iter().filter_map(|l| l.fort.map(|f| ((l.world, l.pos), f))).collect();
-        let mut edges: Vec<Vec<(usize, Option<super::FortRef>)>> = vec![Vec::new(); cells];
-        for (w, g) in open_grids.iter().enumerate() {
-            for r in 0..g.rows() {
-                for c in 0..g.cols {
-                    let tile = g.get(r, c);
-                    if (tile == rom_data::TILE_AIRSHIP || tile == rom_data::TILE_BOWSER)
-                        && (w, (r, c)) != state.start
-                    {
-                        continue;
-                    }
-                    for (dr, dc, horz) in
-                        [(0i32, 1i32, true), (0, -1, true), (1, 0, false), (-1, 0, false)]
-                    {
-                        let inside = |a: i32, b: i32| {
-                            (0..g.rows() as i32).contains(&a) && (0..g.cols as i32).contains(&b)
-                        };
-                        let (pr, pc) = (r as i32 + dr, c as i32 + dc);
-                        let (nr, nc) = (r as i32 + 2 * dr, c as i32 + 2 * dc);
-                        if !inside(pr, pc) || !inside(nr, nc) {
-                            continue;
-                        }
-                        let path = (pr as usize, pc as usize);
-                        let land = (nr as usize, nc as usize);
-                        let valid = if horz { rom_data::VALID_HORZ } else { rom_data::VALID_VERT };
-                        if valid.contains(&g.get(path.0, path.1))
-                            && !rom_data::BACKGROUND_TILES.contains(&g.get(land.0, land.1))
-                        {
-                            edges[idx((w, (r, c)))]
-                                .push((idx((w, land)), lock_fort.get(&(w, path)).copied()));
-                        }
-                    }
-                }
-            }
-            let canoes = rom_data::active_canoe_edges(w, g.eights_are_wild);
-            for &(a, b) in state.worlds[w].pipe_pairs.iter().chain(canoes.iter()) {
-                edges[idx((w, a))].push((idx((w, b)), None));
-                edges[idx((w, b))].push((idx((w, a)), None));
-            }
-        }
-        for &(from, to) in &links {
-            edges[idx(from)].push((idx(to), None));
-        }
-        let fort_cells = items
+        let bound = super::metrics::ShortestBound::new(state);
+        let played_cell = items
             .iter()
-            .filter_map(|i| match *i {
-                RouteItem::Fort(f, p) => Some((f, idx(p))),
-                _ => None,
-            })
+            .enumerate()
+            .filter(|(_, item)| item.played())
+            .map(|(i, item)| (bound.cell(item.pos()), i))
             .collect();
-        let mut played_cell = vec![None; cells];
-        for (i, item) in items.iter().enumerate().filter(|(_, i)| i.played()) {
-            played_cell[idx(item.pos())] = Some(i);
-        }
 
         RouteModel {
             state,
@@ -3730,9 +3673,7 @@ impl<'a> RouteModel<'a> {
             items,
             links,
             open_grids,
-            offset,
-            edges,
-            fort_cells,
+            bound,
             played_cell,
         }
     }
@@ -3743,10 +3684,6 @@ impl<'a> RouteModel<'a> {
 
     fn has(set: u128, i: usize) -> bool {
         set & (1u128 << i) != 0
-    }
-
-    fn idx(&self, (w, (r, c)): MazePos) -> usize {
-        self.offset[w] + r * self.open_grids[w].cols + c
     }
 
     /// Levels + forts + airships: what a route makes the player play.
@@ -3879,80 +3816,11 @@ impl<'a> RouteModel<'a> {
             .collect()
     }
 
-    /// **The optimistic estimate**: the fewest levels, forts and airships still
-    /// to play from `set` — only ever less than the truth, so a set it puts
-    /// over a budget really is over. `None` when the castle is out of reach
-    /// even optimistically.
-    ///
-    /// Locks are honoured, lightly: crossing one costs nothing itself, but
-    /// nobody stands past it more cheaply than its fort costs to reach, so a
-    /// lock edge arrives at `max(cost so far, cost of its fort)`, and fort costs
-    /// are re-solved until they settle. The max rather than the sum is what
-    /// keeps it optimistic — the walk to the fort and past the lock may share
-    /// levels. Wand airships still owed are a second target: the run must reach
-    /// the K-th cheapest of them too.
+    /// The optimistic estimate of what is still to play from `set` — the
+    /// content floor's own measure (`metrics::ShortestBound`), asked with the
+    /// set's played items as already cleared.
     fn estimate(&self, set: u128) -> Option<usize> {
-        let enter =
-            |cell: usize| u32::from(self.played_cell[cell].is_some_and(|i| !Self::has(set, i)));
-        let mut fort_cost: std::collections::HashMap<super::FortRef, u32> = self
-            .fort_cells
-            .iter()
-            .map(|&(f, cell)| {
-                let done = self.played_cell[cell].is_some_and(|i| Self::has(set, i));
-                (f, if done { 0 } else { u32::MAX })
-            })
-            .collect();
-        loop {
-            let mut dist = vec![u32::MAX; self.edges.len()];
-            let mut heap = std::collections::BinaryHeap::new();
-            let s = self.idx(self.state.start);
-            dist[s] = enter(s);
-            heap.push(std::cmp::Reverse((dist[s], s)));
-            while let Some(std::cmp::Reverse((d, u))) = heap.pop() {
-                if d > dist[u] {
-                    continue;
-                }
-                for &(v, lock) in &self.edges[u] {
-                    let gate = lock.map_or(0, |f| fort_cost[&f]);
-                    if gate == u32::MAX {
-                        continue;
-                    }
-                    let nd = d.max(gate) + enter(v);
-                    if nd < dist[v] {
-                        dist[v] = nd;
-                        heap.push(std::cmp::Reverse((nd, v)));
-                    }
-                }
-            }
-            let mut changed = false;
-            for &(f, cell) in &self.fort_cells {
-                if dist[cell] < fort_cost[&f] {
-                    fort_cost.insert(f, dist[cell]);
-                    changed = true;
-                }
-            }
-            if changed {
-                continue;
-            }
-            let mut need = dist[self.idx(self.state.goal)];
-            if need == u32::MAX {
-                return None;
-            }
-            let held_or_owed: Vec<u32> = self
-                .wand_tiles
-                .iter()
-                .map(|&p| {
-                    let cleared = self.played_cell[self.idx(p)].is_some_and(|i| Self::has(set, i));
-                    if cleared { 0 } else { dist[self.idx(p)] }
-                })
-                .collect();
-            let mut owed = held_or_owed;
-            owed.sort_unstable();
-            if self.k > 0 {
-                need = need.max(*owed.get(self.k - 1)?);
-            }
-            return (need != u32::MAX).then_some(need as usize);
-        }
+        self.bound.estimate(|cell| self.played_cell.get(&cell).is_some_and(|&i| Self::has(set, i)))
     }
 
     /// One play-through, shrunk to a minimal route. `guided` prefers the next
@@ -4075,7 +3943,8 @@ impl<'a> RouteModel<'a> {
 /// sets), `ROUTE_EXACT_SECS` (60).
 ///
 /// CSV: `seed,k,lazy_lf,est0,guided_best,shortest,shortest_lf,proven,typical,
-/// within10,distinct,samples,stuck,secs`. `typical` is the median size over
+/// within10,distinct,samples,stuck,secs,deals`. `deals` is how many deals the
+/// generator paid for (harness builds only). `typical` is the median size over
 /// the random samples; `within10` the share of them within 10% of `shortest`.
 #[test]
 #[ignore]
@@ -4096,7 +3965,7 @@ fn maze_route_census() {
     // the shipping pipeline (K comes from the key). Without it, the census
     // harness builds one from its own rolled flag arms.
     let flags = std::env::var("ROUTE_FLAGS").ok();
-    let (state, k) = match &flags {
+    let (state, k, deals) = match &flags {
         Some(key) => {
             let options = crate::Options::from_flag_key(key).expect("ROUTE_FLAGS decodes");
             assert!(options.world_maze, "ROUTE_FLAGS is not a world-maze key");
@@ -4107,9 +3976,12 @@ fn maze_route_census() {
                 .with(|slot| slot.borrow_mut().take())
                 .expect("the pipeline generated a maze");
             let k = state.wands_required;
-            (state, k)
+            (state, k, None)
         }
-        None => (generated(&raw, seed, &Knobs::default(), k).1, k),
+        None => {
+            let (_, state, report) = generated(&raw, seed, &Knobs::default(), k);
+            (state, k, Some(report.deals))
+        }
     };
     let clock = Instant::now();
     let model = RouteModel::new(&state, k, hammers);
@@ -4168,7 +4040,7 @@ fn maze_route_census() {
     });
     let show = |v: Option<usize>| v.map_or(String::from("-"), |v| v.to_string());
     eprintln!(
-        "ROUTECSV,{seed},{k},{},{},{},{},{},{},{},{:.3},{},{samples},{stuck},{:.1}",
+        "ROUTECSV,{seed},{k},{},{},{},{},{},{},{},{:.3},{},{samples},{stuck},{:.1},{}",
         lazy.content,
         show(model.estimate(0)),
         show(guided_best),
@@ -4178,7 +4050,8 @@ fn maze_route_census() {
         show(typical),
         within10,
         distinct.len(),
-        clock.elapsed().as_secs_f64()
+        clock.elapsed().as_secs_f64(),
+        show(deals)
     );
 }
 
