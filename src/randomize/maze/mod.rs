@@ -49,7 +49,7 @@ pub(crate) mod graph;
 // How long a generated maze is, in levels.
 //
 // It began as a measurement instrument and [`CONTENT_FLOOR`] promoted it:
-// [`generate`] now prices every deal with [`metrics::completion_cost`] and
+// [`generate`] now prices every deal with [`metrics::shortest_lower_bound`] and
 // redeals the short ones, so this runs on the shipping path. The rest of the
 // module is still census-only.
 mod metrics;
@@ -186,56 +186,50 @@ const IDENTITY_SPINE: [usize; 8] = [0, 1, 2, 3, 4, 5, 6, 7];
 /// stops buying and starts charging.
 pub(crate) const DEFAULT_WANDS_REQUIRED: u8 = 3;
 
-/// The shortest run the mode will ship, in levels and fortresses beaten.
+/// The shortest run the mode will ship: a lower bound on the shortest route,
+/// in levels, forts and airships played ([`metrics::shortest_lower_bound`]).
 ///
-/// **Measured** (`maze_content_floor_census`, 300 grids). Without a floor the
-/// length of a run is very nearly unmanaged: at K=0 it ran from **2** to 48,
-/// and the wand gate only lifts the bottom of that — K is a floor, not a
-/// length dial, and K=0 is a setting players like.
+/// **Why a redeal.** Redealing the maze on the *same* eight worlds moves a
+/// run's length far more than changing worlds does: the between-grid share of
+/// the variance is **12%** (sd 2.95 between grids against 8.08 within one). A
+/// short deal is an ordinary grid that got a bad deal, so the lever is aimed
+/// at the maze layer rather than at the terrain.
 ///
-/// The floor exists because of what the spread is made of. Redealing the maze
-/// on the *same* eight worlds moves `content` far more than changing worlds
-/// does: the between-grid share of the variance is **12%** (sd 2.95 between
-/// grids against 8.08 within one), and the median grid's twenty deals spanned
-/// **28 levels**. A grid whose first deal came out under 14 has a per-grid mean
-/// of 20.3 against 21.8 overall — it is an ordinary grid that got a bad deal,
-/// not a grid that cannot produce a long game. So a redeal is the right lever,
-/// and it is aimed at the maze layer rather than at the terrain.
+/// **Why this measure** (2026-10, `maze_route_census`). The floor used to be
+/// 14 on a "lazy" play-through that beats the cheapest fort next, needed or
+/// not. That number is mostly detours: over 1,000 seeds it tracked the exact
+/// shortest route only loosely (r ≈ 0.6), let a third of seeds through with a
+/// shortest route under 14 levels + forts, and against 34 real races it
+/// predicted the winner's time at r = 0.28. The lower bound tracks the exact
+/// shortest at r = 0.78 (K=3) / 0.84 (K=0), the winner's time at r = 0.63,
+/// and costs a tenth as much to compute (0.12 ms against 1.2 ms native).
 ///
-/// 14 is where the cost curve is still cheap and the grids still clear it
-/// easily:
+/// **Why 10.** A lower bound makes "at least 10" a guarantee: no seed's
+/// shortest route is under 10. The rest is a rate the owner chose — short runs
+/// are fun as long as they are not common. Measured on the shipping floor,
+/// 1,000 seeds each (`maze_route_census`), against the lazy floor it replaced:
 ///
-/// | floor | K=0 redeal % | mean deals | K=0 min → | median → |
+/// | | K=0 old | K=0 new | K=3 old | K=3 new |
 /// |---|---|---|---|---|
-/// | 12 | 15% | 1.18 | 12 | 23 → 24 |
-/// | **14** | **20%** | **1.26** | **14** | **23 → 25** |
-/// | 16 | 26% | 1.36 | 16 | 23 → 26 |
-/// | 18 | 33% | 1.50 | 18 | 23 → 26 |
+/// | shortest route < 14 | 23.6% | **13.4%** | 5.8% | **3.4%** |
+/// | shortest route < 10 | 3.8% | **0%** | 0% | **0%** |
+/// | shortest min / median | 4 / 17 | 10 / 18 | 10 / 18 | 11 / 19 |
+/// | mean deals | ~1.22 | 1.53 | ~1.1 | 1.39 |
 ///
-/// 18 is where the terrain starts to bite — 3 grids of 200 cleared it twice or
-/// less in twenty deals, so [`MAX_DEALS`] would begin shipping under-floor
-/// seeds. At 14 no grid of 200 ever failed to clear it.
-///
-///
-/// **Re-measured 2026-09-10, after the route Dijkstra became a radix heap**
-/// (PR #234). Moving tie-breaks moves maps, so the floor's cost had to be
-/// re-checked rather than assumed: at 14 it came out slightly *cheaper* —
-/// K=0 redeals 18% of seeds (mean 1.22 deals, worst 4) against 20% / 1.26 / 6
-/// before, K=3 9%, and nothing ships under the floor. The sweep table above
-/// still dates from before that change, so read its 12 / 16 / 18 rows as
-/// relative rather than current.
-/// The redeal deliberately does **not** condition on landing just above the
-/// floor: a rejected deal is redrawn from the whole distribution, so it lands
-/// at a typical length. That is why the floor moves K=0's minimum from 2 to 14
-/// while the median moves only 23 → 25, and the maximum not at all.
-const CONTENT_FLOOR: usize = 14;
+/// The redeal draws a fresh deal from the whole distribution, so a kept maze is
+/// not biased toward sitting just above the line. The extra deals cost nothing
+/// measurable in WASM: the cheaper check pays for them. Fuller account in
+/// `docs/world_maze_design.md`, "2026-10: the floor measures the shortest
+/// route".
+const CONTENT_FLOOR: usize = 10;
 
 /// How many deals [`generate`] will pay for before keeping the best it saw.
 ///
 /// The cap is a cost bound, not a correctness one — the loop keeps the longest
 /// deal it has seen, so a seed that never clears [`CONTENT_FLOOR`] ships the
-/// best available rather than failing. Worst observed at the shipping floor was
-/// 6 deals in 300 seeds; 8 leaves margin without letting a pathological grid
+/// best available rather than failing. At the shipping floor, 1,000 seeds: 8
+/// deals on 2 seeds at K=0 and 1 at K=3, every one still clearing the floor; 8
+/// leaves that margin without letting a pathological grid
 /// spend 100 ms of a WASM budget that is already tight (a deal costs ~9.5 ms in
 /// the browser, measured).
 const MAX_DEALS: usize = 8;
@@ -489,7 +483,7 @@ impl GlobalState {
 
     /// Which path cells are shut, per world, given the forts beaten so far.
     ///
-    /// The fixpoint and [`metrics::completion_cost`] both step through the same
+    /// The fixpoint and `metrics::completion_cost` both step through the same
     /// sequence of these, one per fort set, and they have to agree about what a
     /// given set of beaten forts makes walkable. The constructive fill steps
     /// through the same sequence a third time.
@@ -957,7 +951,8 @@ pub(crate) struct GenReport {
     /// Deals this seed paid for, 1..=[`MAX_DEALS`]. Anything above 1 is the
     /// content floor rejecting a short maze.
     deals: usize,
-    /// What the kept deal priced at, in levels and fortresses beaten. Below
+    /// What the kept deal priced at: [`metrics::shortest_lower_bound`], in
+    /// levels, forts and airships. Below
     /// [`CONTENT_FLOOR`] only when [`MAX_DEALS`] ran out.
     content: usize,
     /// Fortresses moved into another world — see [`relocate`]. Empty when the
@@ -975,14 +970,14 @@ struct Deal {
     /// finish is worse than a short one, so a solvable deal beats an unsolvable
     /// one however long the unsolvable one measures.
     ///
-    /// Deliberately [`Spheres::solvable`] and not `completion_cost().reached`,
-    /// which is the weaker question. `reached` asks only whether the castle can
-    /// be entered; `solvable` also demands every fortress be beatable, because
+    /// Deliberately [`Spheres::solvable`] and not "the bound found a route",
+    /// which is the weaker question: that asks only whether the castle can be
+    /// entered; `solvable` also demands every fortress be beatable, because
     /// content sealed out of the game is a bug in its own right. A deal can
     /// satisfy the first and fail the second.
     solvable: bool,
-    /// Levels and fortresses a play-through beats, or 0 when the castle was
-    /// never reached. See [`metrics::completion_cost`].
+    /// [`metrics::shortest_lower_bound`]: levels, forts and airships on the
+    /// shortest route at least, or 0 when the castle was never reached.
     content: usize,
     state: GlobalState,
     /// The fixpoint this deal was judged on, kept so the winner does not have
@@ -1019,7 +1014,7 @@ impl Deal {
 /// pads and the key assignment together move a run's length far more than the
 /// eight worlds under them do, so a maze that prices below [`CONTENT_FLOOR`]
 /// is redrawn rather than shipped. The loop keeps the longest deal it saw, so
-/// it cannot fail; see [`CONTENT_FLOOR`] for the measurement that chose 14.
+/// it cannot fail; see [`CONTENT_FLOOR`] for the measurement that chose 10.
 pub(crate) fn generate<R: Rng>(
     result: &BuildResult,
     spine: &[usize],
@@ -1108,8 +1103,7 @@ pub(crate) fn generate<R: Rng>(
     while deals < MAX_DEALS {
         deals += 1;
         let mut dealt = deal(rng);
-        let cost = metrics::completion_cost(&dealt.state);
-        dealt.content = if cost.reached { cost.content } else { 0 };
+        dealt.content = metrics::shortest_lower_bound(&dealt.state).unwrap_or(0);
         // Accept only a deal that is BOTH finishable and long enough. Ranking
         // solvability above length is what makes an unsolvable deal impossible
         // to keep while any solvable one has been seen — the fallback below is

@@ -15,6 +15,10 @@ deploys.
   world are tan, and an away pair wears the odd colour, with the nub on the
   fortress. Away locks still show their fortress's world number, except in
   World 8, where they wear the nub as on Some.
+- **World Maze seeds are never shorter than 10.** The maze's length check now
+  measures the quickest way to beat the game, counting levels, fortresses and
+  airships. Short seeds still turn up, but only about 1 in 8 is under 14 with
+  no wands required (1 in 30 with three), and none are under 10.
 
 ### Fixed
 

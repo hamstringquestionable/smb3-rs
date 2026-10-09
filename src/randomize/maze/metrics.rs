@@ -7,23 +7,31 @@
 //! twenty levels" — and it has to be answered across eight grids with the
 //! lock/key dependency in the middle of it.
 //!
-//! Two numbers, and they measure different things:
-//!
-//! * [`completion_cost`] — how many levels and fortresses a play-through
-//!   actually beats. This is the headline: the length of the game.
-//! * `required_levels` (test-only) — how many levels the player has **no choice** about,
-//!   in the strict sense that removing one makes the game unwinnable. This is
-//!   the mandatory core; everything else is a route decision.
-//!
-//! The gap between them is the size of the choice the maze offers.
+//! * [`shortest_lower_bound`] — the shipping number: a lower bound on the
+//!   shortest route, in levels, forts and airships played. The content floor
+//!   judges every deal by it.
+//! * `completion_cost` (test-only) — what a "lazy" play-through beats: always
+//!   the cheapest fort next, needed or not. It was the floor until 2026-10;
+//!   measured against real races it predicted almost nothing (r = 0.28 against
+//!   winners' times), because most of what it counts is detours a real player
+//!   does not take. Kept for the censuses.
+//! * `required_levels` (test-only) — how many levels the player has **no
+//!   choice** about, in the strict sense that removing one makes the game
+//!   unwinnable. This is the mandatory core; everything else is a route
+//!   decision.
 
-use std::collections::HashSet;
+use std::cmp::Reverse;
+use std::collections::{BinaryHeap, HashMap, HashSet};
 
-use super::walk::{MazePos, walk_maze, walk_maze_cost};
+use super::walk::MazePos;
+#[cfg(test)]
+use super::walk::{walk_maze, walk_maze_cost};
 use super::{FortRef, GlobalState};
 use crate::randomize::overworld::build::SlotKind;
+use crate::randomize::rom_data;
 
 /// A play-through's price, in content beaten.
+#[cfg(test)]
 #[derive(Clone, Debug, Default)]
 pub(crate) struct CompletionCost {
     /// Levels and fortresses beaten on the way to the castle.
@@ -58,6 +66,7 @@ pub(crate) struct CompletionCost {
 /// run. Getting the exact minimum means searching over key orders, which is
 /// exponential; the bound is tight enough to answer "about how long is this
 /// game" and it is honest about which way it errs.
+#[cfg(test)]
 pub(crate) fn completion_cost(state: &GlobalState) -> CompletionCost {
     let bases = state.base_grids(&HashSet::new());
     let links = state.links();
@@ -168,9 +177,8 @@ pub(crate) fn completion_cost(state: &GlobalState) -> CompletionCost {
 /// be beaten, that level was mandatory.
 ///
 /// Expensive: one global fixpoint per level, ~62 per seed. A census
-/// instrument, not something to call in a build — unlike its neighbour
-/// [`completion_cost`], which `maze::CONTENT_FLOOR` promoted to the shipping
-/// path.
+/// instrument, not something to call in a build — the floor uses
+/// [`shortest_lower_bound`] instead.
 ///
 /// **Returns `None` when the maze was not winnable to begin with, and that
 /// guard is not paranoia — it is a bug this instrument actually caused.** The
@@ -207,4 +215,206 @@ pub(crate) fn required_levels(state: &GlobalState) -> Option<usize> {
         }
     }
     Some(count)
+}
+
+/// **A lower bound on the shortest route through a maze**, in levels, forts
+/// and airships played — what [`super::CONTENT_FLOOR`] judges a deal by.
+///
+/// The exact shortest route cannot be computed per deal (`maze_route_census`
+/// takes seconds to minutes per seed, and does not always finish). This is the
+/// optimistic estimate that census prunes with: it is never more than the
+/// truth, so "at least 10" is a guarantee, and it tracks the truth closely
+/// enough to be useful — r = 0.78 against the exact shortest over 1,000 seeds
+/// at K=3, 0.84 at K=0, and r = 0.63 against real race winners' times, where
+/// the lazy play-through it replaced managed 0.28. About ten times cheaper
+/// than that play-through, too (0.12 ms against 1.2 ms native).
+///
+/// **How.** One Dijkstra over every cell of every world, charging 1 for
+/// entering a level, fort or airship not yet cleared. Locks are honoured
+/// lightly: crossing one costs nothing itself, but nobody stands past it more
+/// cheaply than its fort costs to reach, so a lock edge arrives at
+/// `max(cost so far, cost of its fort)`, and the fort costs are re-solved
+/// until they settle. The max rather than the sum is what keeps it optimistic
+/// — the walk to a fort and the walk past its lock may share levels. Wands
+/// still owed are a second target: the run must also reach the K-th cheapest
+/// wand airship.
+///
+/// The move graph is the walker's — 2-tile steps over valid path tiles,
+/// pipes, every canoe (whether or not its dock is reachable yet — optimistic
+/// again), pads and the airship spine, and nothing out of an airship or castle
+/// tile except the global start — built once per maze.
+pub(crate) struct ShortestBound {
+    // Only `cell` reads these; production asks by flat index already.
+    #[cfg(test)]
+    offset: Vec<usize>,
+    #[cfg(test)]
+    cols: Vec<usize>,
+    edges: Vec<Vec<(usize, Option<FortRef>)>>,
+    /// Cells that cost 1 to enter: every level, fort and airship.
+    played: Vec<bool>,
+    forts: Vec<(FortRef, usize)>,
+    wands: Vec<usize>,
+    start: usize,
+    goal: usize,
+    k: usize,
+}
+
+impl ShortestBound {
+    pub(crate) fn new(state: &GlobalState) -> Self {
+        let grids = state.base_grids(&HashSet::new());
+        let cols: Vec<usize> = grids.iter().map(|g| g.cols).collect();
+        let mut offset = Vec::with_capacity(grids.len());
+        let mut cells = 0;
+        for g in &grids {
+            offset.push(cells);
+            cells += g.rows() * g.cols;
+        }
+        let idx = |(w, (r, c)): MazePos| offset[w] + r * cols[w] + c;
+
+        let lock_fort: HashMap<MazePos, FortRef> =
+            state.locks.iter().filter_map(|l| l.fort.map(|f| ((l.world, l.pos), f))).collect();
+        let mut edges: Vec<Vec<(usize, Option<FortRef>)>> = vec![Vec::new(); cells];
+        for (w, g) in grids.iter().enumerate() {
+            let inside = |r: i32, c: i32| {
+                (0..g.rows() as i32).contains(&r) && (0..g.cols as i32).contains(&c)
+            };
+            for r in 0..g.rows() {
+                for c in 0..g.cols {
+                    let tile = g.get(r, c);
+                    if (tile == rom_data::TILE_AIRSHIP || tile == rom_data::TILE_BOWSER)
+                        && (w, (r, c)) != state.start
+                    {
+                        continue;
+                    }
+                    for (dr, dc, horz) in
+                        [(0i32, 1i32, true), (0, -1, true), (1, 0, false), (-1, 0, false)]
+                    {
+                        let (pr, pc) = (r as i32 + dr, c as i32 + dc);
+                        let (nr, nc) = (r as i32 + 2 * dr, c as i32 + 2 * dc);
+                        if !inside(pr, pc) || !inside(nr, nc) {
+                            continue;
+                        }
+                        let path = (pr as usize, pc as usize);
+                        let land = (nr as usize, nc as usize);
+                        let valid = if horz { rom_data::VALID_HORZ } else { rom_data::VALID_VERT };
+                        if valid.contains(&g.get(path.0, path.1))
+                            && !rom_data::BACKGROUND_TILES.contains(&g.get(land.0, land.1))
+                        {
+                            edges[idx((w, (r, c)))]
+                                .push((idx((w, land)), lock_fort.get(&(w, path)).copied()));
+                        }
+                    }
+                }
+            }
+            let canoes = rom_data::active_canoe_edges(w, g.eights_are_wild);
+            for &(a, b) in state.worlds[w].pipe_pairs.iter().chain(canoes.iter()) {
+                edges[idx((w, a))].push((idx((w, b)), None));
+                edges[idx((w, b))].push((idx((w, a)), None));
+            }
+        }
+        for (from, to) in state.links() {
+            edges[idx(from)].push((idx(to), None));
+        }
+
+        let mut played = vec![false; cells];
+        let mut forts = Vec::new();
+        for w in &state.worlds {
+            for s in &w.slots {
+                match s.kind {
+                    SlotKind::Level => played[idx((w.world_idx, s.pos))] = true,
+                    SlotKind::Fortress => {
+                        let cell = idx((w.world_idx, s.pos));
+                        played[cell] = true;
+                        forts.push((FortRef { world: w.world_idx, section: s.section }, cell));
+                    }
+                    _ => {}
+                }
+            }
+            if let Some(t) = w.target
+                && (w.world_idx, t) != state.goal
+            {
+                played[idx((w.world_idx, t))] = true;
+            }
+        }
+        let wands = state.wand_tiles().into_iter().map(idx).collect();
+
+        ShortestBound {
+            start: idx(state.start),
+            goal: idx(state.goal),
+            k: usize::from(state.wands_required),
+            #[cfg(test)]
+            offset,
+            #[cfg(test)]
+            cols,
+            edges,
+            played,
+            forts,
+            wands,
+        }
+    }
+
+    /// The flat index of a cell — the unit [`Self::estimate`]'s `cleared` is
+    /// asked in.
+    #[cfg(test)]
+    pub(crate) fn cell(&self, (w, (r, c)): MazePos) -> usize {
+        self.offset[w] + r * self.cols[w] + c
+    }
+
+    /// The fewest levels, forts and airships still to play, with `cleared`
+    /// naming the cells already played (they cost nothing). `None` when the
+    /// castle cannot be reached even optimistically.
+    pub(crate) fn estimate(&self, cleared: impl Fn(usize) -> bool) -> Option<usize> {
+        let enter = |cell: usize| u32::from(self.played[cell] && !cleared(cell));
+        let mut fort_cost: HashMap<FortRef, u32> = self
+            .forts
+            .iter()
+            .map(|&(f, cell)| (f, if cleared(cell) { 0 } else { u32::MAX }))
+            .collect();
+        loop {
+            let mut dist = vec![u32::MAX; self.edges.len()];
+            let mut heap = BinaryHeap::new();
+            dist[self.start] = enter(self.start);
+            heap.push(Reverse((dist[self.start], self.start)));
+            while let Some(Reverse((d, u))) = heap.pop() {
+                if d > dist[u] {
+                    continue;
+                }
+                for &(v, lock) in &self.edges[u] {
+                    let gate = lock.map_or(0, |f| fort_cost[&f]);
+                    if gate == u32::MAX {
+                        continue;
+                    }
+                    let next = d.max(gate) + enter(v);
+                    if next < dist[v] {
+                        dist[v] = next;
+                        heap.push(Reverse((next, v)));
+                    }
+                }
+            }
+            // Opening a lock only ever lowers costs, so this converges.
+            let mut changed = false;
+            for &(f, cell) in &self.forts {
+                if dist[cell] < fort_cost[&f] {
+                    fort_cost.insert(f, dist[cell]);
+                    changed = true;
+                }
+            }
+            if changed {
+                continue;
+            }
+            let mut need = dist[self.goal];
+            if self.k > 0 {
+                let mut owed: Vec<u32> =
+                    self.wands.iter().map(|&c| if cleared(c) { 0 } else { dist[c] }).collect();
+                owed.sort_unstable();
+                need = need.max(*owed.get(self.k - 1)?);
+            }
+            return (need != u32::MAX).then_some(need as usize);
+        }
+    }
+}
+
+/// The floor's question for a finished maze: [`ShortestBound`] from scratch.
+pub(crate) fn shortest_lower_bound(state: &GlobalState) -> Option<usize> {
+    ShortestBound::new(state).estimate(|_| false)
 }
