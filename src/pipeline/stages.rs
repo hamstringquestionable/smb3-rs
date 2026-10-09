@@ -497,6 +497,10 @@ pub(super) fn maze_model(
             rng,
         );
         randomize::maze::stamp_into(build, &state);
+        // Test builds only: hand the finished maze to `maze_route_census`, so
+        // it can measure the maze a real seed + flag key produces.
+        #[cfg(test)]
+        randomize::maze::LAST_MAZE.with(|slot| *slot.borrow_mut() = Some(state.clone()));
 
         // **The canoe gate's model half.** Beach every boat behind an Anchor,
         // then make sure an Anchor exists somewhere the player can get to
