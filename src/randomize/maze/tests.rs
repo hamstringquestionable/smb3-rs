@@ -4181,3 +4181,50 @@ fn maze_route_census() {
         clock.elapsed().as_secs_f64()
     );
 }
+
+/// **What the content floor would cost per deal**: the lazy score
+/// (`metrics::completion_cost`, today's floor) against the lock-aware
+/// lower bound on the shortest route (building [`RouteModel`]'s move graph
+/// plus one `estimate`), on the same mazes. Native timing; the browser runs
+/// the maze layer ~1.3x slower. `ROUTE_WANDS` sets K.
+#[test]
+#[ignore]
+fn floor_cost_census() {
+    use std::time::Instant;
+    let Some(raw) = load_rom() else { return };
+    let k = std::env::var("ROUTE_WANDS").ok().and_then(|s| s.parse().ok()).unwrap_or(3u8);
+    let seeds = census_seeds(200);
+    let mut states = Vec::new();
+    for seed in 0..seeds {
+        states.push(generated(&raw, seed, &Knobs::default(), k).1);
+    }
+    let reps = 5;
+    let clock = Instant::now();
+    let mut sink = 0usize;
+    for _ in 0..reps {
+        for s in &states {
+            sink += super::metrics::completion_cost(s).content;
+        }
+    }
+    let lazy = clock.elapsed().as_secs_f64() * 1000.0 / (reps * states.len()) as f64;
+    let clock = Instant::now();
+    for _ in 0..reps {
+        for s in &states {
+            sink += RouteModel::new(s, k, 0).estimate(0).unwrap_or(0);
+        }
+    }
+    let est = clock.elapsed().as_secs_f64() * 1000.0 / (reps * states.len()) as f64;
+    let clock = Instant::now();
+    for _ in 0..reps {
+        for s in &states {
+            sink += s.spheres().spheres.len();
+        }
+    }
+    let fix = clock.elapsed().as_secs_f64() * 1000.0 / (reps * states.len()) as f64;
+    eprintln!(
+        "K={k}, {} mazes x {reps}: lazy {lazy:.3} ms, estimate {est:.3} ms ({:.2}x), \
+         one global fixpoint {fix:.3} ms  [{sink}]",
+        states.len(),
+        est / lazy
+    );
+}
