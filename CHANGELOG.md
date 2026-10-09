@@ -19,8 +19,22 @@ deploys.
   measures the quickest way to beat the game, counting levels, fortresses and
   airships. Short seeds still turn up, but only about 1 in 8 is under 14 with
   no wands required (1 in 30 with three), and none are under 10.
+- **The Hammer suit takes your player colour.** Its white parts become a light
+  tint of your colour and its black parts a dark tint.
+- **World colours shift one tileset at a time.** Each map and level style now
+  gets its own shift. Previously the shifts were grouped by guessed palette
+  regions, so one map could share another style's shift.
 
 ### Fixed
+
+- **Player colours no longer recolour the Hammer suit's face.** The face is
+  kept, as it is for every other suit.
+- **World colours no longer mix two palettes in one colour group.** Every
+  swapped group of four colours was offset by two, so one group could end up
+  half vanilla and half Recolored.
+- **World colours no longer scramble the map's suit palettes.** They could
+  change which palette a suit used on the map, and could give the P-Wing
+  garbage colours.
 
 - **World 4's empty island spots are land again.** The spot two nodes below
   the start and the Toad House spot on the bottom row drew as water when
