@@ -4,7 +4,15 @@
 > (2026-04-21) and was never updated for what actually shipped. Do not read
 > §§2-7 as a description of current behavior. **The shipped system is described
 > by `palettes.rs`'s own doc comments** (`randomize_themed`, around line 208) and
-> lives in `palettes.rs` + `palette_variants.rs`. Two things diverged materially:
+> lives in `palettes.rs` + `palette_variants.rs`.
+>
+> **The ROM model below is also wrong.** The "0x36BE4 slot table" and the
+> "slices" are the 16 `PalSet_*` sets of PRG027, 192 bytes each, starting at
+> 0x36BE2, and the "level layout pointer table at 0x377E0" is
+> `Palette_By_Tileset` (0x377E2). See `smb3_rom_reference.md` → "Palette Sets",
+> which was verified against the ROM bytes on 2026-10-09.
+>
+> Two things diverged materially:
 >
 > - **Coverage.** The variant library is no longer plains-only. `palette_variants.rs`
 >   covers all 8 themed slots and all 4 per-tileset slices.

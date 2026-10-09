@@ -2295,39 +2295,116 @@ Each palette entry is typically 3 color bytes + 1 shared background color.
 
 | File Offset | Size | Description |
 |------------|------|-------------|
-| 0x36DAA–0x36DAD | 4 bytes | Lava / Rotodisc palette |
-| 0x36DFE–0x36E01 | 4 bytes | Bowser / Donut Lift palette |
+| 0x36DAA–0x36DAD | 4 bytes | Lava / Rotodisc palette: `PalSet_Fort` BG Pal 4, sub-palette 2 |
+| 0x36DFE–0x36E01 | 4 bytes | Bowser / Donut Lift palette: `PalSet_Fort` SPR Pal 1 (row 9), sub-palette 3 |
 
-### Per-Level Palette Selection
+### Palette Sets — `PalSet_*` (PRG027, verified 2026-10-09)
 
-Each level header byte 5 (`_abbccddd`) embeds a `c` field (object palette, 2 bits)
-and a `d` field (BG palette, 3 bits) — see *Level Header Format*. The values index
-into per-tileset palette tables loaded by the level loader. The same value can mean
-different colors in different tilesets (e.g., BG palette index 2 in plains is greens,
-but in fortress it is grays).
+Every level, map, Toad House, bonus game and 2P Vs screen gets its 32 colors from
+one routine, `Setup_PalData` (PRG027 `$B83F`, file 0x3784F). It copies them into
+`Pal_Data` (`$7DDE`, 32 bytes), the master copy that the fades and the PPU upload
+work from. This subsection was checked against the Rev 1 ROM bytes, not just the
+disassembly's comments: the table contents, the pointer table, the loader's
+opcodes, and every store to the variables involved.
 
-### Per-Tileset / Per-Area Palette Tables (PRG012–PRG013)
+**How a palette is chosen.**
 
-These are PPU-upload "scripts" — sequences of `00 3F xx LL <LL bytes>` blocks that
-the SMB3 PPU upload routine streams directly to PPU `$2007`. The leading `00 3F xx`
-is the destination VRAM address (palette area starts at `$3F00`); `LL` is the byte
-count; the body is raw NES color bytes. Identified by reverse-engineering the
-"Super Mario Bros. 3 Recolored v1.0" IPS — every cluster below is wholly rewritten
-by Recolored, proving these are the master per-tileset/area palette tables.
+1. `Level_Tileset` (`$070A`) × 2 indexes `Palette_By_Tileset` (`$B7D2`, file
+   0x377E2–0x37807, 19 words) to pick a set.
+2. `PalSel_Tile_Colors` (`$073A`) × 16 picks one BG row of that set, which is
+   copied into `Pal_Data+0..15`.
+3. `PalSel_Obj_Colors` (`$073B`) × 16 picks one sprite row, copied into
+   `Pal_Data+16..31`.
+4. `Pal_Data+0` is then copied over `+16/+20/+24/+28`. That makes every
+   sprite sub-palette's first byte (`$FF` in the table) the shared background
+   color.
 
-> **Confirmed vs inferred, in this subsection only.** That these clusters *are*
-> the master palette tables is confirmed — Recolored rewrites all of them, and
-> the shipped randomizer writes into them. What each individual table means is
-> **inferred from structural patterns and the Recolored diff, not read out of
-> the disassembly**, and the rows below say so individually ("Likely Purpose",
-> "still untested", "hypothesis unverified"). Treat the offsets as solid and the
-> semantics as a working model: confirm against the disassembly before basing a
-> new write on any one row. This is the one section of this document that states
-> unverified semantics, and it is marked rather than silently mixed in.
+For a level, the two selectors come from header byte 5 (PRG030 at file 0x3D829):
+`PalSel_Tile_Colors = b5 & 7` (the `d` field, rows 0–7) and
+`PalSel_Obj_Colors = c | 8` (the `c` field, rows 8–11). The spade game sets
+1/9 and the N-spade game sets 2/10. On the map, PRG012's `Map_Tile_ColorSets` /
+`Map_Object_ColorSets` (file 0x1842D, indexed by `World_Num`) set them.
 
-| File Offset | Size | Pattern | Likely Purpose (inferred — see caveat above) |
+The override `Pal_Force_Set12` (zero page `$1A`) would make the routine load
+another set by index instead of by tileset. Vanilla never sets it: the only
+store to `$1A` in the ROM is the routine's own `LDA #0 / STA $1A`.
+
+**Layout.** Every set is 12 rows × 16 bytes = 192 bytes (`$C0`): 8 BG rows
+(`BG Pal 0–7`), then 4 sprite rows (`SPR Pal 0–3`, selected as 8–11). Each row
+is four 4-byte sub-palettes, so **sub-palettes start at 0x36BE2 + 4n**. The
+earlier probe-based model used a grid starting at 0x36BE4, which is 2 bytes off
+this one, and grouped bytes into ~56-byte "bands". Neither matches the ROM.
+Its "band" labels (W6 map, plains HUD, shared slots) came from paints that
+crossed set boundaries, and are retired.
+
+| `Level_Tileset` | Set | CPU | File range |
+|---|---|---|---|
+| 0 | `PalSet_Maps` | `$ABD2` | 0x36BE2–0x36CA1 |
+| 1 | `PalSet_Plains` | `$AC92` | 0x36CA2–0x36D61 |
+| 2 | `PalSet_Fort` | `$AD52` | 0x36D62–0x36E21 |
+| 3, 14 | `PalSet_HillsUnder` (hills, underground) | `$AE12` | 0x36E22–0x36EE1 |
+| 4 | `PalSet_HighUp` | `$AED2` | 0x36EE2–0x36FA1 |
+| 5 | `PalSet_Plant` | `$AF92` | 0x36FA2–0x37061 |
+| 6 | `PalSet_Water` | `$B052` | 0x37062–0x37121 |
+| 7 | `PalSet_Toad` | `$B112` | 0x37122–0x371E1 |
+| 8 | `PalSet_PipeMaze` | `$B1D2` | 0x371E2–0x372A1 |
+| 9 | `PalSet_Desert` | `$B292` | 0x372A2–0x37361 |
+| 10 | `PalSet_Airship` | `$B352` | 0x37362–0x37421 |
+| 11 | `PalSet_Giant` | `$B412` | 0x37422–0x374E1 |
+| 12 | `PalSet_Ice` | `$B4D2` | 0x374E2–0x375A1 |
+| 13 | `PalSet_Sky` | `$B592` | 0x375A2–0x37661 |
+| 18 | `PalSet_2PVs` | `$B652` | 0x37662–0x37721 |
+| 15, 16, 17 | `PalSet_Bonus` (bonus intro, spade, N-spade) | `$B712` | 0x37722–0x377E1 |
+
+**`PalSet_Maps` is used only on the world map.** Only three code paths store 0
+to `Level_Tileset`, all in PRG030: map init, map entry, and the return to the
+map after a game over. No world pointer table entry uses tileset 0. All 8 calls
+to `Setup_PalData` are in PRG030. A pipe or door junction copies the header's
+alternate tileset into `Level_Tileset`, and 131 headers carry 0 there. The only
+ones on real map levels are two W6 ice levels (map row 6, columns 12 and 36),
+and both have alternate layout and object pointers of `$0000`, so they have no
+sub-area to enter. That last point is read from the headers, not
+emulator-tested.
+
+Map rows: BG row = `Map_Tile_ColorSets[World_Num]` =
+`00 01 00 03 04 05 06 07 02`. So W1 and W3 share row 0, W9 (the warp zone)
+uses row 2, and each other world uses its own row. Sprite row = 9 in W8 and 8
+everywhere else. Rows 10–11 are unused copies.
+
+**Do not paint `Palette_By_Tileset`.** Overwriting it sends the loader to a
+garbage address, which is the crash the earlier probes hit and recorded as a
+"level layout pointer table at 0x377E0".
+
+**What follows the pointer table is not set data either:**
+
+| File range | CPU | Label | Contents |
+|---|---|---|---|
+| 0x37808–0x3781F | `$B7F8` | `BonusGame_PlayerPal` | Mario/Luigi palettes for the bonus game (24 B) |
+| 0x37820–0x37821 | `$B810` | `Map_PlayerPalFix` | Map base color: `$16` Mario, `$1A` Luigi |
+| 0x37822–0x3782A | `$B812` | `InitPal_Per_MapPowerup` | Suit → palette index (9 B) |
+| 0x3782B–0x3784E | `$B81B` | `InitPals_Per_MapPUp` | Map player palette per suit, 9 × 4 B |
+| 0x3784F– | `$B83F` | `Setup_PalData` | Code (the `$AD` at 0x3784F is `LDA $070A`) |
+
+> **Note**: opening the inventory triggers a palette re-upload that reverts
+> level-screen palettes to vanilla mid-frame, then restores them on close
+> (observed in probe runs).
+
+### PRG025 Palette Upload Streams (unverified)
+
+These are PPU-upload "scripts": sequences of `00 3F xx LL <LL bytes>` blocks
+that the PPU upload routine streams to `$2007`. `00 3F xx` is the destination
+VRAM address (palette RAM starts at `$3F00`), `LL` is the byte count, and the
+body is raw NES color bytes. They were found by reverse-engineering the
+"Super Mario Bros. 3 Recolored v1.0" IPS, which rewrites all of them.
+
+> **Unverified semantics.** These rows were identified by structural patterns
+> and the Recolored diff, not read out of the disassembly, and level palettes do
+> **not** come from here (see `PalSet_*` above). Confirm against `prg025.asm`
+> before basing a write on any row.
+
+| File Offset | Size | Pattern | Likely Purpose (inferred) |
 |-------------|------|---------|----------------|
-| 0x33046–0x331A2 | 349 B | 8 × `00 3F 00 20 0F 0F …32 colors…` (32-byte full BG+sprite palette set) | **Per-tileset full-palette upload table** — 8 entries; one per BG palette index used by level loader |
+| 0x33046–0x331A2 | 349 B | 8 × `00 3F 00 20 0F 0F …32 colors…` (32-byte full BG+sprite palette set) | Full-palette upload streams (fades/transitions?) |
 | 0x331BB–0x331DE | 35 B  | dense ≤0x3F bytes | Adjunct palette set (FG vs BG?) |
 | 0x331EE–0x331F8 | 11 B  | dense ≤0x3F bytes | Small palette block (3 entries × ≈4 B) |
 | 0x33201–0x3320B | 11 B  | dense ≤0x3F bytes | Small palette block |
@@ -2336,104 +2413,45 @@ by Recolored, proving these are the master per-tileset/area palette tables.
 | 0x333A7–0x333B1 | 11 B  | dense ≤0x3F bytes | Small palette block |
 | 0x333CA–0x333D4 | 11 B  | dense ≤0x3F bytes | Small palette block |
 | 0x333ED–0x333F7 | 11 B  | dense ≤0x3F bytes | Small palette block |
-| 0x33410–0x33496 | 135 B | 4 × `00 3F 00 20 0F 0F …16 bytes…` | **Per-area BG palette set** — 4 entries (likely sky/forest/water/dark) |
+| 0x33410–0x33496 | 135 B | 4 × `00 3F 00 20 0F 0F …16 bytes…` | BG palette upload set, 4 entries |
 | 0x3349D–0x334AB | 15 B  | dense ≤0x3F bytes | Small palette block |
-| 0x334C4–0x33530 | 109 B | 5 × `00 3F 10 10 0F 0F …16 bytes…` (sprite palettes only) | **Per-area sprite palette set** — 5 entries; loads only `$3F10–$3F1F` |
-| 0x36BE4–0x36DA5 | ~450 B | per-palette-slot sub-tables of ~56 B each | **Themed palette slot table** — bands likely correspond to BG palette indices (`d` field of level header byte 5); levels share slots across tilesets. Rainbow probe confirmed: |
-| 0x36BE4–0x36C1C | 56 B  |  | (band 0, red) **Used by W6 sky overworld map + map HUD** |
-| 0x36C1C–0x36C54 | 56 B  |  | (band 1, orange) **Used by W7 (pipe) overworld map** |
-| 0x36C54–0x36C8C | 56 B  |  | (band 2, yellow) **Used by hammer bro overworld sprites + "HELP" message text + world-label sprites** |
-| 0x36C8C–0x36CC4 | 56 B  |  | (band 3, green) **Used by plains 1-1 BG + HUD** (confirmed via targeted single-band probe). Writes $3F00 universal BG + likely sprite palette 0. |
-| 0x36CC4–0x36CFC | 56 B  |  | (band 4, cyan) **Used by giant tileset (W4)** |
-| 0x36CFC–0x36D34 | 56 B  |  | (band 5, blue) **Used by plains enemies AND W7-5 sub-area BG** (shared slot) |
-| 0x36D34–0x36D6C | 56 B  |  | (band 6, purple) **Used by W4-F1 and W8 fortress HUD** + some W8 brick/door tiles |
-| 0x36D6C–0x36DA6 | 56 B  |  | (band 7, magenta) **Used by fortress BG (windows, bricks) AND W7-5 sub-area enemies AND most of W4-F1** (shared slot) |
-|                 |        |  | **Coverage caveat**: rainbow probe affected overworld + specific fortress/sub-area levels but NOT the majority of regular levels — those load palettes from a *different* table (most likely 0x33046 et al., still untested). |
-|                 |        |  | **Note**: opening inventory triggers a palette re-upload that reverts level-screen palettes to vanilla mid-frame, then restores them on close |
-| 0x36DAA–0x36DAD | 4 B   | (pre-existing) Lava/Rotodisc | (already known) |
-| 0x36DFE–0x36E01 | 4 B   | (pre-existing) Bowser/Donut | (already known) |
-| 0x36E20–0x36EBD | 158 B | 4-byte palette quartets ending in `0f` | Per-tileset palette quartet table (~40 palettes); not yet confirmed empirically |
-| 0x36EE2–0x37000 | 286 B | mixed alignment, ~36-byte sub-tables | Confirmed sub-regions (W6 sky and water tested across 5 tilesets): |
-| 0x36F00–0x36F05 | 5 B   |  | Drives a water-context sprite palette (circular underwater sprites) |
-| 0x36F4B–0x36F6E | 35 B  |  | Drives sky-tileset enemies + animated note-block frames (W6 sky only) |
-| 0x36EE2–0x36F05 (rest) | 30 B | | Subtle effects only at fine granularity; previous "HUD red" reading was a $3F00 universal-background mirror artifact when entire range was one color |
-| 0x36F05–0x36F4B,0x36F6E–0x37000 | rest | | Untested across all tilesets; band-per-tileset hypothesis unverified |
-| 0x37000–0x37200 | 512 B  | 8 × ~64 B sub-tables | **Water-tileset palette pool** (CONFIRMED): |
-|                 |        |                      | • band 1 (0x37040–0x37080) = underwater BG (W2-1) |
-|                 |        |                      | • band 3 (0x370C0–0x37100) = water-level enemies (W2-1) |
-|                 |        |                      | • other bands had no visible effect on plains/sky/desert/underground/fortress, so this slice appears to be water-specific |
-| 0x37200–0x37400 | 512 B  | 8 × ~64 B sub-tables | **Desert + fortress + airship palette pool** (CONFIRMED): |
-|                 |        |                      | • band 2 (0x37280–0x372C0) = desert BG (2-1) |
-|                 |        |                      | • band 3 (0x372C0–0x37300) = fortress HUD + highlights (2-F) |
-|                 |        |                      | • band 4 (0x37300–0x37340) = desert enemies (2-1) |
-|                 |        |                      | • band 5 (0x37340–0x37380) = airship BG/HUD + fortress enemies (2-F, 1-airship, 2-airship) |
-|                 |        |                      | • band 6 (0x37380–0x373C0) = airship foreground variants (2-airship, 3-airship) |
-|                 |        |                      | • band 7 (0x373C0–0x37400) = airship enemies (1/2/3 airships) |
-|                 |        |                      | • bands 0/1 untested (likely additional fortress variants) |
-| 0x37400–0x37600 | 512 B  | 8 × ~64 B sub-tables | **Giant tileset + water pipe/decoration palettes** (CONFIRMED): |
-|                 |        |                      | • band 0 (0x37400–0x37440) = giant BG (W4-1) |
-|                 |        |                      | • band 2 (0x37480–0x374C0) = giant enemies (W4-1) |
-|                 |        |                      | • band 5 (0x37540–0x37580) = water-tileset pipe accents (W3-1) |
-|                 |        |                      | • band 7 (0x375C0–0x37600) = water decoration (W3-1) |
-|                 |        |                      | • other bands did not light up in plains/sky/underground/fortress |
-| 0x37600–0x377DF | 480 B  | palette data (8 × ~60 B bands) | Slice 4 — partial: |
-|                 |        |                      | • band 0 (0x37600–0x3763C) = Sky-Land (W5) enemy palette (observed in 5-7, 5-8) |
-|                 |        |                      | • band 3 (0x376B4–0x376F0 safe / 0x376D8–0x37720 full) = Plains 1-1 BG palette variant (observed under full slice 4 probe) |
-|                 |        |                      | • band 5 (0x37540–0x37580 safe / 0x37768–0x377B0 full) = Plains 1-1 enemy palette |
-|                 |        |                      | • other bands untested in sky-bg/underground/ice/hilly |
-| 0x377E0–0x37807 | ~40 B  | **level layout CPU pointer table** (pointers in `$ABD2-$B412` range) | **DO NOT PAINT — painting crashes level loading.** Pointer table used by the level loader to resolve layout/enemy references. |
-| 0x37808–0x37846 | ~60 B  | palette data | Slice 4-B — separate paint probe if needed |
-|                 |        |  | **Lesson**: the "master pool" 0x36EE2-0x37846 is NOT pure palette data. Interleaved pointer tables / lookup tables must be preserved. Any randomizer needs per-sub-region byte maps to know what's safe to touch. |
+| 0x334C4–0x33530 | 109 B | 5 × `00 3F 10 10 0F 0F …16 bytes…` (sprite palettes only) | Sprite palette upload set, 5 entries; loads only `$3F10–$3F1F` |
 
-> **Empirical confirmations** came from emulator probe runs: paint each table to
-> NES `0x24` (hot magenta) and observe which graphics turn pink, with
-> `patches/smb3practice_SE.ips` applied for warp whistles + level select + open
-> movement so all worlds are reachable. The probe generator (`gen_palette_probes.py`)
-> has been deleted now that its findings are recorded here — recover it from git
-> history if the technique is needed again.
-
-> **Quartet alignment varies** across these tables — outline `0F` is at byte 2 in
-> 0x36BE4 but at byte 1 in 0x36EE2. Hardcoding "outline at byte 3" is unsafe; either
-> probe each table for its alignment, or use the **raw painter strategy**: paint
-> every byte in the range that is not `0x00` or `0x0F`, leaving those two alone.
-> That sidesteps alignment entirely and was the approach that produced the
-> confirmations above.
-
-> **Note**: Specific table semantics (tileset assignment, index mapping) are inferred from
-> structural patterns and the Recolored IPS, not yet verified against the SMB3 disassembly.
+> **Probe technique.** The earlier empirical work painted each table to NES `0x24`
+> (hot magenta) and watched which graphics turned pink, with
+> `patches/smb3practice_SE.ips` applied for warp whistles, level select and open
+> movement. The probe generator (`gen_palette_probes.py`) is deleted; recover it
+> from git history if needed. For the `PalSet_*` region the table above
+> supersedes those probe results.
 
 ### Recolored diff sweep findings (2026-07-08)
 
-A full sweep of Recolored's changes across PRG012–013 (for themed-palette
+A full sweep of Recolored's changes across the palette data (for themed-palette
 coverage expansion) established:
 
-- **0x33046–0x335xx (transition/fade palette streams + map attribute data):
-  Recolored RESTRUCTURED this region** — it inserted bytes, shifting the
+- **0x33046–0x335xx (PRG025 upload streams + map attribute data):
+  Recolored RESTRUCTURED this region**: it inserted bytes, shifting the
   remainder of the stream, and repointed referencing code elsewhere. Vanilla
-  data appears at recolored offsets ±8. In-place quartet swaps against this
+  data appears at Recolored offsets ±8. In-place quartet swaps against this
   region would corrupt the stream structure; supporting it would require
   porting Recolored's code repoints too. **Skipped by the themed randomizer.**
-- **Slot-table tail (0x36DA8–0x36E20)**: Recolored recolors it in place with
-  its usual palette signature (`36 0F → 37 06` etc.). Treated as palette
-  quartets on the 0x36BE4 table grid. Contains the known Lava/Rotodisc
-  (0x36DAA) and Bowser/Donut (0x36DFE) quartets.
-- **Pool 0x36E20–0x37000**: walking quartets from 0x36E20 aligns the
-  empirically confirmed water-sprite slot at 0x36F00 (0xE0 is 4-aligned);
-  the previously documented 0x36EE2 sub-start does not (0x1E is not).
-  The 0x36E20 grid is therefore the structural one.
-- **0x37844–0x37850 (post slice 4)**: two more palette quartets past the
-  documented pool end (`30 36 0F` and `16 36 0F` recolored with the usual
-  pattern). The byte at 0x3784F is 0xAD (non-palette, likely code/data
-  boundary) — quartet writes must keep it identical.
-- Scattered single-byte `99→92` diffs across PRG013 are the `JSR $FE99 →
-  JSR $FE92` jump-engine relocation — code, never palette-swappable.
+- **0x36BE2–0x377E1 (`PalSet_*`)**: Recolored recolors these in place. The
+  sweep walked them on the old 0x36BE4 grid, so the "slot table tail
+  (0x36DA8)", "pool (0x36E20)" and "slice" regions it names are slices of the
+  sets listed above, 2 bytes off the real sub-palette boundaries.
+- **0x37844–0x37850 (past the old "slice 4")**: these are the last entries of
+  `InitPals_Per_MapPUp` (map suit palettes, ending 0x3784E). The byte at
+  0x3784F is `$AD`, the first opcode of `Setup_PalData`, so it must stay
+  identical.
+- Scattered single-byte `99→92` diffs across PRG026–PRG027 are the `JSR $FE99 →
+  JSR $FE92` jump-engine relocation: code, never palette-swappable.
 
 Themed-palette randomizer coverage after this sweep: all Recolored-changed
-quartets in slots 0–7 + tail, pool, slices 1–4 (`palette_variants.rs`
-variant swap), plus hue-rotation-only coverage of kept-vanilla chromatic
-quartets (`ROTATE_ONLY_QUARTETS`).
-> Confirm with disassembly cross-reference before basing critical writes on these offsets.
->
+quartets in the `PalSet_*` region (`palette_variants.rs` variant swap; its
+`SLOT*`/`SLICE*`/`POOL` group names follow the retired band model), plus
+hue-rotation-only coverage of kept-vanilla chromatic quartets
+(`ROTATE_ONLY_QUARTETS`).
+
 > The cluster-by-cluster reverse engineering behind this section was done with
 > `tools/palette_inspect.py` (dumped every Recolored cluster, classified it, and
 > showed vanilla vs. recolored hex side-by-side). That tool has been deleted now
