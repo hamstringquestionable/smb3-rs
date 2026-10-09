@@ -62,3 +62,12 @@ mos6502 = "0.10.1"
 # Output is unchanged — a codegen setting cannot alter program semantics, and
 # `output_matches_baseline` confirms it against the committed hash.
 codegen-units = 1
+
+[profile.dev]
+# Light optimisation for debug builds, which is what `cargo test` runs.
+#
+# **Measured 2026-10-09**: `overworld_baseline` went from 97s to 2.7s; the
+# ROM-backed tests run whole randomizations, and unoptimised that put the local
+# `cargo test` at ~7.5 minutes. The price is the rebuild after an edit: 1.3s to
+# 12.4s. CI is unaffected in practice — it has no ROM, so those tests skip.
+opt-level = 1
