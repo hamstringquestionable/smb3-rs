@@ -279,59 +279,101 @@ fn theme_group_for(offset: usize) -> Option<usize> {
         .position(|g| g.ranges.iter().any(|&(start, end)| (start..end).contains(&offset)))
 }
 
+/// Where a palette set's colors come from, before its hue shift. One source
+/// is rolled per set, so every screen is a single designed scheme rather than
+/// a collage of sub-palettes from different ones.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum Source {
+    Vanilla,
+    /// "Super Mario Bros. 3 Recolored v1.0": `VariantGroup::variants[1]`.
+    /// Sub-palettes it left alone are vanilla.
+    Recolored,
+    /// Vanilla with every hue snapped to one of four families (`TUSCAN_COLS`).
+    Tuscan,
+}
+
+const SOURCES: [Source; 3] = [Source::Vanilla, Source::Recolored, Source::Tuscan];
+
+/// The "tuscan" family: hue column (1-C) -> one of four columns, from the
+/// Adobe "Tuscan Sun / Dusk Blue / Mint Leaf / Tomato" palette snapped to NES
+/// columns gold 7, indigo 2, teal C, coral 6. Blues go indigo, reds coral,
+/// oranges/yellows gold, greens teal. The luminance row is kept, so contrast
+/// within a sub-palette survives. Index 0 is unused (grays don't move).
+const TUSCAN_COLS: [u8; 13] = [0, 2, 2, 2, 6, 6, 6, 7, 7, 7, 0xC, 0xC, 0xC];
+
+/// Snap a chromatic byte's hue to the tuscan family; anything else (grays,
+/// blacks, `$FF` placeholders, non-color bytes) passes through.
+fn tuscan(byte: u8) -> u8 {
+    if !is_chromatic(byte) {
+        return byte;
+    }
+    (byte & 0x30) | TUSCAN_COLS[usize::from(byte & 0x0F)]
+}
+
+/// The 4 bytes `source` gives a sub-palette whose vanilla bytes are `vanilla`.
+fn from_source(source: Source, vanilla: [u8; 4], recolored: Option<[u8; 4]>) -> [u8; 4] {
+    match source {
+        Source::Vanilla => vanilla,
+        Source::Recolored => recolored.unwrap_or(vanilla),
+        Source::Tuscan => vanilla.map(tuscan),
+    }
+}
+
 /// Themed palette randomization across all tilesets.
 ///
-/// Two layers, both aesthetically safe by construction:
+/// Two rolls per palette set (`THEME_GROUPS`), both applied to the whole set
+/// so a screen stays one coherent scheme:
 ///
-/// 1. **Variant swap**: for each curated quartet position, pick ONE whole
-///    4-byte variant from a list of pre-validated options (vanilla +
-///    Recolored + hand-curated). Every emitted palette group was designed as
-///    a coherent unit — no flat color-pool mixing, no independent byte picks.
+/// 1. **Source**: vanilla, Recolored or tuscan (`Source`). Each was designed,
+///    or derived, as a complete scheme; mixing them per sub-palette made
+///    screens into collages of three designs.
 ///
-/// 2. **Context-aware hue rotation**: each theme group (plains, water,
-///    fortress, ...) rolls its own small hue shift from the group's allowed
-///    set and applies it to every chromatic byte the group owns. The NES
-///    color byte is `(luminance << 4) | hue`, so rotating the hue nibble
-///    while preserving the luminance nibble keeps every brightness/contrast
-///    relationship of the source palette intact — visibility is preserved by
-///    construction. Shifts are capped at 2 steps (~60°) and constrained per
-///    context, so water stays watery, lava stays warm, and skies never go
-///    magenta — subtle seasonal variation instead of a whole-wheel spin.
-///    Grays, blacks, whites (hue nibble 0/D/E/F) and non-color bytes
-///    (> 0x3C, 0xFF skip markers) pass through untouched.
+/// 2. **Hue shift**: a small rotation from the set's allowed list, applied
+///    to every chromatic byte. The NES color byte is `(row << 4) | hue`, and
+///    rotation keeps the row. That is NOT the same as keeping brightness:
+///    NES hues differ in lightness within a row (yellows and greens are far
+///    brighter than blues), and one step moves CIELAB L* by 6 on average,
+///    up to ~20 (measured 2026-10-09). Shifting a whole sub-palette together
+///    keeps most of its internal contrast. Grays, blacks, whites (hue nibble
+///    0/D/E/F) and non-color bytes (> 0x3C, `$FF` placeholders) pass through.
 ///
-/// Coverage: every sub-palette Recolored changed across the 16 `PalSet_*`
-/// sets, never touching `Palette_By_Tileset` (0x377E2-0x37807) or the
-/// wardrobe tables after it, which `apply_player_scheme` owns. Sub-palettes Recolored kept at vanilla but which hold
-/// chromatic bytes are in `ROTATE_ONLY_QUARTETS`: they never variant-swap,
-/// but they DO hue-rotate, so a kept-vanilla green can't clash with rotated
-/// colors on the same screen.
+/// Coverage: every chromatic sub-palette of the 16 `PalSet_*` sets — the ones
+/// Recolored changed (`VariantGroup`s) and the ones it kept
+/// (`ROTATE_ONLY_QUARTETS`) — never touching `Palette_By_Tileset`
+/// (0x377E2-0x37807) or the wardrobe tables after it, which
+/// `apply_player_scheme` owns.
 pub(crate) fn randomize_themed<R: Rng>(rom: &mut Rom, rng: &mut R) {
     // World palettes only — the character wardrobe is `randomize()`'s job,
     // driven independently by the player-colors option.
 
-    // Roll one shift per theme group, in declaration order (deterministic
+    // Roll a source and a shift per set, in declaration order (deterministic
     // for a given RNG stream).
-    let group_shifts: Vec<u8> =
-        THEME_GROUPS.iter().map(|g| *g.shifts.choose(rng).unwrap()).collect();
-    let shift_for =
-        |offset: usize| -> u8 { theme_group_for(offset).map_or(0, |gi| group_shifts[gi]) };
+    let rolls: Vec<(Source, u8)> = THEME_GROUPS
+        .iter()
+        .map(|g| (*SOURCES.choose(rng).unwrap(), *g.shifts.choose(rng).unwrap()))
+        .collect();
+    let roll_for =
+        |offset: usize| theme_group_for(offset).map_or((Source::Vanilla, 0), |gi| rolls[gi]);
 
     for region in THEMED_REGIONS {
-        apply_variant_groups(rom, region, shift_for, rng);
+        for group in *region {
+            let (source, shift) = roll_for(group.offset);
+            let bytes = from_source(source, group.variants[0], Some(group.variants[1]));
+            rom.write_range(group.offset, &bytes.map(|b| rotate_hue(b, shift)));
+        }
     }
 
-    // Hue-rotate the kept-vanilla chromatic quartets in place.
+    // Sub-palettes Recolored kept: vanilla under both Vanilla and Recolored.
     for &offset in ROTATE_ONLY_QUARTETS {
-        let shift = shift_for(offset);
-        for i in 0..4 {
-            let b = rom.read_byte(offset + i);
-            rom.write_byte(offset + i, rotate_hue(b, shift));
-        }
+        let (source, shift) = roll_for(offset);
+        let mut vanilla = [0u8; 4];
+        vanilla.copy_from_slice(rom.read_range(offset, 4));
+        let bytes = from_source(source, vanilla, None);
+        rom.write_range(offset, &bytes.map(|b| rotate_hue(b, shift)));
     }
 }
 
-/// Rotate a NES color's hue around the 12-hue wheel, preserving luminance.
+/// Rotate a NES color's hue around the 12-hue wheel, keeping its luminance row.
 ///
 /// NES color byte layout: high nibble = luminance row (0-3), low nibble =
 /// hue column (1-C; 0 = gray/white, D-F = blacks/forbidden). Only chromatic
@@ -346,22 +388,6 @@ fn rotate_hue(byte: u8, shift: u8) -> u8 {
     }
     let rotated = ((hue - 1 + shift) % 12) + 1;
     (byte & 0xF0) | rotated
-}
-
-/// For each curated position, pick one 4-byte variant at random, hue-rotate
-/// its chromatic bytes by its theme group's shift, and write it.
-fn apply_variant_groups<R: Rng>(
-    rom: &mut Rom,
-    groups: &[VariantGroup],
-    shift_for: impl Fn(usize) -> u8,
-    rng: &mut R,
-) {
-    for group in groups {
-        let picked = group.variants.choose(rng).unwrap();
-        let shift = shift_for(group.offset);
-        let rotated = picked.map(|b| rotate_hue(b, shift));
-        rom.write_range(group.offset, &rotated);
-    }
 }
 
 #[cfg(test)]
@@ -623,36 +649,82 @@ mod tests {
     }
 
     #[test]
-    fn themed_emits_rotated_curated_variants_only() {
-        // Every 4-byte write at a curated position must match one of the
-        // pre-registered variants rotated by its theme group's shift — ONE
-        // shift per group (coherent theme within each context, no per-quartet
-        // rainbow), drawn from the group's allowed set, and no free-byte picks.
-        for seed in [1u64, 42, 99, 777, 12345] {
+    fn each_palette_set_is_one_source_and_one_shift() {
+        // A screen loads all its colors from one PalSet set, so every
+        // sub-palette in a set must come from the SAME source with the SAME
+        // shift: no screen is a collage of vanilla, Recolored and tuscan.
+        // Stamp vanilla bytes everywhere so rotate-only quartets are real
+        // colors too, then find the one (source, shift) explaining each set.
+        let mut seen_sources = std::collections::HashSet::new();
+        for seed in 0u64..40 {
             let mut rom = make_test_rom();
+            for g in all_variant_groups() {
+                rom.write_range(g.offset, &g.variants[0]);
+            }
+            for &offset in ROTATE_ONLY_QUARTETS {
+                rom.write_range(offset, &[0x0F, 0x16, 0x2A, 0x21]);
+            }
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
             randomize_themed(&mut rom, &mut rng);
 
             for (gi, tg) in THEME_GROUPS.iter().enumerate() {
-                let group_quartets: Vec<&'static VariantGroup> = all_variant_groups()
-                    .into_iter()
-                    .filter(|g| theme_group_for(g.offset) == Some(gi))
-                    .collect();
-                let shift_matches = |shift: u8| -> bool {
-                    group_quartets.iter().all(|group| {
-                        let written = rom.read_range(group.offset, 4);
-                        group.variants.iter().any(|v| {
-                            v.iter().zip(written).all(|(&vb, &wb)| rotate_hue(vb, shift) == wb)
-                        })
-                    })
+                let explains = |source: Source, shift: u8| -> bool {
+                    let rot = |q: [u8; 4]| q.map(|b| rotate_hue(b, shift));
+                    let groups_ok = all_variant_groups()
+                        .into_iter()
+                        .filter(|g| theme_group_for(g.offset) == Some(gi))
+                        .all(|g| {
+                            let want = from_source(source, g.variants[0], Some(g.variants[1]));
+                            rom.read_range(g.offset, 4) == rot(want)
+                        });
+                    let kept_ok = ROTATE_ONLY_QUARTETS
+                        .iter()
+                        .filter(|&&o| theme_group_for(o) == Some(gi))
+                        .all(|&o| {
+                            let want = from_source(source, [0x0F, 0x16, 0x2A, 0x21], None);
+                            rom.read_range(o, 4) == rot(want)
+                        });
+                    groups_ok && kept_ok
                 };
+                let found: Vec<Source> = SOURCES
+                    .into_iter()
+                    .filter(|&src| tg.shifts.iter().any(|&sh| explains(src, sh)))
+                    .collect();
                 assert!(
-                    tg.shifts.iter().any(|&s| shift_matches(s)),
-                    "seed {seed}, group '{}': no allowed shift explains all written quartets",
-                    tg.name,
+                    !found.is_empty(),
+                    "seed {seed}, set '{}': no single source+shift",
+                    tg.name
                 );
+                seen_sources.extend(found);
             }
         }
+        assert_eq!(seen_sources.len(), SOURCES.len(), "every source should be rolled");
+    }
+
+    #[test]
+    fn variant_groups_are_vanilla_then_recolored() {
+        // `from_source` indexes `variants[0]`/`[1]` as vanilla/Recolored.
+        for g in all_variant_groups() {
+            assert_eq!(g.variants.len(), 2, "group {:#07x}", g.offset);
+            assert_ne!(g.variants[0], g.variants[1], "group {:#07x} is a no-op", g.offset);
+        }
+    }
+
+    #[test]
+    fn tuscan_keeps_rows_and_four_families() {
+        // Every chromatic color keeps its luminance row and lands on one of
+        // the four family columns; red and green stay apart (Koopa shells,
+        // mushroom vs 1-up); everything else passes through.
+        for b in 0u8..=0xFF {
+            let t = tuscan(b);
+            if is_chromatic(b) {
+                assert_eq!(t & 0x30, b & 0x30, "{b:#04x} changed row");
+                assert!([2, 6, 7, 0xC].contains(&(t & 0x0F)), "{b:#04x} -> {t:#04x}");
+            } else {
+                assert_eq!(t, b, "{b:#04x} must pass through");
+            }
+        }
+        assert_ne!(tuscan(0x16) & 0x0F, tuscan(0x1A) & 0x0F, "red and green merged");
     }
 
     #[test]
