@@ -46,9 +46,9 @@ these working.
 | Tool | Status | Notes |
 |------|--------|-------|
 | `rom_map.py` | OK | **30 commits** — the workhorse. Generates `rom_map.json`; also `--level <name>`, `--tile <byte>`, `--numbered`, `--walk`, `--progression`, `--check`. |
-| `gen_palette_variants.py` | **rewrites source** | Regenerates `src/randomize/cosmetic/palette_variants.rs` from the Recolored IPS + vanilla ROM. Check `git diff` after running. |
-| `extract_palette_variants.py` | OK | Feeds the above — extracts quartet-level `VariantGroup` entries. |
-| `add_variant_family.py` | **rewrites source** | Appends a hue-family-tinted variant to every `VariantGroup`. |
+| `gen_palette_variants.py` | **rewrites source** | Generates all of `src/randomize/cosmetic/palette_variants.rs` (vanilla + Recolored IPS + the hue families in its `FAMILIES` list, on the real `PalSet_*` grid). Nothing in the file is hand-made, so rerunning is safe; check `git diff`. |
+| `extract_palette_variants.py` | **stale** | Walks the retired 0x36BE4 grid, 2 bytes off the real sub-palettes. Superseded by `gen_palette_variants.py`. |
+| `add_variant_family.py` | library | The hue-family remap `gen_palette_variants.py` imports. Its own `main` appends to the generated file, which the next regeneration drops — add a family to `FAMILIES` instead. |
 | `gen_visual_previews.py` | OK **[PIL]** | Regenerates `web/assets/visual-previews/*.png`, shipped in the web app. |
 | `required_progression.py` | needs args | Required-progression / linearity metric for randomized ROMs. |
 | `offset_dups.py` | OK | Finds ROM offset literals duplicating a `rom_data.rs` constant. Run before committing a patch — CLAUDE.md leans on this. |
@@ -73,9 +73,8 @@ Written once because they were written well.
 ## Side effects
 
 `preview_palette_pools.py` and `preview_palette_variants.py` write HTML into the
-repo root (untracked — delete after use). `gen_palette_variants.py` and
-`add_variant_family.py` rewrite `src/randomize/cosmetic/palette_variants.rs`; check
-`git diff` after running either.
+repo root (untracked — delete after use). `gen_palette_variants.py` rewrites
+`src/randomize/cosmetic/palette_variants.rs`; check `git diff` after running it.
 
 ## Playtest ROMs
 

@@ -1,67 +1,80 @@
 #!/usr/bin/env python3
-"""Regenerate `src/randomize/cosmetic/palette_variants.rs` from Recolored IPS + vanilla ROM.
+"""Regenerate `src/randomize/cosmetic/palette_variants.rs` from the vanilla ROM,
+the Recolored IPS and the hue families in FAMILIES.
 
-*** THE RUST FILE HAS DIVERGED FROM GENERATED OUTPUT — DO NOT REGEN CASUALLY ***
-palette_variants.rs now carries content this tool cannot reproduce:
-  - hand-curated third-party variants (e.g. the "tuscan" entries)
-  - ROTATE_ONLY_QUARTETS (kept-vanilla chromatic quartets for hue rotation)
-  - the hand-verified SLICE4_POST group at 0x3784C (fails the palette_like
-    filter because of an adjacent non-palette byte)
-Running this tool overwrites the file and LOSES all of that. It refuses to run
-without --force. For incremental region work use extract_palette_variants.py
-(prints to stdout) and hand-edit the Rust file.
+The file is fully generated: every variant is derived byte-for-byte from one of
+those sources, so regenerating loses nothing. To add a variant family, add it to
+FAMILIES here and rerun; don't hand-edit the Rust file.
 
-Excluded regions:
-  - 0x377E0-0x37807 — level-layout pointer-table CRASH TRAP.
-  - 0x33046-0x335xx — Recolored restructured this stream (insertions); unsafe
-    for in-place quartet swaps.
+Layout (verified against the ROM, see docs/smb3_rom_reference.md → "Palette
+Sets"): the 16 `PalSet_*` sets of PRG027 sit back to back from 0x36BE2, 192
+bytes each, and every 4-byte sub-palette starts at 0x36BE2 + 4n. Two player
+palette tables follow the `Palette_By_Tileset` pointer table, each on its own
+4-byte grid.
+
+For each aligned quartet in a region:
+  - Recolored changed it → a VariantGroup: vanilla, Recolored, then each family's
+    tint of vanilla (skipped when identical to an earlier variant);
+  - Recolored kept it, but it holds a chromatic byte → ROTATE_ONLY_QUARTETS
+    (never swapped, but hue-rotated with its theme so it can't clash).
+
+Never covered:
+  - 0x377E2-0x37807 `Palette_By_Tileset` — painting it crashes the loader.
+  - 0x37820-0x3782A `Map_PlayerPalFix` + `InitPal_Per_MapPowerup` — the
+    second is palette INDICES (00-08), which hue rotation would corrupt.
+  - 0x3784F+ `Setup_PalData` code.
+  - 0x33046-0x335xx — Recolored restructured this stream (insertions).
 
 Usage:
-    nix-shell -p python3 --run "python3 tools/gen_palette_variants.py --force"
+    nix-shell -p python3 --run "python3 tools/gen_palette_variants.py"
 """
 
-import sys
 from pathlib import Path
+
+from add_variant_family import family_from_pool, substitute_byte
 
 ROOT = Path(__file__).resolve().parent.parent
 ROM = ROOT / "roms/Super Mario Bros. 3 (USA) (Rev 1).nes"
 IPS = ROOT / "patches/Super Mario Bros. 3 Recolored v1.0.ips"
 OUT = ROOT / "src/randomize/cosmetic/palette_variants.rs"
 
-# (rust_const_name, label, start, end, description)
+# Hue families applied to every Recolored-changed quartet: (label, pool).
+FAMILIES = [
+    ("tuscan", [0x27, 0x12, 0x2C, 0x26]),
+]
+
+PALSET_BASE = 0x36BE2
+PALSET_SIZE = 0xC0
+
+# (rust_const_name, label) for each PalSet, in ROM order.
+PALSETS = [
+    ("MAPS_VARIANTS", "PalSet_Maps (tileset 0: world map)"),
+    ("PLAINS_VARIANTS", "PalSet_Plains (tileset 1)"),
+    ("FORT_VARIANTS", "PalSet_Fort (tileset 2)"),
+    ("HILLS_UNDER_VARIANTS", "PalSet_HillsUnder (tilesets 3, 14)"),
+    ("HIGH_UP_VARIANTS", "PalSet_HighUp (tileset 4)"),
+    ("PLANT_VARIANTS", "PalSet_Plant (tileset 5)"),
+    ("WATER_VARIANTS", "PalSet_Water (tileset 6)"),
+    ("TOAD_VARIANTS", "PalSet_Toad (tileset 7)"),
+    ("PIPE_MAZE_VARIANTS", "PalSet_PipeMaze (tileset 8)"),
+    ("DESERT_VARIANTS", "PalSet_Desert (tileset 9)"),
+    ("AIRSHIP_VARIANTS", "PalSet_Airship (tileset 10)"),
+    ("GIANT_VARIANTS", "PalSet_Giant (tileset 11)"),
+    ("ICE_VARIANTS", "PalSet_Ice (tileset 12)"),
+    ("SKY_VARIANTS", "PalSet_Sky (tileset 13)"),
+    ("TWO_P_VS_VARIANTS", "PalSet_2PVs (tileset 18)"),
+    ("BONUS_VARIANTS", "PalSet_Bonus (tilesets 15-17)"),
+]
+
+# (rust_const_name, label, start, end) — every region, each on its own grid.
 REGIONS = [
-    ("SLOT0_MAP_VARIANTS",     "slot 0",    0x36BE4, 0x36C1C,
-        "W6 sky overworld map + map HUD."),
-    ("SLOT1_MAP_VARIANTS",     "slot 1",    0x36C1C, 0x36C54,
-        "W7 (pipe) overworld map."),
-    ("SLOT2_VARIANTS",         "slot 2",    0x36C54, 0x36C8C,
-        "Hammer Bro sprites + HELP/world-label text overlay."),
-    ("PLAINS_SLOT3_VARIANTS",  "slot 3",    0x36C8C, 0x36CC4,
-        "Plains BG + HUD ($3F00 universal)."),
-    ("SLOT4_VARIANTS",         "slot 4",    0x36CC4, 0x36CFC,
-        "Giant tileset (W4)."),
-    ("SLOT5_VARIANTS",         "slot 5",    0x36CFC, 0x36D34,
-        "Plains enemies AND W7-5 sub-area BG (shared)."),
-    ("SLOT6_VARIANTS",         "slot 6",    0x36D34, 0x36D6C,
-        "Fortress HUD / related."),
-    ("SLOT7_VARIANTS",         "slot 7",    0x36D6C, 0x36DA6,
-        "Fortress BG AND W7-5 sub-area enemies (shared)."),
-    ("SLOT_TAIL_VARIANTS",     "slot tail", 0x36DA8, 0x36E20,
-        "Trailing themed-slot data past slot 7 (starts at 0x36DA8, the first offset past slot 7 on the table's 4-byte grid)."),
-    ("POOL_VARIANTS",          "pool",      0x36E20, 0x37000,
-        "Palette pool incl. the confirmed water-sprite slot at 0x36F00 (walking from 0x36E20 aligns it; the old 0x36EE2 sub-start does not)."),
-    ("SLICE1_WATER_VARIANTS",  "slice 1",   0x37000, 0x37200,
-        "Water tileset per-level variants."),
-    ("SLICE2_VARIANTS",        "slice 2",   0x37200, 0x37400,
-        "Desert + fortress + airship variants."),
-    ("SLICE3_GIANT_VARIANTS",  "slice 3",   0x37400, 0x37600,
-        "Giant tileset + water accents."),
-    ("SLICE4_HEAD_VARIANTS",   "slice 4 head (pre-pointer-table)", 0x37600, 0x377E0,
-        "Sky-Land + plains variants. MUST stop before 0x377E0 (level-layout pointer table — painting it crashes the game)."),
-    ("SLICE4_TAIL_VARIANTS",   "slice 4 tail", 0x37808, 0x37846,
-        "Slice 4 tail (after pointer-table crash trap)."),
-    ("SLICE4_POST_VARIANTS",   "slice 4 post", 0x37844, 0x37850,
-        "Palette constants just past the documented pool end. NOTE: regen drops the hand-verified 0x3784C group (adjacent 0xAD byte fails palette_like)."),
+    (name, label, PALSET_BASE + i * PALSET_SIZE, PALSET_BASE + (i + 1) * PALSET_SIZE)
+    for i, (name, label) in enumerate(PALSETS)
+] + [
+    ("BONUS_PLAYER_VARIANTS", "BonusGame_PlayerPal (Mario/Luigi in the bonus games)",
+        0x37808, 0x37820),
+    ("MAP_SUIT_VARIANTS", "InitPals_Per_MapPUp (map player palette per suit)",
+        0x3782B, 0x3784F),
 ]
 
 
@@ -86,86 +99,108 @@ def parse_ips(p):
     return out
 
 
+def is_chromatic(b):
+    return b <= 0x3C and 1 <= (b & 0x0F) <= 0x0C
+
+
+def hexq(q):
+    return ", ".join(f"0x{b:02X}" for b in q)
+
+
+HEADER = """\
+//! Curated palette-group variants for themed palette randomization.
+//!
+//! GENERATED by `tools/gen_palette_variants.py` — do not hand-edit; change the
+//! generator and rerun it. Every variant derives byte-for-byte from the vanilla
+//! ROM, the "Super Mario Bros. 3 Recolored v1.0" IPS, or a hue family, so a
+//! regeneration loses nothing.
+//!
+//! Each entry is one 4-color sub-palette (file offset) paired with known-good
+//! variants. At randomization time one variant is picked per position, so every
+//! emitted sub-palette was designed as a unit — no pool-mixing, no independent
+//! byte picks.
+//!
+//! Layout: one table per `PalSet_*` set of PRG027 (192 bytes each from 0x36BE2;
+//! sub-palettes start at 0x36BE2 + 4n), plus the two player palette tables after
+//! `Palette_By_Tileset`. See `docs/smb3_rom_reference.md` → "Palette Sets".
+//! Never covered: `Palette_By_Tileset` (0x377E2-0x37807, painting it crashes the
+//! loader) and `InitPal_Per_MapPowerup` (0x37822-0x3782A, palette indices).
+//!
+//! Every table carries `#[rustfmt::skip]`: the compact four-line-per-group
+//! layout is what keeps a palette table readable, and what `git diff` after a
+//! regeneration is meant to show.
+
+/// A palette-group variant set at a specific file offset.
+pub(crate) struct VariantGroup {
+    pub(crate) offset: usize,
+    /// List of known-good 4-byte variants. At least one variant (vanilla)
+    /// must always be present. Additional variants widen the randomization
+    /// space without adding clash risk.
+    pub(crate) variants: &'static [[u8; 4]],
+}
+"""
+
+
 def main():
-    if "--force" not in sys.argv:
-        sys.exit(
-            "palette_variants.rs has hand-curated content this tool cannot "
-            "reproduce (see docstring). Use tools/extract_palette_variants.py "
-            "for incremental work, or pass --force to overwrite anyway."
-        )
     vanilla = ROM.read_bytes()
     recolored = bytearray(vanilla)
     for off, payload in parse_ips(IPS):
         recolored[off : off + len(payload)] = payload
+    families = [(label, family_from_pool(pool)) for label, pool in FAMILIES]
 
-    out = []
+    out = [HEADER]
     p = out.append
-    p("//! Curated palette-group variants for themed palette randomization.")
-    p("//!")
-    p("//! Each entry is a position in the ROM (file offset) where a 4-byte palette")
-    p("//! group lives, paired with two or more known-good variants (vanilla + sources")
-    p("//! like \"Super Mario Bros. 3 Recolored v1.0\"). At randomization time the")
-    p("//! randomizer picks one variant per position, so every combination emitted")
-    p("//! is built from aesthetically pre-validated 4-byte groups — no pool-mixing,")
-    p("//! no independent-byte picks, no clash risk.")
-    p("//!")
-    p("//! This sidesteps the failure mode where flat color-pool randomization")
-    p("//! produces combinations the original palette artists never intended.")
-    p("//!")
-    p("//! Bootstrap: `tools/gen_palette_variants.py` regenerates this file from the")
-    p("//! Recolored IPS. Hand-curated alternates from other palette hacks can be")
-    p("//! appended to each entry's `variants` list — but regeneration will overwrite")
-    p("//! them, so start hand-editing once the Recolored seeds feel right.")
-    p("//!")
-    p("//! Hard constraint: NEVER include the pointer-table range 0x377E0-0x37807")
-    p("//! in any variant group — painting those bytes corrupts the level-layout")
-    p("//! CPU pointers and crashes the game on world entry.")
-    p("//!")
-    p("//! Every table below carries `#[rustfmt::skip]`: the compact four-line-per-group")
-    p("//! layout is what makes a palette table readable, and it is what `git diff` after")
-    p("//! a regeneration is meant to show. rustfmt would expand each group to seven")
-    p("//! lines and double the file. `tools/gen_palette_variants.py` emits the")
-    p("//! attributes as well — keep the two in step.")
-    p("")
-    p("/// A palette-group variant set at a specific file offset.")
-    p("pub struct VariantGroup {")
-    p("    pub offset: usize,")
-    p("    /// List of known-good 4-byte variants. At least one variant (vanilla)")
-    p("    /// must always be present. Additional variants widen the randomization")
-    p("    /// space without adding clash risk.")
-    p("    pub variants: &'static [[u8; 4]],")
-    p("}")
-    p("")
-
-    for const_name, label, start, end, desc in REGIONS:
-        changed = []
-        offset = start
-        while offset + 4 <= end:
-            v = vanilla[offset : offset + 4]
-            r = bytes(recolored[offset : offset + 4])
+    rotate_only = []  # (label, [offsets])
+    for const_name, label, start, end in REGIONS:
+        assert (end - start) % 4 == 0, const_name
+        groups = []
+        kept = []
+        for off in range(start, end, 4):
+            v = bytes(vanilla[off : off + 4])
+            r = bytes(recolored[off : off + 4])
             if v != r:
-                changed.append((offset, v, r))
-            offset += 4
+                variants = [(v, "vanilla"), (r, "recolored")]
+                for fam_label, col_map in families:
+                    t = bytes(substitute_byte(b, col_map) for b in v)
+                    if all(t != q for q, _ in variants):
+                        variants.append((t, fam_label))
+                groups.append((off, variants))
+            elif any(is_chromatic(b) for b in v):
+                kept.append(off)
+        rotate_only.append((label, kept))
+
         p("// " + "-" * 74)
-        p(f"// {label.capitalize()} ({start:#07x}-{end:#07x}) — {desc}")
-        p(f"// {len(changed)} quartets changed by Recolored.")
+        p(f"// {label}: {start:#07x}-{end - 1:#07x}")
+        p(f"// {len(groups)} sub-palettes changed by Recolored.")
         p("// " + "-" * 74)
         p("")
-        # The compact layout below is the point of this file; see the module
-        # doc comment. Keep this attribute in step with palette_variants.rs.
         p("#[rustfmt::skip]")
-        p(f"pub const {const_name}: &[VariantGroup] = &[")
-        for off, v, r in changed:
-            v_hex = ", ".join(f"0x{b:02X}" for b in v)
-            r_hex = ", ".join(f"0x{b:02X}" for b in r)
+        p(f"pub(crate) const {const_name}: &[VariantGroup] = &[")
+        for off, variants in groups:
             p(f"    VariantGroup {{ offset: 0x{off:05X}, variants: &[")
-            p(f"        [{v_hex}],  // vanilla")
-            p(f"        [{r_hex}],  // recolored")
-            p(f"    ]}},")
+            for q, lab in variants:
+                p(f"        [{hexq(q)}],  // {lab}")
+            p("    ]},")
         p("];")
         p("")
 
-    OUT.write_text("\n".join(out))
+    p("// " + "-" * 74)
+    p("// Rotate-only quartets: sub-palettes Recolored left at vanilla that hold")
+    p("// chromatic bytes. Never variant-swapped, but hue-rotated with their theme")
+    p("// group so a kept-vanilla green can't clash with rotated neighbours.")
+    p("// " + "-" * 74)
+    p("")
+    p("#[rustfmt::skip]")
+    p("pub(crate) const ROTATE_ONLY_QUARTETS: &[usize] = &[")
+    for label, offs in rotate_only:
+        if not offs:
+            continue
+        p(f"    // {label} ({len(offs)})")
+        for i in range(0, len(offs), 8):
+            p("    " + " ".join(f"0x{o:05X}," for o in offs[i : i + 8]))
+    p("];")
+
+    OUT.write_text("\n".join(out) + "\n")
     print(f"wrote {OUT}")
 
 
