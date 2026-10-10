@@ -27,6 +27,7 @@ Status column:
 | [seed_stability.md](seed_stability.md) | **Live** | When generated output may change and what has to be proved instead of byte identity. The policy (seeds are stable within a version, never across), the census bar, the current baseline, and which of the three instruments answers which question. |
 | [overworld_baseline_log.md](overworld_baseline_log.md) | **Live** | The overworld baseline recapture log. Restarted 2026-09-08, when the baseline began hashing the overworld rather than the whole ROM. |
 | [start_airship_swap_findings.md](start_airship_swap_findings.md) | **Reference** | Engine internals behind the start ↔ airship swap. Verified against the disassembly. |
+| [procedural_maps_design.md](procedural_maps_design.md) | **Design note** | Generated overworld layouts behind an opt-in flag: one `WorldMap` interface fed by a vanilla or a generated source. **Nothing is implemented.** |
 | [seed_report_design.md](seed_report_design.md) | **Design note** | A spoiler log. **Nothing is implemented** — the doc says so itself. |
 | [palette_randomizer_design.md](palette_randomizer_design.md) | **Historical** | An RFC frozen at the moment "Option B" was picked. What shipped diverged in coverage, technique and options — `palettes.rs`'s doc comments are the live account. |
 | [pipe_swap_poc_findings.md](pipe_swap_poc_findings.md) | **Historical** | A February POC whose module and CLI flag were deleted. Superseded by the pipe-shuffle section of the ROM reference. |
