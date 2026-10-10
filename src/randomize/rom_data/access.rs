@@ -489,6 +489,7 @@ pub(crate) fn write_hb_sprite(
 /// Read the non-Hammer-Bro floating sprite positions for a world (army, canoe,
 /// piranhas, …). When Hammer Bros are redistributed, only these stay fixed and
 /// must be protected from level/fort placement; the vanilla HB tiles are freed.
+#[cfg(test)]
 pub(crate) fn read_non_hb_sprite_positions(rom: &Rom, world_idx: usize) -> Vec<(usize, usize)> {
     let hb: std::collections::HashSet<(usize, usize)> =
         read_hb_sprite_positions(rom, world_idx).into_iter().collect();

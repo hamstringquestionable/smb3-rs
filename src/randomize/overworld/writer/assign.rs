@@ -85,7 +85,6 @@ fn pool_entry_for_pin(pool: &[usize], data: &OverworldData, pin: (usize, usize))
 }
 
 pub(super) fn assign_pool<R: Rng>(
-    rom: &Rom,
     build: &BuildResult,
     data: &OverworldData,
     rng: &mut R,
@@ -643,7 +642,7 @@ pub(super) fn assign_pool<R: Rng>(
         let sprite_positions: HashSet<(usize, usize)> = if shuffle_hammer_bros {
             built.hb_sprites.iter().map(|s| s.grid_pos).collect()
         } else {
-            rom_data::read_hb_sprite_positions(rom, wi).into_iter().collect()
+            catalog.maps[wi].hb_sprites.iter().copied().collect()
         };
 
         let mut sprite_slots = Vec::new();

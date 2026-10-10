@@ -93,14 +93,14 @@ fn census_ctx(raw: &Rom, seed: u64) -> CensusCtx {
         ..Default::default()
     };
     let (level_counts, fort_counts, c1_floors) =
-        allot_budgets(&rom, &catalog, &pickup, &flags, &mut roll_rng);
+        allot_budgets(&catalog, &pickup, &flags, &mut roll_rng);
     let bridges_out = roll_bridges_out(&mut roll_rng);
     CensusCtx { rom, catalog, pickup, flags, level_counts, fort_counts, c1_floors, bridges_out }
 }
 
 impl CensusCtx {
     fn world(&self, world_idx: usize) -> WorldState {
-        let mut state = from_pickup(&self.rom, &self.catalog, &self.pickup, world_idx, &self.flags);
+        let mut state = from_pickup(&self.catalog, &self.pickup, world_idx, &self.flags);
         state.level_budget = self.level_counts[world_idx];
         state.fort_budget = self.fort_counts[world_idx];
         state.c1_floor = self.c1_floors[world_idx];
@@ -1487,7 +1487,7 @@ fn test_builder_diversity_census() {
     let allotments: Vec<([usize; 8], [usize; 8], [u32; 8])> = (0..seeds)
         .map(|seed| {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
-            allot_budgets(&rom, &catalog, &pickup, &BuildFlags::default(), &mut rng)
+            allot_budgets(&catalog, &pickup, &BuildFlags::default(), &mut rng)
         })
         .collect();
 
@@ -1495,7 +1495,7 @@ fn test_builder_diversity_census() {
     println!("world  arm       layout-div  route-div  NN(mean±sd)  salt-r");
     for (world_idx, shipping_shapes) in shipping.iter().enumerate() {
         let budgeted_world = |seed: u64| {
-            let mut state = from_pickup(&rom, &catalog, &pickup, world_idx, &BuildFlags::default());
+            let mut state = from_pickup(&catalog, &pickup, world_idx, &BuildFlags::default());
             let (level_counts, fort_counts, c1_floors) = &allotments[seed as usize];
             state.level_budget = level_counts[world_idx];
             state.fort_budget = fort_counts[world_idx];
@@ -1896,7 +1896,7 @@ fn test_builder_island_roles() {
         ..Default::default()
     };
     let sizes_roles = |world_idx: usize| {
-        let state = from_pickup(&rom, &catalog, &pickup, world_idx, &flags);
+        let state = from_pickup(&catalog, &pickup, world_idx, &flags);
         let (pocket, count) = super::islands::pocket_map(&state);
         let islands = super::islands::classify(&state, &pocket, count);
         let mut v: Vec<(usize, super::islands::IslandRole)> =

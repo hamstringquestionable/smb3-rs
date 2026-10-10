@@ -258,7 +258,7 @@ pub(crate) fn build<R: Rng>(
     // W1-W7 roll 1-3 with the 13-fort total conserved), levels distributed
     // by compressed capacity shares.
     let (level_counts, fort_counts, c1_floors) =
-        allot_budgets(rom, data.catalog, data.pickup, &flags, rng);
+        allot_budgets(data.catalog, data.pickup, &flags, rng);
 
     // How many of W8's four locks land on the bridge approach to Bowser's
     // castle. Rolled here with the other per-seed budgets, because that is
@@ -267,7 +267,7 @@ pub(crate) fn build<R: Rng>(
 
     let mut states: Vec<WorldState> = (0..8)
         .map(|wi| {
-            let mut state = from_pickup(rom, data.catalog, data.pickup, wi, &flags);
+            let mut state = from_pickup(data.catalog, data.pickup, wi, &flags);
             state.level_budget = level_counts[wi];
             state.fort_budget = fort_counts[wi];
             state.c1_floor = c1_floors[wi];
@@ -297,7 +297,6 @@ pub(crate) fn build<R: Rng>(
     // Toad houses promote first so the smaller, less flexible 22-entry budget
     // lands before spades scramble for the remaining HammerBro slots.
     promote_hb_slots(
-        rom,
         &mut worlds,
         data,
         rng,
@@ -306,7 +305,6 @@ pub(crate) fn build<R: Rng>(
         None,
     );
     promote_hb_slots(
-        rom,
         &mut worlds,
         data,
         rng,

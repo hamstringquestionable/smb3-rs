@@ -460,8 +460,7 @@ fn report_distribution_by_exponent() {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
             let fort_counts = redistribute_fortresses(&mut rng);
             let caps =
-                prepare_capacities(&rom, &catalog, &pickup, &fort_counts, false, true, false)
-                    .capacities;
+                prepare_capacities(&catalog, &pickup, &fort_counts, false, true, false).capacities;
 
             // Detect clamp events (a world's fair share exceeds its capacity).
             let weights: [f64; 8] =

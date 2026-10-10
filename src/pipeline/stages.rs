@@ -312,15 +312,22 @@ pub(super) fn overworld_catalog(
     run: &Resolved,
     rng: &mut ChaCha8Rng,
 ) -> NodeCatalog {
-    rom.set_tag("overworld/builder");
-    let mut catalog =
-        randomize::overworld::node_catalog::NodeCatalog::build(rom, options.include_beta_stages);
     // Piranha shuffle: free the two W7 plant levels into the pool. The sprite
-    // clear must precede the builder — capacity/eligibility reads sprite
-    // state straight from the ROM.
+    // clear must precede the map load, which reads sprite positions from the
+    // ROM, and slot eligibility still reads the ROM directly.
     if run.piranha_active {
         rom.set_tag("piranha_shuffle");
         randomize::levels::piranha_rooms::clear_vanilla_plants(rom);
+    }
+    rom.set_tag("overworld/builder");
+    let maps = randomize::overworld::map_source::vanilla::load(rom);
+    let mut catalog = randomize::overworld::node_catalog::NodeCatalog::from_maps(
+        rom,
+        maps,
+        options.include_beta_stages,
+    );
+    if run.piranha_active {
+        rom.set_tag("piranha_shuffle");
         catalog.release_map_objects();
     }
     if options.swap_start_airship {

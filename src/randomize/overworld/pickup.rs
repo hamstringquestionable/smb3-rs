@@ -11,8 +11,9 @@
 
 use crate::rom::Rom;
 
+use crate::randomize::overworld::map_source::vanilla::{BLANK_TILE_OVERRIDES, ISLAND_POSITIONS};
 use crate::randomize::overworld::node_catalog::{CatalogEntry, NodeCatalog, NodeKind};
-use crate::randomize::rom_data::{self, FxSlot, Grid, VALID_BLANK_TILES, VALID_HORZ, VALID_VERT};
+use crate::randomize::rom_data::{self, Grid, Pos, VALID_BLANK_TILES, VALID_HORZ, VALID_VERT};
 
 // ---------------------------------------------------------------------------
 // Output types
@@ -122,11 +123,8 @@ fn pick_up_filtered(
     let mut pool: Vec<PoolEntry> = Vec::new();
     let mut worlds = Vec::with_capacity(8);
 
-    let fx_slots = rom_data::read_fx_slots(rom);
-    let fx_assignments = rom_data::read_world_fx_assignments(rom);
-
-    for (wi, world_fx) in fx_assignments.iter().enumerate() {
-        worlds.push(pick_up_world(rom, catalog, wi, &mut pool, flags, pred, &fx_slots, world_fx));
+    for wi in 0..8 {
+        worlds.push(pick_up_world(catalog, wi, &mut pool, flags, pred));
     }
 
     // Synthetic beta entries (world_idx == usize::MAX) have no vanilla grid
@@ -157,24 +155,18 @@ fn pick_up_filtered(
 // Per-world pick-up
 // ---------------------------------------------------------------------------
 
-// Reason: only `(fx_slots, world_fx)` bundle naturally, and at 2 fields a
-// struct adds more noise than it removes. The remaining args are
-// individually meaningful inputs to per-world pickup.
-#[allow(clippy::too_many_arguments)]
 fn pick_up_world(
-    rom: &Rom,
     catalog: &NodeCatalog,
     world_idx: usize,
     pool: &mut Vec<PoolEntry>,
     flags: PickupFlags,
     pred: fn(&CatalogEntry, PickupFlags) -> bool,
-    fx_slots: &[FxSlot],
-    world_fx: &[u8],
 ) -> ClearedWorld {
-    let mut grid = rom_data::read_tile_grid(rom, world_idx);
+    let map = &catalog.maps[world_idx];
+    let mut grid = map.grid.clone();
 
-    // Pre-open all vanilla FX gap tiles so the grid is fully connected.
-    open_fx_gaps(&mut grid, fx_slots, world_fx);
+    // Pre-open every gap so the grid is fully connected.
+    open_gaps(&mut grid, &map.gaps);
 
     let mut pickup_positions = Vec::new();
     let mut pool_indices = Vec::new();
@@ -207,32 +199,6 @@ fn pick_up_world(
 // ---------------------------------------------------------------------------
 // Blank tile selection
 // ---------------------------------------------------------------------------
-
-/// Position-specific overrides where the neighbor-based heuristic picks the
-/// wrong tile. `(world_idx, row, col, tile)`
-const BLANK_TILE_OVERRIDES: &[(usize, usize, usize, u8)] = &[
-    (2, 8, 6, 0x47), // W3 spade near start — heuristic picks 0x44 (no neighbors), needs 0x47 for BFS
-    (7, 5, 8, 0x8D), // W8 battleship entry — its cell is navy water (canoe area), not a land blank.
-                     // The entry is still picked up into the pool (placed elsewhere); only this
-                     // leftover tile changes, so the heuristic's 0x44 land tile is overridden to water.
-];
-
-/// Positions that should use island-themed blank tiles (0xAE/0xAF/0xB5/0xB6)
-/// even though [`theme_for`] would read them as standard land. Only W3 (2,4)
-/// genuinely needs the override — its connecting path is the standard 0x46
-/// above it while the strip it sits on runs south — but the rest are kept as
-/// a safety net, since they stay right even when a lock is stamped over the
-/// island path the sniff would otherwise key on.
-const ISLAND_POSITIONS: &[(usize, usize, usize)] = &[
-    // W3 — narrow island strips
-    (2, 2, 4),  // 3-2
-    (2, 4, 4),  // hammer
-    (2, 6, 4),  // 3-1
-    (2, 4, 12), // hammer
-    (2, 6, 12), // 3-5
-    (3, 6, 20), // W4 4-4
-    (6, 5, 10), // W7 7-4
-];
 
 /// Blank-tile theme tuple: `(horiz, vert, both, none)` covering the four
 /// combinations of valid-path neighbors.
@@ -365,35 +331,14 @@ fn theme_for(
 }
 
 // ---------------------------------------------------------------------------
-// FX gap opener
+// Gap opener
 // ---------------------------------------------------------------------------
 
-/// Replace vanilla FX gap tiles with their underlying path tiles, making the
-/// grid fully connected before placement.
-///
-/// **The path comes from the tile standing there, not from the FX slot.** The
-/// slot's own `replace_tile` says the same thing for sixteen of vanilla's
-/// seventeen. The odd one out is slot `$08`, W6 `(4, 13)`: it stores the sky
-/// path `$DA` for a lock sitting on plain ground, which is what the *preceding*
-/// slot legitimately stores for the game's one real sky lock — the value looks
-/// carried down a row when the table was authored
-/// (`fortress_fx::derivation` pins it).
-///
-/// It also settles a handshake that used to run the other way. `apply_w8_bridges`
-/// stamps a bridge over W8 `(5, 53)`, which is where slot 16 sits, and had to
-/// poke `BRIDGE_TILE` into `FortressFX_MapTileReplace` so this loop would not
-/// paint a plain path over it. Asking the grid instead answers correctly with
-/// no channel at all: a cell already showing an open tile is not a gap, so
-/// nothing is written.
-fn open_fx_gaps(grid: &mut Grid, fx_slots: &[FxSlot], world_fx: &[u8]) {
-    for &slot_idx in world_fx {
-        let slot = &fx_slots[slot_idx as usize];
-        if slot.grid_row >= grid.rows() || slot.grid_col >= grid.cols {
-            continue;
-        }
-        if let Some(path) = rom_data::path_for_gap_tile(grid.get(slot.grid_row, slot.grid_col)) {
-            grid.set(slot.grid_row, slot.grid_col, path);
-        }
+/// Open every gap the source map reports, making the grid fully connected
+/// before placement.
+fn open_gaps(grid: &mut Grid, gaps: &[(Pos, u8)]) {
+    for &((row, col), path) in gaps {
+        grid.set(row, col, path);
     }
 }
 
@@ -674,12 +619,11 @@ mod tests {
             None => return,
         };
 
-        let fx_slots = rom_data::read_fx_slots(&rom);
-        let fx_assignments = rom_data::read_world_fx_assignments(&rom);
+        let maps = crate::randomize::overworld::map_source::vanilla::load(&rom);
         let mut mismatches = 0;
         for &(wi, row, col, override_tile) in BLANK_TILE_OVERRIDES {
-            let mut grid = rom_data::read_tile_grid(&rom, wi);
-            open_fx_gaps(&mut grid, &fx_slots, &fx_assignments[wi]);
+            let mut grid = maps[wi].grid.clone();
+            open_gaps(&mut grid, &maps[wi].gaps);
 
             let heuristic_tile = blank_tile_from_neighbors(&grid, wi, row, col);
             let vanilla_tile = grid.get(row, col);

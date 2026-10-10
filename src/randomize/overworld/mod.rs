@@ -2,14 +2,16 @@
 //! the locks that gate them.
 //!
 //! The builder is a four-phase pipeline, run by `pipeline::stages` in this
-//! order: [`node_catalog`] classifies all 340 pointer-table entries,
+//! order, on maps supplied by [`map_source`]: [`node_catalog`] classifies all
+//! 340 pointer-table entries,
 //! [`pickup`] clears the maps and pools what was on them, [`build`] decides the
 //! new layout as a model, and [`writer`] commits it to the ROM in one pass.
 //! The world maze, when on, runs between `build` and `writer` — see
 //! `crate::randomize::maze`.
 
-// --- The builder pipeline: catalog -> pickup -> build -> write ---
+// --- The builder pipeline: map source -> catalog -> pickup -> build -> write ---
 pub(crate) mod build;
+pub(crate) mod map_source;
 pub(crate) mod node_catalog;
 pub(crate) mod pickup;
 pub(crate) mod writer;

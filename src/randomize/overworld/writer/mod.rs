@@ -52,7 +52,7 @@ pub(crate) fn write_overworld<R: Rng>(
     rng: &mut R,
     flags: WriteFlags,
 ) -> WrittenOverworld {
-    let assignments = assign_pool(rom, build, data, rng, flags);
+    let assignments = assign_pool(build, data, rng, flags);
 
     // Compute W8 army sprite target positions before writing tiles,
     // so write_tile_grid can stamp connectivity-aware blank tiles under the sprites.
