@@ -9,13 +9,12 @@
 //! The null-model census that opened this file is gone with the uniform placer
 //! it measured; see the note in the parent module.
 
-use std::collections::HashSet;
-
 use rand::SeedableRng;
 use rand::seq::SliceRandom;
 use rand_chacha::ChaCha8Rng;
 
 use super::graph::{Knobs, PAD_BUDGET};
+use super::routes::{CensusParams, RouteModel, StageKind, census};
 use super::{GenReport, GlobalState, IDENTITY_SPINE, MazeEdge};
 
 use crate::randomize::maze::item_keys::Key;
@@ -3563,362 +3562,8 @@ fn a_key_inside_the_reach_opens_the_canoe_gate() {
 }
 
 // ---------------------------------------------------------------------------
-// Route census
+// Route census — the model lives in `super::routes`
 // ---------------------------------------------------------------------------
-
-/// One thing a route can clear: a level, a fortress, an airship, or (with
-/// hammers) a rock. A route is the SET of these it clears, so two orders of
-/// the same set are one route.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum RouteItem {
-    Level(MazePos),
-    Fort(super::FortRef, MazePos),
-    Airship(MazePos),
-    Rock(MazePos),
-}
-
-impl RouteItem {
-    fn pos(self) -> MazePos {
-        match self {
-            RouteItem::Level(p) | RouteItem::Fort(_, p) | RouteItem::Airship(p) => p,
-            RouteItem::Rock(p) => p,
-        }
-    }
-
-    /// Levels, forts and airships are played; a rock is only broken.
-    fn played(self) -> bool {
-        !matches!(self, RouteItem::Rock(_))
-    }
-}
-
-/// Breakable rocks and the path a hammer leaves (`route_choice`'s table).
-const ROUTE_ROCKS: [(u8, u8); 2] = [(0x51, 0x45), (0x52, 0x46)];
-
-/// One maze, as the route census sees it: what can be cleared, whether a set of
-/// cleared things finishes the game, and an optimistic estimate of what is
-/// still to play.
-///
-/// **A set wins** when, with every level, fort and airship NOT in it walled
-/// off, the walk from the start reaches the castle holding K wand airships. A
-/// fort opens its lock, an airship grants its wand and a rock breaks only once
-/// the walk actually reaches it — being in the set is not enough, because
-/// shrinking a set can cut one off. That is the generator's own fixpoint rule,
-/// and [`RouteModel::confirm`] cross-checks a route against it.
-///
-/// Winning is monotone (more cleared is never less reachable), so a set from
-/// which no single item can be dropped is a **minimal** route.
-struct RouteModel<'a> {
-    state: &'a GlobalState,
-    k: usize,
-    hammers: usize,
-    items: Vec<RouteItem>,
-    wand_tiles: HashSet<MazePos>,
-    links: Vec<(MazePos, MazePos)>,
-    /// Slots stamped, nothing walled: what the path tiles between cells are.
-    open_grids: Vec<Grid>,
-    /// The floor's own estimate (`metrics::ShortestBound`), so the census and
-    /// the generator can never disagree about it.
-    bound: super::metrics::ShortestBound,
-    /// Flat cell index → the played item standing there.
-    played_cell: std::collections::HashMap<usize, usize>,
-}
-
-impl<'a> RouteModel<'a> {
-    fn new(state: &'a GlobalState, k: u8, hammers: usize) -> Self {
-        let mut items: Vec<RouteItem> = Vec::new();
-        for w in &state.worlds {
-            let wi = w.world_idx;
-            for s in &w.slots {
-                match s.kind {
-                    SlotKind::Level => items.push(RouteItem::Level((wi, s.pos))),
-                    SlotKind::Fortress => items.push(RouteItem::Fort(
-                        super::FortRef { world: wi, section: s.section },
-                        (wi, s.pos),
-                    )),
-                    _ => {}
-                }
-            }
-            if let Some(t) = w.target
-                && (wi, t) != state.goal
-            {
-                items.push(RouteItem::Airship((wi, t)));
-            }
-            if hammers > 0 {
-                for r in 0..w.grid.rows() {
-                    for c in 0..w.grid.cols {
-                        if ROUTE_ROCKS.iter().any(|&(rock, _)| rock == w.grid.get(r, c)) {
-                            items.push(RouteItem::Rock((wi, (r, c))));
-                        }
-                    }
-                }
-            }
-        }
-        assert!(items.len() <= 128, "{} items do not fit a u128 set", items.len());
-        let open_grids = state.base_grids(&HashSet::new());
-        let links = state.links();
-
-        let bound = super::metrics::ShortestBound::new(state);
-        let played_cell = items
-            .iter()
-            .enumerate()
-            .filter(|(_, item)| item.played())
-            .map(|(i, item)| (bound.cell(item.pos()), i))
-            .collect();
-
-        RouteModel {
-            state,
-            k: usize::from(k),
-            hammers,
-            wand_tiles: state.wand_tiles().into_iter().collect(),
-            items,
-            links,
-            open_grids,
-            bound,
-            played_cell,
-        }
-    }
-
-    fn n(&self) -> usize {
-        self.items.len()
-    }
-
-    fn has(set: u128, i: usize) -> bool {
-        set & (1u128 << i) != 0
-    }
-
-    /// Levels + forts + airships: what a route makes the player play.
-    fn size(&self, set: u128) -> usize {
-        (0..self.n()).filter(|&i| Self::has(set, i) && self.items[i].played()).count()
-    }
-
-    /// Levels + forts only — the lazy score's units.
-    fn levels_and_forts(&self, set: u128) -> usize {
-        (0..self.n())
-            .filter(|&i| {
-                Self::has(set, i)
-                    && matches!(self.items[i], RouteItem::Level(_) | RouteItem::Fort(..))
-            })
-            .count()
-    }
-
-    /// Walk with exactly `set` cleared: the reach, the shut lock cells, and
-    /// whether it finishes the game.
-    fn walk(&self, set: u128) -> (super::walk::MazeReach, Vec<HashSet<rom_data::Pos>>, bool) {
-        let walled: HashSet<MazePos> = (0..self.n())
-            .filter(|&i| !Self::has(set, i) && self.items[i].played())
-            .map(|i| self.items[i].pos())
-            .collect();
-        let base = self.state.base_grids(&walled);
-        let mut open = HashSet::new();
-        let mut broken: HashSet<usize> = HashSet::new();
-        loop {
-            let mut grids = base.clone();
-            for &i in &broken {
-                let (w, (r, c)) = self.items[i].pos();
-                let rock = grids[w].get(r, c);
-                let path = ROUTE_ROCKS.iter().find(|&&(t, _)| t == rock).map(|&(_, p)| p);
-                grids[w].set(r, c, path.expect("a rock item stands on a rock"));
-            }
-            let shut = self.state.shut_locks(&open);
-            let view = self.state.view(&grids, &shut, &HashSet::new());
-            let reach = walk_maze(&view, &self.links, self.state.start);
-            let mut grew = false;
-            for i in (0..self.n()).filter(|&i| Self::has(set, i)) {
-                match self.items[i] {
-                    RouteItem::Fort(f, p) if !open.contains(&f) && reach.contains(p) => {
-                        open.insert(f);
-                        grew = true;
-                    }
-                    RouteItem::Rock(_) if !broken.contains(&i) && self.beside(i, &reach) => {
-                        broken.insert(i);
-                        grew = true;
-                    }
-                    _ => {}
-                }
-            }
-            if grew {
-                continue;
-            }
-            let wands = (0..self.n())
-                .filter(|&i| Self::has(set, i))
-                .filter(|&i| {
-                    matches!(self.items[i], RouteItem::Airship(p)
-                        if self.wand_tiles.contains(&p) && reach.contains(p))
-                })
-                .count();
-            let wins = reach.contains(self.state.goal) && wands >= self.k;
-            return (reach, shut, wins);
-        }
-    }
-
-    fn wins(&self, set: u128) -> bool {
-        self.walk(set).2
-    }
-
-    /// A rock with a reached cell one or two steps from it.
-    fn beside(&self, i: usize, reach: &super::walk::MazeReach) -> bool {
-        let (w, (r, c)) = self.items[i].pos();
-        let g = &self.open_grids[w];
-        [(0i32, 1i32), (0, -1), (1, 0), (-1, 0)].iter().any(|&(dr, dc)| {
-            (1..=2).any(|step| {
-                let (nr, nc) = (r as i32 + step * dr, c as i32 + step * dc);
-                (0..g.rows() as i32).contains(&nr)
-                    && (0..g.cols as i32).contains(&nc)
-                    && reach.contains((w, (nr as usize, nc as usize)))
-            })
-        })
-    }
-
-    /// Can the player step onto item `i` from what `reach` holds? The walker's
-    /// own move: a 2-tile step from a reached cell across an open path tile,
-    /// never out of an airship or castle tile.
-    fn enterable(
-        &self,
-        i: usize,
-        reach: &super::walk::MazeReach,
-        shut: &[HashSet<rom_data::Pos>],
-    ) -> bool {
-        if matches!(self.items[i], RouteItem::Rock(_)) {
-            return self.beside(i, reach);
-        }
-        let (w, (r, c)) = self.items[i].pos();
-        let g = &self.open_grids[w];
-        [(0i32, 1i32, true), (0, -1, true), (1, 0, false), (-1, 0, false)].iter().any(
-            |&(dr, dc, horz)| {
-                let at = |step: i32| {
-                    let (nr, nc) = (r as i32 + step * dr, c as i32 + step * dc);
-                    ((0..g.rows() as i32).contains(&nr) && (0..g.cols as i32).contains(&nc))
-                        .then_some((nr as usize, nc as usize))
-                };
-                let (Some(path), Some(from)) = (at(1), at(2)) else { return false };
-                let valid = if horz { rom_data::VALID_HORZ } else { rom_data::VALID_VERT };
-                let from_tile = g.get(from.0, from.1);
-                let sink = (from_tile == rom_data::TILE_AIRSHIP
-                    || from_tile == rom_data::TILE_BOWSER)
-                    && (w, from) != self.state.start;
-                reach.contains((w, from))
-                    && !sink
-                    && valid.contains(&g.get(path.0, path.1))
-                    && !shut[w].contains(&path)
-            },
-        )
-    }
-
-    /// The items a player holding `set` could clear next.
-    fn next_items(&self, set: u128) -> Vec<usize> {
-        let (reach, shut, _) = self.walk(set);
-        let rocks_used =
-            (0..self.n()).filter(|&i| Self::has(set, i) && !self.items[i].played()).count();
-        (0..self.n())
-            .filter(|&i| !Self::has(set, i))
-            .filter(|&i| self.items[i].played() || rocks_used < self.hammers)
-            .filter(|&i| self.enterable(i, &reach, &shut))
-            .collect()
-    }
-
-    /// The optimistic estimate of what is still to play from `set` — the
-    /// content floor's own measure (`metrics::ShortestBound`), asked with the
-    /// set's played items as already cleared.
-    fn estimate(&self, set: u128) -> Option<usize> {
-        self.bound.estimate(|cell| self.played_cell.get(&cell).is_some_and(|&i| Self::has(set, i)))
-    }
-
-    /// One play-through, shrunk to a minimal route. `guided` prefers the next
-    /// item that leaves the least still to play; otherwise every enterable item
-    /// is equally likely. `None` if the player got stuck.
-    fn play<R: rand::Rng>(&self, rng: &mut R, guided: bool) -> Option<u128> {
-        use rand::seq::IndexedRandom;
-        let mut set = 0u128;
-        while !self.wins(set) {
-            let next = self.next_items(set);
-            let pick = if guided && rng.random_bool(0.8) {
-                let scored: Vec<(usize, usize)> = next
-                    .iter()
-                    .filter_map(|&i| {
-                        let grown = set | (1u128 << i);
-                        self.estimate(grown).map(|h| (i, self.size(grown) + h))
-                    })
-                    .collect();
-                let best = scored.iter().map(|&(_, s)| s).min();
-                let top: Vec<usize> =
-                    scored.iter().filter(|&&(_, s)| Some(s) == best).map(|&(i, _)| i).collect();
-                top.choose(rng).copied()
-            } else {
-                next.choose(rng).copied()
-            };
-            set |= 1u128 << pick?;
-        }
-        Some(self.shrink(set, rng))
-    }
-
-    /// Drop items in random order while the set still wins, until none can go.
-    fn shrink<R: rand::Rng>(&self, mut set: u128, rng: &mut R) -> u128 {
-        loop {
-            let mut order: Vec<usize> = (0..self.n()).filter(|&i| Self::has(set, i)).collect();
-            order.shuffle(rng);
-            let before = set;
-            for i in order {
-                let without = set & !(1u128 << i);
-                if self.wins(without) {
-                    set = without;
-                }
-            }
-            if set == before {
-                return set;
-            }
-        }
-    }
-
-    /// **The smallest winning set of size at most `budget`, exactly**, or
-    /// `None` if there is none. Breadth-first by set size, so the first win
-    /// found is the smallest; a set the estimate puts over budget is cut.
-    /// The second value is false when `cap` sets or `limit` time ran out first,
-    /// so the answer is unproven.
-    fn shortest_within(
-        &self,
-        budget: usize,
-        cap: usize,
-        limit: std::time::Duration,
-    ) -> (Option<u128>, bool) {
-        let clock = std::time::Instant::now();
-        let mut seen: HashSet<u128> = HashSet::from([0]);
-        let mut layer: Vec<u128> = vec![0];
-        let mut explored = 0usize;
-        while !layer.is_empty() {
-            let mut next: Vec<u128> = Vec::new();
-            for &set in &layer {
-                explored += 1;
-                if explored > cap || clock.elapsed() > limit {
-                    return (None, false);
-                }
-                if self.wins(set) {
-                    return (Some(set), true);
-                }
-                for i in self.next_items(set) {
-                    let grown = set | (1u128 << i);
-                    if !seen.insert(grown) {
-                        continue;
-                    }
-                    if self.estimate(grown).is_none_or(|h| self.size(grown) + h > budget) {
-                        continue;
-                    }
-                    next.push(grown);
-                }
-            }
-            layer = next;
-        }
-        (None, true)
-    }
-
-    /// The generator's own fixpoint agrees this set finishes the game.
-    fn confirm(&self, set: u128) -> bool {
-        let walled: HashSet<MazePos> = (0..self.n())
-            .filter(|&i| !Self::has(set, i) && self.items[i].played())
-            .map(|i| self.items[i].pos())
-            .collect();
-        self.state.spheres_with_blocked(&walled).goal_sphere.is_some()
-    }
-}
 
 /// **How long, and how varied, are a maze's routes?** One seed per run, one
 /// `ROUTECSV` line out, so a batch runs seeds in parallel processes.
@@ -3928,7 +3573,7 @@ impl<'a> RouteModel<'a> {
 /// take time and have to be played).
 ///
 /// * **Shortest, exactly.** Guided players find a short route; then
-///   [`RouteModel::shortest_within`] searches for anything smaller, with the
+///   `RouteModel::shortest_within` searches for anything smaller, with the
 ///   budget one under the best found, so the estimate has almost no slack to
 ///   waste. "proven" says the search finished.
 /// * **Spread, by random play.** `ROUTE_SAMPLES` uniformly random players,
@@ -3940,7 +3585,8 @@ impl<'a> RouteModel<'a> {
 ///
 /// Env: `ROUTE_SEED` (1), `ROUTE_WANDS` (shipped K), `ROUTE_HAMMERS` (0),
 /// `ROUTE_SAMPLES` (1000), `ROUTE_GUIDED` (20), `ROUTE_EXACT_CAP` (200,000
-/// sets), `ROUTE_EXACT_SECS` (60).
+/// sets), `ROUTE_EXACT_SECS` (60), `ROUTE_THREADS` (1; 0 = every core — the
+/// figures do not change with it, only the time).
 ///
 /// CSV: `seed,k,lazy_lf,est0,guided_best,shortest,shortest_lf,proven,typical,
 /// within10,distinct,samples,stuck,secs,deals`. `deals` is how many deals the
@@ -3949,7 +3595,7 @@ impl<'a> RouteModel<'a> {
 #[test]
 #[ignore]
 fn maze_route_census() {
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
 
     let Some(raw) = load_rom() else { return };
     let env = |k: &str, d: u64| std::env::var(k).ok().and_then(|s| s.parse().ok()).unwrap_or(d);
@@ -3983,74 +3629,38 @@ fn maze_route_census() {
             (state, k, Some(report.deals))
         }
     };
-    let clock = Instant::now();
-    let model = RouteModel::new(&state, k, hammers);
     let lazy = super::metrics::completion_cost(&state);
-    let mut rng = ChaCha8Rng::seed_from_u64(seed ^ 0x2007_00E5);
+    // One thread by default: batches run seeds in parallel processes already.
+    let threads = env("ROUTE_THREADS", 1) as usize;
+    let params =
+        CensusParams { samples, guided, hammers, exact_cap: cap, exact_limit: limit, threads };
+    let c = census(&state, &params, seed ^ 0x2007_00E5);
 
-    // --- Shortest ------------------------------------------------------------
-    let mut best: Option<u128> = None;
-    let better = |r: u128, best: &mut Option<u128>| {
-        if best.is_none_or(|b| model.size(r) < model.size(b)) {
-            *best = Some(r);
-        }
-    };
-    for _ in 0..guided {
-        if let Some(r) = model.play(&mut rng, true) {
-            better(r, &mut best);
-        }
-    }
-    let guided_best = best.map(|b| model.size(b));
-
-    // --- Spread ------------------------------------------------------------
-    let mut sizes: Vec<usize> = Vec::new();
-    let mut distinct: HashSet<u128> = HashSet::new();
-    let mut stuck = 0usize;
-    for _ in 0..samples {
-        match model.play(&mut rng, false) {
-            Some(r) => {
-                sizes.push(model.size(r));
-                distinct.insert(r);
-                better(r, &mut best);
-            }
-            None => stuck += 1,
-        }
-    }
-
-    // --- Prove it ----------------------------------------------------------
-    let (shortest, proven) = match best {
-        Some(b) => {
-            let (smaller, done) = model.shortest_within(model.size(b) - 1, cap, limit);
-            (Some(smaller.unwrap_or(b)), done)
-        }
-        None => (None, false),
-    };
-    if let Some(s) = shortest {
-        assert!(
-            model.confirm(s),
-            "seed {seed}: the generator's fixpoint rejects a route the census found"
-        );
-    }
-
+    let mut sizes: Vec<usize> =
+        c.routes.iter().flat_map(|(r, n)| std::iter::repeat_n(c.played(r), *n)).collect();
     sizes.sort_unstable();
-    let short = shortest.map(|s| model.size(s));
+    let short = c.shortest.as_ref().map(|s| c.played(s));
+    let short_lf = c.shortest.as_ref().map(|s| {
+        s.iter().filter(|&&i| matches!(c.stages[i].0, StageKind::Level | StageKind::Fort)).count()
+    });
     let typical = sizes.get(sizes.len() / 2).copied();
     let within10 = short.map_or(0.0, |s| {
         sizes.iter().filter(|&&z| z * 10 <= s * 11).count() as f64 / sizes.len().max(1) as f64
     });
     let show = |v: Option<usize>| v.map_or(String::from("-"), |v| v.to_string());
     eprintln!(
-        "ROUTECSV,{seed},{k},{},{},{},{},{},{},{},{:.3},{},{samples},{stuck},{:.1},{}",
+        "ROUTECSV,{seed},{k},{},{},{},{},{},{},{},{:.3},{},{samples},{},{:.1},{}",
         lazy.content,
-        show(model.estimate(0)),
-        show(guided_best),
+        show(c.lower_bound),
+        show(c.guided_best),
         show(short),
-        show(shortest.map(|s| model.levels_and_forts(s))),
-        u8::from(proven),
+        show(short_lf),
+        u8::from(c.proven),
         show(typical),
         within10,
-        distinct.len(),
-        clock.elapsed().as_secs_f64(),
+        c.routes.len(),
+        c.stuck,
+        c.secs,
         show(deals)
     );
 }
