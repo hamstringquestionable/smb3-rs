@@ -56,6 +56,8 @@ mod metrics;
 mod relocate;
 mod roles;
 #[cfg(test)]
+mod routes;
+#[cfg(test)]
 mod tests;
 
 #[cfg(test)]
