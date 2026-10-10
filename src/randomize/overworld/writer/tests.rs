@@ -31,9 +31,7 @@ fn load_rom() -> Option<Rom> {
 fn load_prepped_rom() -> Option<Rom> {
     let mut out = load_rom()?;
     qol::fix_w3_drawbridges(&mut out);
-    qol::remove_rocks(&mut out);
-    qol::apply_w1_shortcut(&mut out, false);
-    qol::apply_w8_bridges(&mut out);
+    crate::randomize::overworld::map_source::vanilla::stamp_fixes(&mut out, false, false);
     qol::fix_big_q_block_rooms(&mut out);
     Some(out)
 }
@@ -1013,7 +1011,6 @@ fn test_no_uncovered_blank_nodes() {
 
         let mut test_rom = rom.clone();
         qol::fix_w3_drawbridges(&mut test_rom);
-        qol::remove_rocks(&mut test_rom);
         qol::fix_big_q_block_rooms(&mut test_rom);
         write_overworld(
             &mut test_rom,
@@ -1086,7 +1083,6 @@ fn test_generate_rom() {
 
         // Apply QoL patches that the builder expects.
         qol::fix_w3_drawbridges(&mut out);
-        qol::remove_rocks(&mut out);
         qol::fix_big_q_block_rooms(&mut out);
 
         write_overworld(

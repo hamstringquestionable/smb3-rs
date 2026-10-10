@@ -47,15 +47,14 @@ fn census_seeds(default: u64) -> u64 {
 fn qol_variant(rom: &Rom, hammer_rocks: bool, eights_wild: bool) -> Rom {
     let mut out = rom.clone();
     qol::fix_w3_drawbridges(&mut out);
-    qol::remove_rocks(&mut out);
-    if hammer_rocks {
-        qol::make_hammer_rocks(&mut out);
-    }
-    qol::apply_w1_shortcut(&mut out, hammer_rocks);
-    qol::apply_w8_bridges(&mut out);
     if eights_wild {
-        qol::apply_w8_canoe_and_paths(&mut out);
+        qol::place_w8_canoe(&mut out);
     }
+    crate::randomize::overworld::map_source::vanilla::stamp_fixes(
+        &mut out,
+        hammer_rocks,
+        eights_wild,
+    );
     qol::fix_big_q_block_rooms(&mut out);
     out
 }
@@ -2219,9 +2218,9 @@ fn an_uninstalled_lock_becomes_open_path() {
 #[test]
 #[ignore]
 fn w8_bridge_keys() {
-    use super::super::qol::{W8_BRIDGE_COLS, W8_BRIDGE_ROW};
     use super::super::rom_data::{Pos, W8_IDX};
     use super::walk::walk_maze;
+    use crate::randomize::overworld::map_source::vanilla::{W8_BRIDGE_COLS, W8_BRIDGE_ROW};
     use std::collections::HashSet;
 
     let Some(raw) = load_rom() else { return };

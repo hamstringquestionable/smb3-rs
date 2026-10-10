@@ -47,15 +47,14 @@ fn apply_qol_for_overworld(rom: &Rom) -> Rom {
 fn apply_qol_variant(rom: &Rom, hammer_rocks: bool, eights_wild: bool) -> Rom {
     let mut out = rom.clone();
     crate::randomize::qol::fix_w3_drawbridges(&mut out);
-    crate::randomize::qol::remove_rocks(&mut out);
-    if hammer_rocks {
-        crate::randomize::qol::make_hammer_rocks(&mut out);
-    }
-    crate::randomize::qol::apply_w1_shortcut(&mut out, hammer_rocks);
-    crate::randomize::qol::apply_w8_bridges(&mut out);
     if eights_wild {
-        crate::randomize::qol::apply_w8_canoe_and_paths(&mut out);
+        crate::randomize::qol::place_w8_canoe(&mut out);
     }
+    crate::randomize::overworld::map_source::vanilla::stamp_fixes(
+        &mut out,
+        hammer_rocks,
+        eights_wild,
+    );
     crate::randomize::qol::fix_big_q_block_rooms(&mut out);
     out
 }

@@ -619,7 +619,7 @@ mod tests {
             None => return,
         };
 
-        let maps = crate::randomize::overworld::map_source::vanilla::load(&rom);
+        let maps = crate::randomize::overworld::map_source::vanilla::read(&rom);
         let mut mismatches = 0;
         for &(wi, row, col, override_tile) in BLANK_TILE_OVERRIDES {
             let mut grid = maps[wi].grid.clone();

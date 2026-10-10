@@ -1,8 +1,15 @@
-//! The vanilla map source: each world as the ROM has it.
+//! The vanilla map source: each world as the ROM has it, plus the edits the
+//! randomizer always makes to it ([`fixes`]).
 //!
 //! This is the one home for knowledge that is only true of vanilla's
 //! hand-drawn maps: cells keyed by position, and tile quirks the neighbour rule
 //! gets wrong. A generated map brings its own equivalents instead.
+
+mod fixes;
+
+#[cfg(test)]
+pub(crate) use fixes::HAMMER_ROCKS;
+pub(crate) use fixes::{W8_BRIDGE_COLS, W8_BRIDGE_ROW};
 
 use crate::randomize::rom_data::{self, FxSlot, Grid, Pos, WORLDS};
 use crate::rom::Rom;
@@ -44,10 +51,43 @@ pub(crate) const ISLAND_POSITIONS: &[(usize, usize, usize)] = &[
     (6, 5, 10), // W7 7-4
 ];
 
-/// Read all eight worlds from the ROM.
-pub(crate) fn load(rom: &Rom) -> Vec<WorldMap> {
-    let fx_slots = rom_data::read_fx_slots(rom);
-    let fx_assignments = rom_data::read_world_fx_assignments(rom);
+/// The vanilla maps with the randomizer's edits applied: what the pipeline
+/// builds on.
+pub(crate) fn load(rom: &Rom, more_hammer_rocks: bool, eights_are_wild: bool) -> Vec<WorldMap> {
+    let mut maps = read_tiles(rom);
+    fixes::apply(&mut maps, more_hammer_rocks, eights_are_wild);
+    find_gaps(rom, &mut maps);
+    maps
+}
+
+/// All eight worlds exactly as the ROM has them, with no edits.
+pub(crate) fn read(rom: &Rom) -> Vec<WorldMap> {
+    let mut maps = read_tiles(rom);
+    find_gaps(rom, &mut maps);
+    maps
+}
+
+/// Write the vanilla map edits into the ROM itself.
+///
+/// Test harnesses only. The pipeline never does this: its maps carry the
+/// edits and the writer puts them in place. A harness that builds from a ROM
+/// uses this to put that ROM in the state the pipeline's maps are in.
+#[cfg(test)]
+pub(crate) fn stamp_fixes(rom: &mut Rom, more_hammer_rocks: bool, eights_are_wild: bool) {
+    let mut maps = read_tiles(rom);
+    fixes::apply(&mut maps, more_hammer_rocks, eights_are_wild);
+    for (wi, map) in maps.iter().enumerate() {
+        for row in 0..map.grid.rows() {
+            for col in 0..map.grid.cols {
+                rom.write_byte(rom_data::map_tile_offset(wi, row, col), map.grid.get(row, col));
+            }
+        }
+    }
+}
+
+/// Everything but the gaps, which depend on the finished tiles and so are
+/// found last ([`find_gaps`]).
+fn read_tiles(rom: &Rom) -> Vec<WorldMap> {
     (0..8)
         .map(|wi| {
             let grid = rom_data::read_tile_grid(rom, wi);
@@ -55,13 +95,12 @@ pub(crate) fn load(rom: &Rom) -> Vec<WorldMap> {
             let entry_pos = (0..world.entry_count)
                 .map(|i| rom_data::entry_grid_position(rom, world, i))
                 .collect();
-            let gaps = fx_gaps(&grid, &fx_slots, &fx_assignments[wi]);
             WorldMap {
                 grid,
                 entry_pos,
                 sprites: rom_data::read_map_sprite_positions(rom, wi),
                 hb_sprites: rom_data::read_hb_sprite_positions(rom, wi),
-                gaps,
+                gaps: Vec::new(),
                 hammer_gated: HAMMER_GATED_POCKETS
                     .iter()
                     .filter(|(w, _)| *w == wi)
@@ -70,6 +109,15 @@ pub(crate) fn load(rom: &Rom) -> Vec<WorldMap> {
             }
         })
         .collect()
+}
+
+/// Fill in each map's gaps from the FX tables, against its finished grid.
+fn find_gaps(rom: &Rom, maps: &mut [WorldMap]) {
+    let fx_slots = rom_data::read_fx_slots(rom);
+    let fx_assignments = rom_data::read_world_fx_assignments(rom);
+    for (map, world_fx) in maps.iter_mut().zip(&fx_assignments) {
+        map.gaps = fx_gaps(&map.grid, &fx_slots, world_fx);
+    }
 }
 
 /// Vanilla's gaps: the cells its fortress-FX slots name, each with the path

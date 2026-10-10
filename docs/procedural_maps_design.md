@@ -1,7 +1,22 @@
-# Procedural Overworld Maps — design
+# Procedural Overworld Maps — design### What the readers read now
 
-*Design only, started 2026-10-10. **Nothing here is implemented.** Branch
-`feature/procedural-maps`. Where a claim below rests on reading the code rather
+*As built.* The catalog owns the eight maps it was built from
+(`NodeCatalog::maps`), so every later phase reaches them through the catalog
+it already holds.
+
+| Reader | Used to read (ROM or constant) | Reads now |
+|---|---|---|
+| catalog (`classify`, `pipes`) | grid, `entry_grid_position` | `WorldMap.grid`, `.entry_pos` |
+| pickup | `read_tile_grid`, FX table | `.grid`, `.gaps` |
+| `build/sources.rs` | HB sprites, `HAMMER_GATED_POCKETS` | `.hb_sprites`, `.hammer_gated` |
+| `build/capacity.rs` | HB and other sprite positions | `.hb_sprites`, `.sprites` |
+| `writer/assign.rs`, `writer/sprites.rs` | HB sprite positions | `.hb_sprites` |
+
+Still read from the ROM on purpose: what each entry *is* (the catalog), and
+map-object slot ids (slot eligibility belongs to the sprite writers).
+
+*Started 2026-10-10. **Milestone 1 (the interface and the vanilla source) is
+built; nothing past it is.** Branch `feature/procedural-maps`. Where a claim below rests on reading the code rather
 than on a test or a playtest, it says so.*
 
 ## The point
@@ -57,6 +72,11 @@ struct WorldMap {
 }
 ```
 
+*That is the design sketch. The built type (`overworld/map_source/mod.rs`) is
+narrower for now: `entry_pos` indexed by entry, `sprites` plus `hb_sprites` as
+positions, and no `start` or `tile_quirks` field yet. Those arrive with the
+generator, which is the first thing that needs them.*
+
 It holds **positions and tiles only**. What each entry *is* (which level, fort,
 Toad House) still comes from the catalog reading the ROM's pointer data. A
 source decides *where* things go, never *what* they are, which is why the
@@ -64,22 +84,38 @@ budgets carry over for free.
 
 ### Vanilla source
 
-Holds every piece of vanilla-specific map knowledge, which today is scattered
-across `pickup.rs`, `build/sources.rs` and `qol/overworld_map.rs`:
+*As built (milestone 1).* `overworld/map_source/vanilla/` holds the
+vanilla-specific map knowledge that used to be spread across `pickup.rs`,
+`build/sources.rs` and `qol/overworld_map.rs`:
 
-- grid, entry positions, sprite positions and start, read from the ROM
-- the **grid** edits `map_fixes` makes today (W1 shortcut rock, rock removal,
-  W8 bridges / canoe paths / water, W3 drawbridge tiles), still behind their
-  flags
-- `gaps` from the FX table (what `open_fx_gaps` reads today)
-- `hammer_gated` from `HAMMER_GATED_POCKETS`
-- `tile_quirks` from `BLANK_TILE_OVERRIDES` and `ISLAND_POSITIONS`
+- `read` takes the grid, entry positions and sprite positions from the ROM.
+- `load` is `read` plus the map edits in `fixes.rs` (rock removal, extra
+  hammer rocks, the W1 shortcut, the W8 bridges / water / canoe docks, the W3
+  drawbridge tiles), behind their flags. **They are applied in memory and
+  never written to the ROM**; the writer puts each world's grid in place once.
+  Settled deliberately over "write the ROM, read it back": one path for the
+  map, written once, with no "must run before the builder reads the map"
+  ordering rule.
+- `gaps` come from the FX table, computed **after** the edits, because the W8
+  bridge edit covers an FX cell that must then not count as a gap.
+- `hammer_gated` comes from `HAMMER_GATED_POCKETS`.
+- `BLANK_TILE_OVERRIDES` and `ISLAND_POSITIONS` moved here too, but pickup
+  still reads them directly. Gating them off for a generated map waits for the
+  generator, where it can be tested.
+
+**One map write stays a ROM write: the W8 canoe sprite** (`qol::place_w8_canoe`,
+in the `map_fixes` stage). Map sprites have several writers, so the source reads
+the sprite back rather than owning it. It moves when the writer gains the
+duty below.
+
+Test harnesses that build from a ROM call `vanilla::stamp_fixes`, which writes
+the edited grids into the harness ROM. Test-only; the pipeline never does it.
 
 **Engine patches stay where they are.** `map_fixes` also patches code, e.g.
 `fix_w3_drawbridges` NOPs the `World3_Bridge` toggle (`prg010.asm` ~1949) as
 well as replacing the four drawbridge tiles. Only the tile half describes the
-map, so only it moves. The NOP applies whichever source ran; a generated W3
-has no drawbridges either.
+map, so only it moves. The NOP stays in `qol::fix_w3_drawbridges` and applies
+whichever source ran; a generated W3 has no drawbridges either.
 
 ### Generated source
 
@@ -88,26 +124,31 @@ graph → layout → tiles (see "The generator"). It reports its own `gaps` and
 `hammer_gated`, and should normally report no `tile_quirks`, because it draws
 every tile correctly in the first place.
 
-### What changes for the readers
+### What the readers read now
 
-| Today reads | Will read |
-|---|---|
-| `read_tile_grid` (pickup) | `WorldMap.grid` |
-| `entry.grid_pos`, from the ROM pointer table (catalog) | `WorldMap.entries` |
-| `read_map_sprite_positions` / `read_non_hb_sprite_positions` (capacity) | `WorldMap.sprites` |
-| FX table in `open_fx_gaps` (pickup) | `WorldMap.gaps` |
-| `HAMMER_GATED_POCKETS` (`build/sources.rs`) | `WorldMap.hammer_gated` |
-| `BLANK_TILE_OVERRIDES` / `ISLAND_POSITIONS` (pickup) | `WorldMap.tile_quirks` |
+*As built.* The catalog owns the eight maps it was built from
+(`NodeCatalog::maps`), so every later phase reaches them through the catalog
+it already holds.
+
+| Reader | Used to read (ROM or constant) | Reads now |
+|---|---|---|
+| catalog (`classify`, `pipes`) | grid, `entry_grid_position` | `WorldMap.grid`, `.entry_pos` |
+| pickup | `read_tile_grid`, FX table | `.grid`, `.gaps` |
+| `build/sources.rs` | HB sprites, `HAMMER_GATED_POCKETS` | `.hb_sprites`, `.hammer_gated` |
+| `build/capacity.rs` | HB and other sprite positions | `.hb_sprites`, `.sprites` |
+| `writer/assign.rs`, `writer/sprites.rs` | HB sprite positions | `.hb_sprites` |
+
+Still read from the ROM on purpose: what each entry *is* (the catalog), and
+map-object slot ids (slot eligibility belongs to the sprite writers).
 
 The writer gains one duty: write **every** entry's position, every sprite
 position and the start from the struct, not only the ones that moved. On the
 vanilla source those are the bytes already in the ROM, so output is unchanged.
 Start ↔ Airship swap already does this for two entries
 (`write_swapped_world_entries`, then the every-seed `resort_pointer_table`),
-which is the precedent that it is safe.
-
-*This table is from one read of the code. Milestone 1 starts by listing every
-reader with file and line; anything this table missed is found there.*
+which is the precedent that it is safe. **Not built yet**: on the vanilla source
+it would write identical bytes, so nothing can test it before a source moves
+things. It belongs with the generator.
 
 ### What "off" means
 
@@ -260,10 +301,10 @@ special-case the generator.
 
 ## Milestones
 
-1. **The interface and the vanilla source.** List every reader (file and line),
-   introduce `WorldMap`, move the readers onto it. Proven byte-identical. One
-   PR into `beta/next`, useful on its own because it gathers the vanilla
-   quirks into one module.
+1. **The interface and the vanilla source.** *Done 2026-10-10.* `WorldMap`,
+   the vanilla source, readers moved onto it, map edits applied in memory.
+   Proven byte-identical by `rom_identity` (100 seeds over 11 arms, including
+   one with `more hammer rocks` and `8s are Wild` on).
 2. **Round-trip and inventory.** Decode vanilla into `WorldMap` and write it
    back byte-identical. Record each world's tile vocabulary (paths, the three
    water kinds, rocks, scenery) and vanilla's shape statistics (nodes per

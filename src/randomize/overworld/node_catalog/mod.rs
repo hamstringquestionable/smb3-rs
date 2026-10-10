@@ -148,9 +148,10 @@ pub(crate) struct NodeCatalog {
 }
 
 impl NodeCatalog {
-    /// Build the catalog of the vanilla maps.
+    /// Build the catalog of the vanilla maps exactly as the ROM has them,
+    /// without the randomizer's map edits.
     pub(crate) fn build(rom: &Rom, include_beta_stages: bool) -> Self {
-        Self::from_maps(rom, map_source::vanilla::load(rom), include_beta_stages)
+        Self::from_maps(rom, map_source::vanilla::read(rom), include_beta_stages)
     }
 
     /// Build the catalog by classifying every entry: what it is from the ROM,

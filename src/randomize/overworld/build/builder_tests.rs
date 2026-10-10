@@ -29,15 +29,14 @@ fn base_qol(rom: &Rom) -> Rom {
 fn qol_variant(rom: &Rom, hammer_rocks: bool, eights_wild: bool) -> Rom {
     let mut out = rom.clone();
     qol::fix_w3_drawbridges(&mut out);
-    qol::remove_rocks(&mut out);
-    if hammer_rocks {
-        qol::make_hammer_rocks(&mut out);
-    }
-    qol::apply_w1_shortcut(&mut out, hammer_rocks);
-    qol::apply_w8_bridges(&mut out);
     if eights_wild {
-        qol::apply_w8_canoe_and_paths(&mut out);
+        qol::place_w8_canoe(&mut out);
     }
+    crate::randomize::overworld::map_source::vanilla::stamp_fixes(
+        &mut out,
+        hammer_rocks,
+        eights_wild,
+    );
     qol::fix_big_q_block_rooms(&mut out);
     out
 }

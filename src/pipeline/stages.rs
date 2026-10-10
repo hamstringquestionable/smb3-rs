@@ -112,36 +112,15 @@ pub(super) fn resolve(seed: u64, options: &Options, rng: &mut ChaCha8Rng) -> Res
 
 /// Stage 1: map fixes every later overworld pass must see.
 pub(super) fn map_fixes(rom: &mut Rom, run: &Resolved) {
-    // QoL map patches run first so all subsequent overworld operations
-    // (fortress redistribution, pipe shuffle, lock shuffle) see the final
-    // map connectivity and store correct replacement tiles.
+    // The map's tile edits (drawbridges, rocks, the W1 shortcut, the W8
+    // bridges and canoe docks) are not here: they belong to the vanilla map
+    // source, which applies them in memory (`map_source::vanilla`). What stays
+    // is engine code, and the W8 canoe sprite, which the map source reads back.
     rom.set_tag("qol/drawbridges");
     randomize::qol::fix_w3_drawbridges(rom);
-    // Path-blocking rocks (W2 secret path, W3 boat dock, W4 pipe shortcut) are
-    // always removed: the overworld builder relies on those tiles being open
-    // for connectivity, so this is no longer player-gated.
-    rom.set_tag("qol/rocks");
-    randomize::qol::remove_rocks(rom);
-    if run.more_hammer_rocks {
-        rom.set_tag("qol/more_hammer_rocks");
-        randomize::qol::make_hammer_rocks(rom);
-    }
-
-    // W1 shortcut rock. The tiles land either way — only the rock's
-    // breakability follows `more_hammer_rocks`, so the map never leaks how a
-    // `Maybe` roll came out. Before the builder, like every map edit.
-    rom.set_tag("qol/w1_shortcut");
-    randomize::qol::apply_w1_shortcut(rom, run.more_hammer_rocks);
-
-    // W8 Dark World map edits. The screen-3 water/bridge final page is always
-    // applied; the screen-0 canoe + screen-2 extra paths are gated behind
-    // `8s are Wild`. Both must run before the overworld builder so it sees the
-    // new connectivity.
-    rom.set_tag("qol/w8_bridges");
-    randomize::qol::apply_w8_bridges(rom);
     if run.eights_are_wild {
         rom.set_tag("qol/w8_canoe_and_paths");
-        randomize::qol::apply_w8_canoe_and_paths(rom);
+        randomize::qol::place_w8_canoe(rom);
     }
 
     // Fix Big ? Block bonus rooms so they follow the level, not the world slot.
@@ -320,7 +299,11 @@ pub(super) fn overworld_catalog(
         randomize::levels::piranha_rooms::clear_vanilla_plants(rom);
     }
     rom.set_tag("overworld/builder");
-    let maps = randomize::overworld::map_source::vanilla::load(rom);
+    let maps = randomize::overworld::map_source::vanilla::load(
+        rom,
+        run.more_hammer_rocks,
+        run.eights_are_wild,
+    );
     let mut catalog = randomize::overworld::node_catalog::NodeCatalog::from_maps(
         rom,
         maps,

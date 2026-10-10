@@ -41,7 +41,7 @@
 
 use super::*;
 
-use crate::randomize::qol::{W8_BRIDGE_COLS, W8_BRIDGE_ROW};
+use crate::randomize::overworld::map_source::vanilla::{W8_BRIDGE_COLS, W8_BRIDGE_ROW};
 use rand::seq::SliceRandom;
 
 pub(crate) struct Locks;

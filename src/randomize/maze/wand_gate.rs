@@ -415,7 +415,7 @@ mod tests {
     /// the same cell is what `free_bridge_spans` now withholds.
     #[test]
     fn the_gate_cell_is_a_stamped_bridge_span() {
-        use crate::randomize::qol::{W8_BRIDGE_COLS, W8_BRIDGE_ROW};
+        use crate::randomize::overworld::map_source::vanilla::{W8_BRIDGE_COLS, W8_BRIDGE_ROW};
         assert_eq!(W8_WAND_GATE_POS.0, W8_BRIDGE_ROW);
         assert!(W8_BRIDGE_COLS.contains(&W8_WAND_GATE_POS.1));
     }
@@ -602,7 +602,7 @@ mod tests {
     #[test]
     fn apply_touches_no_map_grid_and_repoints_no_metatile() {
         let Some(mut rom) = vanilla() else { return };
-        crate::randomize::qol::apply_w8_bridges(&mut rom);
+        crate::randomize::overworld::map_source::vanilla::stamp_fixes(&mut rom, false, false);
         let before = rom.clone();
         let (row, col) = W8_WAND_GATE_POS;
         assert_eq!(rom.read_byte(map_tile_offset(W8_IDX, row, col)), BRIDGE_TILE);
@@ -1151,15 +1151,14 @@ mod chokepoint {
         };
         let mut rom = raw.clone();
         qol::fix_w3_drawbridges(&mut rom);
-        qol::remove_rocks(&mut rom);
-        if hammer_rocks {
-            qol::make_hammer_rocks(&mut rom);
-        }
-        qol::apply_w1_shortcut(&mut rom, hammer_rocks);
-        qol::apply_w8_bridges(&mut rom);
         if eights_wild {
-            qol::apply_w8_canoe_and_paths(&mut rom);
+            qol::place_w8_canoe(&mut rom);
         }
+        crate::randomize::overworld::map_source::vanilla::stamp_fixes(
+            &mut rom,
+            hammer_rocks,
+            eights_wild,
+        );
 
         let mut catalog = NodeCatalog::build(&rom, false);
         let mut swap_rng = ChaCha8Rng::seed_from_u64(seed);
