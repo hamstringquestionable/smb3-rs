@@ -75,6 +75,10 @@ const EXTEND_NEWEST: f64 = 0.75;
 /// How many of the farthest-apart candidate pairs a loop link is picked from.
 const FARTHEST_FEW: usize = 3;
 
+/// Most squares (four nodes in a ring, which give no real route choice) a
+/// layout may have. Not banned outright: one now and then reads fine.
+const MAX_SQUARES: usize = 1;
+
 /// Draw layouts until one meets `targets`, or give up after `attempts`.
 pub(super) fn generate<R: Rng>(
     rows: usize,
@@ -164,17 +168,20 @@ fn try_once<R: Rng>(
     //    Prefer pairs far apart along the links already there: a link between
     //    nodes 8 hops apart is a real second route, while one between nodes 3
     //    hops apart only closes a square and offers no choice. Pick among the
-    //    farthest few, so layouts still vary.
+    //    farthest few, so layouts still vary. A square is allowed, but at most
+    //    `MAX_SQUARES` per layout.
     let loops = rng.random_range(targets.loops.0..=targets.loops.1);
     let mut extra: Vec<(Pos, Pos)> = Vec::new();
     let mut loop_sizes: Vec<usize> = Vec::new();
     for _ in 0..loops {
         let current: Vec<(Pos, Pos, Link)> =
             tree.iter().chain(&extra).map(|&(a, b)| (a, b, Link::Path)).collect();
+        let squares_left = loop_sizes.iter().filter(|&&s| s == 4).count() < MAX_SQUARES;
         let mut scored: Vec<(usize, (Pos, Pos))> = spare
             .iter()
             .filter(|p| !extra.contains(p))
             .map(|&(a, b)| (path_hops(a, &current).get(&b).copied().unwrap_or(0), (a, b)))
+            .filter(|&(hops, _)| hops != 3 || squares_left)
             .collect();
         scored.sort_by(|x, y| y.0.cmp(&x.0).then(x.1.cmp(&y.1)));
         let &(hops, pair) = scored.get(..FARTHEST_FEW.min(scored.len()))?.choose(rng)?;
