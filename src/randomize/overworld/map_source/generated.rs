@@ -138,6 +138,32 @@ fn try_once<R: Rng>(
     let mut nodes = vec![start];
     let mut in_tree: HashSet<Pos> = HashSet::from([start]);
     let mut tree: Vec<(Pos, Pos)> = Vec::new();
+
+    //    First a waypoint: a random spot in the last column, reached by a
+    //    winding path from the start, so every layout spans the screen. Each
+    //    step moves right or toward the waypoint's row, chosen at random.
+    let last_col = on_lattice.iter().map(|p| p.1).max()?;
+    let column: Vec<Pos> = on_lattice.iter().copied().filter(|p| p.1 == last_col).collect();
+    let waypoint = *column.choose(rng)?;
+    let mut at = start;
+    while at != waypoint {
+        let mut steps = Vec::new();
+        if at.1 < waypoint.1 {
+            steps.push((at.0, at.1 + 2));
+        }
+        if at.0 < waypoint.0 {
+            steps.push((at.0 + 2, at.1));
+        }
+        if at.0 > waypoint.0 {
+            steps.push((at.0 - 2, at.1));
+        }
+        let &next = steps.choose(rng)?;
+        in_tree.insert(next);
+        nodes.push(next);
+        tree.push(ordered(at, next));
+        at = next;
+    }
+
     while nodes.len() < targets.nodes {
         let free = |n: Pos| -> Vec<Pos> {
             neighbours(n, &on_lattice).into_iter().filter(|m| !in_tree.contains(m)).collect()
