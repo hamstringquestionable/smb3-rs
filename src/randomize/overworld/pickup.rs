@@ -234,6 +234,10 @@ const ISLAND_POSITIONS: &[(usize, usize, usize)] = &[
     (6, 5, 10), // W7 7-4
 ];
 
+/// Breakable rocks: `$51` opens to a horizontal path, `$52` to a vertical one.
+const ROCK_HORZ: u8 = 0x51;
+const ROCK_VERT: u8 = 0x52;
+
 /// Blank-tile theme tuple: `(horiz, vert, both, none)` covering the four
 /// combinations of valid-path neighbors.
 const THEME_STANDARD: (u8, u8, u8, u8) = (0x47, 0x48, 0x4A, 0x44);
@@ -296,8 +300,11 @@ pub(super) fn blank_tile_from_neighbors(
     let h_tile = if col > 0 { Some(grid.get(row, col - 1)) } else { None };
     let v_tile = if row > 0 { Some(grid.get(row - 1, col)) } else { None };
 
-    let has_h = h_tile.is_some_and(|t| VALID_HORZ.contains(&t));
-    let has_v = v_tile.is_some_and(|t| VALID_VERT.contains(&t));
+    // A breakable rock leads somewhere once broken, so the node draws its path
+    // stub into it, the way the W1 shortcut's hand-placed `$4A` does. Only
+    // the breakable rocks: the decorative `$53` looks the same but is a wall.
+    let has_h = h_tile.is_some_and(|t| VALID_HORZ.contains(&t) || t == ROCK_HORZ);
+    let has_v = v_tile.is_some_and(|t| VALID_VERT.contains(&t) || t == ROCK_VERT);
 
     // The connecting path, with the strip paths whose edge facing this cell
     // is water: its right edge for the left neighbor, its bottom for the one
