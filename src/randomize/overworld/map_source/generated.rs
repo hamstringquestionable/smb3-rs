@@ -237,7 +237,8 @@ fn try_once<R: Rng>(
     targets: Targets,
     rng: &mut R,
 ) -> Option<Layout> {
-    let on_lattice: HashSet<Pos> = lattice(rows, cols, start).into_iter().collect();
+    let cells = lattice(rows, cols, start);
+    let on_lattice: HashSet<Pos> = cells.iter().copied().collect();
 
     // 1. A random tree grown from the start until it has the node count. Most
     //    steps extend the newest node that can still grow, which draws long
@@ -250,8 +251,10 @@ fn try_once<R: Rng>(
     //    First a waypoint: a random spot in the last column, reached by a
     //    winding path from the start, so every layout spans the screen. Each
     //    step moves right or toward the waypoint's row, chosen at random.
-    let last_col = on_lattice.iter().map(|p| p.1).max()?;
-    let column: Vec<Pos> = on_lattice.iter().copied().filter(|p| p.1 == last_col).collect();
+    // From the ordered lattice, never the set: a HashSet iterates in a
+    // different order every run, which made the same seed draw different maps.
+    let last_col = cells.iter().map(|p| p.1).max()?;
+    let column: Vec<Pos> = cells.iter().copied().filter(|p| p.1 == last_col).collect();
     let waypoint = *column.choose(rng)?;
     let mut at = start;
     while at != waypoint {
@@ -561,4 +564,27 @@ fn generated_w1_is_completable() {
             .unwrap_or_else(|e| panic!("seed {seed}: pipeline failed: {e}"));
     }
     println!("pipeline: {} seeds ran end to end", seeds.min(20));
+}
+
+/// The same seed must draw the same map. Each `HashSet` iterates in its own
+/// order, so a choice made from one shows up here as two different maps.
+#[test]
+fn generated_w1_is_deterministic() {
+    use rand::SeedableRng;
+    use rand_chacha::ChaCha8Rng;
+
+    let Some(rom) = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes")
+        .ok()
+        .and_then(|d| crate::rom::Rom::from_bytes(&d).ok())
+    else {
+        eprintln!("SKIP: requires the ROM, which is not included in the repo");
+        return;
+    };
+    let vanilla = super::vanilla::load(&rom, false, false);
+    for seed in 0..20 {
+        let draw = || world_map(&vanilla[0], 0, &mut ChaCha8Rng::seed_from_u64(seed)).unwrap();
+        let (a, b) = (draw(), draw());
+        assert_eq!(a.grid.tiles, b.grid.tiles, "seed {seed}: two draws differ");
+        assert_eq!(a.entry_pos, b.entry_pos, "seed {seed}: two draws place entries differently");
+    }
 }

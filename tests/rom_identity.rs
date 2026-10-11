@@ -95,6 +95,8 @@ fn arms() -> Vec<(&'static str, Options, u64)> {
         ("friendlier", Options { friendlier_levels: true, ..base() }, ARM_SEEDS),
         ("no hb shuffle", Options { shuffle_hammer_bros: false, ..base() }, ARM_SEEDS),
         ("beta stages", Options { include_beta_stages: true, ..base() }, ARM_SEEDS),
+        // Experimental generated World 1 (hidden option).
+        ("generated w1", Options { generated_worlds: 1, ..base() }, ARM_SEEDS),
         // The map edits gated on these two are off by default.
         (
             "hammer rocks + 8s wild",
