@@ -174,6 +174,8 @@ use progression::{
     hammer_skip, island_count, level_adjacency_pairs, start_goal_express_pipe,
 };
 #[cfg(test)]
+pub(crate) use route_choice::BREAKABLE_ROCKS;
+#[cfg(test)]
 use route_choice::dump_route_choice;
 pub(crate) use sources::from_built;
 #[cfg(test)]

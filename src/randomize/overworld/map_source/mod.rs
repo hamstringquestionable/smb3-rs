@@ -9,6 +9,8 @@
 //! Today there is one source, [`vanilla`]. The planned second is a generator;
 //! see `docs/procedural_maps_design.md`.
 
+#[cfg(test)]
+mod inventory;
 pub(crate) mod vanilla;
 
 use crate::randomize::rom_data::{Grid, Pos};

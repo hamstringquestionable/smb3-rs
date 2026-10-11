@@ -242,6 +242,12 @@ Vanilla water is one of three things, and the renderer must keep them apart:
 The renderer's vanilla oracle test (see "How we know it works") is where we
 show we can tell them apart.
 
+**Canoe routes stay vanilla until milestone 5.** Which docks the canoe joins is
+a fixed per-world table today (`rom_data::CANOE_EDGES`, read through
+`active_canoe_edges`). Generating docks and canoe paths is part of the W3
+milestone; the dock pairs then join `WorldMap`, so each source supplies its
+own, the way `gaps` works.
+
 ## Anchors and rules
 
 Fixed points the generator builds around, and rules it must respect:
@@ -317,9 +323,9 @@ special-case the generator.
    the vanilla source, readers moved onto it, map edits applied in memory.
    Proven byte-identical by `rom_identity` (100 seeds over 11 arms, including
    one with `more hammer rocks` and `8s are Wild` on).
-2. **Inventory.** Record each world's tile vocabulary (paths, the three water
-   kinds, rocks, scenery) and vanilla's shape statistics (nodes per screen,
-   branching, dead ends, loops) as the generator's target.
+2. **Inventory.** *Done 2026-10-11*; results in "Vanilla's shape" below.
+   Each world's tile vocabulary and shape statistics, as the generator's
+   target.
 3. **W1 generated: paths and rocks.** The renderer and its vanilla oracle test
    first, then a standalone binary printing ASCII maps, then a `testrom` flag,
    then the censuses. (W1 has no pipe pairs.)
@@ -329,6 +335,68 @@ special-case the generator.
 6. **The rest**, each world's special mechanics as its own question: W5's sky
    page, W7's pipe-heavy budget, W8's darkness, army sprites and anchors.
 7. **The flag.** Flag-key bits and a key version bump, web option.
+
+## Vanilla's shape (the generator's targets)
+
+*Measured 2026-10-11 by `map_source::inventory`
+(`cargo test --release --lib map_inventory -- --ignored --nocapture`), on the
+vanilla source with default flags, gaps and breakable rocks open. The same
+function measures a generated `WorldMap`, so a generated world is compared
+with these figures by re-running it, not by reading this table.*
+
+| World | Nodes | Per screen | Walk links | Dead ends | Corridors | Junctions | Loops | Walk pieces | Start → target |
+|---|---|---|---|---|---|---|---|---|---|
+| W1 | 21 | 21.0 | 22 | 3 | 13 | 5 | 2 | 21 | 9 |
+| W2 | 47 | 23.5 | 49 | 7 | 30 | 10 | 3 | 47 | 15 |
+| W3 | 52 | 17.3 | 52 | 16 | 21 | 15 | 4 | 42, 5, 3, 2 | 15 |
+| W4 | 34 | 17.0 | 34 | 10 | 15 | 9 | 2 | 30, 4 | 15 |
+| W5 | 42 | 21.0 | 43 | 8 | 24 | 10 | 3 | 22, 20 | 18 |
+| W6 | 57 | 19.0 | 61 | 10 | 32 | 15 | 5 | 57 | 23 |
+| W7 | 46 | 23.0 | 40 | 16 | 23 | 6 | 1 | 14, 10, 9, 6, 4, 2, 1 | 13 |
+| W8 | 41 | 10.2 | 36 | 13 | 25 | 3 | 0 | 17, 8, 7, 6, 3 | 18 |
+
+Dead ends, corridors and junctions count a node's walk links (1, 2, 3+); W7
+has one node reached only by pipe. "Walk pieces" are the groups that walking
+alone connects; more than one means islands joined by pipe or canoe.
+Start → target is in hops, using pipes and canoe.
+
+What it says:
+
+- **Vanilla has no spare nodes.** Every walkable node in every world carries a
+  pointer entry, including the blank-looking ones (Hammer Bro and filler
+  entries). A generated world needs exactly as many nodes as its world has
+  pointer entries; more is headroom, fewer starves capacity.
+- **Vanilla is close to a tree.** Walk links barely exceed nodes, most nodes
+  are corridors, and there are 0-5 loops per world. Loops are where route
+  choice comes from, so **this column is a floor to beat, not a target to
+  match**: "fresh routes" means more of them than vanilla has.
+- **Islands are how W3, W4, W5, W7 and W8 get their structure.** W7 is seven
+  pipe-joined pieces and W8 five. A generator that only draws connected maps
+  would lose that, so pieces belong in the region graph from the start.
+- **Water is three things, and one tile plays two of them.** `$9D` is a gap
+  (a lock drawn as water) at one FX cell each in W4, W5 and W6, and plain scenery water
+  elsewhere in the same worlds. The renderer cannot tell them apart by tile;
+  only the region graph knows which water is a gap.
+
+Tile vocabulary by role (vanilla, all worlds; the test prints per-world
+counts):
+
+| Role | Tiles |
+|---|---|
+| Horizontal path | `45` `49`, island `AC` `B7`, bridges `B3` `B8` `B9`, sky `DA`, `E6` (W8) |
+| Vertical path | `46`, island `AA` `AB` `B0`, bridge `BA`, sky `DB` |
+| Gap / lock | `54` `56` (locks), `9D` (water), `E4` (sky) |
+| Breakable rock | `51` (opens horizontal), `52` (opens vertical) |
+| Background | `02` `B4` |
+
+Everything else is scenery: from 9 distinct tiles (36 cells) in W1 to 39 in
+W3, and up to 499 cells in W8.
+
+**Found while measuring.** The map walker counts the scenery cell at column 0,
+left of each start, as a node: the start's entrance path stub runs off the
+left edge and the walker does not check the cell it lands on. Harmless to the
+builder (nothing is placed there), so it is left alone; the inventory counts
+only entry and blank cells.
 
 ## Open questions
 

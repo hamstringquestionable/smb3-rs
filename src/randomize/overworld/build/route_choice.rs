@@ -58,7 +58,7 @@ pub(crate) const SHAPING_SLACK: u32 = 9;
 
 /// Breakable overworld rocks and the path tile they open into
 /// ($51→$45 horizontal, $52→$46 vertical). $53 is unbreakable (stays a wall).
-const BREAKABLE_ROCKS: [(u8, u8); 2] = [(0x51, 0x45), (0x52, 0x46)];
+pub(crate) const BREAKABLE_ROCKS: [(u8, u8); 2] = [(0x51, 0x45), (0x52, 0x46)];
 
 /// One distinct route to the goal.
 #[derive(Clone, Debug, PartialEq, Eq)]
