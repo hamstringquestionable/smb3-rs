@@ -362,10 +362,11 @@ Start → target is in hops, using pipes and canoe.
 
 What it says:
 
-- **Vanilla has no spare nodes.** Every walkable node in every world carries a
-  pointer entry, including the blank-looking ones (Hammer Bro and filler
-  entries). A generated world needs exactly as many nodes as its world has
-  pointer entries; more is headroom, fewer starves capacity.
+- **Every node has a pointer entry; the spare ones hold Hammer Bro levels.**
+  Vanilla fills each node that has no level, fort or other feature with a
+  Hammer Bro level, which is why some entries sit on blank-looking tiles. So
+  a generated world's node count is its pointer-entry count: spare nodes are
+  where Hammer Bro levels go, and fewer nodes than entries starves capacity.
 - **Vanilla is close to a tree.** Walk links barely exceed nodes, most nodes
   are corridors, and there are 0-5 loops per world. Loops are where route
   choice comes from, so **this column is a floor to beat, not a target to
