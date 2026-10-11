@@ -65,6 +65,10 @@ pub(super) const W1_TARGETS: Targets = Targets {
     rocks: (0, 2),
 };
 
+/// How often the tree grows from its newest node rather than from any node.
+/// A first guess, to be judged on the ASCII layouts.
+const EXTEND_NEWEST: f64 = 0.75;
+
 /// Draw layouts until one meets `targets`, or give up after `attempts`.
 pub(super) fn generate<R: Rng>(
     rows: usize,
@@ -117,20 +121,24 @@ fn try_once<R: Rng>(
 ) -> Option<Layout> {
     let on_lattice: HashSet<Pos> = lattice(rows, cols, start).into_iter().collect();
 
-    // 1. A random tree grown from the start until it has the node count.
+    // 1. A random tree grown from the start until it has the node count. Most
+    //    steps extend the newest node that can still grow, which draws long
+    //    corridors; the rest branch from any node. Picking from any node every
+    //    time grows a blob around the start instead.
     let mut nodes = vec![start];
     let mut in_tree: HashSet<Pos> = HashSet::from([start]);
     let mut tree: Vec<(Pos, Pos)> = Vec::new();
     while nodes.len() < targets.nodes {
-        let mut frontier: Vec<(Pos, Pos)> = Vec::new();
-        for &n in &nodes {
-            for m in neighbours(n, &on_lattice) {
-                if !in_tree.contains(&m) {
-                    frontier.push((n, m));
-                }
-            }
-        }
-        let &(from, to) = frontier.choose(rng)?;
+        let free = |n: Pos| -> Vec<Pos> {
+            neighbours(n, &on_lattice).into_iter().filter(|m| !in_tree.contains(m)).collect()
+        };
+        let growable: Vec<Pos> = nodes.iter().copied().filter(|&n| !free(n).is_empty()).collect();
+        let from = if rng.random_bool(EXTEND_NEWEST) {
+            *growable.last()?
+        } else {
+            *growable.choose(rng)?
+        };
+        let &to = free(from).choose(rng)?;
         in_tree.insert(to);
         nodes.push(to);
         tree.push(ordered(from, to));
