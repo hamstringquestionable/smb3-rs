@@ -200,6 +200,10 @@ fn pick_up_world(
 // Blank tile selection
 // ---------------------------------------------------------------------------
 
+/// Breakable rocks: `$51` opens to a horizontal path, `$52` to a vertical one.
+const ROCK_HORZ: u8 = 0x51;
+const ROCK_VERT: u8 = 0x52;
+
 /// Blank-tile theme tuple: `(horiz, vert, both, none)` covering the four
 /// combinations of valid-path neighbors.
 const THEME_STANDARD: (u8, u8, u8, u8) = (0x47, 0x48, 0x4A, 0x44);
@@ -264,8 +268,11 @@ pub(super) fn blank_tile_from_neighbors(
     let h_tile = if col > 0 { Some(grid.get(row, col - 1)) } else { None };
     let v_tile = if row > 0 { Some(grid.get(row - 1, col)) } else { None };
 
-    let has_h = h_tile.is_some_and(|t| VALID_HORZ.contains(&t));
-    let has_v = v_tile.is_some_and(|t| VALID_VERT.contains(&t));
+    // A breakable rock leads somewhere once broken, so the node draws its path
+    // stub into it, the way the W1 shortcut's hand-placed `$4A` does. Only
+    // the breakable rocks: the decorative `$53` looks the same but is a wall.
+    let has_h = h_tile.is_some_and(|t| VALID_HORZ.contains(&t) || t == ROCK_HORZ);
+    let has_v = v_tile.is_some_and(|t| VALID_VERT.contains(&t) || t == ROCK_VERT);
 
     // The connecting path, with the strip paths whose edge facing this cell
     // is water: its right edge for the left neighbor, its bottom for the one
@@ -661,17 +668,22 @@ mod tests {
         );
     }
 
-    /// The vanilla tile fixes apply to vanilla layouts only. W3 (8,6) is
-    /// forced to `$47` on vanilla; a generated layout gets the neighbour
-    /// rule's answer instead.
+    /// The vanilla tile fixes apply to vanilla layouts only. W8 (5,8), the
+    /// battleship cell, is forced to navy water `$8D` on vanilla; a generated
+    /// layout gets the neighbour rule's answer instead. (W3 (8,6) no longer
+    /// shows the difference: since breakable rocks count as connections, the
+    /// rule gives its `$47` on its own.)
     #[test]
     fn blank_overrides_apply_to_vanilla_layouts_only() {
         let Some(rom) = load_rom() else { return };
-        let mut grid = rom_data::read_tile_grid(&rom, 2);
+        let mut grid = rom_data::read_tile_grid(&rom, 7);
         assert!(grid.vanilla_layout, "a grid read from the ROM is a vanilla layout");
-        assert_eq!(blank_tile_for(&grid, 2, 8, 6), 0x47);
+        // A level tile there, as pickup sees it before blanking the cell (an
+        // existing blank is kept unchanged and never reaches the overrides).
+        grid.set(5, 8, 0x03);
+        assert_eq!(blank_tile_for(&grid, 7, 5, 8), 0x8D);
         grid.vanilla_layout = false;
-        assert_ne!(blank_tile_for(&grid, 2, 8, 6), 0x47);
+        assert_ne!(blank_tile_for(&grid, 7, 5, 8), 0x8D);
     }
 
     #[test]
