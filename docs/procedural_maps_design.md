@@ -350,8 +350,9 @@ special-case the generator.
    hidden `generated_worlds` option (not in the flag key; the web always
    sends 0), set by `testrom --generate-world 1`; needs Hammer Bro shuffle on.
    `generated_w1_is_completable`: 500 of 500 seeds completable, 20 run the
-   whole pipeline. Not yet: the renderer oracle test, the route census, a
-   playtest. **Decorations come next, as their own step, before anything
+   whole pipeline. **Playtested 2026-10-11 by the project owner (seeds 1 and
+   2): works.** Not yet: the renderer oracle test, the route census.
+   **Decorations come next, as their own step, before anything
    ships** (project owner).
 4. **A world with pipes** (W2 or W4).
 5. **W3: water and canoe.** Islands are the biggest new mechanic, so they get
