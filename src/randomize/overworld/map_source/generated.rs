@@ -1,21 +1,27 @@
-//! The generated map source, layout stage: a world's nodes and links, with no
-//! tiles yet.
+//! The generated map source: a world's layout (nodes and links), drawn into a
+//! [`WorldMap`] the rest of the pipeline uses exactly like a vanilla one.
 //!
-//! A layout is judged as ASCII before anything draws tiles or touches the ROM
-//! (`docs/procedural_maps_design.md`, milestone 3):
+//! Two stages. [`generate`] decides the layout, which can be judged as ASCII
+//! before anything is drawn:
 //!
 //! ```sh
 //! cargo test --release --lib generated_layouts -- --ignored --nocapture
 //! ```
 //!
-//! Test-only until the renderer exists; nothing here reaches a seed.
+//! [`world_map`] then draws it: frame and ground from the vanilla world, paths
+//! and rocks from the links, and each pointer entry on a node showing its own
+//! tile. No scenery yet (`docs/procedural_maps_design.md`, milestone 3).
+//! Reached only through the hidden `generated_worlds` option.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use rand::Rng;
-use rand::seq::IndexedRandom;
+use rand::seq::{IndexedRandom, SliceRandom};
 
-use crate::randomize::rom_data::Pos;
+use crate::randomize::overworld::pickup::blank_tile_from_neighbors;
+use crate::randomize::rom_data::{AIRSHIP_ENTRIES, Pos, TILE_START, VALID_BLANK_TILES};
+
+use super::WorldMap;
 
 /// What a link between two neighbouring nodes is.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -29,6 +35,10 @@ pub(super) enum Link {
 
 /// One world's layout: where the nodes are and how they connect.
 #[derive(Debug)]
+// Reason: `rows`, `cols`, `start` and `loop_sizes` are read only by the ASCII
+// view and the tally, which are test-only; the layout carries them so a test
+// judges exactly what production generated.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(super) struct Layout {
     pub(super) rows: usize,
     pub(super) cols: usize,
@@ -89,6 +99,104 @@ pub(super) fn generate<R: Rng>(
     rng: &mut R,
 ) -> Option<Layout> {
     (0..attempts).find_map(|_| try_once(rows, cols, start, targets, rng))
+}
+
+/// Plain ground: what every empty cell becomes until there is scenery.
+const GROUND: u8 = 0xB4;
+/// Path and rock tiles for a link, by direction: `(horizontal, vertical)`.
+const PATH: (u8, u8) = (0x45, 0x46);
+const ROCK: (u8, u8) = (0x51, 0x52);
+
+/// Generate a new map for `world_idx`, drawn over `vanilla` (that world's
+/// vanilla map, which supplies the frame, the start, and each entry's tile).
+/// `None` if no layout met the targets; the caller keeps vanilla then.
+///
+/// Only World 1 has targets so far.
+pub(crate) fn world_map<R: Rng>(
+    vanilla: &WorldMap,
+    world_idx: usize,
+    rng: &mut R,
+) -> Option<WorldMap> {
+    if world_idx != 0 {
+        return None;
+    }
+    let old = &vanilla.grid;
+    let on_grid = |p: Pos| p.0 < old.rows() && p.1 < old.cols;
+    let start_idx = (0..vanilla.entry_pos.len()).find(|&i| {
+        on_grid(vanilla.entry_pos[i]) && {
+            let p = vanilla.entry_pos[i];
+            old.get(p.0, p.1) == TILE_START
+        }
+    })?;
+    let start = vanilla.entry_pos[start_idx];
+    let layout = generate(old.rows(), old.cols, start, W1_TARGETS, 1000, rng)?;
+
+    // Frame (first and last column) and the start's entrance stub stay as
+    // vanilla drew them; everything else starts as plain ground.
+    let mut grid = old.clone();
+    grid.vanilla_layout = false;
+    for r in 0..grid.rows() {
+        for c in 1..grid.cols - 1 {
+            if (r, c) != (start.0, start.1 - 1) {
+                grid.set(r, c, GROUND);
+            }
+        }
+    }
+    for &(a, b, kind) in &layout.links {
+        let (horiz, vert) = if kind == Link::Rock { ROCK } else { PATH };
+        grid.set((a.0 + b.0) / 2, (a.1 + b.1) / 2, if a.0 == b.0 { horiz } else { vert });
+    }
+
+    // Entries onto nodes: the start stays, the airship goes to the target,
+    // the rest are dealt at random onto the remaining nodes. Entries off the
+    // grid (unused rows in the pointer table) stay where they are.
+    let airship_idx =
+        (0..vanilla.entry_pos.len()).find(|&i| AIRSHIP_ENTRIES.contains(&(world_idx, i)))?;
+    let mut free: Vec<Pos> =
+        layout.nodes.iter().copied().filter(|&n| n != start && n != layout.target).collect();
+    free.shuffle(rng);
+    let mut entry_pos = vanilla.entry_pos.clone();
+    entry_pos[airship_idx] = layout.target;
+    for (i, pos) in entry_pos.iter_mut().enumerate() {
+        if i != start_idx && i != airship_idx && on_grid(vanilla.entry_pos[i]) {
+            *pos = free.pop()?;
+        }
+    }
+    if !free.is_empty() {
+        return None;
+    }
+
+    // Each entry shows its own tile. A blank one (a Hammer Bro level's cell)
+    // is redrawn for its new neighbours, after every entry is down.
+    let mut blanks = Vec::new();
+    for (i, &pos) in entry_pos.iter().enumerate() {
+        let from = vanilla.entry_pos[i];
+        if !on_grid(from) {
+            continue;
+        }
+        let tile = old.get(from.0, from.1);
+        grid.set(pos.0, pos.1, tile);
+        if VALID_BLANK_TILES.contains(&tile) {
+            blanks.push(pos);
+        }
+    }
+    for pos in blanks {
+        let tile = blank_tile_from_neighbors(&grid, world_idx, pos.0, pos.1);
+        grid.set(pos.0, pos.1, tile);
+    }
+
+    // The castle top sits above the airship, as in vanilla.
+    let air = vanilla.entry_pos[airship_idx];
+    grid.set(layout.target.0 - 1, layout.target.1, old.get(air.0 - 1, air.1));
+
+    Some(WorldMap {
+        grid,
+        entry_pos,
+        sprites: Vec::new(),
+        hb_sprites: Vec::new(),
+        gaps: Vec::new(),
+        hammer_gated: Vec::new(),
+    })
 }
 
 /// Nodes sit two tiles apart, because a map move is two tiles: on the start's
@@ -278,6 +386,7 @@ fn path_hops(start: Pos, links: &[(Pos, Pos, Link)]) -> HashMap<Pos, usize> {
     hops
 }
 
+#[cfg(test)]
 impl Layout {
     /// One character per map tile: `S` start, `A` target, `o` node, `-` and
     /// `|` paths, `R` a rock.
@@ -382,4 +491,74 @@ fn generated_layouts() {
             junctions as f64 / built as f64,
         );
     }
+}
+
+/// The stranding check for generated World 1: across seeds, the builder must
+/// leave the airship reachable from the start (locks open, the builder's own
+/// convention, and rocks shut), and the whole pipeline must run without
+/// panicking. `CENSUS_SEEDS` seeds, default 50.
+///
+/// ```sh
+/// CENSUS_SEEDS=500 cargo test --release --lib generated_w1_is_completable -- --ignored --nocapture
+/// ```
+#[test]
+#[ignore]
+fn generated_w1_is_completable() {
+    use crate::randomize::overworld::build::{BuildFlags, OverworldData, build};
+    use crate::randomize::overworld::helpers::find_target;
+    use crate::randomize::overworld::map_walker::walk_map;
+    use crate::randomize::overworld::node_catalog::NodeCatalog;
+    use crate::randomize::overworld::pickup::{PickupFlags, pick_up};
+    use rand::SeedableRng;
+    use rand_chacha::ChaCha8Rng;
+
+    let Ok(raw) = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes") else {
+        eprintln!("SKIP: requires the ROM, which is not included in the repo");
+        return;
+    };
+    let rom = crate::rom::Rom::from_bytes(&raw).unwrap();
+    let seeds: u64 = std::env::var("CENSUS_SEEDS").ok().and_then(|s| s.parse().ok()).unwrap_or(50);
+
+    // The builder alone, many seeds.
+    let mut generated = 0;
+    for seed in 0..seeds {
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
+        let mut maps = super::vanilla::load(&rom, false, false);
+        let Some(w1) = world_map(&maps[0], 0, &mut rng) else { continue };
+        maps[0] = w1;
+        generated += 1;
+        let catalog = NodeCatalog::from_maps(&rom, maps, false);
+        let flags = PickupFlags {
+            shuffle_spade_games: true,
+            shuffle_toad_houses: true,
+            shuffle_hammer_bros: true,
+        };
+        let pickup = pick_up(&rom, &catalog, flags);
+        let result = build(
+            &rom,
+            &OverworldData { pickup: &pickup, catalog: &catalog },
+            &mut rng,
+            BuildFlags {
+                shuffle_toad_houses: true,
+                shuffle_hammer_bros: true,
+                ..Default::default()
+            },
+        );
+        let w1 = &result.worlds[0];
+        let start = crate::randomize::rom_data::find_start(&w1.grid);
+        let target = find_target(&w1.grid, 0).expect("generated W1 has an airship");
+        assert!(
+            walk_map(&w1.grid, &w1.pipe_pairs, start, 0).nodes.contains(&target),
+            "seed {seed}: generated W1's airship is unreachable from the start",
+        );
+    }
+    println!("builder: {generated} of {seeds} seeds generated a W1, all completable");
+
+    // The whole pipeline, fewer seeds: the writer and every later stage.
+    let options = crate::Options { generated_worlds: 1, palettes: false, ..Default::default() };
+    for seed in 0..seeds.min(20) {
+        crate::generate_patched_rom(&raw, seed, &options, None)
+            .unwrap_or_else(|e| panic!("seed {seed}: pipeline failed: {e}"));
+    }
+    println!("pipeline: {} seeds ran end to end", seeds.min(20));
 }

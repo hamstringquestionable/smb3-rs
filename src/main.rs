@@ -695,6 +695,8 @@ fn build_options(cli: &Cli) -> Options {
             starting_lives: cli.starting_lives,
             starting_items,
             skip_rom_validation: cli.skip_rom_validation,
+            // Experimental; `testrom --generate-world` turns it on.
+            generated_worlds: 0,
         }
     }
 }

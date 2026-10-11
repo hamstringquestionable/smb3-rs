@@ -285,6 +285,7 @@ pub(super) const NOT_ENCODED: &[&str] = &[
     "king_quotes",         // cosmetic flavor text; draws its RNG either way
     "fireball_hearts",     // cosmetic; static patch, no RNG
     "skip_rom_validation", // operational (CLI/WASM input handling), not randomization
+    "generated_worlds",    // experimental, testrom only; a shared key never turns it on
 ];
 
 /// The `Options` field names this build encodes into the flag key.
@@ -550,6 +551,7 @@ impl Options {
             // Not encoded — see NOT_ENCODED for the reason on each.
             palettes: _, palette_themed: _, player_color: _,
             remove_flashing: _, king_quotes: _, fireball_hearts: _, skip_rom_validation: _,
+            generated_worlds: _,
         } = self;
 
         let item = |i: usize| starting_items.get(i).copied().unwrap_or(0);
@@ -754,6 +756,7 @@ impl Options {
             king_quotes: true,
             fireball_hearts: false,
             skip_rom_validation: false,
+            generated_worlds: 0,
         }
     }
 

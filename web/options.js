@@ -777,6 +777,7 @@ export const SCHEMA = [
 const CONSTANT_FIELDS = {
 	disable_autoscroll: true,
 	card_speed_clear: true,
+	generated_worlds: 0,
 };
 
 // --- Presets ---

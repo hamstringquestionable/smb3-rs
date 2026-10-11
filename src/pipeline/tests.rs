@@ -1191,6 +1191,7 @@ fn all_off_options() -> Options {
         wild_injections: Vec::new(),
         starting_items: vec![],
         skip_rom_validation: false,
+        generated_worlds: 0,
         anchor_visuals: false,
     }
 }
@@ -1273,6 +1274,7 @@ fn all_on_options() -> Options {
         wild_injections: WildChaser::ALL.to_vec(),
         starting_items: vec![0x05, 0x09, 0x03],
         skip_rom_validation: false,
+        generated_worlds: 0,
         anchor_visuals: true,
     }
 }

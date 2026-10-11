@@ -342,6 +342,17 @@ special-case the generator.
    judged on **ASCII layouts** from an ignored test before anything touches
    tiles or the ROM; then the renderer and its vanilla oracle test; then a
    `testrom` flag and the censuses. (W1 has no pipe pairs.)
+
+   *Status 2026-10-11:* layout generator and a first, scenery-free
+   renderer are in (`map_source::generated`): frame and entrance stub from
+   vanilla, `$B4` ground, `$45`/`$46` paths, `$51`/`$52` rocks, each entry on
+   a node showing its own tile, castle top above the airship. Behind the
+   hidden `generated_worlds` option (not in the flag key; the web always
+   sends 0), set by `testrom --generate-world 1`; needs Hammer Bro shuffle on.
+   `generated_w1_is_completable`: 500 of 500 seeds completable, 20 run the
+   whole pipeline. Not yet: the renderer oracle test, the route census, a
+   playtest. **Decorations come next, as their own step, before anything
+   ships** (project owner).
 4. **A world with pipes** (W2 or W4).
 5. **W3: water and canoe.** Islands are the biggest new mechanic, so they get
    their own milestone.

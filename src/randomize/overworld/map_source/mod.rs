@@ -6,11 +6,10 @@
 //! entry *is* still comes from the catalog reading the ROM, which is why every
 //! world keeps its own budgets whichever source ran.
 //!
-//! Today there is one source, [`vanilla`]. The planned second is a generator;
-//! see `docs/procedural_maps_design.md`.
+//! Two sources: [`vanilla`], and [`generated`] for worlds the hidden
+//! `generated_worlds` option asks for. See `docs/procedural_maps_design.md`.
 
-#[cfg(test)]
-mod generated;
+pub(crate) mod generated;
 #[cfg(test)]
 mod inventory;
 pub(crate) mod vanilla;

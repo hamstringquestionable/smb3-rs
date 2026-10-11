@@ -820,6 +820,14 @@ pub struct Options {
     /// randomization seed.
     #[serde(default)]
     pub skip_rom_validation: bool,
+    /// Which worlds get a generated map instead of vanilla's layout, as a
+    /// bitmask: bit 0 is World 1. Experimental and hidden — `testrom` sets it,
+    /// the web app always sends 0, and it is not in the flag key. Only World 1
+    /// can be generated so far, and only with `shuffle_hammer_bros` on; any
+    /// other world asked for stays vanilla. See
+    /// `docs/procedural_maps_design.md`.
+    #[serde(default)]
+    pub generated_worlds: u8,
 }
 
 fn default_true() -> bool {
@@ -904,6 +912,7 @@ impl Default for Options {
             starting_lives: default_starting_lives(),
             starting_items: Vec::new(),
             skip_rom_validation: false,
+            generated_worlds: 0,
         }
     }
 }

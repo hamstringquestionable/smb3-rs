@@ -299,11 +299,24 @@ pub(super) fn overworld_catalog(
         randomize::levels::piranha_rooms::clear_vanilla_plants(rom);
     }
     rom.set_tag("overworld/builder");
-    let maps = randomize::overworld::map_source::vanilla::load(
+    let mut maps = randomize::overworld::map_source::vanilla::load(
         rom,
         run.more_hammer_rocks,
         run.eights_are_wild,
     );
+    // Experimental: generated maps for the worlds `generated_worlds` names.
+    // Hammer Bro shuffle must be on, so the builder places the bros; a world
+    // the generator cannot draw keeps its vanilla map.
+    if options.shuffle_hammer_bros {
+        for (wi, map) in maps.iter_mut().enumerate() {
+            if options.generated_worlds & (1 << wi) != 0
+                && let Some(generated) =
+                    randomize::overworld::map_source::generated::world_map(map, wi, rng)
+            {
+                *map = generated;
+            }
+        }
+    }
     let mut catalog = randomize::overworld::node_catalog::NodeCatalog::from_maps(
         rom,
         maps,
