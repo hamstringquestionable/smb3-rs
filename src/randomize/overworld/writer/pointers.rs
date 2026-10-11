@@ -18,6 +18,31 @@ fn write_entry_pos(
     rom.write_byte(sc + entry_idx, (screen << 4) | col_in_screen);
 }
 
+/// Write the position of every entry pickup left in place whose position on
+/// the map differs from the ROM's: the start and airship of a world Start ↔
+/// Airship swap flipped, and anything a generated map moved. Entries pickup
+/// took are written by [`write_pointer_entries`] instead, so they are skipped.
+///
+/// Must run BEFORE `pipe_helpers::resort_pointer_table` for the same world, so
+/// the resort puts the rewritten entries in their screen/row order.
+pub(super) fn write_kept_entry_positions(rom: &mut Rom, world_idx: usize, data: &OverworldData) {
+    let world = &WORLDS[world_idx];
+    let rt = world.rowtype_offset;
+    let sc = rt + world.entry_count;
+    let picked: HashSet<usize> = data.pickup.pool.iter().map(|pe| pe.catalog_idx).collect();
+    for (ci, entry) in data.catalog.entries.iter().enumerate() {
+        if entry.world_idx != world_idx || picked.contains(&ci) {
+            continue;
+        }
+        if rom_data::entry_grid_position(rom, world, entry.entry_idx) == entry.grid_pos {
+            continue;
+        }
+        // Keep the low nibble of the rowtype byte: it is the tileset.
+        let tileset = rom.read_byte(rt + entry.entry_idx);
+        write_entry_pos(rom, rt, sc, entry.entry_idx, entry.grid_pos, tileset);
+    }
+}
+
 pub(super) fn write_pointer_entries(
     rom: &mut Rom,
     world_idx: usize,

@@ -25,11 +25,10 @@ use rand::Rng;
 use crate::rom::Rom;
 
 use crate::randomize::overworld::node_catalog::{NodeCatalog, NodeKind};
-use crate::randomize::overworld::pipe_helpers::grid_pos_to_dest_nibbles;
 use crate::randomize::rom_data::{
     self, AIRSHIP_OBJ_SLOT, FS_SAS_GAMEOVER_FINALIZE, FS_SAS_SCRH_TABLE, FS_SAS_SCRL_TABLE,
     FS_SAS_SEED_HELPER, FS_SAS_X_TABLE, FS_SAS_XHI_TABLE, GAMEOVER_FINALIZE_SITE, Grid,
-    MAP_INIT_SCROLL_SITE, MAP_TILE_GRIDS, MAP_Y_STARTS_OFF, WORLDS,
+    MAP_INIT_SCROLL_SITE, MAP_TILE_GRIDS, MAP_Y_STARTS_OFF,
 };
 
 /// World index of W5 (Sky), the one world with special-case handling: its
@@ -132,41 +131,6 @@ fn above_start_override(world_idx: usize) -> Option<u8> {
         3 | 6 => Some(0x42),  // W4 / W7 — land path blank
         W5_IDX => Some(0xD7), // W5 — sky blank
         _ => None,
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Phase 3a: per-world pointer-table entry updates (called from the writer
-// before pipe_helpers::resort_pointer_table)
-// ---------------------------------------------------------------------------
-
-/// For a swapped world, rewrite the Airship and Start entries' rowtype/scrcol
-/// bytes so their pointer-table positions match the new grid coordinates. The
-/// writer's main pass deliberately leaves these two entries alone (they're not
-/// in the pickup pool), so without this step the engine looks up the wrong
-/// entry when the player walks onto the swapped tiles.
-///
-/// Must run BEFORE `pipe_helpers::resort_pointer_table` for the same world so
-/// the resort places the rewritten entries in their correct screen/row order.
-pub(super) fn write_swapped_world_entries(rom: &mut Rom, world_idx: usize, catalog: &NodeCatalog) {
-    if !catalog.start_airship_swapped[world_idx] {
-        return;
-    }
-    let world = &WORLDS[world_idx];
-    let rt_off = world.rowtype_offset;
-    let sc_off = rt_off + world.entry_count;
-
-    for entry in
-        catalog.world(world_idx).filter(|e| matches!(e.kind, NodeKind::Airship | NodeKind::Start))
-    {
-        let (row, col) = entry.grid_pos;
-        let (screen, col_in_screen, row_nib) = grid_pos_to_dest_nibbles(row, col);
-
-        // Preserve the low nibble of the existing rowtype byte (tileset code).
-        let old_rt = rom.read_byte(rt_off + entry.entry_idx);
-        let new_rt = (row_nib << 4) | (old_rt & 0x0F);
-        rom.write_byte(rt_off + entry.entry_idx, new_rt);
-        rom.write_byte(sc_off + entry.entry_idx, (screen << 4) | col_in_screen);
     }
 }
 
