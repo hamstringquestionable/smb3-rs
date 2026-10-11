@@ -368,6 +368,56 @@ special-case the generator.
    Not identical to today's rule (pure distance would also allow the last
    three spots of the top row), so switching moves W1's output; do it when
    one of the two cases needs it (project owner, 2026-10-11).
+
+   **Decorations: the plan** (2026-10-11, not built). Decorations are
+   generated the same way as the layout: shapes are grown, then drawn, and
+   the drawing rules are learned from vanilla rather than hand-written.
+
+   - **D1. Empty regions.** After paths and nodes are drawn, the empty cells
+     (not node, path or frame) fall into separate regions. Each region is
+     filled according to its size and shape: tiny ones (1–2 cells, usually
+     wedged between paths) stay ground; medium ones get a cluster; large,
+     open ones are candidates for a feature (a lake or a forest).
+   - **D2. Clusters.** Single-tile decorations grown as a blob inside a
+     region: one seed cell, then neighbours added at random up to a size the
+     region allows. No edges to draw, so they always look coherent. Each
+     world's decoration tiles are a small hand-written theme table, checked
+     against the inventory's scenery counts. `$53` (decorative rock, which
+     looks like a breakable one) never touches a path.
+   - **D3. Edge rules learned from vanilla.** Lakes and shores are like paths:
+     each cell's tile depends on which neighbours are water. Read every water
+     and shore cell in vanilla's maps, record "neighbour pattern → tile", and
+     check each pattern always gives the same tile (the oracle, in the style
+     of the blank-tile test). If it holds, any water shape can be drawn by
+     marking the water cells and looking tiles up; a pattern vanilla never
+     shows is one the generator does not grow. The same works for any other
+     edged feature vanilla has (hills, forest edges), if their patterns are
+     consistent.
+   - **D4. Lakes and forests.** In a large region, grow a blob (a random
+     flood fill from a seed cell, stopping at a size limit and at the cells
+     next to paths), then draw it with D3's table. A forest is the same with
+     tree tiles; if vanilla's trees have no edge pattern, it is a D2 cluster
+     instead.
+   - **D5. Rivers and water gaps.** A river is decided with the layout, not
+     after it: a band of water cells across the map that avoids nodes. Where
+     it crosses a link, the path tile becomes a bridge. **Water gaps then
+     come from the builder, not the generator:** a lock the builder places
+     on a bridge `$B3` is drawn as water `$9D` until its fortress rebuilds
+     it, exactly as W8's bridge row works. Constraint found 2026-10-11: only
+     the horizontal bridge `$B3` has a water-gap form; a vertical bridge
+     `$BA` locks as a land lock `$54`. So rivers cross links horizontally
+     (a river running north–south), or a vertical crossing's bridge is kept
+     out of the lock candidates.
+   - **D6. Judging it.** ASCII cannot show whether scenery is coherent.
+     Judged on real tiles: `testrom` ROMs played or screenshotted (headless
+     Mesen), and possibly a PNG render of a map from the ROM's own CHR.
+
+   **The mini tiles `$57`–`$5E`** are W5's miniature ground, drawn for its
+   view down from the sky (one each at W5 row 0; `$5E` unused). A possible
+   texture for variety, to be tried on real tiles, not a default.
+
+   Order: D1 + D2 first (a decorated, playable W1), then D3 as an experiment
+   that decides whether D4 and D5 can draw water, then D4, then D5.
 4. **A world with pipes** (W2 or W4).
 5. **W3: water and canoe.** Islands are the biggest new mechanic, so they get
    their own milestone.
