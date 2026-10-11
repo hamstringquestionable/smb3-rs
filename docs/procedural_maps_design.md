@@ -345,7 +345,7 @@ special-case the generator.
 
    *Status 2026-10-11:* layout generator and a first, scenery-free
    renderer are in (`map_source::generated`): frame and entrance stub from
-   vanilla, `$B4` ground, `$45`/`$46` paths, `$51`/`$52` rocks, each entry on
+   vanilla, `$B4` dancing-bush fill (vanilla W1's own filler), `$45`/`$46` paths, `$51`/`$52` rocks, each entry on
    a node showing its own tile, castle top above the airship. Behind the
    hidden `generated_worlds` option (not in the flag key; the web always
    sends 0), set by `testrom --generate-world 1`; needs Hammer Bro shuffle on.
@@ -477,7 +477,7 @@ counts):
 | Vertical path | `46`, island `AA` `AB` `B0`, bridge `BA`, sky `DB` |
 | Gap / lock | `54` `56` (locks), `9D` (water), `E4` (sky) |
 | Breakable rock | `51` (opens horizontal), `52` (opens vertical) |
-| Background | `02` `B4` |
+| Background | `02`, `B4` (the dancing bush, listed in `BACKGROUND_TILES`) |
 
 Everything else is scenery: from 9 distinct tiles (36 cells) in W1 to 39 in
 W3, and up to 499 cells in W8.

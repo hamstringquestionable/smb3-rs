@@ -2650,6 +2650,34 @@ world_start + (C // 16) * 144 + R * 16 + (C % 16)
 | 0xEB | Fortress tile | Alternate fortress |
 | 0xFF | Border / unused | Map edge |
 
+> **Stale rows above (noted 2026-10-11, not yet corrected):** `$B4` is the
+> dancing bush, not void; `$68`/`$69` draw as a pyramid; `$5F` is the W5 Spiral
+> Castle (`TILE_SPIRAL`); `$AE`/`$AF` and `$D9`/`$DC`–`$DE` are island and sky
+> blank nodes. Southbird's `TILE_*` constants (`smb3.asm` ~line 3545) are the
+> better source for a single byte.
+
+#### Scenery and decoration tiles
+
+Names from Southbird's `TILE_*` constants where it has one; the rest from the
+project owner (2026-10-11). Gathered for generated-map decorations
+(`docs/procedural_maps_design.md`).
+
+| Tile | Southbird | Looks like | Notes |
+|------|-----------|-----------|-------|
+| `$42` | — | plain ground | all four quadrants blank (`FE`) |
+| `$53` | `TILE_ROCK` | rock | permanent; pixel-identical to breakable `$52` |
+| `$55` | — | star | |
+| `$57`–`$5E` | — | miniature ground | W5's view down from the sky; `$57`–`$5D` appear only in W5, `$5E` nowhere |
+| `$82`–`$A9` | `$82` `TILE_WATER_INVT`, `$9D` `TILE_RIVERVERT` | water and shores | `$9D` is "vertical river segment (gets bridged)": vanilla rivers run north–south under a horizontal bridge `$B3`, the only bridge with a water-gap form |
+| `$B4` | `TILE_DANCINGBUSH` | bush ("cactus") | animated; vanilla's filler in W1's empty space |
+| `$BB` | `TILE_DANCINGPALM` | palm tree | animated; World 2 |
+| `$BD` | `TILE_DANCINGFLOWER` | fire flower | animated; also in `Map_EnterSpecialTiles` (DANCINGFLOWER) |
+| `$BE` | — | plant | |
+| `$BF` | `TILE_POOL` | pool / oasis | W2; completable on page 2 (see the rows 7/8 completion-bit note) |
+| `$E1` | — | mushroom | |
+| `$E9` | `TILE_WORLD5STAR` | star | W5 sky |
+| `$EA` | — | rock | W6 uses it 67 times |
+
 ### World Map Functionality (PRG010: 0x14010–0x1600F)
 
 Key tables in PRG010 (indexed by World_Num 0–7):

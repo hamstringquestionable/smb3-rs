@@ -8,7 +8,7 @@
 //! cargo test --release --lib generated_layouts -- --ignored --nocapture
 //! ```
 //!
-//! [`world_map`] then draws it: frame and ground from the vanilla world, paths
+//! [`world_map`] then draws it: frame and bush fill from the vanilla world, paths
 //! and rocks from the links, and each pointer entry on a node showing its own
 //! tile. No scenery yet (`docs/procedural_maps_design.md`, milestone 3).
 //! Reached only through the hidden `generated_worlds` option.
@@ -101,8 +101,9 @@ pub(super) fn generate<R: Rng>(
     (0..attempts).find_map(|_| try_once(rows, cols, start, targets, rng))
 }
 
-/// Plain ground: what every empty cell becomes until there is scenery.
-const GROUND: u8 = 0xB4;
+/// The dancing bush (`TILE_DANCINGBUSH`): what every empty cell becomes until
+/// there is scenery. Vanilla W1 fills its empty space with it too.
+const FILL: u8 = 0xB4;
 /// Path and rock tiles for a link, by direction: `(horizontal, vertical)`.
 const PATH: (u8, u8) = (0x45, 0x46);
 const ROCK: (u8, u8) = (0x51, 0x52);
@@ -138,7 +139,7 @@ pub(crate) fn world_map<R: Rng>(
     for r in 0..grid.rows() {
         for c in 1..grid.cols - 1 {
             if (r, c) != (start.0, start.1 - 1) {
-                grid.set(r, c, GROUND);
+                grid.set(r, c, FILL);
             }
         }
     }
