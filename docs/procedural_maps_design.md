@@ -418,3 +418,15 @@ only entry and blank cells.
 - Should a theme be able to move to another world slot (a desert map in slot
   5)? Needs the palette/tileset question answered first.
 - Starts as anchors in v1: keep for good, or generate later?
+- **Nodes beyond the pointer-entry count.** A generated world uses exactly one
+  node per pointer entry (W1: 21 of 35 lattice spots). Measured 2026-10-11:
+  finished `8s are Wild` seeds already have **8 blank nodes with no pointer
+  entry in W8** on every seed checked (5 of 5), and that mode ships, so a plain
+  blank node with no entry looks safe to stand on — which contradicts the
+  writer comment that walking onto a tile with no entry crashes. The risk the
+  project owner names is the **Hammer Bro march**: a bro landing on such a node
+  pulls the player into it. A march veto, like the ones that already keep bros
+  off other tiles, would cover it. Until that is checked in the emulator,
+  generated worlds keep the entry limit. Two more ways to cover more of the
+  screen without entries: extra blank nodes (this), and longer path runs where
+  the player stops on path tiles (vanilla W8's bridge row does this).
