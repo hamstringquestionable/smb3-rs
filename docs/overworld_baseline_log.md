@@ -34,6 +34,35 @@ hashes they describe are gone; the reasoning is not.
 
 ## Entries
 
+### 2026-10-11 — blank nodes draw their path stub into a breakable rock (fix/rock-path-stubs)
+
+**Intended: a breakable rock counts as a connection when a blank node picks
+its tile.** `pickup::blank_tile_from_neighbors` draws a stub to the left when
+that neighbour is a horizontal path and up when it is a vertical one. Rocks
+were in neither list, so a node beside one drew no stub into it and the rock
+read as a wall. Now `$51` to the left counts as horizontal and `$52` above
+counts as vertical, as the W1 shortcut's hand-placed `$4A` already does. The
+decorative `$53` is still a wall. Reported from a playtest of a generated W1.
+
+**What moved.** 11 of the 20 seeds: 1, 2, 4, 6, 9, 11, 14, 15, 17, 19 and 20,
+the ones where pickup re-blanks a level cell beside a rock.
+
+**How that was established.** Byte diff, `--patched-rom --no-palettes`, old tree
+against new: 30 default seeds, 30 with `more hammer rocks`, 10 with `8s are
+Wild`. Every changed byte is one of:
+
+- a blank node with a breakable rock to its left or above, gaining the stub
+  (76 bytes across 50 of the 70 ROMs). On default seeds 1–20: W2 (6,14)
+  `44 → 47`, W3 (8,8) `48 → 4A`, W4 (4,22) `47 → 4A`, W6 (6,26) `48 → 4A`.
+  With `more hammer rocks` also W1 (6,6) `44 → 47` and W8 (3,38) `44 → 47`;
+- the ending montage's mini-maps of those cells (`0x3218C`–`0x32468`, inside
+  `credits` `BUFFER_REGION`), only in seeds whose map changed.
+
+The seeds the baseline flags are exactly the default seeds whose ROM changed.
+`test_route_census` is not rerun: nothing but these tiles moved in 70 seeds,
+so no placement or lock decision changed, and the walker treats every
+blank variant the same.
+
 ### 2026-10-06 — island-edge blanks: W4's cells under `0xAB` (fix/w4-island-blank)
 
 **Intended: a blank takes the island theme only when the strip path's edge

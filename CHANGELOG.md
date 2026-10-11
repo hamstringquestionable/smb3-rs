@@ -29,6 +29,9 @@ deploys.
 
 ### Fixed
 
+- **Paths run into breakable rocks.** A map node next to a rock you can break
+  with a hammer now draws its path leading into the rock, so the rock reads as
+  a shortcut rather than a wall.
 - **Player colours no longer recolour the Hammer suit's face.** The face is
   kept, as it is for every other suit.
 - **World colours no longer mix two palettes in one colour group.** Every
