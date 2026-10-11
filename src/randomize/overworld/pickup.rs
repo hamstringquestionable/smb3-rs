@@ -241,8 +241,10 @@ pub(super) fn blank_tile_for(grid: &Grid, world_idx: usize, row: usize, col: usi
         return current;
     }
 
-    if let Some(&(_, _, _, tile)) =
-        BLANK_TILE_OVERRIDES.iter().find(|&&(w, r, c, _)| w == world_idx && r == row && c == col)
+    if grid.vanilla_layout
+        && let Some(&(_, _, _, tile)) = BLANK_TILE_OVERRIDES
+            .iter()
+            .find(|&&(w, r, c, _)| w == world_idx && r == row && c == col)
     {
         return tile;
     }
@@ -276,11 +278,12 @@ pub(super) fn blank_tile_from_neighbors(
         None
     };
 
-    let (h, v, hv, none) = if ISLAND_POSITIONS.contains(&(world_idx, row, col)) {
-        THEME_ISLAND
-    } else {
-        theme_for(grid, row, col, neighbor)
-    };
+    let (h, v, hv, none) =
+        if grid.vanilla_layout && ISLAND_POSITIONS.contains(&(world_idx, row, col)) {
+            THEME_ISLAND
+        } else {
+            theme_for(grid, row, col, neighbor)
+        };
 
     match (has_h, has_v) {
         (true, true) => hv,
@@ -656,6 +659,19 @@ mod tests {
             BLANK_TILE_OVERRIDES.len(),
             mismatches
         );
+    }
+
+    /// The vanilla tile fixes apply to vanilla layouts only. W3 (8,6) is
+    /// forced to `$47` on vanilla; a generated layout gets the neighbour
+    /// rule's answer instead.
+    #[test]
+    fn blank_overrides_apply_to_vanilla_layouts_only() {
+        let Some(rom) = load_rom() else { return };
+        let mut grid = rom_data::read_tile_grid(&rom, 2);
+        assert!(grid.vanilla_layout, "a grid read from the ROM is a vanilla layout");
+        assert_eq!(blank_tile_for(&grid, 2, 8, 6), 0x47);
+        grid.vanilla_layout = false;
+        assert_ne!(blank_tile_for(&grid, 2, 8, 6), 0x47);
     }
 
     #[test]

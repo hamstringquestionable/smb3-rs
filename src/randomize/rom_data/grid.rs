@@ -14,6 +14,12 @@ pub(crate) struct Grid {
     /// overworld builder stamps the real value onto the grids it walks, and it
     /// is preserved through clones.
     pub(crate) eights_are_wild: bool,
+    /// Whether this is one of vanilla's hand-drawn layouts, so the tile
+    /// fixes keyed to vanilla cells (`map_source::vanilla::BLANK_TILE_OVERRIDES`
+    /// and `ISLAND_POSITIONS`) apply. True for any grid read from the ROM; a
+    /// generated layout sets it false, since those cells mean nothing there.
+    /// Rides on the grid for the same reason as `eights_are_wild`.
+    pub(crate) vanilla_layout: bool,
 }
 
 impl Grid {
@@ -52,7 +58,7 @@ pub(crate) fn read_tile_grid(rom: &Rom, world_idx: usize) -> Grid {
         tiles.push(row);
     }
 
-    Grid { tiles, cols, eights_are_wild: false }
+    Grid { tiles, cols, eights_are_wild: false, vanilla_layout: true }
 }
 
 /// All eight worlds' tile grids, read off a finished ROM.

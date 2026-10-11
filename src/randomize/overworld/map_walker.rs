@@ -794,8 +794,12 @@ mod tests {
             // The island dock `b` is left isolated, so it can only be reached
             // via a canoe hop — never by walking. `eights_are_wild` on so the
             // W8 edges resolve.
-            let mut grid =
-                Grid { tiles: vec![vec![0xB4u8; 48]; 9], cols: 48, eights_are_wild: true };
+            let mut grid = Grid {
+                tiles: vec![vec![0xB4u8; 48]; 9],
+                cols: 48,
+                eights_are_wild: true,
+                vanilla_layout: false,
+            };
             let start = (a.0, a.1 - 2);
             grid.set(a.0, a.1 - 1, 0x45); // VALID_HORZ path tile
             grid.set(a.0, a.1, 0x45); // mainland dock node (non-background)

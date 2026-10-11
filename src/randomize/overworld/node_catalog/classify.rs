@@ -59,14 +59,8 @@ pub(super) fn classify_world(
 
     // Build pipe pair map: entry_idx → dest_idx
     let dest_indices = rom_data::dest_indices_for_world(world_idx);
-    let pipe_map = build_pipe_map(
-        rom,
-        world_idx,
-        &map.entry_pos,
-        &pipe_entries_by_obj,
-        &spiral_entries,
-        &dest_indices,
-    );
+    let pipe_map =
+        build_pipe_map(rom, world_idx, &pipe_entries_by_obj, &spiral_entries, &dest_indices);
 
     // -- Classify each entry --
     let mut result = Vec::with_capacity(n);

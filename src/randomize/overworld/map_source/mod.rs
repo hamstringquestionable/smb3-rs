@@ -20,7 +20,9 @@ use crate::randomize::rom_data::{Grid, Pos};
 pub(crate) struct WorldMap {
     /// Every tile, with gaps still closed (drawn as their water or lock art).
     pub(crate) grid: Grid,
-    /// Where each pointer-table entry sits, indexed by `entry_idx`.
+    /// Where each pointer-table entry sits, indexed by `entry_idx`. The grid
+    /// must show each entry's own tile at its position: the catalog reads the
+    /// tile there to recognise the start.
     pub(crate) entry_pos: Vec<Pos>,
     /// Every active map-object sprite.
     pub(crate) sprites: Vec<Pos>,

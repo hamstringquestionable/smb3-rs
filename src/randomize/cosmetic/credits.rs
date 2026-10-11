@@ -514,7 +514,12 @@ mod tests {
 
     #[test]
     fn handtrap_renders_as_node_marker() {
-        let g = Grid { tiles: vec![vec![0x45, HAND_TRAP_TILE]], cols: 2, eights_are_wild: false };
+        let g = Grid {
+            tiles: vec![vec![0x45, HAND_TRAP_TILE]],
+            cols: 2,
+            eights_are_wild: false,
+            vanilla_layout: false,
+        };
         // A hand-trap draws the ring marker regardless of its neighbors.
         assert_eq!(mini_tile_at(&g, 0, 1, &[]), HAND_TRAP_MINI);
         // A non-hand-trap tile is a plain LUT lookup.

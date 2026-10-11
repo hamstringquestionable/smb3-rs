@@ -128,7 +128,12 @@ impl Phase for Recorder {
 fn test_builder_schedule_runs_phases_in_order() {
     let mut state = WorldState {
         world_idx: 0,
-        grid: Grid { tiles: vec![vec![0x00; 4]; 9], cols: 4, eights_are_wild: false },
+        grid: Grid {
+            tiles: vec![vec![0x00; 4]; 9],
+            cols: 4,
+            eights_are_wild: false,
+            vanilla_layout: false,
+        },
         slots: Vec::new(),
         locks: Vec::new(),
         pipe_pairs: Vec::new(),

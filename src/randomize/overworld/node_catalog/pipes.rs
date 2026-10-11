@@ -5,7 +5,7 @@ use std::collections::HashMap;
 
 use crate::rom::Rom;
 
-use crate::randomize::rom_data::{self, Pos, WORLDS};
+use crate::randomize::rom_data::{self, WORLDS};
 
 // ---------------------------------------------------------------------------
 // Pipe pair matching
@@ -20,7 +20,6 @@ use crate::randomize::rom_data::{self, Pos, WORLDS};
 pub(super) fn build_pipe_map(
     rom: &Rom,
     world_idx: usize,
-    entry_pos: &[Pos],
     pipe_entries_by_obj: &HashMap<u16, Vec<usize>>,
     spiral_entries: &[usize],
     dest_indices: &[usize],
@@ -48,10 +47,12 @@ pub(super) fn build_pipe_map(
         pairs.push((sorted[0], sorted[1]));
     }
 
-    // Match pairs to dest indices by comparing grid positions
+    // Match pairs to dest indices by comparing grid positions. These are the
+    // ROM's positions, not the source map's: which entries form a pipe pair
+    // is a fact about the levels, and a generated map moves the pipes.
     for &(ea, eb) in &pairs {
-        let ea_pos = entry_pos[ea];
-        let eb_pos = entry_pos[eb];
+        let ea_pos = rom_data::entry_grid_position(rom, world, ea);
+        let eb_pos = rom_data::entry_grid_position(rom, world, eb);
 
         for &d in dest_indices {
             let (da, db) = rom_data::read_dest_positions(rom, d);
