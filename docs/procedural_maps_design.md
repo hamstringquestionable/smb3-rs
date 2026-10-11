@@ -326,9 +326,22 @@ special-case the generator.
 2. **Inventory.** *Done 2026-10-11*; results in "Vanilla's shape" below.
    Each world's tile vocabulary and shape statistics, as the generator's
    target.
-3. **W1 generated: paths and rocks.** The renderer and its vanilla oracle test
-   first, then a standalone binary printing ASCII maps, then a `testrom` flag,
-   then the censuses. (W1 has no pipe pairs.)
+   **Groundwork after the inventory** (*done 2026-10-11*, byte-identical):
+   pipe pairing reads the ROM again, since which entries pair is identity
+   and a generated map moves pipes; the vanilla blank-tile overrides and
+   island cells apply only to grids with `Grid::vanilla_layout` set; and the
+   writer writes every kept entry whose map position differs from the ROM's
+   (`write_kept_entry_positions`, which replaced the swap-only
+   `write_swapped_world_entries`). **Left for the first generated world**,
+   because nothing exercises them before one exists: choosing the source per
+   world; Hammer Bro sprites (require Hammer Bro shuffle on, or have the
+   generator place them); and the airship *sprite*, which only moves for
+   worlds Start ↔ Airship swap flipped (`move_airship_sprites`), so a
+   generated airship needs the same move.
+3. **W1 generated: paths and rocks.** In this order: the layout generator,
+   judged on **ASCII layouts** from an ignored test before anything touches
+   tiles or the ROM; then the renderer and its vanilla oracle test; then a
+   `testrom` flag and the censuses. (W1 has no pipe pairs.)
 4. **A world with pipes** (W2 or W4).
 5. **W3: water and canoe.** Islands are the biggest new mechanic, so they get
    their own milestone.
