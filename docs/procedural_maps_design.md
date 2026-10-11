@@ -239,8 +239,8 @@ Vanilla water is one of three things, and the renderer must keep them apart:
    `gaps`; becomes the FX table.
 3. **Canoe water**: crossed by the canoe between docks.
 
-Proving the vanilla round-trip (milestone 2) is where we show we can tell them
-apart.
+The renderer's vanilla oracle test (see "How we know it works") is where we
+show we can tell them apart.
 
 ## Anchors and rules
 
@@ -288,8 +288,20 @@ special-case the generator.
 - **Vanilla source:** seeded output byte-identical before and after the
   refactor (`tests/rom_identity.rs`). This is byte identity used for its proper
   job: "I intended to change nothing, prove it".
-- **Round-trip:** vanilla ROM → `WorldMap` → written back → identical bytes.
-  Proves the struct captures everything a map is.
+- **Renderer oracle:** describe vanilla abstractly (nodes, edges, the three
+  kinds of water), let the renderer draw tiles from that description, and
+  compare against vanilla's real tiles. This separates renderer bugs from
+  generator bugs: once it passes, a generated map that looks wrong is the
+  generator's fault. It covers what a renderer must get right (path and
+  junction tiles, blank nodes, water and shorelines), **not** scenery, which
+  is hand-placed art no rule reproduces. Written alongside the renderer, in
+  the style of `test_theme_matches_every_vanilla_blank`, which already does
+  this for vanilla's 155 blanks.
+
+  *Not* a raw round-trip: `WorldMap` stores raw tiles, so reading vanilla in
+  and writing it back is identical by construction, and milestone 1 already
+  proved it. An earlier draft listed that round-trip as its own milestone; it
+  was dropped on 2026-10-11 for that reason.
 - **Generated source:** never stranded
   (`CENSUS_SEEDS=500 cargo test --release --lib all_world_targets_reachable`),
   and **route choice at least as good as vanilla layouts**
@@ -305,12 +317,12 @@ special-case the generator.
    the vanilla source, readers moved onto it, map edits applied in memory.
    Proven byte-identical by `rom_identity` (100 seeds over 11 arms, including
    one with `more hammer rocks` and `8s are Wild` on).
-2. **Round-trip and inventory.** Decode vanilla into `WorldMap` and write it
-   back byte-identical. Record each world's tile vocabulary (paths, the three
-   water kinds, rocks, scenery) and vanilla's shape statistics (nodes per
-   screen, branching, dead ends, loops) as the generator's target.
-3. **W1 generated: paths and rocks.** A standalone binary printing ASCII maps
-   first, then a `testrom` flag, then the censuses. (W1 has no pipe pairs.)
+2. **Inventory.** Record each world's tile vocabulary (paths, the three water
+   kinds, rocks, scenery) and vanilla's shape statistics (nodes per screen,
+   branching, dead ends, loops) as the generator's target.
+3. **W1 generated: paths and rocks.** The renderer and its vanilla oracle test
+   first, then a standalone binary printing ASCII maps, then a `testrom` flag,
+   then the censuses. (W1 has no pipe pairs.)
 4. **A world with pipes** (W2 or W4).
 5. **W3: water and canoe.** Islands are the biggest new mechanic, so they get
    their own milestone.
