@@ -248,14 +248,19 @@ fn try_once<R: Rng>(
     let mut in_tree: HashSet<Pos> = HashSet::from([start]);
     let mut tree: Vec<(Pos, Pos)> = Vec::new();
 
-    //    First a waypoint: a random spot in the last column, reached by a
-    //    winding path from the start, so every layout spans the screen. Each
-    //    step moves right or toward the waypoint's row, chosen at random.
+    //    First a waypoint, reached by a winding path from the start, so every
+    //    layout reaches the right-hand side. It lands in a staircase in the
+    //    bottom-right corner: on the top row only the last column qualifies,
+    //    and each row further down allows one more column in from the right.
+    //    Each step of the path moves right or toward the waypoint's row,
+    //    chosen at random.
     // From the ordered lattice, never the set: a HashSet iterates in a
     // different order every run, which made the same seed draw different maps.
     let last_col = cells.iter().map(|p| p.1).max()?;
-    let column: Vec<Pos> = cells.iter().copied().filter(|p| p.1 == last_col).collect();
-    let waypoint = *column.choose(rng)?;
+    let first_row = cells.iter().map(|p| p.0).min()?;
+    let corner: Vec<Pos> =
+        cells.iter().copied().filter(|&(r, c)| (last_col - c) / 2 <= (r - first_row) / 2).collect();
+    let waypoint = *corner.choose(rng)?;
     let mut at = start;
     while at != waypoint {
         let mut steps = Vec::new();
