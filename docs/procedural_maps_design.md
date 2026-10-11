@@ -334,10 +334,10 @@ special-case the generator.
    (`write_kept_entry_positions`, which replaced the swap-only
    `write_swapped_world_entries`). **Left for the first generated world**,
    because nothing exercises them before one exists: choosing the source per
-   world; Hammer Bro sprites (require Hammer Bro shuffle on, or have the
-   generator place them); and the airship *sprite*, which only moves for
-   worlds Start ↔ Airship swap flipped (`move_airship_sprites`), so a
-   generated airship needs the same move.
+   world; and Hammer Bro sprites (require Hammer Bro shuffle on, or have the
+   generator place them). The airship needs no sprite: in W1–W7 there is no
+   airship map sprite to move, because the randomizer disables the airship
+   cutscene and autoscroller (per the project owner, 2026-10-11).
 3. **W1 generated: paths and rocks.** In this order: the layout generator,
    judged on **ASCII layouts** from an ignored test before anything touches
    tiles or the ROM; then the renderer and its vanilla oracle test; then a

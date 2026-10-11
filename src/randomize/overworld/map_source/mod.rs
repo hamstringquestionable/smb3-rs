@@ -10,6 +10,8 @@
 //! see `docs/procedural_maps_design.md`.
 
 #[cfg(test)]
+mod generated;
+#[cfg(test)]
 mod inventory;
 pub(crate) mod vanilla;
 
