@@ -19,7 +19,7 @@ use rand::Rng;
 use rand::seq::{IndexedRandom, SliceRandom};
 
 use crate::randomize::overworld::pickup::blank_tile_from_neighbors;
-use crate::randomize::rom_data::{AIRSHIP_ENTRIES, Pos, TILE_START, VALID_BLANK_TILES};
+use crate::randomize::rom_data::{AIRSHIP_ENTRIES, Grid, Pos, TILE_START, VALID_BLANK_TILES};
 
 use super::WorldMap;
 
@@ -190,6 +190,8 @@ pub(crate) fn world_map<R: Rng>(
     let air = vanilla.entry_pos[airship_idx];
     grid.set(layout.target.0 - 1, layout.target.1, old.get(air.0 - 1, air.1));
 
+    decorate(&mut grid, rng);
+
     Some(WorldMap {
         grid,
         entry_pos,
@@ -200,6 +202,110 @@ pub(crate) fn world_map<R: Rng>(
     })
 }
 
+/// Plain ground (all four quadrants blank): W1's clearings.
+const CLEARING: u8 = 0x42;
+/// A rock that never breaks. It looks exactly like a breakable one, so it is
+/// only ever placed where no path or node touches it.
+const DECO_ROCK: u8 = 0x53;
+
+/// Scenery (milestone 3, decorations D1 + D2). The empty cells, still all
+/// bush fill, fall into separate regions; each region big enough gets a few
+/// clusters of clearing or rock, grown as a blob from a random cell. Tiny
+/// regions, usually wedged between paths, stay bushes.
+fn decorate<R: Rng>(grid: &mut Grid, rng: &mut R) {
+    for region in empty_regions(grid) {
+        if region.len() < MIN_DECORATED_REGION {
+            continue;
+        }
+        for _ in 0..1 + region.len() / CELLS_PER_CLUSTER {
+            let rock = rng.random_bool(ROCK_SHARE);
+            let allowed: Vec<Pos> = region
+                .iter()
+                .copied()
+                .filter(|&p| grid.get(p.0, p.1) == FILL && (!rock || clear_of_paths(grid, p)))
+                .collect();
+            let Some(&seed) = allowed.choose(rng) else { continue };
+            let size = rng.random_range(2..=MAX_CLUSTER.min(region.len() / 2).max(2));
+            let tile = if rock { DECO_ROCK } else { CLEARING };
+            let mut cluster = vec![seed];
+            while cluster.len() < size {
+                let next: Vec<Pos> = allowed
+                    .iter()
+                    .copied()
+                    .filter(|p| !cluster.contains(p) && cluster.iter().any(|&c| touching(c, *p)))
+                    .collect();
+                let Some(&p) = next.choose(rng) else { break };
+                cluster.push(p);
+            }
+            for (r, c) in cluster {
+                grid.set(r, c, tile);
+            }
+        }
+    }
+}
+
+/// Regions smaller than this stay bushes.
+const MIN_DECORATED_REGION: usize = 3;
+/// One more cluster per this many cells of region.
+const CELLS_PER_CLUSTER: usize = 12;
+/// Most cells one cluster grows to.
+const MAX_CLUSTER: usize = 6;
+/// Share of clusters that are rock piles rather than clearings. Vanilla W1
+/// has 9 rock cells to 11 clearing cells.
+const ROCK_SHARE: f64 = 0.4;
+
+fn touching(a: Pos, b: Pos) -> bool {
+    a.0.abs_diff(b.0) + a.1.abs_diff(b.1) == 1
+}
+
+/// The groups of bush-fill cells joined side to side, in grid order. The
+/// first and last columns are the frame and never part of one.
+fn empty_regions(grid: &Grid) -> Vec<Vec<Pos>> {
+    let mut seen = vec![vec![false; grid.cols]; grid.rows()];
+    let mut regions = Vec::new();
+    for r in 0..grid.rows() {
+        for c in 1..grid.cols - 1 {
+            if seen[r][c] || grid.get(r, c) != FILL {
+                continue;
+            }
+            seen[r][c] = true;
+            let mut region = vec![(r, c)];
+            let mut i = 0;
+            while i < region.len() {
+                let (pr, pc) = region[i];
+                i += 1;
+                let around = [
+                    pr.checked_sub(1).map(|r| (r, pc)),
+                    (pr + 1 < grid.rows()).then_some((pr + 1, pc)),
+                    (pc > 1).then(|| (pr, pc - 1)),
+                    (pc + 2 < grid.cols).then_some((pr, pc + 1)),
+                ];
+                for (nr, nc) in around.into_iter().flatten() {
+                    if !seen[nr][nc] && grid.get(nr, nc) == FILL {
+                        seen[nr][nc] = true;
+                        region.push((nr, nc));
+                    }
+                }
+            }
+            regions.push(region);
+        }
+    }
+    regions
+}
+
+/// No neighbour of `p` is a path or a node: every one is scenery or frame.
+fn clear_of_paths(grid: &Grid, (r, c): Pos) -> bool {
+    let around = [
+        r.checked_sub(1).map(|r| (r, c)),
+        (r + 1 < grid.rows()).then_some((r + 1, c)),
+        c.checked_sub(1).map(|c| (r, c)),
+        (c + 1 < grid.cols).then_some((r, c + 1)),
+    ];
+    around.into_iter().flatten().all(|(nr, nc)| {
+        let t = grid.get(nr, nc);
+        t == FILL || t == CLEARING || t == DECO_ROCK || nc == 0 || nc + 1 == grid.cols
+    })
+}
 /// Nodes sit two tiles apart, because a map move is two tiles: on the start's
 /// row and column parity. Column 0 is left out: it is where the start's
 /// entrance path runs off the edge of the map.
@@ -592,5 +698,51 @@ fn generated_w1_is_deterministic() {
         let (a, b) = (draw(), draw());
         assert_eq!(a.grid.tiles, b.grid.tiles, "seed {seed}: two draws differ");
         assert_eq!(a.entry_pos, b.entry_pos, "seed {seed}: two draws place entries differently");
+    }
+}
+
+/// Generated W1 as drawn tiles, before the builder places anything:
+/// `.` bush, ` ` clearing, `^` rock (decorative), `-` `|` paths, `R` breakable
+/// rock, `o` node, `S` start, `A` airship, `a` castle top, `#` frame.
+///
+/// ```sh
+/// cargo test --release --lib generated_w1_tiles -- --ignored --nocapture
+/// ```
+#[test]
+#[ignore]
+fn generated_w1_tiles() {
+    use rand::SeedableRng;
+    use rand_chacha::ChaCha8Rng;
+
+    let Some(rom) = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes")
+        .ok()
+        .and_then(|d| crate::rom::Rom::from_bytes(&d).ok())
+    else {
+        eprintln!("SKIP: requires the ROM, which is not included in the repo");
+        return;
+    };
+    let vanilla = super::vanilla::load(&rom, false, false);
+    let seeds: u64 = std::env::var("LAYOUT_SEEDS").ok().and_then(|s| s.parse().ok()).unwrap_or(6);
+    for seed in 1..=seeds {
+        let map = world_map(&vanilla[0], 0, &mut ChaCha8Rng::seed_from_u64(seed)).unwrap();
+        println!("\n--- seed {seed}");
+        for r in 0..map.grid.rows() {
+            let row: String = (0..map.grid.cols)
+                .map(|c| match map.grid.get(r, c) {
+                    FILL => '.',
+                    CLEARING => ' ',
+                    DECO_ROCK => '^',
+                    0x45 | 0x49 => '-',
+                    0x46 => '|',
+                    0x51 | 0x52 => 'R',
+                    0x02 => '#',
+                    TILE_START => 'S',
+                    0xC9 => 'A',
+                    0xC8 => 'a',
+                    _ => 'o',
+                })
+                .collect();
+            println!("  {row}");
+        }
     }
 }
