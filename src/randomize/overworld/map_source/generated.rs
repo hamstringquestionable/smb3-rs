@@ -39,6 +39,9 @@ pub(super) struct Layout {
     pub(super) start: Pos,
     /// The airship (the castle in W8).
     pub(super) target: Pos,
+    /// Each loop link's length: the nodes around the loop it closed when it
+    /// was added. 4 is a square, which gives the player no real choice.
+    pub(super) loop_sizes: Vec<usize>,
 }
 
 /// The targets a layout must meet, or it is thrown away and redrawn.
@@ -68,6 +71,9 @@ pub(super) const W1_TARGETS: Targets = Targets {
 /// How often the tree grows from its newest node rather than from any node.
 /// A first guess, to be judged on the ASCII layouts.
 const EXTEND_NEWEST: f64 = 0.75;
+
+/// How many of the farthest-apart candidate pairs a loop link is picked from.
+const FARTHEST_FEW: usize = 3;
 
 /// Draw layouts until one meets `targets`, or give up after `attempts`.
 pub(super) fn generate<R: Rng>(
@@ -155,10 +161,25 @@ fn try_once<R: Rng>(
             }
         }
     }
+    //    Prefer pairs far apart along the links already there: a link between
+    //    nodes 8 hops apart is a real second route, while one between nodes 3
+    //    hops apart only closes a square and offers no choice. Pick among the
+    //    farthest few, so layouts still vary.
     let loops = rng.random_range(targets.loops.0..=targets.loops.1);
-    let extra: Vec<(Pos, Pos)> = spare.choose_multiple(rng, loops).copied().collect();
-    if extra.len() < loops {
-        return None;
+    let mut extra: Vec<(Pos, Pos)> = Vec::new();
+    let mut loop_sizes: Vec<usize> = Vec::new();
+    for _ in 0..loops {
+        let current: Vec<(Pos, Pos, Link)> =
+            tree.iter().chain(&extra).map(|&(a, b)| (a, b, Link::Path)).collect();
+        let mut scored: Vec<(usize, (Pos, Pos))> = spare
+            .iter()
+            .filter(|p| !extra.contains(p))
+            .map(|&(a, b)| (path_hops(a, &current).get(&b).copied().unwrap_or(0), (a, b)))
+            .collect();
+        scored.sort_by(|x, y| y.0.cmp(&x.0).then(x.1.cmp(&y.1)));
+        let &(hops, pair) = scored.get(..FARTHEST_FEW.min(scored.len()))?.choose(rng)?;
+        loop_sizes.push(hops + 1);
+        extra.push(pair);
     }
 
     // 3. Some extra links become rocks. Never a tree link, so never required.
@@ -189,7 +210,7 @@ fn try_once<R: Rng>(
         return None;
     }
 
-    Some(Layout { rows, cols, nodes, links, start, target })
+    Some(Layout { rows, cols, nodes, links, start, target, loop_sizes })
 }
 
 fn degrees(nodes: &[Pos], links: &[(Pos, Pos, Link)]) -> HashMap<Pos, usize> {
@@ -247,21 +268,33 @@ impl Layout {
 
     /// The figures the inventory reports for a map, on this layout.
     pub(super) fn summary(&self) -> String {
-        let degree = degrees(&self.nodes, &self.links);
-        let dead = degree.iter().filter(|&(&n, &d)| d == 1 && n != self.start).count();
-        let junctions = degree.values().filter(|&&d| d >= 3).count();
-        let rocks = self.links.iter().filter(|l| l.2 == Link::Rock).count();
-        let loops = self.links.len() + 1 - self.nodes.len();
         let hops = path_hops(self.start, &self.links).get(&self.target).copied();
         format!(
-            "nodes {}  loops {loops}  dead ends {dead}  junctions {junctions}  rocks {rocks}  \
-             start->airship {}",
+            "nodes {}  loops {} {:?}  dead ends {}  junctions {}  rocks {}  start->airship {}",
             self.nodes.len(),
+            self.links.len() + 1 - self.nodes.len(),
+            self.loop_sizes,
+            self.dead_ends(),
+            self.junctions(),
+            self.links.iter().filter(|l| l.2 == Link::Rock).count(),
             hops.map_or("-".to_string(), |h| h.to_string()),
         )
     }
+
+    fn dead_ends(&self) -> usize {
+        degrees(&self.nodes, &self.links)
+            .iter()
+            .filter(|&(&n, &d)| d == 1 && n != self.start)
+            .count()
+    }
+
+    fn junctions(&self) -> usize {
+        degrees(&self.nodes, &self.links).values().filter(|&&d| d >= 3).count()
+    }
 }
 
+/// Prints each seed's layout as ASCII (`LAYOUT_SEEDS`, default 10). Past 20
+/// seeds it prints only the tally, for comparing generator changes.
 #[test]
 #[ignore]
 fn generated_layouts() {
@@ -282,19 +315,38 @@ fn generated_layouts() {
     println!("Vanilla W1: nodes 21  loops 2  dead ends 3  junctions 5  rocks 1  start->airship 9");
 
     let seeds: u64 = std::env::var("LAYOUT_SEEDS").ok().and_then(|s| s.parse().ok()).unwrap_or(10);
-    let mut failed = 0;
+    let quiet = seeds > 20;
+    let (mut failed, mut built) = (0, 0);
+    let (mut loops, mut squares, mut loop_total, mut junctions) = (0, 0, 0, 0);
     for seed in 1..=seeds {
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
         match generate(w1.rows(), w1.cols, start, W1_TARGETS, 1000, &mut rng) {
             Some(layout) => {
-                println!("\n--- seed {seed}: {}", layout.summary());
-                print!("{}", layout.ascii());
+                built += 1;
+                loops += layout.loop_sizes.len();
+                squares += layout.loop_sizes.iter().filter(|&&s| s == 4).count();
+                loop_total += layout.loop_sizes.iter().sum::<usize>();
+                junctions += layout.junctions();
+                if !quiet {
+                    println!("\n--- seed {seed}: {}", layout.summary());
+                    print!("{}", layout.ascii());
+                }
             }
             None => {
                 failed += 1;
-                println!("\n--- seed {seed}: no layout in 1000 attempts");
+                if !quiet {
+                    println!("\n--- seed {seed}: no layout in 1000 attempts");
+                }
             }
         }
     }
     println!("\n{failed} of {seeds} seeds found no layout");
+    if built > 0 && loops > 0 {
+        println!(
+            "loops: {loops}, squares {:.0}%, mean loop size {:.1}; mean junctions {:.1}",
+            100.0 * squares as f64 / loops as f64,
+            loop_total as f64 / loops as f64,
+            junctions as f64 / built as f64,
+        );
+    }
 }
