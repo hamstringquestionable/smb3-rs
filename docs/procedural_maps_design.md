@@ -354,6 +354,20 @@ special-case the generator.
    2): works.** Not yet: the renderer oracle test, the route census.
    **Decorations come next, as their own step, before anything
    ships** (project owner).
+
+   **The waypoint, and how it generalizes.** Before the tree grows, a winding
+   path runs from the start to a waypoint, so a layout cannot clump around
+   the start. For W1 (start top-left) the waypoint lands in a bottom-right
+   staircase: the last column on the top row, one more column in per row
+   down. That is roughly "far from the start, measured diagonally" (row plus
+   column distance), which is the form to switch to when either of these
+   arrives, since it needs no notion of right or bottom:
+   - **a start that moves**: the far region moves with it;
+   - **a wider world** (W3, W6: 3 screens; W8: 4): one waypoint per screen,
+     chained, each far from the one before, so no screen is left bare.
+   Not identical to today's rule (pure distance would also allow the last
+   three spots of the top row), so switching moves W1's output; do it when
+   one of the two cases needs it (project owner, 2026-10-11).
 4. **A world with pipes** (W2 or W4).
 5. **W3: water and canoe.** Islands are the biggest new mechanic, so they get
    their own milestone.
