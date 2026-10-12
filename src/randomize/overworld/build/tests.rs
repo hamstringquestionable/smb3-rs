@@ -145,6 +145,19 @@ fn census_build(rom: &Rom, seed: u64) -> BuildResult {
     let rom = apply_qol_variant(rom, arm == CensusArm::HammerRocks, arm == CensusArm::EightsWild);
     let mut rng = ChaCha8Rng::seed_from_u64(seed);
     let mut catalog = NodeCatalog::build(&rom, false);
+    // CENSUS_GENERATE=1: World 1 is a generated map (the hidden
+    // `generated_worlds` option), drawn from its own RNG so every other draw
+    // of the seed is unchanged.
+    if std::env::var("CENSUS_GENERATE").is_ok() {
+        let mut maps = catalog.maps.clone();
+        let mut gen_rng = ChaCha8Rng::seed_from_u64(seed ^ 0x6E6E_5741);
+        if let Some(w1) =
+            crate::randomize::overworld::map_source::generated::world_map(&maps[0], 0, &mut gen_rng)
+        {
+            maps[0] = w1;
+            catalog = NodeCatalog::from_maps(&rom, maps, false);
+        }
+    }
     let mut swap_rng = ChaCha8Rng::seed_from_u64(seed);
     crate::randomize::overworld::start_airship_swap::pick_swaps(&mut catalog, &mut swap_rng);
     let pickup = overworld::pickup::pick_up(

@@ -44,9 +44,14 @@ const W5_IDX: usize = 4;
 /// that world's Start and Airship entry `grid_pos` values in the catalog, and
 /// record the swap on `catalog.start_airship_swapped[wi]`. Downstream phases
 /// pick up the new positions automatically.
+///
+/// A generated world is never swapped: its map was drawn around its own
+/// start and airship, and the swap's castle top lands on the cell above the
+/// old start, which there can be a path. Its coin is still flipped, so the
+/// other worlds' swaps do not change.
 pub(crate) fn pick_swaps<R: Rng>(catalog: &mut NodeCatalog, rng: &mut R) {
     for wi in 0..7 {
-        if !rng.random::<bool>() {
+        if !rng.random::<bool>() || !catalog.maps[wi].grid.vanilla_layout {
             continue;
         }
         let start_idx = catalog
