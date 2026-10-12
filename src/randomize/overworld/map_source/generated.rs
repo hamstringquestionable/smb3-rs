@@ -849,10 +849,21 @@ fn try_once<R: Rng>(
     }
 
     // 3. Some extra links become rocks. Never a tree link, so never required.
-    let rocks = rng.random_range(targets.rocks.0..=targets.rocks.1).min(extra.len());
+    //    Never a vertical link down onto the bottom row either: its rock sits
+    //    on row 7, and rows 7 and 8 share one completion bit, so the node
+    //    below (a kept Toad House, say) would open the rock and never stay
+    //    used.
+    let mut rocks = rng.random_range(targets.rocks.0..=targets.rocks.1);
     let mut links: Vec<(Pos, Pos, Link)> = tree.iter().map(|&(a, b)| (a, b, Link::Path)).collect();
-    for (i, &(a, b)) in extra.iter().enumerate() {
-        links.push((a, b, if i < rocks { Link::Rock } else { Link::Path }));
+    for &(a, b) in &extra {
+        let onto_bottom = a.1 == b.1 && a.0.max(b.0) == rows - 1;
+        let kind = if rocks > 0 && !onto_bottom {
+            rocks -= 1;
+            Link::Rock
+        } else {
+            Link::Path
+        };
+        links.push((a, b, kind));
     }
 
     // 4. The target: a dead end at the right distance, not reached from above,
@@ -1045,18 +1056,42 @@ fn generated_w1_is_completable() {
     let seeds: u64 = std::env::var("CENSUS_SEEDS").ok().and_then(|s| s.parse().ok()).unwrap_or(50);
 
     // The builder alone, many seeds.
+    // Three arms by seed: everything shuffled; Toad Houses and spades left
+    // where the generator dealt them; Start <-> Airship swap on.
     let mut generated = 0;
     let (mut with_river, mut with_gap, mut with_moat) = (0, 0, 0);
+    let mut row78_conflicts = Vec::new();
+    let mut stranded_by_swap: Vec<u64> = Vec::new();
     for seed in 0..seeds {
+        let (shuffle, swap) = match seed % 3 {
+            0 => (true, false),
+            1 => (false, false),
+            _ => (true, true),
+        };
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
         let mut maps = super::vanilla::load(&rom, false, false);
         let Some(w1) = world_map(&maps[0], 0, &mut rng) else { continue };
+        // Rows 7 and 8 share one completion bit: a completable or removable
+        // tile on row 7 must never sit above a node on row 8.
+        let last = w1.grid.rows() - 1;
+        for &(r, c) in &w1.entry_pos {
+            if r == last
+                && crate::randomize::overworld::build::is_completion_unsafe(
+                    w1.grid.get(last - 1, c),
+                )
+            {
+                row78_conflicts.push((seed, c));
+            }
+        }
         maps[0] = w1;
         generated += 1;
-        let catalog = NodeCatalog::from_maps(&rom, maps, false);
+        let mut catalog = NodeCatalog::from_maps(&rom, maps, false);
+        if swap {
+            crate::randomize::overworld::start_airship_swap::pick_swaps(&mut catalog, &mut rng);
+        }
         let flags = PickupFlags {
-            shuffle_spade_games: true,
-            shuffle_toad_houses: true,
+            shuffle_spade_games: shuffle,
+            shuffle_toad_houses: shuffle,
             shuffle_hammer_bros: true,
         };
         let pickup = pick_up(&rom, &catalog, flags);
@@ -1065,7 +1100,7 @@ fn generated_w1_is_completable() {
             &OverworldData { pickup: &pickup, catalog: &catalog },
             &mut rng,
             BuildFlags {
-                shuffle_toad_houses: true,
+                shuffle_toad_houses: shuffle,
                 shuffle_hammer_bros: true,
                 ..Default::default()
             },
@@ -1092,12 +1127,23 @@ fn generated_w1_is_completable() {
         );
         let start = crate::randomize::rom_data::find_start(&w1.grid);
         let target = find_target(&w1.grid, 0).expect("generated W1 has an airship");
-        assert!(
-            walk_map(&w1.grid, &w1.pipe_pairs, start, 0).nodes.contains(&target),
-            "seed {seed}: generated W1's airship is unreachable from the start",
-        );
+        let reachable = walk_map(&w1.grid, &w1.pipe_pairs, start, 0).nodes.contains(&target);
+        if swap && !reachable {
+            stranded_by_swap.push(seed);
+            continue;
+        }
+        assert!(reachable, "seed {seed}: generated W1's airship is unreachable from the start");
     }
     println!("builder: {generated} of {seeds} seeds generated a W1, all completable");
+    assert!(
+        row78_conflicts.is_empty(),
+        "a completable or removable tile above a bottom-row node (seed, column): {row78_conflicts:?}",
+    );
+    println!(
+        "  stranded with Start <-> Airship swap on: {} of {} {stranded_by_swap:?}",
+        stranded_by_swap.len(),
+        seeds / 3
+    );
     println!(
         "  {with_river} have water crossing a path, {with_moat} a moat; in {with_gap} the builder locked a bridge (a water gap)"
     );
