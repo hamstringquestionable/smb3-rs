@@ -310,17 +310,6 @@ pub(crate) const MAX_WANDS: u8 = 7;
 #[cfg(test)]
 const BOX_CORNER_TILES: [u8; 4] = [0x80, 0x81, 0x82, 0x83];
 
-/// File offset of pattern-table tile `$80`. The map BG set is pages
-/// `$14`-`$17` — one 4KB region indexed `$00`-`$FF` — so `$80` is half way in.
-#[cfg(test)]
-const MAP_CHR_BASE: usize = 0x40010 + 0x14 * 0x400;
-
-/// File offset of one map BG pattern-table tile.
-#[cfg(test)]
-const fn map_chr_offset(tile: u8) -> usize {
-    MAP_CHR_BASE + tile as usize * 16
-}
-
 // --- Application --------------------------------------------------------
 
 /// Write the wand gate: its graphics, its tile, and the two routines that
@@ -387,7 +376,7 @@ const fn jmp_free(opcode: u8, target: u16) -> [u8; 3] {
 mod tests {
     use super::*;
     use crate::randomize::rom_data::asm;
-    use crate::randomize::rom_data::{WAND_GATE_TILE, map_tile_offset};
+    use crate::randomize::rom_data::{WAND_GATE_TILE, map_chr_offset, map_tile_offset};
 
     const K: u8 = 3;
 

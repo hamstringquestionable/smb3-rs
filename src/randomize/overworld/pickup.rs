@@ -13,7 +13,9 @@ use crate::rom::Rom;
 
 use crate::randomize::overworld::map_source::vanilla::{BLANK_TILE_OVERRIDES, ISLAND_POSITIONS};
 use crate::randomize::overworld::node_catalog::{CatalogEntry, NodeCatalog, NodeKind};
-use crate::randomize::rom_data::{self, Grid, Pos, VALID_BLANK_TILES, VALID_HORZ, VALID_VERT};
+use crate::randomize::rom_data::{
+    self, Grid, Pos, ROCK_BREAK_H, ROCK_BREAK_V, VALID_BLANK_TILES, VALID_HORZ, VALID_VERT,
+};
 
 // ---------------------------------------------------------------------------
 // Output types
@@ -200,10 +202,6 @@ fn pick_up_world(
 // Blank tile selection
 // ---------------------------------------------------------------------------
 
-/// Breakable rocks: `$51` opens to a horizontal path, `$52` to a vertical one.
-const ROCK_HORZ: u8 = 0x51;
-const ROCK_VERT: u8 = 0x52;
-
 /// Blank-tile theme tuple: `(horiz, vert, both, none)` covering the four
 /// combinations of valid-path neighbors.
 const THEME_STANDARD: (u8, u8, u8, u8) = (0x47, 0x48, 0x4A, 0x44);
@@ -271,8 +269,8 @@ pub(super) fn blank_tile_from_neighbors(
     // A breakable rock leads somewhere once broken, so the node draws its path
     // stub into it, the way the W1 shortcut's hand-placed `$4A` does. Only
     // the breakable rocks: the decorative `$53` looks the same but is a wall.
-    let has_h = h_tile.is_some_and(|t| VALID_HORZ.contains(&t) || t == ROCK_HORZ);
-    let has_v = v_tile.is_some_and(|t| VALID_VERT.contains(&t) || t == ROCK_VERT);
+    let has_h = h_tile.is_some_and(|t| VALID_HORZ.contains(&t) || t == ROCK_BREAK_H);
+    let has_v = v_tile.is_some_and(|t| VALID_VERT.contains(&t) || t == ROCK_BREAK_V);
 
     // The connecting path, with the strip paths whose edge facing this cell
     // is water: its right edge for the left neighbor, its bottom for the one

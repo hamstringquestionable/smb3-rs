@@ -49,6 +49,25 @@ pub(crate) const WATER_GAP_TILE: u8 = 0x9D;
 /// The bridge tile a water gap is cut from and restored to.
 pub(crate) const BRIDGE_TILE: u8 = 0xB3;
 
+/// Breakable rocks (Southbird `TILE_ROCKBREAKH` / `TILE_ROCKBREAKV`): `$51`
+/// opens to a horizontal path, `$52` to a vertical one. The permanent rock
+/// `$53` looks the same.
+pub(crate) const ROCK_BREAK_H: u8 = 0x51;
+pub(crate) const ROCK_BREAK_V: u8 = 0x52;
+
+/// File offset of the map's background pattern-table tile `$00`, frame 0. The
+/// map BG set is CHR pages `$14`-`$17` for every world, one 4KB run indexed
+/// `$00`-`$FF` (`docs/smb3_rom_reference.md` § World-map graphics).
+#[cfg(test)]
+pub(crate) const MAP_CHR_BASE: usize = 0x40010 + 0x14 * 0x400;
+
+/// File offset of one map background pattern-table tile (16 bytes, two
+/// bit planes).
+#[cfg(test)]
+pub(crate) const fn map_chr_offset(tile: u8) -> usize {
+    MAP_CHR_BASE + tile as usize * 16
+}
+
 /// A lock tile — opened by clearing its fortress, or by the hammer when
 /// `hammer_breaks_locks` is on.
 pub(crate) fn is_lock(tile: u8) -> bool {

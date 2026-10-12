@@ -9,9 +9,10 @@
 //! ```
 //!
 //! [`world_map`] then draws it: frame and bush fill from the vanilla world, paths
-//! and rocks from the links, and each pointer entry on a node showing its own
-//! tile. No scenery yet (`docs/procedural_maps_design.md`, milestone 3).
-//! Reached only through the hidden `generated_worlds` option.
+//! and rocks from the links, each pointer entry on a node showing its own
+//! tile, then water (lakes, a river, a moat) and decoration clusters
+//! (`docs/procedural_maps_design.md`, milestone 3). Reached only through the
+//! hidden `generated_worlds` option.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -19,13 +20,16 @@ use rand::Rng;
 use rand::seq::{IndexedRandom, SliceRandom};
 
 use crate::randomize::overworld::pickup::blank_tile_from_neighbors;
-use crate::randomize::rom_data::{AIRSHIP_ENTRIES, Grid, Pos, TILE_START, VALID_BLANK_TILES};
+use crate::randomize::rom_data::{
+    AIRSHIP_ENTRIES, BRIDGE_TILE, Grid, Pos, ROCK_BREAK_H, ROCK_BREAK_V, TILE_START,
+    VALID_BLANK_TILES,
+};
 
 use super::WorldMap;
 
 /// What a link between two neighbouring nodes is.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(super) enum Link {
+enum Link {
     /// An ordinary path.
     Path,
     /// A rock a hammer opens. Only ever a shortcut: the paths alone always
@@ -39,38 +43,38 @@ pub(super) enum Link {
 // view and the tally, which are test-only; the layout carries them so a test
 // judges exactly what production generated.
 #[cfg_attr(not(test), allow(dead_code))]
-pub(super) struct Layout {
-    pub(super) rows: usize,
-    pub(super) cols: usize,
+struct Layout {
+    rows: usize,
+    cols: usize,
     /// Every node, start and target included.
-    pub(super) nodes: Vec<Pos>,
+    nodes: Vec<Pos>,
     /// Links between nodes two tiles apart, each pair stored once.
-    pub(super) links: Vec<(Pos, Pos, Link)>,
-    pub(super) start: Pos,
+    links: Vec<(Pos, Pos, Link)>,
+    start: Pos,
     /// The airship (the castle in W8).
-    pub(super) target: Pos,
+    target: Pos,
     /// Each loop link's length: the nodes around the loop it closed when it
     /// was added. 4 is a square, which gives the player no real choice.
-    pub(super) loop_sizes: Vec<usize>,
+    loop_sizes: Vec<usize>,
 }
 
 /// The targets a layout must meet, or it is thrown away and redrawn.
 #[derive(Clone, Copy, Debug)]
-pub(super) struct Targets {
+struct Targets {
     /// The world's pointer-entry count: one node per entry. Spare nodes hold
     /// Hammer Bro levels, as in vanilla.
-    pub(super) nodes: usize,
+    nodes: usize,
     /// Links added on top of a tree. Each one is exactly one loop.
-    pub(super) loops: (usize, usize),
-    pub(super) dead_ends: (usize, usize),
+    loops: (usize, usize),
+    dead_ends: (usize, usize),
     /// Fewest hops from the start to the target, on paths alone.
-    pub(super) start_to_target: (usize, usize),
-    pub(super) rocks: (usize, usize),
+    start_to_target: (usize, usize),
+    rocks: (usize, usize),
 }
 
 /// The proposal agreed for W1 on 2026-10-11. Vanilla W1 is 21 nodes, 2
 /// loops, 3 dead ends, 9 hops, 1 rock shortcut.
-pub(super) const W1_TARGETS: Targets = Targets {
+const W1_TARGETS: Targets = Targets {
     nodes: 21,
     loops: (3, 5),
     dead_ends: (2, 5),
@@ -90,7 +94,7 @@ const FARTHEST_FEW: usize = 3;
 const MAX_SQUARES: usize = 1;
 
 /// Draw layouts until one meets `targets`, or give up after `attempts`.
-pub(super) fn generate<R: Rng>(
+fn generate<R: Rng>(
     rows: usize,
     cols: usize,
     start: Pos,
@@ -101,12 +105,13 @@ pub(super) fn generate<R: Rng>(
     (0..attempts).find_map(|_| try_once(rows, cols, start, targets, rng))
 }
 
-/// The dancing bush (`TILE_DANCINGBUSH`): what every empty cell becomes until
-/// there is scenery. Vanilla W1 fills its empty space with it too.
+/// The dancing bush (`TILE_DANCINGBUSH`): every empty cell starts as it, and
+/// what water and decoration leave stays it. Vanilla W1 fills its empty space
+/// with it too.
 const FILL: u8 = 0xB4;
 /// Path and rock tiles for a link, by direction: `(horizontal, vertical)`.
 const PATH: (u8, u8) = (0x45, 0x46);
-const ROCK: (u8, u8) = (0x51, 0x52);
+const ROCK: (u8, u8) = (ROCK_BREAK_H, ROCK_BREAK_V);
 
 /// Generate a new map for `world_idx`, drawn over `vanilla` (that world's
 /// vanilla map, which supplies the frame, the start, and each entry's tile).
@@ -192,7 +197,10 @@ pub(crate) fn world_map<R: Rng>(
 
     // Water, all drawn together at the end: lakes in the big open regions,
     // most of the time a river joining two lakes, sometimes a moat. Then the
-    // decoration clusters fill what is left.
+    // decoration clusters fill what is left. The order matters: each step
+    // sees a cell as free only while it is still bush `FILL`, and water marks
+    // its cells `WATER_PENDING` as it is added, so it is never decorated over
+    // and decorative rocks keep clear of it.
     let mut water = Water::default();
     for region in empty_regions(&grid) {
         if region.len() >= LAKE_MIN_REGION && rng.random_bool(LAKE_CHANCE) {
@@ -244,17 +252,7 @@ fn decorate<R: Rng>(grid: &mut Grid, rng: &mut R) {
             let Some(&seed) = allowed.choose(rng) else { continue };
             let size = rng.random_range(2..=MAX_CLUSTER.min(region.len() / 2).max(2));
             let tile = if rock { DECO_ROCK } else { CLEARING };
-            let mut cluster = vec![seed];
-            while cluster.len() < size {
-                let next: Vec<Pos> = allowed
-                    .iter()
-                    .copied()
-                    .filter(|p| !cluster.contains(p) && cluster.iter().any(|&c| touching(c, *p)))
-                    .collect();
-                let Some(&p) = next.choose(rng) else { break };
-                cluster.push(p);
-            }
-            for (r, c) in cluster {
+            for (r, c) in grow_blob(&allowed, seed, size, rng) {
                 grid.set(r, c, tile);
             }
         }
@@ -371,6 +369,31 @@ impl Water {
         self.cells.iter().copied().filter(|&p| water_tile(&self.picture(p)).is_none()).collect()
     }
 
+    /// Add water only if every water cell still has a tile afterwards, and
+    /// mark the new cells taken on the grid; otherwise change nothing.
+    fn try_add(
+        &mut self,
+        grid: &mut Grid,
+        cells: &[Pos],
+        bridges: &[Pos],
+        crossings: &[Pos],
+    ) -> bool {
+        let before = (self.cells.len(), self.bridges.len(), self.crossings.len());
+        self.cells.extend(cells);
+        self.bridges.extend(bridges);
+        self.crossings.extend(crossings);
+        if !self.undrawable().is_empty() {
+            self.cells.truncate(before.0);
+            self.bridges.truncate(before.1);
+            self.crossings.truncate(before.2);
+            return false;
+        }
+        for &(r, c) in cells {
+            grid.set(r, c, WATER_PENDING);
+        }
+        true
+    }
+
     fn draw(&self, grid: &mut Grid) {
         let tiles: Vec<(Pos, u8)> = self
             .cells
@@ -381,7 +404,7 @@ impl Water {
             grid.set(r, c, t);
         }
         for &(r, c) in &self.bridges {
-            grid.set(r, c, BRIDGE);
+            grid.set(r, c, BRIDGE_TILE);
         }
         for &(r, c) in &self.crossings {
             grid.set(r, c, CROSSING);
@@ -389,8 +412,6 @@ impl Water {
     }
 }
 
-/// The bridge over water running north-south, a horizontal path.
-const BRIDGE: u8 = 0xB3;
 /// A vertical path over water running east-west, land at both ends.
 const CROSSING: u8 = 0xBA;
 /// Stands in for a water cell until [`Water::draw`] picks its tile, so later
@@ -405,6 +426,7 @@ const CROSSING_COST: u32 = 6;
 /// Random extra cost per cell, up to this: what makes the river wander.
 const RIVER_NOISE: u32 = 20;
 /// Routes tried, each with fresh noise, before a layout goes without a river.
+/// Lakes grown for the river's ends stay even when no route works.
 const RIVER_ATTEMPTS: usize = 10;
 /// Smallest region a lake for a river's end may be grown in.
 const END_LAKE_REGION: usize = 6;
@@ -425,7 +447,7 @@ fn add_river<R: Rng>(grid: &mut Grid, water: &mut Water, rng: &mut R) {
                 continue;
             }
             for &p in region {
-                let far = near.iter().map(|&q| p.0.abs_diff(q.0) + p.1.abs_diff(q.1)).min();
+                let far = near.iter().map(|&q| manhattan(p, q)).min();
                 spots.push((far.unwrap_or(0), p, i));
             }
         }
@@ -453,19 +475,9 @@ fn add_river<R: Rng>(grid: &mut Grid, water: &mut Water, rng: &mut R) {
         if bridges.len() + crossings.len() > MAX_CROSSINGS {
             continue;
         }
-        let before = (water.cells.len(), water.bridges.len(), water.crossings.len());
-        water.cells.extend(&cells);
-        water.bridges.extend(&bridges);
-        water.crossings.extend(&crossings);
-        if water.undrawable().is_empty() {
-            for &(r, c) in &cells {
-                grid.set(r, c, WATER_PENDING);
-            }
+        if water.try_add(grid, &cells, &bridges, &crossings) {
             return;
         }
-        water.cells.truncate(before.0);
-        water.bridges.truncate(before.1);
-        water.crossings.truncate(before.2);
     }
 }
 
@@ -475,10 +487,7 @@ const FAR_FEW: usize = 5;
 /// The pair of lakes whose nearest cells are farthest apart.
 fn farthest_lakes(lakes: &[Vec<Pos>]) -> (usize, usize) {
     let gap = |a: &[Pos], b: &[Pos]| {
-        a.iter()
-            .flat_map(|p| b.iter().map(move |q| p.0.abs_diff(q.0) + p.1.abs_diff(q.1)))
-            .min()
-            .unwrap_or(0)
+        a.iter().flat_map(|&p| b.iter().map(move |&q| manhattan(p, q))).min().unwrap_or(0)
     };
     let mut best = (0, 1);
     let mut best_gap = 0;
@@ -599,17 +608,7 @@ fn add_moat(grid: &mut Grid, (r, c): Pos, water: &mut Water) {
         return;
     }
     let new: Vec<Pos> = ring.into_iter().filter(|p| !water.cells.contains(p)).collect();
-    let before = (water.cells.len(), water.bridges.len());
-    water.cells.extend(&new);
-    water.bridges.push(entry);
-    if !water.undrawable().is_empty() {
-        water.cells.truncate(before.0);
-        water.bridges.truncate(before.1);
-        return;
-    }
-    for &(rr, cc) in &new {
-        grid.set(rr, cc, WATER_PENDING);
-    }
+    water.try_add(grid, &new, &[entry], &[]);
 }
 
 /// Grow a lake inside `region`, from `seed` or a random cell, and add it to
@@ -625,16 +624,9 @@ fn grow_lake<R: Rng>(
 ) -> bool {
     let Some(seed) = seed.or_else(|| region.choose(rng).copied()) else { return false };
     let size = rng.random_range(4..=MAX_LAKE.min(region.len() / 2).max(4));
-    let mut lake = vec![seed];
-    while lake.len() < size {
-        let next: Vec<Pos> = region
-            .iter()
-            .copied()
-            .filter(|p| !lake.contains(p) && lake.iter().any(|&c| touching(c, *p)))
-            .collect();
-        let Some(&p) = next.choose(rng) else { break };
-        lake.push(p);
-    }
+    let mut lake = grow_blob(region, seed, size, rng);
+    // Trim against the water already there, then take it back out:
+    // `try_add` makes the final, all-or-nothing addition.
     let before = water.cells.len();
     water.cells.extend(&lake);
     loop {
@@ -643,12 +635,9 @@ fn grow_lake<R: Rng>(
         lake.retain(|&q| q != p);
         water.cells.retain(|&q| q != p);
     }
-    if lake.len() < 2 || !water.undrawable().is_empty() {
-        water.cells.truncate(before);
+    water.cells.truncate(before);
+    if lake.len() < 2 || !water.try_add(grid, &lake, &[], &[]) {
         return false;
-    }
-    for &(r, c) in &lake {
-        grid.set(r, c, WATER_PENDING);
     }
     water.lakes.push(lake);
     true
@@ -664,8 +653,29 @@ const MAX_CLUSTER: usize = 6;
 /// has 9 rock cells to 11 clearing cells.
 const ROCK_SHARE: f64 = 0.4;
 
+/// Steps between two cells, moving side to side.
+fn manhattan(a: Pos, b: Pos) -> usize {
+    a.0.abs_diff(b.0) + a.1.abs_diff(b.1)
+}
+
 fn touching(a: Pos, b: Pos) -> bool {
-    a.0.abs_diff(b.0) + a.1.abs_diff(b.1) == 1
+    manhattan(a, b) == 1
+}
+
+/// Grow a blob of up to `size` cells from `seed`, each new cell a random one
+/// of `allowed` touching the blob so far. Stops early when none is left.
+fn grow_blob<R: Rng>(allowed: &[Pos], seed: Pos, size: usize, rng: &mut R) -> Vec<Pos> {
+    let mut blob = vec![seed];
+    while blob.len() < size {
+        let next: Vec<Pos> = allowed
+            .iter()
+            .copied()
+            .filter(|p| !blob.contains(p) && blob.iter().any(|&c| touching(c, *p)))
+            .collect();
+        let Some(&p) = next.choose(rng) else { break };
+        blob.push(p);
+    }
+    blob
 }
 
 /// The groups of bush-fill cells joined side to side, in grid order. The
@@ -926,7 +936,7 @@ fn path_hops(start: Pos, links: &[(Pos, Pos, Link)]) -> HashMap<Pos, usize> {
 impl Layout {
     /// One character per map tile: `S` start, `A` target, `o` node, `-` and
     /// `|` paths, `R` a rock.
-    pub(super) fn ascii(&self) -> String {
+    fn ascii(&self) -> String {
         let mut cells = vec![vec![' '; self.cols]; self.rows];
         for &(r, c) in &self.nodes {
             cells[r][c] = 'o';
@@ -945,7 +955,7 @@ impl Layout {
     }
 
     /// The figures the inventory reports for a map, on this layout.
-    pub(super) fn summary(&self) -> String {
+    fn summary(&self) -> String {
         let hops = path_hops(self.start, &self.links).get(&self.target).copied();
         format!(
             "nodes {}  loops {} {:?}  dead ends {}  junctions {}  rocks {}  start->airship {}",
@@ -1108,7 +1118,7 @@ fn generated_w1_is_completable() {
         let w1 = &result.worlds[0];
         let bridges: Vec<Pos> = (0..w1.grid.rows())
             .flat_map(|r| (0..w1.grid.cols).map(move |c| (r, c)))
-            .filter(|&(r, c)| w1.grid.get(r, c) == BRIDGE)
+            .filter(|&(r, c)| w1.grid.get(r, c) == BRIDGE_TILE)
             .collect();
         let crossings: Vec<Pos> = (0..w1.grid.rows())
             .flat_map(|r| (0..w1.grid.cols).map(move |c| (r, c)))
@@ -1216,7 +1226,7 @@ fn generated_w1_tiles() {
                     0x51 | 0x52 => 'R',
                     0x02 => '#',
                     0x82..=0xA9 => '~',
-                    BRIDGE => '=',
+                    BRIDGE_TILE => '=',
                     CROSSING => '+',
                     TILE_START => 'S',
                     0xC9 => 'A',
@@ -1242,15 +1252,19 @@ fn water_pictures_match_the_graphics() {
         eprintln!("SKIP: requires the ROM, which is not included in the repo");
         return;
     };
-    let chr = 0x40010 + 0x14 * 0x400;
+    // The lookup takes the first match, so the pictures must all differ.
+    let distinct: HashSet<&str> = WATER_TILES.iter().map(|&(_, p)| p).collect();
+    assert_eq!(distinct.len(), WATER_TILES.len(), "two water tiles share a picture");
+
     let pixel = |piece: u8, r: usize, c: usize| {
-        let at = chr + piece as usize * 16;
+        let at = crate::randomize::rom_data::map_chr_offset(piece);
         ((rom[at + r] >> (7 - c)) & 1) | (((rom[at + r + 8] >> (7 - c)) & 1) << 1)
     };
+    let base = crate::randomize::rom_data::PRG012_FILE_BASE;
     for &(tile, want) in &WATER_TILES {
         let t = tile as usize;
         let (ul, ll, ur, lr) =
-            (rom[0x18010 + t], rom[0x18110 + t], rom[0x18210 + t], rom[0x18310 + t]);
+            (rom[base + t], rom[base + 0x100 + t], rom[base + 0x200 + t], rom[base + 0x300 + t]);
         let at = |r: usize, c: usize| {
             let piece = match (r < 8, c < 8) {
                 (true, true) => ul,
