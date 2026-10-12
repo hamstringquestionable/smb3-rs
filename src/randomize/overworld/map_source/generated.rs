@@ -396,8 +396,8 @@ const BRIDGE: u8 = 0xB3;
 const WATER_PENDING: u8 = 0x8D;
 /// Chance a layout gets a river (project owner, 2026-10-12).
 const RIVER_CHANCE: f64 = 0.75;
-/// Chance the river sidesteps two columns at each odd row.
-const BEND_CHANCE: f64 = 0.35;
+/// Chance the river sidesteps at each odd row.
+const BEND_CHANCE: f64 = 0.7;
 /// Bridges a river must have: enough to divide the map, few enough to read
 /// as a river and not a ladder.
 const RIVER_CROSSINGS: (usize, usize) = (1, 3);
@@ -425,17 +425,23 @@ fn place_river<R: Rng>(grid: &Grid, rng: &mut R) -> Option<Water> {
                 }
             }
             if r % 2 == 1 && rng.random_bool(BEND_CHANCE) {
-                let step: isize = if rng.random_bool(0.5) { 2 } else { -2 };
-                let to = c as isize + step;
-                let mid = (c as isize + step / 2) as usize;
-                if to >= 3
-                    && (to as usize) < grid.cols - 2
-                    && grid.get(r, mid) == FILL
-                    && grid.get(r, to as usize) == FILL
-                {
-                    water.cells.push((r, mid));
-                    water.cells.push((r, to as usize));
-                    c = to as usize;
+                // Sidestep two or four columns, falling back to two when the
+                // longer run is blocked, so the river wanders rather than
+                // jogging one tile and carrying straight on.
+                let dir: isize = if rng.random_bool(0.5) { 1 } else { -1 };
+                let longest = if rng.random_bool(0.5) { 4 } else { 2 };
+                for span in (2..=longest).rev().step_by(2) {
+                    let to = c as isize + dir * span;
+                    let cells: Vec<Pos> =
+                        (1..=span).map(|i| (r, (c as isize + dir * i) as usize)).collect();
+                    if to >= 3
+                        && (to as usize) < grid.cols - 2
+                        && cells.iter().all(|&(cr, cc)| grid.get(cr, cc) == FILL)
+                    {
+                        water.cells.extend(cells);
+                        c = to as usize;
+                        break;
+                    }
                 }
             }
         }
