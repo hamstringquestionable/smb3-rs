@@ -2678,6 +2678,34 @@ project owner (2026-10-11). Gathered for generated-map decorations
 | `$E9` | `TILE_WORLD5STAR` | star | W5 sky |
 | `$EA` | — | rock | W6 uses it 67 times |
 
+#### Water tiles: one water/land picture each
+
+*(Measured 2026-10-11, and used to draw generated lakes.)* Read through their
+CHR, the 40 tiles `$82`–`$A9` are a complete shoreline kit. In the map's
+background CHR, **colour 1 is water and colour 3 is land** (0 and 2 draw the
+shore outline). Sampled at nine points per tile (the corners, the edge
+middles and the centre, each the majority of a 3×3 pixel block), every one of
+the 40 is water in the centre and a **different** picture around it: `$8D` is
+open water, `$99` the top-left corner of a lake, `$9D` a one-tile vertical
+channel (Southbird's `TILE_RIVERVERT`), `$A2` a horizontal one.
+
+So water is drawn like paths: mark which cells are water, give each cell's
+edge middle water when that neighbour is water and each corner water when
+both edges and the diagonal are, and look the picture up. The table and the
+test that re-derives it from the CHR are `WATER_TILES` and
+`water_pictures_match_the_graphics` in `overworld/map_source/generated.rs`.
+
+In vanilla the kit is used consistently between water tiles: on the edges
+they share, 5555 sample points agree and 307 disagree, and the disagreements
+are almost all open water butting straight onto a node, pipe, bush or plain
+ground (vanilla sometimes skips the shore there).
+
+**Reading the tile byte alone does not work.** Treating `$82`–`$A9` as "water"
+and recording each cell's 8 water/land neighbours (off-map counted as water)
+gives 75 of 132 patterns
+with more than one tile; a cell with water all round is drawn as 11 different
+tiles. The picture lives in the quadrants, not in the neighbourhood.
+
 ### World Map Functionality (PRG010: 0x14010–0x1600F)
 
 Key tables in PRG010 (indexed by World_Num 0–7):

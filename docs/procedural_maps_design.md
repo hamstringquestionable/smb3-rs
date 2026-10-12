@@ -369,7 +369,7 @@ special-case the generator.
    three spots of the top row), so switching moves W1's output; do it when
    one of the two cases needs it (project owner, 2026-10-11).
 
-   **Decorations: the plan** (2026-10-11, not built). Decorations are
+   **Decorations: the plan** (2026-10-11; **D1, D2 and D4 built, D3 settled, D5 not yet**; lakes approved by the project owner on real tiles). Decorations are
    generated the same way as the layout: shapes are grown, then drawn, and
    the drawing rules are learned from vanilla rather than hand-written.
 
@@ -418,6 +418,19 @@ special-case the generator.
 
    Order: D1 + D2 first (a decorated, playable W1), then D3 as an experiment
    that decides whether D4 and D5 can draw water, then D4, then D5.
+
+   **What was built (2026-10-11).** D1 + D2: regions of 3+ cells get
+   `1 + size/12` clusters of 2–6 cells, 40% rock piles (`$53`, never beside a
+   path or node) and the rest clearings (`$42`); the fill stays `$B4`. D3
+   settled the water question, but not the way first planned: the tile byte
+   and its 8 neighbours do **not** determine water (75 of 132 patterns
+   conflict); each tile's **CHR quadrants** do. Each of the 40 water tiles
+   draws a different water/land picture at nine points, which is the table
+   the lakes use (ROM reference § "Water tiles: one water/land picture
+   each"). D4: in a region of 10+ cells, half the time, a lake of 4–12 cells
+   grows as a blob, each cell's picture comes from its lake neighbours, and
+   cells with no matching tile are trimmed. All of these numbers are first
+   guesses, judged on real tiles; none came from a census.
 4. **A world with pipes** (W2 or W4).
 5. **W3: water and canoe.** Islands are the biggest new mechanic, so they get
    their own milestone.
