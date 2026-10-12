@@ -93,17 +93,37 @@ const FARTHEST_FEW: usize = 3;
 /// layout may have. Not banned outright: one now and then reads fine.
 const MAX_SQUARES: usize = 1;
 
-/// Draw layouts until one meets `targets`, or give up after `attempts`.
+/// Draw layouts until one meets `targets`, or give up after `attempts`. The
+/// start is one of the [`CORNER`] nodes in a corner picked at random, once,
+/// so a corner that is harder to fill is not drawn less often. `anchor` (the
+/// vanilla start) only sets the lattice's parity.
 fn generate<R: Rng>(
     rows: usize,
     cols: usize,
-    start: Pos,
+    anchor: Pos,
     targets: Targets,
     attempts: usize,
     rng: &mut R,
 ) -> Option<Layout> {
-    (0..attempts).find_map(|_| try_once(rows, cols, start, targets, rng))
+    let cells = lattice(rows, cols, anchor);
+    let (top, bottom) = (cells.iter().map(|p| p.0).min()?, cells.iter().map(|p| p.0).max()?);
+    let (left, right) = (cells.iter().map(|p| p.1).min()?, cells.iter().map(|p| p.1).max()?);
+    let (row_edge, col_edge) = (
+        if rng.random::<bool>() { top } else { bottom },
+        if rng.random::<bool>() { left } else { right },
+    );
+    let corner: Vec<Pos> = cells
+        .iter()
+        .copied()
+        .filter(|&(r, c)| r.abs_diff(row_edge) < 2 * CORNER && c.abs_diff(col_edge) < 2 * CORNER)
+        .collect();
+    let start = *corner.choose(rng)?;
+    (0..attempts).find_map(|_| try_once(rows, cols, anchor, start, targets, rng))
 }
+
+/// The start corner's size in nodes each way: 2 x 2 nodes, a 4 x 4 block of
+/// tiles.
+const CORNER: usize = 2;
 
 /// The dancing bush (`TILE_DANCINGBUSH`): every empty cell starts as it, and
 /// what water and decoration leave stays it. Vanilla W1 fills its empty space
@@ -134,27 +154,30 @@ pub(crate) fn world_map<R: Rng>(
             old.get(p.0, p.1) == TILE_START
         }
     })?;
-    let start = vanilla.entry_pos[start_idx];
-    let layout = generate(old.rows(), old.cols, start, W1_TARGETS, 1000, rng)?;
+    let vanilla_start = vanilla.entry_pos[start_idx];
+    let layout = generate(old.rows(), old.cols, vanilla_start, W1_TARGETS, 1000, rng)?;
+    let start = layout.start;
 
-    // Frame (first and last column) and the start's entrance stub stay as
-    // vanilla drew them; everything else starts as plain ground.
+    // The frame (first and last column) stays as vanilla drew it; everything
+    // else starts as bush. A start in the first lattice column gets vanilla's
+    // entrance stub, the path running off the edge of the map.
     let mut grid = old.clone();
     grid.vanilla_layout = false;
     for r in 0..grid.rows() {
         for c in 1..grid.cols - 1 {
-            if (r, c) != (start.0, start.1 - 1) {
-                grid.set(r, c, FILL);
-            }
+            grid.set(r, c, FILL);
         }
+    }
+    if start.1 == vanilla_start.1 {
+        grid.set(start.0, start.1 - 1, old.get(vanilla_start.0, vanilla_start.1 - 1));
     }
     for &(a, b, kind) in &layout.links {
         let (horiz, vert) = if kind == Link::Rock { ROCK } else { PATH };
         grid.set((a.0 + b.0) / 2, (a.1 + b.1) / 2, if a.0 == b.0 { horiz } else { vert });
     }
 
-    // Entries onto nodes: the start stays, the airship goes to the target,
-    // the rest are dealt at random onto the remaining nodes. Entries off the
+    // Entries onto nodes: the start and the airship go where the layout put
+    // them, the rest are dealt at random onto the remaining nodes. Entries off the
     // grid (unused rows in the pointer table) stay where they are.
     let airship_idx =
         (0..vanilla.entry_pos.len()).find(|&i| AIRSHIP_ENTRIES.contains(&(world_idx, i)))?;
@@ -162,6 +185,7 @@ pub(crate) fn world_map<R: Rng>(
         layout.nodes.iter().copied().filter(|&n| n != start && n != layout.target).collect();
     free.shuffle(rng);
     let mut entry_pos = vanilla.entry_pos.clone();
+    entry_pos[start_idx] = start;
     entry_pos[airship_idx] = layout.target;
     for (i, pos) in entry_pos.iter_mut().enumerate() {
         if i != start_idx && i != airship_idx && on_grid(vanilla.entry_pos[i]) {
@@ -726,13 +750,13 @@ fn clear_of_paths(grid: &Grid, (r, c): Pos) -> bool {
         t == FILL || t == CLEARING || t == DECO_ROCK || nc == 0 || nc + 1 == grid.cols
     })
 }
-/// Nodes sit two tiles apart, because a map move is two tiles: on the start's
-/// row and column parity. Column 0 is left out: it is where the start's
-/// entrance path runs off the edge of the map.
-fn lattice(rows: usize, cols: usize, start: Pos) -> Vec<Pos> {
+/// Nodes sit two tiles apart, because a map move is two tiles: on the
+/// vanilla start's row and column parity. Column 0 is left out: it is where
+/// the start's entrance path runs off the edge of the map.
+fn lattice(rows: usize, cols: usize, anchor: Pos) -> Vec<Pos> {
     let mut cells = Vec::new();
-    for r in (start.0 % 2..rows).step_by(2) {
-        for c in (start.1 % 2..cols).step_by(2) {
+    for r in (anchor.0 % 2..rows).step_by(2) {
+        for c in (anchor.1 % 2..cols).step_by(2) {
             if c > 0 {
                 cells.push((r, c));
             }
@@ -760,11 +784,12 @@ fn ordered(a: Pos, b: Pos) -> (Pos, Pos) {
 fn try_once<R: Rng>(
     rows: usize,
     cols: usize,
+    anchor: Pos,
     start: Pos,
     targets: Targets,
     rng: &mut R,
 ) -> Option<Layout> {
-    let cells = lattice(rows, cols, start);
+    let cells = lattice(rows, cols, anchor);
     let on_lattice: HashSet<Pos> = cells.iter().copied().collect();
 
     // 1. A random tree grown from the start until it has the node count. Most
@@ -776,23 +801,33 @@ fn try_once<R: Rng>(
     let mut tree: Vec<(Pos, Pos)> = Vec::new();
 
     //    First a waypoint, reached by a winding path from the start, so every
-    //    layout reaches the right-hand side. It lands in a staircase in the
-    //    bottom-right corner: on the top row only the last column qualifies,
-    //    and each row further down allows one more column in from the right.
-    //    Each step of the path moves right or toward the waypoint's row,
-    //    chosen at random.
+    //    layout crosses the map. It lands in a staircase on the side away
+    //    from the start's column: on the row farthest from the start's row
+    //    only the far column qualifies, and each row nearer allows one more
+    //    column in. (A start bottom-left puts it bottom-right.) Each step of
+    //    the path moves toward the waypoint's column or row, chosen at random.
     // From the ordered lattice, never the set: a HashSet iterates in a
     // different order every run, which made the same seed draw different maps.
-    let last_col = cells.iter().map(|p| p.1).max()?;
-    let first_row = cells.iter().map(|p| p.0).min()?;
-    let corner: Vec<Pos> =
-        cells.iter().copied().filter(|&(r, c)| (last_col - c) / 2 <= (r - first_row) / 2).collect();
+    let far_end = |values: Vec<usize>, from: usize| {
+        let (lo, hi) = (*values.iter().min()?, *values.iter().max()?);
+        Some(if from - lo < hi - from { hi } else { lo })
+    };
+    let far_row = far_end(cells.iter().map(|p| p.0).collect(), start.0)?;
+    let far_col = far_end(cells.iter().map(|p| p.1).collect(), start.1)?;
+    let corner: Vec<Pos> = cells
+        .iter()
+        .copied()
+        .filter(|&(r, c)| c.abs_diff(far_col) / 2 <= r.abs_diff(far_row) / 2)
+        .collect();
     let waypoint = *corner.choose(rng)?;
     let mut at = start;
     while at != waypoint {
         let mut steps = Vec::new();
         if at.1 < waypoint.1 {
             steps.push((at.0, at.1 + 2));
+        }
+        if at.1 > waypoint.1 {
+            steps.push((at.0, at.1 - 2));
         }
         if at.0 < waypoint.0 {
             steps.push((at.0 + 2, at.1));
