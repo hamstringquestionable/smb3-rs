@@ -509,6 +509,7 @@ fn lock_candidates(state: &WorldState) -> Vec<(Pos, u8)> {
             let tile = state.grid.get(r, c);
             if !LOCKABLE_TILES.contains(&tile)
                 || locked.contains(&pos)
+                || state.no_locks.contains(&pos)
                 || is_bridge_span(state, pos)
             {
                 continue;

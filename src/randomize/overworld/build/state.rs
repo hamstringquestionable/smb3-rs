@@ -33,6 +33,9 @@ pub(crate) struct WorldState {
     /// Connectivity never bridges them and no phase claims them; they stay
     /// empty hammer-gated nooks.
     pub(crate) hammer_gated: HashSet<Pos>,
+    /// Path cells no lock may take: a generated river's `$BA` crossings, whose
+    /// lock would draw over the water and reopen as plain land path.
+    pub(crate) no_locks: HashSet<Pos>,
     /// Hard limit on pipe pairs in this world — currently the vanilla
     /// per-world count, a chosen design budget (not an inherent ROM limit;
     /// it may be raised later). All pipe-placing phases share it: whatever

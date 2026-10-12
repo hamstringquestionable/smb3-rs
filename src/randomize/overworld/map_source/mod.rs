@@ -35,6 +35,8 @@ pub(crate) struct WorldMap {
     /// Blanks reachable only by breaking a rock, which connectivity must leave
     /// alone rather than bridge with a pipe.
     pub(crate) hammer_gated: Vec<Pos>,
+    /// Path cells no lock may take (a generated river's `$BA` crossings).
+    pub(crate) no_locks: Vec<Pos>,
 }
 
 impl WorldMap {

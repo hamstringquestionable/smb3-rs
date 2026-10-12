@@ -190,20 +190,22 @@ pub(crate) fn world_map<R: Rng>(
     let air = vanilla.entry_pos[airship_idx];
     grid.set(layout.target.0 - 1, layout.target.1, old.get(air.0 - 1, air.1));
 
-    // Water: a river most of the time, then lakes during decoration, all
-    // drawn together at the end.
-    let mut water = if rng.random_bool(RIVER_CHANCE) {
-        place_river(&grid, rng).unwrap_or_default()
-    } else {
-        Water::default()
-    };
+    // Water, all drawn together at the end: lakes in the big open regions,
+    // most of the time a river joining two lakes, sometimes a moat. Then the
+    // decoration clusters fill what is left.
+    let mut water = Water::default();
+    for region in empty_regions(&grid) {
+        if region.len() >= LAKE_MIN_REGION && rng.random_bool(LAKE_CHANCE) {
+            grow_lake(&mut grid, &region, None, &mut water, rng);
+        }
+    }
+    if rng.random_bool(RIVER_CHANCE) {
+        add_river(&mut grid, &mut water, rng);
+    }
     if rng.random_bool(MOAT_CHANCE) {
-        add_moat(&grid, layout.target, &mut water);
+        add_moat(&mut grid, layout.target, &mut water);
     }
-    for &(r, c) in &water.cells {
-        grid.set(r, c, WATER_PENDING);
-    }
-    decorate(&mut grid, &mut water, rng);
+    decorate(&mut grid, rng);
     water.draw(&mut grid);
 
     Some(WorldMap {
@@ -213,6 +215,7 @@ pub(crate) fn world_map<R: Rng>(
         hb_sprites: Vec::new(),
         gaps: Vec::new(),
         hammer_gated: Vec::new(),
+        no_locks: water.crossings.clone(),
     })
 }
 
@@ -222,17 +225,14 @@ const CLEARING: u8 = 0x42;
 /// only ever placed where no path or node touches it.
 const DECO_ROCK: u8 = 0x53;
 
-/// Scenery (milestone 3, decorations D1 + D2). The empty cells, still all
-/// bush fill, fall into separate regions; each region big enough gets a few
-/// clusters of clearing or rock, grown as a blob from a random cell. Tiny
-/// regions, usually wedged between paths, stay bushes.
-fn decorate<R: Rng>(grid: &mut Grid, water: &mut Water, rng: &mut R) {
+/// Scenery (milestone 3, decorations D1 + D2). The empty cells still bush
+/// fill after the water is placed fall into separate regions; each region big
+/// enough gets a few clusters of clearing or rock, grown as a blob from a
+/// random cell. Tiny regions, usually wedged between paths, stay bushes.
+fn decorate<R: Rng>(grid: &mut Grid, rng: &mut R) {
     for region in empty_regions(grid) {
         if region.len() < MIN_DECORATED_REGION {
             continue;
-        }
-        if region.len() >= LAKE_MIN_REGION && rng.random_bool(LAKE_CHANCE) {
-            grow_lake(grid, &region, water, rng);
         }
         for _ in 0..1 + region.len() / CELLS_PER_CLUSTER {
             let rock = rng.random_bool(ROCK_SHARE);
@@ -321,35 +321,35 @@ fn water_tile(picture: &str) -> Option<u8> {
     WATER_TILES.iter().find(|&&(_, p)| p == picture).map(|&(t, _)| t)
 }
 
-/// Everything wet on the map, drawn in one pass once rivers and lakes are
-/// placed, so a lake that meets the river joins it with a proper shore.
+/// Everything wet on the map, drawn in one pass once lakes, river and moat
+/// are placed, so water that meets other water joins it with a proper shore.
 #[derive(Default)]
 struct Water {
-    /// River and lake cells.
+    /// Lake, river and moat cells.
     cells: Vec<Pos>,
-    /// The river's cells, which run off the top and bottom of the map.
-    river: Vec<Pos>,
-    /// Where a path crosses the river: drawn as the bridge `$B3`, and water
-    /// to the cells beside it.
+    /// Each lake's cells, so a river can find its ends.
+    lakes: Vec<Vec<Pos>>,
+    /// A horizontal path crossing water that runs north-south: drawn as the
+    /// bridge `$B3`. A lock the builder puts there is a water gap.
     bridges: Vec<Pos>,
+    /// A vertical path crossing water that runs east-west: drawn as `$BA`
+    /// (path over water, land at both ends). It has no water-gap form, so
+    /// no lock may take it (`WorldMap::no_locks`).
+    crossings: Vec<Pos>,
 }
 
 impl Water {
     fn wet(&self, p: Pos) -> bool {
-        self.cells.contains(&p) || self.bridges.contains(&p)
+        self.cells.contains(&p) || self.bridges.contains(&p) || self.crossings.contains(&p)
     }
 
     /// The picture a water cell needs: an edge middle is water when that
     /// neighbour is wet, a corner when both edges beside it and the diagonal
-    /// are. Above the top row and below the bottom one is water for a river
-    /// cell (the river runs on off the map) and land for anything else.
-    fn picture(&self, (r, c): Pos, rows: usize) -> String {
+    /// are. Off the map is land.
+    fn picture(&self, (r, c): Pos) -> String {
         let at = |dr: isize, dc: isize| {
             let (nr, nc) = (r as isize + dr, c as isize + dc);
-            if nr < 0 || nr >= rows as isize {
-                return self.river.contains(&(r, c)) && nc >= 0 && dc.abs() <= 1;
-            }
-            nc >= 0 && self.wet((nr as usize, nc as usize))
+            nr >= 0 && nc >= 0 && self.wet((nr as usize, nc as usize))
         };
         let w = |b: bool| if b { 'W' } else { 'L' };
         let (n, s, e, west) = (at(-1, 0), at(1, 0), at(0, 1), at(0, -1));
@@ -366,21 +366,16 @@ impl Water {
         )
     }
 
-    /// Cells in `cells` whose picture has no water tile.
-    fn undrawable(&self, rows: usize) -> Vec<Pos> {
-        self.cells
-            .iter()
-            .copied()
-            .filter(|&p| water_tile(&self.picture(p, rows)).is_none())
-            .collect()
+    /// Water cells whose picture has no water tile.
+    fn undrawable(&self) -> Vec<Pos> {
+        self.cells.iter().copied().filter(|&p| water_tile(&self.picture(p)).is_none()).collect()
     }
 
     fn draw(&self, grid: &mut Grid) {
-        let rows = grid.rows();
         let tiles: Vec<(Pos, u8)> = self
             .cells
             .iter()
-            .map(|&p| (p, water_tile(&self.picture(p, rows)).expect("only drawable water is kept")))
+            .map(|&p| (p, water_tile(&self.picture(p)).expect("only drawable water is kept")))
             .collect();
         for ((r, c), t) in tiles {
             grid.set(r, c, t);
@@ -388,82 +383,195 @@ impl Water {
         for &(r, c) in &self.bridges {
             grid.set(r, c, BRIDGE);
         }
+        for &(r, c) in &self.crossings {
+            grid.set(r, c, CROSSING);
+        }
     }
 }
 
-/// The bridge over a river, a horizontal path. A lock the builder puts on it
-/// is drawn as open water until its fortress rebuilds the bridge.
+/// The bridge over water running north-south, a horizontal path.
 const BRIDGE: u8 = 0xB3;
-/// Stands in for a water cell until [`Water::draw`] picks its tile, so the
-/// decoration pass sees the cell as taken.
+/// A vertical path over water running east-west, land at both ends.
+const CROSSING: u8 = 0xBA;
+/// Stands in for a water cell until [`Water::draw`] picks its tile, so later
+/// passes see the cell as taken.
 const WATER_PENDING: u8 = 0x8D;
 /// Chance a layout gets a river (project owner, 2026-10-12).
 const RIVER_CHANCE: f64 = 0.75;
-/// Chance the river sidesteps at each odd row.
-const BEND_CHANCE: f64 = 0.7;
-/// Bridges a river must have: enough to divide the map, few enough to read
-/// as a river and not a ladder.
-const RIVER_CROSSINGS: (usize, usize) = (1, 3);
+/// Most paths a river may cross.
+const MAX_CROSSINGS: usize = 3;
+/// Extra cost of crossing a path, so a river crosses only when it must.
+const CROSSING_COST: u32 = 6;
+/// Random extra cost per cell, up to this: what makes the river wander.
+const RIVER_NOISE: u32 = 20;
+/// Routes tried, each with fresh noise, before a layout goes without a river.
+const RIVER_ATTEMPTS: usize = 10;
+/// Smallest region a lake for a river's end may be grown in.
+const END_LAKE_REGION: usize = 6;
 
-/// A river from the top of the map to the bottom, down an odd column. Odd
-/// columns hold no nodes, so every cell is either a horizontal link's middle
-/// tile (it becomes a bridge) or empty (it becomes water). It may sidestep
-/// two columns at an odd row, but only through empty cells: the cell between
-/// is where a vertical link would be, and no vertical bridge exists. `None`
-/// if no column gives a river with the right number of crossings.
-fn place_river<R: Rng>(grid: &Grid, rng: &mut R) -> Option<Water> {
-    let rows = grid.rows();
-    let columns: Vec<usize> = (3..grid.cols - 2).step_by(2).collect();
-    for _ in 0..RIVER_ATTEMPTS {
-        let mut c = *columns.choose(rng)?;
-        let mut water = Water::default();
-        let mut ok = true;
-        for r in 0..rows {
-            match grid.get(r, c) {
-                FILL => water.cells.push((r, c)),
-                t if t == PATH.0 => water.bridges.push((r, c)),
-                _ => {
-                    ok = false;
-                    break;
-                }
+/// A river joining two lakes. With two or more lakes it joins the two
+/// farthest apart; with fewer it first grows the missing ones far from what
+/// is there (like the layout's waypoint). The route is the cheapest path
+/// through empty cells with random noise added, so it wanders. It crosses a
+/// horizontal path straight north-south (a `$B3` bridge) and a vertical path
+/// straight east-west (`$BA`), never a node. Water has no tile for a channel
+/// ending on land, so a river always runs lake to lake.
+fn add_river<R: Rng>(grid: &mut Grid, water: &mut Water, rng: &mut R) {
+    while water.lakes.len() < 2 {
+        let near: Vec<Pos> = water.lakes.iter().flatten().copied().collect();
+        let mut spots: Vec<(usize, Pos, usize)> = Vec::new();
+        for (i, region) in empty_regions(grid).iter().enumerate() {
+            if region.len() < END_LAKE_REGION {
+                continue;
             }
-            if r % 2 == 1 && rng.random_bool(BEND_CHANCE) {
-                // Sidestep two or four columns, falling back to two when the
-                // longer run is blocked, so the river wanders rather than
-                // jogging one tile and carrying straight on.
-                let dir: isize = if rng.random_bool(0.5) { 1 } else { -1 };
-                let longest = if rng.random_bool(0.5) { 4 } else { 2 };
-                for span in (2..=longest).rev().step_by(2) {
-                    let to = c as isize + dir * span;
-                    let cells: Vec<Pos> =
-                        (1..=span).map(|i| (r, (c as isize + dir * i) as usize)).collect();
-                    if to >= 3
-                        && (to as usize) < grid.cols - 2
-                        && cells.iter().all(|&(cr, cc)| grid.get(cr, cc) == FILL)
-                    {
-                        water.cells.extend(cells);
-                        c = to as usize;
-                        break;
-                    }
-                }
+            for &p in region {
+                let far = near.iter().map(|&q| p.0.abs_diff(q.0) + p.1.abs_diff(q.1)).min();
+                spots.push((far.unwrap_or(0), p, i));
             }
         }
-        // Mark the cells as river before checking they draw: the river's top
-        // and bottom cells only draw because it runs on off the map.
-        water.river = water.cells.clone();
-        let crossings = water.bridges.len();
-        if ok
-            && (RIVER_CROSSINGS.0..=RIVER_CROSSINGS.1).contains(&crossings)
-            && water.undrawable(rows).is_empty()
-        {
-            return Some(water);
+        if spots.is_empty() {
+            return;
+        }
+        // The farthest few, or anywhere for a first lake.
+        spots.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+        let pick = if near.is_empty() { spots.len() } else { FAR_FEW.min(spots.len()) };
+        let &(_, seed, i) = spots[..pick].choose(rng).expect("spots is not empty");
+        let region = empty_regions(grid).swap_remove(i);
+        if !grow_lake(grid, &region, Some(seed), water, rng) {
+            return;
         }
     }
-    None
+    let (a, b) = farthest_lakes(&water.lakes);
+    let (from, to) = (water.lakes[a].clone(), water.lakes[b].clone());
+    for _ in 0..RIVER_ATTEMPTS {
+        let noise: Vec<Vec<u32>> = (0..grid.rows())
+            .map(|_| (0..grid.cols).map(|_| rng.random_range(0..RIVER_NOISE)).collect())
+            .collect();
+        let Some((cells, bridges, crossings)) = route(grid, water, &from, &to, &noise) else {
+            return;
+        };
+        if bridges.len() + crossings.len() > MAX_CROSSINGS {
+            continue;
+        }
+        let before = (water.cells.len(), water.bridges.len(), water.crossings.len());
+        water.cells.extend(&cells);
+        water.bridges.extend(&bridges);
+        water.crossings.extend(&crossings);
+        if water.undrawable().is_empty() {
+            for &(r, c) in &cells {
+                grid.set(r, c, WATER_PENDING);
+            }
+            return;
+        }
+        water.cells.truncate(before.0);
+        water.bridges.truncate(before.1);
+        water.crossings.truncate(before.2);
+    }
 }
 
-/// Columns tried before a layout goes without a river.
-const RIVER_ATTEMPTS: usize = 20;
+/// How many of the farthest spots a river's end lake is picked from.
+const FAR_FEW: usize = 5;
+
+/// The pair of lakes whose nearest cells are farthest apart.
+fn farthest_lakes(lakes: &[Vec<Pos>]) -> (usize, usize) {
+    let gap = |a: &[Pos], b: &[Pos]| {
+        a.iter()
+            .flat_map(|p| b.iter().map(move |q| p.0.abs_diff(q.0) + p.1.abs_diff(q.1)))
+            .min()
+            .unwrap_or(0)
+    };
+    let mut best = (0, 1);
+    let mut best_gap = 0;
+    for i in 0..lakes.len() {
+        for j in i + 1..lakes.len() {
+            let g = gap(&lakes[i], &lakes[j]);
+            if g > best_gap {
+                best = (i, j);
+                best_gap = g;
+            }
+        }
+    }
+    best
+}
+
+/// River cells, bridges and crossings: the cheapest route from a cell of
+/// `from` to a cell of `to`. A step onto an empty cell costs 1 plus its
+/// noise; a step over a path costs [`CROSSING_COST`] and lands on the cell
+/// beyond, which must be empty or the destination lake.
+fn route(
+    grid: &Grid,
+    water: &Water,
+    from: &[Pos],
+    to: &[Pos],
+    noise: &[Vec<u32>],
+) -> Option<(Vec<Pos>, Vec<Pos>, Vec<Pos>)> {
+    use std::cmp::Reverse;
+    use std::collections::BinaryHeap;
+
+    let (rows, cols) = (grid.rows() as isize, grid.cols as isize);
+    let inside = |r: isize, c: isize| r >= 0 && r < rows && c >= 1 && c < cols - 1;
+    let open = |p: Pos| grid.get(p.0, p.1) == FILL && !water.cells.contains(&p);
+    let mut best: HashMap<Pos, u32> = HashMap::new();
+    // How each cell was reached: the cell before it and the path crossed.
+    let mut came: HashMap<Pos, (Pos, Option<Pos>)> = HashMap::new();
+    let mut heap = BinaryHeap::new();
+    for &p in from {
+        best.insert(p, 0);
+        heap.push(Reverse((0u32, p)));
+    }
+    let mut end = None;
+    while let Some(Reverse((cost, p))) = heap.pop() {
+        if best.get(&p).is_some_and(|&b| cost > b) {
+            continue;
+        }
+        if to.contains(&p) {
+            end = Some(p);
+            break;
+        }
+        for (dr, dc) in [(-1isize, 0isize), (1, 0), (0, -1), (0, 1)] {
+            let (r1, c1) = (p.0 as isize + dr, p.1 as isize + dc);
+            if !inside(r1, c1) {
+                continue;
+            }
+            let next = (r1 as usize, c1 as usize);
+            let tile = grid.get(next.0, next.1);
+            let (land, over, step) = if to.contains(&next) || open(next) {
+                (next, None, 1 + noise[next.0][next.1])
+            } else if (tile == PATH.0 && dr != 0) || (tile == PATH.1 && dc != 0) {
+                let (r2, c2) = (r1 + dr, c1 + dc);
+                if !inside(r2, c2) {
+                    continue;
+                }
+                let beyond = (r2 as usize, c2 as usize);
+                if !(to.contains(&beyond) || open(beyond)) {
+                    continue;
+                }
+                (beyond, Some(next), CROSSING_COST + noise[beyond.0][beyond.1])
+            } else {
+                continue;
+            };
+            let total = cost + step;
+            if best.get(&land).is_none_or(|&b| total < b) {
+                best.insert(land, total);
+                came.insert(land, (p, over));
+                heap.push(Reverse((total, land)));
+            }
+        }
+    }
+    let end = end?;
+    let (mut cells, mut bridges, mut crossings) = (Vec::new(), Vec::new(), Vec::new());
+    let mut at = end;
+    while let Some(&(prev, over)) = came.get(&at) {
+        if !to.contains(&at) {
+            cells.push(at);
+        }
+        if let Some(o) = over {
+            if grid.get(o.0, o.1) == PATH.0 { bridges.push(o) } else { crossings.push(o) }
+        }
+        at = prev;
+    }
+    Some((cells, bridges, crossings))
+}
 
 /// Chance a castle whose path comes in from the side gets a moat.
 const MOAT_CHANCE: f64 = 0.5;
@@ -471,9 +579,9 @@ const MOAT_CHANCE: f64 = 0.5;
 /// A moat: water on every cell around the castle and its top, with the
 /// castle's path crossing it on a bridge. Only when that path comes in from
 /// the side, because a path from below would need a vertical bridge and none
-/// exists. Every cell of the ring must be empty (or already river); a moat
+/// exists. Every cell of the ring must be empty (or already water); a moat
 /// that would leave any water cell without a tile is not added.
-fn add_moat(grid: &Grid, (r, c): Pos, water: &mut Water) {
+fn add_moat(grid: &mut Grid, (r, c): Pos, water: &mut Water) {
     if r < 2 || r + 1 >= grid.rows() || c < 2 || c + 2 >= grid.cols {
         return;
     }
@@ -490,23 +598,32 @@ fn add_moat(grid: &Grid, (r, c): Pos, water: &mut Water) {
     if !ring.iter().all(|&p| free(p)) {
         return;
     }
+    let new: Vec<Pos> = ring.into_iter().filter(|p| !water.cells.contains(p)).collect();
     let before = (water.cells.len(), water.bridges.len());
-    water
-        .cells
-        .extend(ring.iter().copied().filter(|p| !water.cells.contains(p)).collect::<Vec<_>>());
+    water.cells.extend(&new);
     water.bridges.push(entry);
-    if !water.undrawable(grid.rows()).is_empty() {
+    if !water.undrawable().is_empty() {
         water.cells.truncate(before.0);
         water.bridges.truncate(before.1);
+        return;
+    }
+    for &(rr, cc) in &new {
+        grid.set(rr, cc, WATER_PENDING);
     }
 }
 
-/// Grow a lake inside `region` and add it to `water`. Lake cells whose
-/// picture has no water tile (a lone cell, say) are trimmed; a lake that
-/// trims below two cells, or that would leave a river cell undrawable, is
-/// dropped. A lake that touches the river joins it.
-fn grow_lake<R: Rng>(grid: &mut Grid, region: &[Pos], water: &mut Water, rng: &mut R) {
-    let Some(&seed) = region.choose(rng) else { return };
+/// Grow a lake inside `region`, from `seed` or a random cell, and add it to
+/// `water`. Lake cells whose picture has no water tile (a lone cell, say) are
+/// trimmed; a lake that trims below two cells, or that would leave other
+/// water undrawable, is dropped. Returns whether a lake was added.
+fn grow_lake<R: Rng>(
+    grid: &mut Grid,
+    region: &[Pos],
+    seed: Option<Pos>,
+    water: &mut Water,
+    rng: &mut R,
+) -> bool {
+    let Some(seed) = seed.or_else(|| region.choose(rng).copied()) else { return false };
     let size = rng.random_range(4..=MAX_LAKE.min(region.len() / 2).max(4));
     let mut lake = vec![seed];
     while lake.len() < size {
@@ -518,23 +635,23 @@ fn grow_lake<R: Rng>(grid: &mut Grid, region: &[Pos], water: &mut Water, rng: &m
         let Some(&p) = next.choose(rng) else { break };
         lake.push(p);
     }
-    let rows = grid.rows();
     let before = water.cells.len();
     water.cells.extend(&lake);
     loop {
-        let bad: Vec<Pos> =
-            water.undrawable(rows).into_iter().filter(|p| lake.contains(p)).collect();
+        let bad: Vec<Pos> = water.undrawable().into_iter().filter(|p| lake.contains(p)).collect();
         let Some(&p) = bad.first() else { break };
         lake.retain(|&q| q != p);
         water.cells.retain(|&q| q != p);
     }
-    if lake.len() < 2 || !water.undrawable(rows).is_empty() {
+    if lake.len() < 2 || !water.undrawable().is_empty() {
         water.cells.truncate(before);
-        return;
+        return false;
     }
     for &(r, c) in &lake {
         grid.set(r, c, WATER_PENDING);
     }
+    water.lakes.push(lake);
+    true
 }
 
 /// Regions smaller than this stay bushes.
@@ -958,8 +1075,16 @@ fn generated_w1_is_completable() {
             .flat_map(|r| (0..w1.grid.cols).map(move |c| (r, c)))
             .filter(|&(r, c)| w1.grid.get(r, c) == BRIDGE)
             .collect();
-        with_river += usize::from(!bridges.is_empty());
+        let crossings: Vec<Pos> = (0..w1.grid.rows())
+            .flat_map(|r| (0..w1.grid.cols).map(move |c| (r, c)))
+            .filter(|&(r, c)| w1.grid.get(r, c) == CROSSING)
+            .collect();
+        with_river += usize::from(!bridges.is_empty() || !crossings.is_empty());
         with_gap += usize::from(w1.locks.iter().any(|l| bridges.contains(&l.pos)));
+        assert!(
+            !w1.locks.iter().any(|l| crossings.contains(&l.pos)),
+            "seed {seed}: a lock took a \\$BA crossing, which has no water-gap form",
+        );
         let castle = find_target(&w1.grid, 0).expect("generated W1 has an airship");
         with_moat += usize::from(
             bridges.contains(&(castle.0, castle.1 - 1))
@@ -974,7 +1099,7 @@ fn generated_w1_is_completable() {
     }
     println!("builder: {generated} of {seeds} seeds generated a W1, all completable");
     println!(
-        "  {with_river} have a river, {with_moat} a moat; in {with_gap} the builder locked a bridge (a water gap)"
+        "  {with_river} have water crossing a path, {with_moat} a moat; in {with_gap} the builder locked a bridge (a water gap)"
     );
 
     // The whole pipeline, fewer seeds: the writer and every later stage.
@@ -1010,7 +1135,7 @@ fn generated_w1_is_deterministic() {
 }
 
 /// Generated W1 as drawn tiles, before the builder places anything:
-/// `.` bush, ` ` clearing, `^` rock (decorative), `~` water, `=` bridge, `-` `|` paths, `R` breakable
+/// `.` bush, ` ` clearing, `^` rock (decorative), `~` water, `=` bridge, `+` path over water, `-` `|` paths, `R` breakable
 /// rock, `o` node, `S` start, `A` airship, `a` castle top, `#` frame.
 ///
 /// ```sh
@@ -1046,6 +1171,7 @@ fn generated_w1_tiles() {
                     0x02 => '#',
                     0x82..=0xA9 => '~',
                     BRIDGE => '=',
+                    CROSSING => '+',
                     TILE_START => 'S',
                     0xC9 => 'A',
                     0xC8 => 'a',

@@ -106,6 +106,7 @@ fn read_tiles(rom: &Rom) -> Vec<WorldMap> {
                     .filter(|(w, _)| *w == wi)
                     .map(|(_, pos)| *pos)
                     .collect(),
+                no_locks: Vec::new(),
             }
         })
         .collect()

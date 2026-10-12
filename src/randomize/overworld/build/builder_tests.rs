@@ -141,6 +141,7 @@ fn test_builder_schedule_runs_phases_in_order() {
         target: None,
         fixed: HashSet::new(),
         hammer_gated: HashSet::new(),
+        no_locks: HashSet::new(),
         pipe_budget: 0,
         level_budget: 0,
         fort_budget: 0,
