@@ -217,6 +217,9 @@ fn decorate<R: Rng>(grid: &mut Grid, rng: &mut R) {
         if region.len() < MIN_DECORATED_REGION {
             continue;
         }
+        if region.len() >= LAKE_MIN_REGION && rng.random_bool(LAKE_CHANCE) {
+            grow_lake(grid, &region, rng);
+        }
         for _ in 0..1 + region.len() / CELLS_PER_CLUSTER {
             let rock = rng.random_bool(ROCK_SHARE);
             let allowed: Vec<Pos> = region
@@ -244,6 +247,116 @@ fn decorate<R: Rng>(grid: &mut Grid, rng: &mut R) {
     }
 }
 
+/// Regions at least this big may get a lake.
+const LAKE_MIN_REGION: usize = 10;
+/// Chance a big enough region gets one.
+const LAKE_CHANCE: f64 = 0.5;
+/// Most cells a lake grows to (it may end smaller once trimmed).
+const MAX_LAKE: usize = 12;
+
+/// Each water tile and the picture its graphics draw: water (`W`) or land
+/// (`L`) at nine points, the corners, edge middles and centre, as rows top /
+/// middle / bottom. Every water tile `$82`–`$A9` is a different picture, so a
+/// lake is drawn by working out each cell's picture from its lake neighbours
+/// and looking the tile up. `water_pictures_match_the_graphics` re-derives
+/// every picture from the ROM's CHR.
+const WATER_TILES: [(u8, &str); 40] = [
+    (0x82, "LWL/WWW/LLL"),
+    (0x83, "LLL/WWW/LWL"),
+    (0x84, "LLL/LWW/LWW"),
+    (0x85, "LLL/WWW/WWW"),
+    (0x86, "LLL/WWL/WWL"),
+    (0x87, "WWW/WWW/WWL"),
+    (0x88, "WWW/WWW/LWW"),
+    (0x89, "WWW/WWW/LWL"),
+    (0x8A, "LWL/LWW/LWL"),
+    (0x8B, "LWL/WWL/LWL"),
+    (0x8C, "LWW/LWW/LWW"),
+    (0x8D, "WWW/WWW/WWW"),
+    (0x8E, "WWL/WWL/WWL"),
+    (0x8F, "WWL/WWW/WWW"),
+    (0x90, "LWW/WWW/WWW"),
+    (0x91, "LWL/WWW/WWW"),
+    (0x92, "WWL/WWW/WWL"),
+    (0x93, "LWW/WWW/LWW"),
+    (0x94, "LWW/LWW/LLL"),
+    (0x95, "WWW/WWW/LLL"),
+    (0x96, "WWL/WWL/LLL"),
+    (0x97, "LWW/LWW/LWL"),
+    (0x98, "WWL/WWL/LWL"),
+    (0x99, "LLL/LWW/LWL"),
+    (0x9A, "LLL/WWL/LWL"),
+    (0x9B, "LLL/WWW/WWL"),
+    (0x9C, "LLL/WWW/LWW"),
+    (0x9D, "LWL/LWL/LWL"),
+    (0x9E, "LWW/WWW/WWL"),
+    (0x9F, "WWL/WWW/LWW"),
+    (0xA0, "LWL/WWW/LWL"),
+    (0xA1, "LLL/LWW/LLL"),
+    (0xA2, "LLL/WWW/LLL"),
+    (0xA3, "LLL/WWL/LLL"),
+    (0xA4, "LWL/LWW/LWW"),
+    (0xA5, "LWL/WWL/WWL"),
+    (0xA6, "LWL/LWW/LLL"),
+    (0xA7, "LWL/WWL/LLL"),
+    (0xA8, "WWL/WWW/LLL"),
+    (0xA9, "LWW/WWW/LLL"),
+];
+
+/// The picture a lake cell needs: an edge middle is water when that neighbour
+/// is lake, a corner when both edges beside it and the diagonal are.
+fn lake_picture(lake: &[Pos], (r, c): Pos) -> String {
+    let at = |dr: isize, dc: isize| {
+        let (nr, nc) = (r as isize + dr, c as isize + dc);
+        nr >= 0 && nc >= 0 && lake.contains(&(nr as usize, nc as usize))
+    };
+    let w = |b: bool| if b { 'W' } else { 'L' };
+    let (n, s, e, west) = (at(-1, 0), at(1, 0), at(0, 1), at(0, -1));
+    format!(
+        "{}{}{}/{}W{}/{}{}{}",
+        w(n && west && at(-1, -1)),
+        w(n),
+        w(n && e && at(-1, 1)),
+        w(west),
+        w(e),
+        w(s && west && at(1, -1)),
+        w(s),
+        w(s && e && at(1, 1)),
+    )
+}
+
+fn water_tile(picture: &str) -> Option<u8> {
+    WATER_TILES.iter().find(|&&(_, p)| p == picture).map(|&(t, _)| t)
+}
+
+/// Grow a lake inside `region` and draw it. Cells whose picture has no water
+/// tile (a lone cell, say) are trimmed until every cell has one; a lake that
+/// trims below two cells is dropped.
+fn grow_lake<R: Rng>(grid: &mut Grid, region: &[Pos], rng: &mut R) {
+    let Some(&seed) = region.choose(rng) else { return };
+    let size = rng.random_range(4..=MAX_LAKE.min(region.len() / 2).max(4));
+    let mut lake = vec![seed];
+    while lake.len() < size {
+        let next: Vec<Pos> = region
+            .iter()
+            .copied()
+            .filter(|p| !lake.contains(p) && lake.iter().any(|&c| touching(c, *p)))
+            .collect();
+        let Some(&p) = next.choose(rng) else { break };
+        lake.push(p);
+    }
+    while let Some(i) = lake.iter().position(|&p| water_tile(&lake_picture(&lake, p)).is_none()) {
+        lake.remove(i);
+    }
+    if lake.len() < 2 {
+        return;
+    }
+    let tiles: Vec<(Pos, u8)> =
+        lake.iter().map(|&p| (p, water_tile(&lake_picture(&lake, p)).unwrap())).collect();
+    for ((r, c), t) in tiles {
+        grid.set(r, c, t);
+    }
+}
 /// Regions smaller than this stay bushes.
 const MIN_DECORATED_REGION: usize = 3;
 /// One more cluster per this many cells of region.
@@ -702,7 +815,7 @@ fn generated_w1_is_deterministic() {
 }
 
 /// Generated W1 as drawn tiles, before the builder places anything:
-/// `.` bush, ` ` clearing, `^` rock (decorative), `-` `|` paths, `R` breakable
+/// `.` bush, ` ` clearing, `^` rock (decorative), `~` water, `-` `|` paths, `R` breakable
 /// rock, `o` node, `S` start, `A` airship, `a` castle top, `#` frame.
 ///
 /// ```sh
@@ -736,6 +849,7 @@ fn generated_w1_tiles() {
                     0x46 => '|',
                     0x51 | 0x52 => 'R',
                     0x02 => '#',
+                    0x82..=0xA9 => '~',
                     TILE_START => 'S',
                     0xC9 => 'A',
                     0xC8 => 'a',
@@ -744,5 +858,51 @@ fn generated_w1_tiles() {
                 .collect();
             println!("  {row}");
         }
+    }
+}
+
+/// Every picture in [`WATER_TILES`] matches what the tile's graphics draw.
+/// A map tile is four 8x8 CHR pieces, listed at `0x18010` / `0x18110` /
+/// `0x18210` / `0x18310` + tile as upper-left, lower-left, upper-right,
+/// lower-right (column by column). The map's background CHR, frame 0, is page
+/// `$14` onward (`0x40010 + 0x14 * 0x400`, 16 bytes a piece, two bit planes).
+/// Colour 1 is water and colour 3 land; each of the nine points is the
+/// majority of the two in a 3x3 block of pixels.
+#[test]
+fn water_pictures_match_the_graphics() {
+    let Ok(rom) = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes") else {
+        eprintln!("SKIP: requires the ROM, which is not included in the repo");
+        return;
+    };
+    let chr = 0x40010 + 0x14 * 0x400;
+    let pixel = |piece: u8, r: usize, c: usize| {
+        let at = chr + piece as usize * 16;
+        ((rom[at + r] >> (7 - c)) & 1) | (((rom[at + r + 8] >> (7 - c)) & 1) << 1)
+    };
+    for &(tile, want) in &WATER_TILES {
+        let t = tile as usize;
+        let (ul, ll, ur, lr) =
+            (rom[0x18010 + t], rom[0x18110 + t], rom[0x18210 + t], rom[0x18310 + t]);
+        let at = |r: usize, c: usize| {
+            let piece = match (r < 8, c < 8) {
+                (true, true) => ul,
+                (false, true) => ll,
+                (true, false) => ur,
+                (false, false) => lr,
+            };
+            pixel(piece, r % 8, c % 8)
+        };
+        let point = |r0: usize, c0: usize| {
+            let block: Vec<u8> = (r0..r0 + 3)
+                .flat_map(|r| (c0..c0 + 3).map(move |c| (r, c)))
+                .map(|(r, c)| at(r, c))
+                .collect();
+            let water = block.iter().filter(|&&p| p == 1).count();
+            let land = block.iter().filter(|&&p| p == 3).count();
+            if water > land { 'W' } else { 'L' }
+        };
+        let rows: Vec<String> =
+            [0, 6, 13].iter().map(|&r| [0, 6, 13].iter().map(|&c| point(r, c)).collect()).collect();
+        assert_eq!(rows.join("/"), want, "${tile:02X}");
     }
 }

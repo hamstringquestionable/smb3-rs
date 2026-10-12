@@ -231,3 +231,92 @@ fn map_inventory() {
         }
     }
 }
+
+/// Decorations D3: can water be drawn from rules learned from vanilla? For
+/// every water tile (`$82`–`$A9`) in the vanilla maps, record which of its 8
+/// neighbours are water and which tile vanilla drew. If each neighbour
+/// pattern always gives the same tile, that table draws any lake shape.
+/// Bridges and paths over water count as water neighbours.
+///
+/// ```sh
+/// cargo test --release --lib shoreline_table -- --ignored --nocapture
+/// ```
+#[test]
+#[ignore]
+fn shoreline_table() {
+    let Some(rom) = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes")
+        .ok()
+        .and_then(|d| crate::rom::Rom::from_bytes(&d).ok())
+    else {
+        eprintln!("SKIP: requires the ROM, which is not included in the repo");
+        return;
+    };
+    const WATER_PATHS: [u8; 9] = [0xAA, 0xAB, 0xAC, 0xB0, 0xB3, 0xB7, 0xB8, 0xB9, 0xBA];
+    let is_water_tile = |t: u8| (0x82..=0xA9).contains(&t);
+    let is_water = |t: u8| is_water_tile(t) || WATER_PATHS.contains(&t);
+    // Neighbour order, as mask bits 0..7: NW N NE W E SW S SE.
+    const AROUND: [(isize, isize); 8] =
+        [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)];
+
+    let maps = super::vanilla::read(&rom);
+    // mask -> tile -> where it occurs
+    let mut table: BTreeMap<u8, BTreeMap<u8, Vec<String>>> = BTreeMap::new();
+    let mut cells = 0;
+    for (wi, map) in maps.iter().enumerate() {
+        let g = &map.grid;
+        for r in 0..g.rows() {
+            for c in 0..g.cols {
+                let t = g.get(r, c);
+                if !is_water_tile(t) {
+                    continue;
+                }
+                cells += 1;
+                let mut mask = 0u8;
+                for (bit, (dr, dc)) in AROUND.iter().enumerate() {
+                    let (nr, nc) = (r as isize + dr, c as isize + dc);
+                    // Off the map counts as water: vanilla runs water to the edge.
+                    let off = nr < 0 || nc < 0 || nr >= g.rows() as isize || nc >= g.cols as isize;
+                    if off || is_water(g.get(nr as usize, nc as usize)) {
+                        mask |= 1 << bit;
+                    }
+                }
+                table
+                    .entry(mask)
+                    .or_default()
+                    .entry(t)
+                    .or_default()
+                    .push(format!("W{}({r},{c})", wi + 1));
+            }
+        }
+    }
+    let conflicts: Vec<_> = table.iter().filter(|(_, tiles)| tiles.len() > 1).collect();
+    println!(
+        "\n{cells} water cells, {} neighbour patterns, {} with more than one tile",
+        table.len(),
+        conflicts.len()
+    );
+    let conflict_cells: usize =
+        conflicts.iter().map(|(_, tiles)| tiles.values().map(Vec::len).sum::<usize>()).sum();
+    println!("cells under a conflicting pattern: {conflict_cells}");
+    println!("\nConflicts (mask NW N NE W E SW S SE -> tile: count, first places):");
+    for (mask, tiles) in &conflicts {
+        let bits: String = (0..8).map(|b| if *mask & (1 << b) != 0 { 'w' } else { '.' }).collect();
+        let list: Vec<String> = tiles
+            .iter()
+            .map(|(t, at)| {
+                format!(
+                    "{t:02X}:{} {}",
+                    at.len(),
+                    at.iter().take(3).cloned().collect::<Vec<_>>().join(" ")
+                )
+            })
+            .collect();
+        println!("  {bits}  {}", list.join(" | "));
+    }
+    println!("\nTiles seen per pattern (consistent ones):");
+    for (mask, tiles) in table.iter().filter(|(_, tiles)| tiles.len() == 1) {
+        let bits: String = (0..8).map(|b| if *mask & (1 << b) != 0 { 'w' } else { '.' }).collect();
+        let (t, at) = tiles.iter().next().unwrap();
+        println!("  {bits} -> {t:02X} ({})", at.len());
+    }
+}
