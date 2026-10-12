@@ -197,6 +197,9 @@ pub(crate) fn world_map<R: Rng>(
     } else {
         Water::default()
     };
+    if rng.random_bool(MOAT_CHANCE) {
+        add_moat(&grid, layout.target, &mut water);
+    }
     for &(r, c) in &water.cells {
         grid.set(r, c, WATER_PENDING);
     }
@@ -461,6 +464,42 @@ fn place_river<R: Rng>(grid: &Grid, rng: &mut R) -> Option<Water> {
 
 /// Columns tried before a layout goes without a river.
 const RIVER_ATTEMPTS: usize = 20;
+
+/// Chance a castle whose path comes in from the side gets a moat.
+const MOAT_CHANCE: f64 = 0.5;
+
+/// A moat: water on every cell around the castle and its top, with the
+/// castle's path crossing it on a bridge. Only when that path comes in from
+/// the side, because a path from below would need a vertical bridge and none
+/// exists. Every cell of the ring must be empty (or already river); a moat
+/// that would leave any water cell without a tile is not added.
+fn add_moat(grid: &Grid, (r, c): Pos, water: &mut Water) {
+    if r < 2 || r + 1 >= grid.rows() || c < 2 || c + 2 >= grid.cols {
+        return;
+    }
+    let Some(entry) =
+        [(r, c - 1), (r, c + 1)].into_iter().find(|&(er, ec)| grid.get(er, ec) == PATH.0)
+    else {
+        return;
+    };
+    let ring: Vec<Pos> = (r - 2..=r + 1)
+        .flat_map(|rr| (c - 1..=c + 1).map(move |cc| (rr, cc)))
+        .filter(|&p| p != (r - 1, c) && p != (r, c) && p != entry)
+        .collect();
+    let free = |(rr, cc): Pos| grid.get(rr, cc) == FILL || water.cells.contains(&(rr, cc));
+    if !ring.iter().all(|&p| free(p)) {
+        return;
+    }
+    let before = (water.cells.len(), water.bridges.len());
+    water
+        .cells
+        .extend(ring.iter().copied().filter(|p| !water.cells.contains(p)).collect::<Vec<_>>());
+    water.bridges.push(entry);
+    if !water.undrawable(grid.rows()).is_empty() {
+        water.cells.truncate(before.0);
+        water.bridges.truncate(before.1);
+    }
+}
 
 /// Grow a lake inside `region` and add it to `water`. Lake cells whose
 /// picture has no water tile (a lone cell, say) are trimmed; a lake that
@@ -890,7 +929,7 @@ fn generated_w1_is_completable() {
 
     // The builder alone, many seeds.
     let mut generated = 0;
-    let (mut with_river, mut with_gap) = (0, 0);
+    let (mut with_river, mut with_gap, mut with_moat) = (0, 0, 0);
     for seed in 0..seeds {
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
         let mut maps = super::vanilla::load(&rom, false, false);
@@ -921,6 +960,11 @@ fn generated_w1_is_completable() {
             .collect();
         with_river += usize::from(!bridges.is_empty());
         with_gap += usize::from(w1.locks.iter().any(|l| bridges.contains(&l.pos)));
+        let castle = find_target(&w1.grid, 0).expect("generated W1 has an airship");
+        with_moat += usize::from(
+            bridges.contains(&(castle.0, castle.1 - 1))
+                || bridges.contains(&(castle.0, castle.1 + 1)),
+        );
         let start = crate::randomize::rom_data::find_start(&w1.grid);
         let target = find_target(&w1.grid, 0).expect("generated W1 has an airship");
         assert!(
@@ -930,7 +974,7 @@ fn generated_w1_is_completable() {
     }
     println!("builder: {generated} of {seeds} seeds generated a W1, all completable");
     println!(
-        "  {with_river} have a river; in {with_gap} the builder locked a bridge (a water gap)"
+        "  {with_river} have a river, {with_moat} a moat; in {with_gap} the builder locked a bridge (a water gap)"
     );
 
     // The whole pipeline, fewer seeds: the writer and every later stage.
