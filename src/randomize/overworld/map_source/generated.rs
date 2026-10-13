@@ -169,12 +169,21 @@ const W1_RECIPE: Recipe = Recipe {
 const W2_RECIPE: Recipe = Recipe {
     layout: W2_TARGETS,
     ground: CLEARING,
+    // One-tile pieces first: they need cells touching no path or node, which
+    // the crowded main map has few of, so the patches and clusters fill
+    // around them rather than leaving them nowhere to go.
     scenery: &[
         Step::Oasis,
         Step::Pools,
+        Step::Scatter { tile: PYRAMID, count: PYRAMIDS },
+        Step::Scatter { tile: QUICKSAND, count: (1, 3) },
+        Step::Scatter { tile: TALL_ROCK, count: (2, 4) },
+        Step::Scatter { tile: RUBBLE, count: (1, 3) },
+        Step::Scatter { tile: ALT_RUBBLE, count: (1, 2) },
+        Step::Scatter { tile: PLANT, count: (3, 6) },
+        Step::Scatter { tile: DUNE, count: (4, 10) },
         Step::Dunes,
         Step::Clusters { other: PALM },
-        Step::Scatter { tile: PYRAMID, count: PYRAMIDS },
     ],
 };
 
@@ -331,6 +340,13 @@ pub(crate) fn world_map<R: Rng>(
     let air = vanilla.entry_pos[airship_idx];
     grid.set(layout.target.0 - 1, layout.target.1, old.get(air.0 - 1, air.1));
 
+    // Every cell drawn so far is a path, a node or the castle top: what
+    // one-tile scenery must not touch.
+    let built: HashSet<Pos> = (0..grid.rows())
+        .flat_map(|r| (1..grid.cols - 1).map(move |c| (r, c)))
+        .filter(|&(r, c)| grid.get(r, c) != FILL)
+        .collect();
+
     // The recipe's scenery, then its water, then its ground.
     let mut water = Water::default();
     for &step in recipe.scenery {
@@ -353,11 +369,11 @@ pub(crate) fn world_map<R: Rng>(
                 }
             }
             Step::Oasis => add_oasis(&mut grid, &mut water),
-            Step::Pools => add_pools(&mut grid, rng),
+            Step::Pools => add_pools(&mut grid, &built, rng),
             Step::Dunes => add_dunes(&mut grid, rng),
             Step::Clusters { other } => decorate(&mut grid, other, rng),
             Step::Scatter { tile, count } => {
-                scatter(&mut grid, tile, count, rng);
+                scatter(&mut grid, &built, tile, count, rng);
             }
         }
     }
@@ -393,6 +409,16 @@ const DUNE: u8 = 0x43;
 const POOL: u8 = 0xBF;
 /// A small pyramid. Also the pyramid level's tile, so never beside a path.
 const PYRAMID: u8 = 0x69;
+/// Quicksand: a round pit. Also a level tile in vanilla W2, like the pyramid.
+const QUICKSAND: u8 = 0x68;
+/// A taller rock (W6 has 67). On its page it is a level-gate tile.
+const TALL_ROCK: u8 = 0xEA;
+/// A small desert plant.
+const PLANT: u8 = 0xBE;
+/// `TILE_FORTRUBBLE` and `TILE_ALTRUBBLE`: what a cleared mini-fortress
+/// leaves, in two colours. Ruins here (user, 2026-10-13).
+const RUBBLE: u8 = 0x60;
+const ALT_RUBBLE: u8 = 0xE3;
 
 /// Pyramids per desert map (vanilla W2 has 7 as scenery).
 const PYRAMIDS: (usize, usize) = (2, 5);
@@ -402,21 +428,28 @@ const POOLS: (usize, usize) = (1, 3);
 const POOL_PALMS: (usize, usize) = (1, 2);
 /// Regions at least this big may get a dune patch, this often.
 const DUNE_MIN_REGION: usize = 6;
-const DUNE_CHANCE: f64 = 0.6;
+const DUNE_CHANCE: f64 = 0.9;
 
-/// Whether `p` may take a one-tile piece of scenery that must stay off
-/// paths and off rows 7 and 8.
-fn scenery_spot(grid: &Grid, p: Pos) -> bool {
-    grid.get(p.0, p.1) == FILL && p.0 + 2 < grid.rows() && clear_of_paths(grid, p)
+/// Whether `p` may take a one-tile piece of scenery: still empty, touching
+/// no cell in `built` (paths, nodes, the castle top), and off rows 7 and 8.
+fn scenery_spot(grid: &Grid, built: &HashSet<Pos>, (r, c): Pos) -> bool {
+    let around = [(r.wrapping_sub(1), c), (r + 1, c), (r, c - 1), (r, c + 1)];
+    grid.get(r, c) == FILL && r + 2 < grid.rows() && !around.iter().any(|p| built.contains(p))
 }
 
 /// Place a few of `tile`, one cell each, at random [`scenery_spot`]s.
-fn scatter<R: Rng>(grid: &mut Grid, tile: u8, count: (usize, usize), rng: &mut R) -> Vec<Pos> {
+fn scatter<R: Rng>(
+    grid: &mut Grid,
+    built: &HashSet<Pos>,
+    tile: u8,
+    count: (usize, usize),
+    rng: &mut R,
+) -> Vec<Pos> {
     let mut placed = Vec::new();
     for _ in 0..rng.random_range(count.0..=count.1) {
         let spots: Vec<Pos> = (0..grid.rows())
             .flat_map(|r| (1..grid.cols - 1).map(move |c| (r, c)))
-            .filter(|&p| scenery_spot(grid, p))
+            .filter(|&p| scenery_spot(grid, built, p))
             .collect();
         let Some(&(r, c)) = spots.choose(rng) else { break };
         grid.set(r, c, tile);
@@ -426,8 +459,8 @@ fn scatter<R: Rng>(grid: &mut Grid, tile: u8, count: (usize, usize), rng: &mut R
 }
 
 /// Small oases: a pool with a palm or two beside it.
-fn add_pools<R: Rng>(grid: &mut Grid, rng: &mut R) {
-    for (r, c) in scatter(grid, POOL, POOLS, rng) {
+fn add_pools<R: Rng>(grid: &mut Grid, built: &HashSet<Pos>, rng: &mut R) {
+    for (r, c) in scatter(grid, built, POOL, POOLS, rng) {
         let mut beside: Vec<Pos> = [(r.wrapping_sub(1), c), (r + 1, c), (r, c - 1), (r, c + 1)]
             .into_iter()
             .filter(|&(nr, nc)| nr < grid.rows() && nc > 0 && nc + 1 < grid.cols)
@@ -1733,7 +1766,8 @@ fn generated_worlds_are_deterministic() {
 
 /// A generated world (`LAYOUT_WORLD`, default 1) as drawn tiles, before the
 /// builder places anything: `.` bush, ` ` clearing or plain sand, `:` dotted
-/// sand, `^` rock (decorative), `T` palm, `O` pool, `M` pyramid, `~` water,
+/// sand, `^` rock (decorative), `T` palm, `O` pool, `M` pyramid, `Q`
+/// quicksand, `K` tall rock, `Y` plant, `u` ruins, `~` water,
 /// `=` bridge, `+` path over water, `-` `|` paths, `R` breakable rock, `o`
 /// node, `S` start, `A` airship, `a` castle top, `#` frame.
 ///
@@ -1770,6 +1804,10 @@ fn generated_tiles() {
                     PALM => 'T',
                     POOL => 'O',
                     PYRAMID => 'M',
+                    QUICKSAND => 'Q',
+                    TALL_ROCK => 'K',
+                    PLANT => 'Y',
+                    RUBBLE | ALT_RUBBLE => 'u',
                     0x45 | 0x49 => '-',
                     0x46 => '|',
                     0x51 | 0x52 => 'R',
