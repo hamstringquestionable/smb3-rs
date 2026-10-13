@@ -56,6 +56,8 @@ struct Layout {
     /// Each loop link's length: the nodes around the loop it closed when it
     /// was added. 4 is a square, which gives the player no real choice.
     loop_sizes: Vec<usize>,
+    /// The secret area's nodes (see [`grow_pocket`]); empty without one.
+    pocket: Vec<Pos>,
 }
 
 /// The targets a layout must meet, or it is thrown away and redrawn.
@@ -70,6 +72,10 @@ struct Targets {
     /// Fewest hops from the start to the target, on paths alone.
     start_to_target: (usize, usize),
     rocks: (usize, usize),
+    /// A secret area's node count, counted in `nodes`: a small tree in the
+    /// map's last scroll view with one way in (see [`grow_pocket`]). A world
+    /// with one starts on the left edge.
+    pocket: Option<(usize, usize)>,
 }
 
 /// The proposal agreed for W1 on 2026-10-11. Vanilla W1 is 21 nodes, 2
@@ -80,7 +86,29 @@ const W1_TARGETS: Targets = Targets {
     dead_ends: (2, 5),
     start_to_target: (7, 11),
     rocks: (0, 2),
+    pocket: None,
 };
+
+/// W2, first guesses around vanilla: 47 nodes, 3 loops, 7 dead ends, 15 hops,
+/// and the secret area behind the (0,21) rock, 6 nodes. The pocket has no
+/// rock at its mouth (user, 2026-10-13); rocks go elsewhere.
+const W2_TARGETS: Targets = Targets {
+    nodes: 47,
+    loops: (2, 4),
+    dead_ends: (5, 9),
+    start_to_target: (13, 17),
+    rocks: (0, 2),
+    pocket: Some((5, 7)),
+};
+
+/// The layout targets for `world_idx`, for the worlds that have them.
+fn targets(world_idx: usize) -> Option<Targets> {
+    match world_idx {
+        0 => Some(W1_TARGETS),
+        1 => Some(W2_TARGETS),
+        _ => None,
+    }
+}
 
 /// How often the tree grows from its newest node rather than from any node.
 /// A first guess, to be judged on the ASCII layouts.
@@ -112,6 +140,8 @@ fn generate<R: Rng>(
         if rng.random::<bool>() { top } else { bottom },
         if rng.random::<bool>() { left } else { right },
     );
+    // Both coins are tossed either way, so W1 draws the same maps.
+    let col_edge = if targets.pocket.is_some() { left } else { col_edge };
     let corner: Vec<Pos> = cells
         .iter()
         .copied()
@@ -137,7 +167,7 @@ const ROCK: (u8, u8) = (ROCK_BREAK_H, ROCK_BREAK_V);
 /// vanilla map, which supplies the frame, the start, and each entry's tile).
 /// `None` if no layout met the targets; the caller keeps vanilla then.
 ///
-/// Only World 1 has targets so far.
+/// Only World 1 is drawn so far; World 2 has a layout, judged as ASCII.
 pub(crate) fn world_map<R: Rng>(
     vanilla: &WorldMap,
     world_idx: usize,
@@ -146,6 +176,7 @@ pub(crate) fn world_map<R: Rng>(
     if world_idx != 0 {
         return None;
     }
+    let targets = targets(world_idx)?;
     let old = &vanilla.grid;
     let on_grid = |p: Pos| p.0 < old.rows() && p.1 < old.cols;
     let start_idx = (0..vanilla.entry_pos.len()).find(|&i| {
@@ -155,7 +186,7 @@ pub(crate) fn world_map<R: Rng>(
         }
     })?;
     let vanilla_start = vanilla.entry_pos[start_idx];
-    let layout = generate(old.rows(), old.cols, vanilla_start, W1_TARGETS, 1000, rng)?;
+    let layout = generate(old.rows(), old.cols, vanilla_start, targets, 1000, rng)?;
     let start = layout.start;
 
     // The frame (first and last column) stays as vanilla drew it; everything
@@ -799,6 +830,15 @@ fn try_once<R: Rng>(
     let mut nodes = vec![start];
     let mut in_tree: HashSet<Pos> = HashSet::from([start]);
     let mut tree: Vec<(Pos, Pos)> = Vec::new();
+    // The secret area's strip: the main tree never enters it, no loop touches
+    // it, and the waypoint and airship ignore it, so it hangs off the main map
+    // by one link. Empty without a pocket.
+    let walled: HashSet<Pos> = match targets.pocket {
+        Some(_) => cells.iter().copied().filter(|p| p.1 >= POCKET_COL).collect(),
+        None => HashSet::new(),
+    };
+    let main: Vec<Pos> = cells.iter().copied().filter(|p| !walled.contains(p)).collect();
+    let pocket_size = targets.pocket.map(|(lo, hi)| rng.random_range(lo..=hi));
 
     //    First a waypoint, reached by a winding path from the start, so every
     //    layout crosses the map. It lands in a staircase on the side away
@@ -812,9 +852,9 @@ fn try_once<R: Rng>(
         let (lo, hi) = (*values.iter().min()?, *values.iter().max()?);
         Some(if from - lo < hi - from { hi } else { lo })
     };
-    let far_row = far_end(cells.iter().map(|p| p.0).collect(), start.0)?;
-    let far_col = far_end(cells.iter().map(|p| p.1).collect(), start.1)?;
-    let corner: Vec<Pos> = cells
+    let far_row = far_end(main.iter().map(|p| p.0).collect(), start.0)?;
+    let far_col = far_end(main.iter().map(|p| p.1).collect(), start.1)?;
+    let corner: Vec<Pos> = main
         .iter()
         .copied()
         .filter(|&(r, c)| c.abs_diff(far_col) / 2 <= r.abs_diff(far_row) / 2)
@@ -841,10 +881,12 @@ fn try_once<R: Rng>(
         tree.push(ordered(at, next));
         at = next;
     }
-
-    while nodes.len() < targets.nodes {
+    while nodes.len() + pocket_size.unwrap_or(0) < targets.nodes {
         let free = |n: Pos| -> Vec<Pos> {
-            neighbours(n, &on_lattice).into_iter().filter(|m| !in_tree.contains(m)).collect()
+            neighbours(n, &on_lattice)
+                .into_iter()
+                .filter(|m| !in_tree.contains(m) && !walled.contains(m))
+                .collect()
         };
         let growable: Vec<Pos> = nodes.iter().copied().filter(|&n| !free(n).is_empty()).collect();
         let from = if rng.random_bool(EXTEND_NEWEST) {
@@ -857,14 +899,31 @@ fn try_once<R: Rng>(
         nodes.push(to);
         tree.push(ordered(from, to));
     }
+    //    The pocket, last: grown into the strip from a mouth beside a node
+    //    the main tree reached.
+    let pocket = match pocket_size {
+        Some(size) => {
+            let p = grow_pocket(&walled, &on_lattice, &in_tree, size, rng)?;
+            tree.extend(p.links.iter().map(|&(a, b)| ordered(a, b)));
+            p.nodes
+        }
+        None => Vec::new(),
+    };
+    nodes.extend(&pocket);
+    in_tree.extend(&pocket);
 
-    // 2. Extra links between neighbouring nodes: each one is a loop.
+    // 2. Extra links between neighbouring nodes: each one is a loop. None
+    //    inside or into the pocket.
     let linked: HashSet<(Pos, Pos)> = tree.iter().copied().collect();
     let mut spare: Vec<(Pos, Pos)> = Vec::new();
-    for &n in &nodes {
+    for &n in nodes.iter().filter(|n| !walled.contains(n)) {
         for m in neighbours(n, &on_lattice) {
             let pair = ordered(n, m);
-            if in_tree.contains(&m) && !linked.contains(&pair) && !spare.contains(&pair) {
+            if in_tree.contains(&m)
+                && !walled.contains(&m)
+                && !linked.contains(&pair)
+                && !spare.contains(&pair)
+            {
                 spare.push(pair);
             }
         }
@@ -918,7 +977,7 @@ fn try_once<R: Rng>(
     let candidates: Vec<Pos> = nodes
         .iter()
         .copied()
-        .filter(|&n| n != start && degree[&n] == 1 && n.0 >= 2)
+        .filter(|&n| n != start && degree[&n] == 1 && n.0 >= 2 && !walled.contains(&n))
         .filter(|&n| {
             let d = hops.get(&n).copied().unwrap_or(usize::MAX);
             (targets.start_to_target.0..=targets.start_to_target.1).contains(&d)
@@ -932,7 +991,59 @@ fn try_once<R: Rng>(
         return None;
     }
 
-    Some(Layout { rows, cols, nodes, links, start, target, loop_sizes })
+    Some(Layout { rows, cols, nodes, links, start, target, loop_sizes, pocket })
+}
+
+/// The first column of the pocket's strip: the map's last scroll view, which
+/// holds nothing else. Vanilla W2's secret area starts at column 22, entered
+/// from (0,20).
+const POCKET_COL: usize = 22;
+
+/// A secret area: a small tree in the strip, joined to the main map by one
+/// link from a main node into its mouth (vanilla W2's area behind the (0,21)
+/// rock, which this randomizer always opens).
+struct Pocket {
+    nodes: Vec<Pos>,
+    /// The tree's links, the joining link first.
+    links: Vec<(Pos, Pos)>,
+}
+
+/// Grow a [`Pocket`] of `size` nodes in `strip`, its mouth beside a node of
+/// `main` (the main tree, already grown).
+fn grow_pocket<R: Rng>(
+    strip: &HashSet<Pos>,
+    on_lattice: &HashSet<Pos>,
+    main: &HashSet<Pos>,
+    size: usize,
+    rng: &mut R,
+) -> Option<Pocket> {
+    // Sorted: `strip` and `main` are sets, which iterate in a different order
+    // every run.
+    let mut doors: Vec<(Pos, Pos)> = strip
+        .iter()
+        .flat_map(|&m| neighbours(m, on_lattice).into_iter().map(move |o| (o, m)))
+        .filter(|(o, _)| main.contains(o))
+        .collect();
+    doors.sort();
+    let &(door, mouth) = doors.choose(rng)?;
+
+    // Grown from the mouth, from any of its nodes, inside the strip only.
+    let mut nodes = vec![mouth];
+    let mut links = vec![(door, mouth)];
+    while nodes.len() < size {
+        let free = |n: Pos| -> Vec<Pos> {
+            neighbours(n, on_lattice)
+                .into_iter()
+                .filter(|m| strip.contains(m) && !nodes.contains(m))
+                .collect()
+        };
+        let growable: Vec<Pos> = nodes.iter().copied().filter(|&n| !free(n).is_empty()).collect();
+        let &from = growable.choose(rng)?;
+        let &to = free(from).choose(rng)?;
+        nodes.push(to);
+        links.push((from, to));
+    }
+    Some(Pocket { nodes, links })
 }
 
 fn degrees(nodes: &[Pos], links: &[(Pos, Pos, Link)]) -> HashMap<Pos, usize> {
@@ -970,11 +1081,14 @@ fn path_hops(start: Pos, links: &[(Pos, Pos, Link)]) -> HashMap<Pos, usize> {
 #[cfg(test)]
 impl Layout {
     /// One character per map tile: `S` start, `A` target, `o` node, `-` and
-    /// `|` paths, `R` a rock.
+    /// `|` paths, `R` a rock, `p` a node in the secret area.
     fn ascii(&self) -> String {
         let mut cells = vec![vec![' '; self.cols]; self.rows];
         for &(r, c) in &self.nodes {
             cells[r][c] = 'o';
+        }
+        for &(r, c) in &self.pocket {
+            cells[r][c] = 'p';
         }
         cells[self.start.0][self.start.1] = 'S';
         cells[self.target.0][self.target.1] = 'A';
@@ -993,13 +1107,14 @@ impl Layout {
     fn summary(&self) -> String {
         let hops = path_hops(self.start, &self.links).get(&self.target).copied();
         format!(
-            "nodes {}  loops {} {:?}  dead ends {}  junctions {}  rocks {}  start->airship {}",
+            "nodes {}  loops {} {:?}  dead ends {}  junctions {}  rocks {}  pocket {}  start->airship {}",
             self.nodes.len(),
             self.links.len() + 1 - self.nodes.len(),
             self.loop_sizes,
             self.dead_ends(),
             self.junctions(),
             self.links.iter().filter(|l| l.2 == Link::Rock).count(),
+            self.pocket.len(),
             hops.map_or("-".to_string(), |h| h.to_string()),
         )
     }
@@ -1016,8 +1131,9 @@ impl Layout {
     }
 }
 
-/// Prints each seed's layout as ASCII (`LAYOUT_SEEDS`, default 10). Past 20
-/// seeds it prints only the tally, for comparing generator changes.
+/// Prints each seed's layout as ASCII (`LAYOUT_SEEDS`, default 10) for
+/// `LAYOUT_WORLD` (default 1). Past 20 seeds it prints only the tally, for
+/// comparing generator changes.
 #[test]
 #[ignore]
 fn generated_layouts() {
@@ -1032,10 +1148,18 @@ fn generated_layouts() {
         return;
     };
     let maps = super::vanilla::load(&rom, false, false);
-    let w1 = &maps[0].grid;
-    let start = crate::randomize::rom_data::find_start(w1).expect("W1 has a start");
-    println!("\nW1 start (anchor): {start:?}; targets: {W1_TARGETS:?}");
-    println!("Vanilla W1: nodes 21  loops 2  dead ends 3  junctions 5  rocks 1  start->airship 9");
+    let world: usize = std::env::var("LAYOUT_WORLD").ok().and_then(|s| s.parse().ok()).unwrap_or(1);
+    let targets = targets(world - 1).expect("LAYOUT_WORLD has targets");
+    let grid = &maps[world - 1].grid;
+    let start = crate::randomize::rom_data::find_start(grid).expect("the world has a start");
+    println!("\nW{world} start (anchor): {start:?}; targets: {targets:?}");
+    println!(
+        "Vanilla: {}",
+        [
+            "W1 nodes 21  loops 2  dead ends 3  junctions 5  rocks 1  start->airship 9",
+            "W2 nodes 47  loops 3  dead ends 7  junctions 10  pocket 6  start->airship 15",
+        ][world - 1]
+    );
 
     let seeds: u64 = std::env::var("LAYOUT_SEEDS").ok().and_then(|s| s.parse().ok()).unwrap_or(10);
     let quiet = seeds > 20;
@@ -1043,7 +1167,7 @@ fn generated_layouts() {
     let (mut loops, mut squares, mut loop_total, mut junctions) = (0, 0, 0, 0);
     for seed in 1..=seeds {
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
-        match generate(w1.rows(), w1.cols, start, W1_TARGETS, 1000, &mut rng) {
+        match generate(grid.rows(), grid.cols, start, targets, 1000, &mut rng) {
             Some(layout) => {
                 built += 1;
                 loops += layout.loop_sizes.len();
