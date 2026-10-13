@@ -1772,6 +1772,9 @@ fn try_once<R: Rng>(
     if !(targets.dead_ends.0..=targets.dead_ends.1).contains(&dead_ends) {
         return None;
     }
+    if hooked_cross(&links) {
+        return None;
+    }
 
     Some(Layout { rows, cols, nodes, links, start, target, loop_sizes, pocket, islands, docks })
 }
@@ -1898,6 +1901,51 @@ fn grow_pocket<R: Rng>(
         links.push((from, to));
     }
     Some(Pocket { nodes, links })
+}
+
+/// Longest straight arm [`hooked_cross`] looks along: the lattice is five
+/// nodes tall, so no arm runs further.
+const MAX_ARM: usize = 2;
+
+/// Whether the links draw a hooked cross: a node with an arm in all four
+/// directions, each a clean corridor (every node on it has just its two
+/// links) running straight for up to [`MAX_ARM`] links and then turning,
+/// every turn the same way round (all clockwise, or all anticlockwise, so
+/// both mirror images). It reads as a swastika, and no layout may contain
+/// one (user, 2026-10-13). A junction whose arms branch on does not read as
+/// one, so it is allowed. Rocks count: they draw in line.
+fn hooked_cross(links: &[(Pos, Pos, Link)]) -> bool {
+    // North, east, south, west: one step clockwise is the next one.
+    const DIRS: [(isize, isize); 4] = [(-2, 0), (0, 2), (2, 0), (0, -2)];
+    let linked: HashSet<(Pos, Pos)> = links.iter().map(|&(a, b, _)| ordered(a, b)).collect();
+    let joined = |p: Pos, (dr, dc): (isize, isize)| {
+        let (r, c) = (p.0 as isize + dr, p.1 as isize + dc);
+        let q = (r >= 0 && c >= 0).then_some((r as usize, c as usize))?;
+        linked.contains(&ordered(p, q)).then_some(q)
+    };
+    let degree = |p: Pos| DIRS.iter().filter(|&&d| joined(p, d).is_some()).count();
+    let mut centres: Vec<Pos> = links.iter().flat_map(|&(a, b, _)| [a, b]).collect();
+    centres.sort();
+    centres.dedup();
+    centres.into_iter().any(|centre| {
+        [1, 3].into_iter().any(|turn| {
+            (0..4).all(|i| {
+                let (out, hook) = (DIRS[i], DIRS[(i + turn) % 4]);
+                let mut at = centre;
+                for _ in 0..MAX_ARM {
+                    let Some(next) = joined(at, out) else { return false };
+                    at = next;
+                    if degree(at) != 2 {
+                        return false;
+                    }
+                    if joined(at, hook).is_some() {
+                        return true;
+                    }
+                }
+                false
+            })
+        })
+    })
 }
 
 fn degrees(nodes: &[Pos], links: &[(Pos, Pos, Link)]) -> HashMap<Pos, usize> {
@@ -2371,5 +2419,78 @@ fn water_pictures_match_the_graphics() {
         let rows: Vec<String> =
             [0, 6, 13].iter().map(|&r| [0, 6, 13].iter().map(|&c| point(r, c)).collect()).collect();
         assert_eq!(rows.join("/"), want, "${tile:02X}");
+    }
+}
+
+/// The hooked-cross check catches both mirror images, at arm lengths one and
+/// two, and leaves a plain cross alone.
+#[test]
+fn hooked_cross_is_caught() {
+    let path = |a: Pos, b: Pos| (ordered(a, b).0, ordered(a, b).1, Link::Path);
+    let c = (4, 8);
+    let plain: Vec<_> = [(2, 8), (6, 8), (4, 6), (4, 10)].iter().map(|&n| path(c, n)).collect();
+    assert!(!hooked_cross(&plain));
+
+    // Clockwise hooks: north arm turns east, east turns south, and so on.
+    let mut clockwise = plain.clone();
+    clockwise.extend([path((2, 8), (2, 10)), path((4, 10), (6, 10))]);
+    clockwise.extend([path((6, 8), (6, 6)), path((4, 6), (2, 6))]);
+    assert!(hooked_cross(&clockwise));
+
+    let mut anticlockwise = plain.clone();
+    anticlockwise.extend([path((2, 8), (2, 6)), path((4, 10), (2, 10))]);
+    anticlockwise.extend([path((6, 8), (6, 10)), path((4, 6), (6, 6))]);
+    assert!(hooked_cross(&anticlockwise));
+
+    // Arms two links long, hooked at the far end.
+    let c = (4, 12);
+    let mut long: Vec<_> = Vec::new();
+    for (a, b, hook) in [
+        ((2, 12), (0, 12), (0, 14)),
+        ((4, 14), (4, 16), (6, 16)),
+        ((6, 12), (8, 12), (8, 10)),
+        ((4, 10), (4, 8), (2, 8)),
+    ] {
+        long.extend([path(c, a), path(a, b), path(b, hook)]);
+    }
+    assert!(hooked_cross(&long));
+
+    // Mixed turns are not the shape.
+    let mut mixed = plain;
+    mixed.extend([path((2, 8), (2, 10)), path((4, 10), (6, 10))]);
+    mixed.extend([path((6, 8), (6, 10)), path((4, 6), (2, 6))]);
+    assert!(!hooked_cross(&mixed));
+}
+
+/// No generated layout contains a hooked cross ([`hooked_cross`]).
+#[test]
+fn generated_layouts_have_no_hooked_cross() {
+    use rand::SeedableRng;
+    use rand_chacha::ChaCha8Rng;
+
+    let Some(rom) = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes")
+        .ok()
+        .and_then(|d| crate::rom::Rom::from_bytes(&d).ok())
+    else {
+        eprintln!("SKIP: requires the ROM, which is not included in the repo");
+        return;
+    };
+    let maps = super::vanilla::load(&rom, false, false);
+    for (wi, map) in maps.iter().enumerate().take(3) {
+        let grid = &map.grid;
+        let start = crate::randomize::rom_data::find_start(grid).unwrap();
+        let airship = (0..map.entry_pos.len())
+            .find(|&i| AIRSHIP_ENTRIES.contains(&(wi, i)))
+            .map(|i| map.entry_pos[i])
+            .unwrap();
+        let targets = recipe(wi).unwrap().layout;
+        for seed in 0..50 {
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            if let Some(layout) =
+                generate(wi, grid.rows(), grid.cols, start, airship, targets, &mut rng)
+            {
+                assert!(!hooked_cross(&layout.links), "W{} seed {seed}", wi + 1);
+            }
+        }
     }
 }
