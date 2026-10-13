@@ -145,15 +145,17 @@ enum Step {
     River,
     /// Sometimes a moat beside the castle ([`add_moat`]).
     Moat,
-    /// The pocket strip's open space as one lake, a palm on an island
-    /// ([`add_oasis`]).
-    Oasis,
-    /// One-tile pools with palms beside them ([`add_pools`]).
-    Pools,
-    /// Patches of dotted sand ([`add_dunes`]).
-    Dunes,
-    /// Clusters of rock or `other` in each open region ([`decorate`]).
-    Clusters { other: u8 },
+    /// The pocket strip's open space as one lake, `island` on an island at
+    /// its deepest cell ([`add_oasis`]).
+    Oasis { island: u8 },
+    /// `count` one-tile `pool`s, each with a `palm` or two beside it
+    /// ([`add_pools`]).
+    Pools { pool: u8, palm: u8, count: (usize, usize) },
+    /// Patches of `tile` grown in the bigger open regions ([`add_patches`]).
+    Patches { tile: u8 },
+    /// Clusters in each open region ([`decorate`]): rock, `rock_share` of the
+    /// time, else `other`.
+    Clusters { other: u8, rock_share: f64 },
     /// A few single tiles off the paths ([`scatter`]).
     Scatter { tile: u8, count: (usize, usize) },
 }
@@ -161,7 +163,13 @@ enum Step {
 const W1_RECIPE: Recipe = Recipe {
     layout: W1_TARGETS,
     ground: FILL,
-    scenery: &[Step::Lakes, Step::River, Step::Moat, Step::Clusters { other: CLEARING }],
+    // Vanilla W1 has 9 rock cells to 11 clearing cells.
+    scenery: &[
+        Step::Lakes,
+        Step::River,
+        Step::Moat,
+        Step::Clusters { other: CLEARING, rock_share: 0.4 },
+    ],
 };
 
 /// Plain sand; dotted sand in patches; palms where W1 has clearings; one big
@@ -173,8 +181,8 @@ const W2_RECIPE: Recipe = Recipe {
     // the crowded main map has few of, so the patches and clusters fill
     // around them rather than leaving them nowhere to go.
     scenery: &[
-        Step::Oasis,
-        Step::Pools,
+        Step::Oasis { island: PALM },
+        Step::Pools { pool: POOL, palm: PALM, count: (1, 3) },
         Step::Scatter { tile: PYRAMID, count: PYRAMIDS },
         Step::Scatter { tile: QUICKSAND, count: (1, 3) },
         Step::Scatter { tile: TALL_ROCK, count: (2, 4) },
@@ -182,8 +190,8 @@ const W2_RECIPE: Recipe = Recipe {
         Step::Scatter { tile: ALT_RUBBLE, count: (1, 2) },
         Step::Scatter { tile: PLANT, count: (3, 6) },
         Step::Scatter { tile: DUNE, count: (4, 10) },
-        Step::Dunes,
-        Step::Clusters { other: PALM },
+        Step::Patches { tile: DUNE },
+        Step::Clusters { other: PALM, rock_share: 0.4 },
     ],
 };
 
@@ -368,10 +376,12 @@ pub(crate) fn world_map<R: Rng>(
                     add_moat(&mut grid, layout.target, &mut water);
                 }
             }
-            Step::Oasis => add_oasis(&mut grid, &mut water),
-            Step::Pools => add_pools(&mut grid, &built, rng),
-            Step::Dunes => add_dunes(&mut grid, rng),
-            Step::Clusters { other } => decorate(&mut grid, other, rng),
+            Step::Oasis { island } => add_oasis(&mut grid, &mut water, island),
+            Step::Pools { pool, palm, count } => {
+                add_pools(&mut grid, &built, pool, palm, count, rng)
+            }
+            Step::Patches { tile } => add_patches(&mut grid, tile, rng),
+            Step::Clusters { other, rock_share } => decorate(&mut grid, other, rock_share, rng),
             Step::Scatter { tile, count } => {
                 scatter(&mut grid, &built, tile, count, rng);
             }
@@ -422,13 +432,11 @@ const ALT_RUBBLE: u8 = 0xE3;
 
 /// Pyramids per desert map (vanilla W2 has 7 as scenery).
 const PYRAMIDS: (usize, usize) = (2, 5);
-/// Pools per desert map (vanilla W2 has 5), each with palms beside it.
-const POOLS: (usize, usize) = (1, 3);
 /// Palms beside each pool.
 const POOL_PALMS: (usize, usize) = (1, 2);
-/// Regions at least this big may get a dune patch, this often.
-const DUNE_MIN_REGION: usize = 6;
-const DUNE_CHANCE: f64 = 0.9;
+/// Regions at least this big may get a patch, this often.
+const PATCH_MIN_REGION: usize = 6;
+const PATCH_CHANCE: f64 = 0.9;
 
 /// Whether `p` may take a one-tile piece of scenery: still empty, touching
 /// no cell in `built` (paths, nodes, the castle top), and off rows 7 and 8.
@@ -459,8 +467,15 @@ fn scatter<R: Rng>(
 }
 
 /// Small oases: a pool with a palm or two beside it.
-fn add_pools<R: Rng>(grid: &mut Grid, built: &HashSet<Pos>, rng: &mut R) {
-    for (r, c) in scatter(grid, built, POOL, POOLS, rng) {
+fn add_pools<R: Rng>(
+    grid: &mut Grid,
+    built: &HashSet<Pos>,
+    pool: u8,
+    palm: u8,
+    count: (usize, usize),
+    rng: &mut R,
+) {
+    for (r, c) in scatter(grid, built, pool, count, rng) {
         let mut beside: Vec<Pos> = [(r.wrapping_sub(1), c), (r + 1, c), (r, c - 1), (r, c + 1)]
             .into_iter()
             .filter(|&(nr, nc)| nr < grid.rows() && nc > 0 && nc + 1 < grid.cols)
@@ -468,29 +483,30 @@ fn add_pools<R: Rng>(grid: &mut Grid, built: &HashSet<Pos>, rng: &mut R) {
             .collect();
         beside.shuffle(rng);
         for (pr, pc) in beside.into_iter().take(rng.random_range(POOL_PALMS.0..=POOL_PALMS.1)) {
-            grid.set(pr, pc, PALM);
+            grid.set(pr, pc, palm);
         }
     }
 }
 
-/// Patches of dotted sand, grown as blobs in the bigger open regions.
-fn add_dunes<R: Rng>(grid: &mut Grid, rng: &mut R) {
+/// Patches of `tile` (W2's dotted sand), grown as blobs in the bigger open
+/// regions.
+fn add_patches<R: Rng>(grid: &mut Grid, tile: u8, rng: &mut R) {
     for region in empty_regions(grid) {
-        if region.len() >= DUNE_MIN_REGION && rng.random_bool(DUNE_CHANCE) {
+        if region.len() >= PATCH_MIN_REGION && rng.random_bool(PATCH_CHANCE) {
             let Some(&seed) = region.choose(rng) else { continue };
             let size = rng.random_range(3..=MAX_LAKE.min(region.len() / 2).max(3));
             for (r, c) in grow_blob(&region, seed, size, rng) {
-                grid.set(r, c, DUNE);
+                grid.set(r, c, tile);
             }
         }
     }
 }
 
 /// The big oasis: the largest open region in the pocket's strip, all of it
-/// water, with a palm on an island at its deepest cell when it has one (a
+/// water, with `island_tile` on an island at its deepest cell when it has one (a
 /// cell with water all round). Water cells with no tile for their picture
-/// are trimmed back to sand. Takes no random draws: the strip decides it.
-fn add_oasis(grid: &mut Grid, water: &mut Water) {
+/// are trimmed back to ground. Takes no random draws: the strip decides it.
+fn add_oasis(grid: &mut Grid, water: &mut Water, island_tile: u8) {
     let strip: Vec<Pos> = empty_regions(grid)
         .into_iter()
         .flat_map(|region| {
@@ -528,7 +544,7 @@ fn add_oasis(grid: &mut Grid, water: &mut Water) {
     water.cells.truncate(before);
     if lake.len() >= 2 && water.try_add(grid, &lake, &[], &[]) {
         if let Some((r, c)) = island {
-            grid.set(r, c, PALM);
+            grid.set(r, c, island_tile);
         }
         water.lakes.push(lake);
     }
@@ -566,13 +582,13 @@ const DECO_ROCK: u8 = 0x53;
 /// enough gets a few clusters of rock or `other` (W1's clearings, W2's
 /// palms), grown as a blob from a random cell. Tiny regions, usually wedged
 /// between paths, stay as they are.
-fn decorate<R: Rng>(grid: &mut Grid, other: u8, rng: &mut R) {
+fn decorate<R: Rng>(grid: &mut Grid, other: u8, rock_share: f64, rng: &mut R) {
     for region in empty_regions(grid) {
         if region.len() < MIN_DECORATED_REGION {
             continue;
         }
         for _ in 0..1 + region.len() / CELLS_PER_CLUSTER {
-            let rock = rng.random_bool(ROCK_SHARE);
+            let rock = rng.random_bool(rock_share);
             let allowed: Vec<Pos> = region
                 .iter()
                 .copied()
@@ -978,9 +994,6 @@ const MIN_DECORATED_REGION: usize = 3;
 const CELLS_PER_CLUSTER: usize = 12;
 /// Most cells one cluster grows to.
 const MAX_CLUSTER: usize = 6;
-/// Share of clusters that are rock piles rather than clearings. Vanilla W1
-/// has 9 rock cells to 11 clearing cells.
-const ROCK_SHARE: f64 = 0.4;
 
 /// Steps between two cells, moving side to side.
 fn manhattan(a: Pos, b: Pos) -> usize {
