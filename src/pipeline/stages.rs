@@ -313,6 +313,10 @@ pub(super) fn overworld_catalog(
                 && let Some(generated) =
                     randomize::overworld::map_source::generated::world_map(map, wi, rng)
             {
+                if let Some(canoe) = generated.canoe {
+                    rom.set_tag("overworld/generated_canoe");
+                    randomize::rom_data::move_canoe(rom, wi, canoe);
+                }
                 *map = generated;
             }
         }

@@ -185,11 +185,15 @@ enum Step {
     Clusters { other: u8, rock_share: f64 },
     /// A few single tiles off the paths ([`scatter`]).
     Scatter { tile: u8, count: (usize, usize) },
+    /// Water as the ground ([`add_sea`]): land on each node's side `margin`
+    /// of the time, grown by `land` of the open cells, and bush islets; the
+    /// rest is sea. First in a recipe, so the steps after it decorate the land.
+    Sea { margin: f64, land: f64 },
 }
 
 const W1_RECIPE: Recipe = Recipe {
     layout: W1_TARGETS,
-    ground: FILL,
+    ground: BUSH,
     // Vanilla W1 has 9 rock cells to 11 clearing cells.
     scenery: &[
         Step::Lakes,
@@ -222,9 +226,19 @@ const W2_RECIPE: Recipe = Recipe {
     ],
 };
 
-/// W3's layout; its water-first drawing is not written yet, so
-/// [`world_map`] does not draw it.
-const W3_RECIPE: Recipe = Recipe { layout: W3_TARGETS, ground: FILL, scenery: &[] };
+/// W3: water first (user, 2026-10-13). The sea is the ground; land grows
+/// around the paths, with bush (W3's boulders) on islets and in clusters, and
+/// a few palms and pools, as vanilla has.
+const W3_RECIPE: Recipe = Recipe {
+    layout: W3_TARGETS,
+    ground: CLEARING,
+    scenery: &[
+        Step::Sea { margin: 0.5, land: 0.1 },
+        Step::Clusters { other: BUSH, rock_share: 0.0 },
+        Step::Scatter { tile: PALM, count: (1, 3) },
+        Step::Scatter { tile: POOL, count: (0, 2) },
+    ],
+};
 
 /// The recipe for `world_idx`, for the worlds that have one.
 fn recipe(world_idx: usize) -> Option<&'static Recipe> {
@@ -279,28 +293,206 @@ fn generate<R: Rng>(
     (0..ATTEMPTS).find_map(|_| try_once(rows, cols, anchor, start, targets, rng))
 }
 
-/// The dancing bush (`TILE_DANCINGBUSH`): every empty cell starts as it, and
-/// what water and decoration leave stays it. Vanilla W1 fills its empty space
-/// with it too.
-const FILL: u8 = 0xB4;
+/// Marks an empty cell while a map is generated: every interior cell starts
+/// as it, and what water and decoration leave becomes the recipe's ground at
+/// the end. No map uses the byte, so a recipe can use any real tile, the bush
+/// included, as scenery.
+const FILL: u8 = 0xFF;
+/// The dancing bush (`TILE_DANCINGBUSH`): vanilla W1 fills its empty space
+/// with it, and W3's rock islets are drawn with it.
+const BUSH: u8 = 0xB4;
+/// `TILE_DOCK`: the canoe is boarded from here, and the only tile it lands at.
+const DOCK: u8 = 0x4B;
+
+/// Bush islets out in open water per sea map.
+const ISLETS: (usize, usize) = (2, 4);
+/// The owner [`add_sea`] gives an islet, and sea trimmed back to land: no
+/// island grows from it.
+const ISLET: usize = usize::MAX;
+
+/// Water first (W3). Land is what is drawn so far (paths, nodes, the castle
+/// top), each of a node's four neighbours `margin` of the time, then `land`
+/// of the open cells grown on
+/// from the shore, then a few one-cell islets of bush out in the open. Every
+/// other cell is sea. Land belongs to the island it grew from, and never
+/// touches another island's, so separate islands always show water between. Land never takes a dock's water tile, nor a cell whose
+/// loss would cut one dock's water off from another's.
+///
+/// A path with sea on both sides becomes a bridge (horizontal) or a `$BA`
+/// crossing (vertical); its ends are nodes, which are always land. Sea cells
+/// with no tile for their picture become land, and `false` if that cuts the
+/// docks apart (the world then keeps vanilla).
+fn add_sea<R: Rng>(
+    grid: &mut Grid,
+    water: &mut Water,
+    layout: &Layout,
+    margin: f64,
+    land: f64,
+    rng: &mut R,
+) -> bool {
+    let (rows, cols) = (grid.rows(), grid.cols);
+    let inside = |(r, c): Pos| r < rows && c >= 1 && c + 1 < cols;
+    let around =
+        |(r, c): Pos| [(r.wrapping_sub(1), c), (r + 1, c), (r, c.wrapping_sub(1)), (r, c + 1)];
+    let cells: Vec<Pos> = (0..rows).flat_map(|r| (1..cols - 1).map(move |c| (r, c))).collect();
+    let wet: Vec<Pos> = layout.docks.iter().map(|d| d.1).collect();
+    water.sea_bounds = Some((rows, cols));
+
+    // Land, keyed by the island it belongs to (0 the start's, k + 1 the
+    // layout's k-th), so islands never grow into each other: no land is
+    // placed touching another island's, diagonals included.
+    let island_of =
+        |p: Pos| layout.islands.iter().position(|i| i.contains(&p)).map_or(0, |k| k + 1);
+    let mut solid: HashMap<Pos, usize> = HashMap::new();
+    for &(r, c) in cells.iter().filter(|&&(r, c)| grid.get(r, c) != FILL) {
+        let nearest = layout.nodes.iter().copied().min_by_key(|&n| manhattan(n, (r, c)));
+        solid.insert((r, c), nearest.map_or(0, island_of));
+    }
+
+    // Whether every dock's water is still one sea, with `solid` as land.
+    let joined = |solid: &HashMap<Pos, usize>| {
+        let Some(&first) = wet.first() else { return true };
+        let mut seen = HashSet::from([first]);
+        let mut queue = vec![first];
+        while let Some(p) = queue.pop() {
+            for n in around(p) {
+                if inside(n) && !solid.contains_key(&n) && seen.insert(n) {
+                    queue.push(n);
+                }
+            }
+        }
+        wet.iter().all(|w| seen.contains(w))
+    };
+    let add = |solid: &mut HashMap<Pos, usize>, (r, c): Pos, island: usize| {
+        let touches_another = (r.saturating_sub(1)..=r + 1).any(|y| {
+            (c.saturating_sub(1)..=c + 1).any(|x| solid.get(&(y, x)).is_some_and(|&o| o != island))
+        });
+        if !inside((r, c))
+            || wet.contains(&(r, c))
+            || solid.contains_key(&(r, c))
+            || touches_another
+        {
+            return false;
+        }
+        solid.insert((r, c), island);
+        let kept = joined(solid);
+        if !kept {
+            solid.remove(&(r, c));
+        }
+        kept
+    };
+
+    for &n in &layout.nodes {
+        for p in around(n) {
+            if rng.random_bool(margin) {
+                add(&mut solid, p, island_of(n));
+            }
+        }
+    }
+    let target = (cells.iter().filter(|p| !solid.contains_key(p)).count() as f64 * land) as usize;
+    let (mut grown, mut tries) = (0, 0);
+    while grown < target && tries < 4 * target {
+        tries += 1;
+        let shore: Vec<(Pos, usize)> = cells
+            .iter()
+            .copied()
+            .filter(|p| !solid.contains_key(p))
+            .filter_map(|p| {
+                around(p)
+                    .iter()
+                    .find_map(|n| solid.get(n))
+                    .filter(|&&o| o != ISLET)
+                    .map(|&o| (p, o))
+            })
+            .collect();
+        let Some(&(p, island)) = shore.choose(rng) else { break };
+        grown += usize::from(add(&mut solid, p, island));
+    }
+    let mut islets = Vec::new();
+    for _ in 0..rng.random_range(ISLETS.0..=ISLETS.1) {
+        let open: Vec<Pos> = cells
+            .iter()
+            .copied()
+            .filter(|&(r, c)| {
+                (r.saturating_sub(2)..=r + 2)
+                    .all(|y| (c.saturating_sub(2)..=c + 2).all(|x| !solid.contains_key(&(y, x))))
+            })
+            .collect();
+        let Some(&p) = open.choose(rng) else { break };
+        if add(&mut solid, p, ISLET) {
+            islets.push(p);
+        }
+    }
+
+    // The sea, trimmed until every cell of it has a tile.
+    let mut sea: Vec<Pos> = cells.iter().copied().filter(|p| !solid.contains_key(p)).collect();
+    loop {
+        if !joined(&solid) {
+            return false;
+        }
+        let in_sea: HashSet<Pos> = sea.iter().copied().collect();
+        let (mut bridges, mut crossings) = (Vec::new(), Vec::new());
+        for &(a, b, kind) in &layout.links {
+            let (r, c) = ((a.0 + b.0) / 2, (a.1 + b.1) / 2);
+            if kind != Link::Path {
+                continue;
+            }
+            if a.0 == b.0
+                && in_sea.contains(&(r.wrapping_sub(1), c))
+                && in_sea.contains(&(r + 1, c))
+            {
+                bridges.push((r, c));
+            } else if a.1 == b.1 && in_sea.contains(&(r, c - 1)) && in_sea.contains(&(r, c + 1)) {
+                crossings.push((r, c));
+            }
+        }
+        if water.try_add(grid, &sea, &bridges, &crossings) {
+            break;
+        }
+        let before = (water.cells.len(), water.bridges.len(), water.crossings.len());
+        water.cells.extend(&sea);
+        water.bridges.extend(&bridges);
+        water.crossings.extend(&crossings);
+        let bad: Vec<Pos> = water.undrawable().into_iter().filter(|p| in_sea.contains(p)).collect();
+        water.cells.truncate(before.0);
+        water.bridges.truncate(before.1);
+        water.crossings.truncate(before.2);
+        if bad.is_empty() {
+            return false;
+        }
+        sea.retain(|p| !bad.contains(p));
+        solid.extend(bad.into_iter().map(|p| (p, ISLET)));
+    }
+    for (r, c) in islets {
+        grid.set(r, c, BUSH);
+    }
+    true
+}
 /// Path and rock tiles for a link, by direction: `(horizontal, vertical)`.
 const PATH: (u8, u8) = (0x45, 0x46);
 const ROCK: (u8, u8) = (ROCK_BREAK_H, ROCK_BREAK_V);
 
 /// Generate a new map for `world_idx`, drawn over `vanilla` (that world's
 /// vanilla map, which supplies the frame, the start, and each entry's tile).
-/// `None` if no layout met the targets; the caller keeps vanilla then.
+/// `None` if no draw succeeded in [`DRAWS`] tries; the caller keeps vanilla then.
 ///
-/// Worlds 1 and 2 so far.
+/// Worlds 1 to 3 so far.
 pub(crate) fn world_map<R: Rng>(
     vanilla: &WorldMap,
     world_idx: usize,
     rng: &mut R,
 ) -> Option<WorldMap> {
+    (0..DRAWS).find_map(|_| draw_once(vanilla, world_idx, rng))
+}
+
+/// Whole maps drawn before a world gives up and keeps vanilla. A draw can
+/// fail late (W3's sea can trim its docks apart); W1 and W2 succeed first
+/// time, so their draws are unchanged by the retries.
+const DRAWS: usize = 20;
+
+/// One attempt at [`world_map`].
+fn draw_once<R: Rng>(vanilla: &WorldMap, world_idx: usize, rng: &mut R) -> Option<WorldMap> {
     let recipe = recipe(world_idx)?;
-    if world_idx == 2 {
-        return None; // W3 is judged as ASCII layouts until it can be drawn.
-    }
     let targets = recipe.layout;
     let old = &vanilla.grid;
     let on_grid = |p: Pos| p.0 < old.rows() && p.1 < old.cols;
@@ -343,16 +535,43 @@ pub(crate) fn world_map<R: Rng>(
     }
 
     // Entries onto nodes: the start and the airship go where the layout put
-    // them, the rest are dealt at random onto the remaining nodes. Entries off the
-    // grid (unused rows in the pointer table) stay where they are.
-    let mut free: Vec<Pos> =
-        layout.nodes.iter().copied().filter(|&n| n != start && n != layout.target).collect();
+    // them, and docks take vanilla's dock entries, then spare Hammer Bro levels
+    // (drawn as docks below). The rest are dealt at random onto the remaining
+    // nodes. Entries off the grid (unused rows in the pointer table) stay where
+    // they are.
+    let dock_nodes: Vec<Pos> = layout.docks.iter().map(|d| d.0).collect();
+    let mut free: Vec<Pos> = layout
+        .nodes
+        .iter()
+        .copied()
+        .filter(|&n| n != start && n != layout.target && !dock_nodes.contains(&n))
+        .collect();
     free.shuffle(rng);
     let mut entry_pos = vanilla.entry_pos.clone();
     entry_pos[start_idx] = start;
     entry_pos[airship_idx] = layout.target;
+    let vanilla_tile = |i: usize| {
+        let p = vanilla.entry_pos[i];
+        on_grid(p).then(|| old.get(p.0, p.1))
+    };
+    let dealt_elsewhere = |i: usize| i == start_idx || i == airship_idx;
+    let dock_entries: Vec<usize> = (0..entry_pos.len())
+        .filter(|&i| vanilla_tile(i) == Some(DOCK))
+        .chain(
+            (0..entry_pos.len())
+                .filter(|&i| !dealt_elsewhere(i))
+                .filter(|&i| vanilla_tile(i).is_some_and(|t| VALID_BLANK_TILES.contains(&t))),
+        )
+        .collect();
+    if dock_entries.iter().filter(|&&i| vanilla_tile(i) == Some(DOCK)).count() > dock_nodes.len() {
+        return None; // A vanilla dock entry with no dock would draw a stray dock.
+    }
+    let docked: Vec<usize> = dock_entries.into_iter().take(dock_nodes.len()).collect();
+    for (&i, &p) in docked.iter().zip(&dock_nodes) {
+        entry_pos[i] = p;
+    }
     for (i, pos) in entry_pos.iter_mut().enumerate() {
-        if i != start_idx && i != airship_idx && on_grid(vanilla.entry_pos[i]) {
+        if !dealt_elsewhere(i) && !docked.contains(&i) && on_grid(vanilla.entry_pos[i]) {
             *pos = free.pop()?;
         }
     }
@@ -377,6 +596,15 @@ pub(crate) fn world_map<R: Rng>(
     for pos in blanks {
         let tile = blank_tile_from_neighbors(&grid, world_idx, pos.0, pos.1);
         grid.set(pos.0, pos.1, tile);
+    }
+    // Docks, and the canoe joining them: from the first, where the canoe
+    // parks, to every other (the walker opens all of them once the first is
+    // reached on foot).
+    for &(r, c) in &dock_nodes {
+        grid.set(r, c, DOCK);
+    }
+    if let Some((&first, rest)) = dock_nodes.split_first() {
+        grid.canoe_edges = Some(rest.iter().map(|&d| (first, d)).collect());
     }
 
     // The castle top sits above the airship, as in vanilla.
@@ -420,6 +648,11 @@ pub(crate) fn world_map<R: Rng>(
             Step::Scatter { tile, count } => {
                 scatter(&mut grid, &built, tile, count, rng);
             }
+            Step::Sea { margin, land } => {
+                if !add_sea(&mut grid, &mut water, &layout, margin, land, rng) {
+                    return None;
+                }
+            }
         }
     }
     water.draw(&mut grid);
@@ -439,6 +672,7 @@ pub(crate) fn world_map<R: Rng>(
         gaps: Vec::new(),
         hammer_gated: Vec::new(),
         no_locks: water.crossings.clone(),
+        canoe: layout.docks.first().map(|d| d.1),
     })
 }
 
@@ -714,6 +948,11 @@ struct Water {
     /// (path over water, land at both ends). It has no water-gap form, so
     /// no lock may take it (`WorldMap::no_locks`).
     crossings: Vec<Pos>,
+    /// A sea's map size, `(rows, cols)` ([`add_sea`]): the open sea runs off
+    /// the top, left and right edges and over the frame columns, as vanilla
+    /// W3's does, and meets land only along the bottom. `None` for lakes,
+    /// where everything off the map is land.
+    sea_bounds: Option<(usize, usize)>,
 }
 
 impl Water {
@@ -723,11 +962,18 @@ impl Water {
 
     /// The picture a water cell needs: an edge middle is water when that
     /// neighbour is wet, a corner when both edges beside it and the diagonal
-    /// are. Off the map is land.
+    /// are. Off the map is land, except a sea's edges (`sea_bounds`).
     fn picture(&self, (r, c): Pos) -> String {
         let at = |dr: isize, dc: isize| {
             let (nr, nc) = (r as isize + dr, c as isize + dc);
-            nr >= 0 && nc >= 0 && self.wet((nr as usize, nc as usize))
+            let inside = nr >= 0 && nc >= 0 && self.wet((nr as usize, nc as usize));
+            match self.sea_bounds {
+                None => inside,
+                Some(_) if nr < 0 => true,
+                Some((rows, _)) if nr as usize >= rows => false,
+                Some((_, cols)) if nc <= 0 || nc as usize >= cols - 1 => true,
+                Some(_) => inside,
+            }
         };
         let w = |b: bool| if b { 'W' } else { 'L' };
         let (n, s, e, west) = (at(-1, 0), at(1, 0), at(0, 1), at(0, -1));
@@ -1758,6 +2004,7 @@ fn generated_is_completable() {
                 row78_conflicts.push((seed, c));
             }
         }
+        let docks = w1.grid.canoe_edges.clone();
         maps[wi] = w1;
         generated += 1;
         let mut catalog = NodeCatalog::from_maps(&rom, maps, false);
@@ -1781,6 +2028,7 @@ fn generated_is_completable() {
             },
         );
         let w1 = &result.worlds[wi];
+        assert_eq!(w1.grid.canoe_edges, docks, "seed {seed}: the builder lost the generated docks");
         let bridges: Vec<Pos> = (0..w1.grid.rows())
             .flat_map(|r| (0..w1.grid.cols).map(move |c| (r, c)))
             .filter(|&(r, c)| w1.grid.get(r, c) == BRIDGE_TILE)
@@ -1915,7 +2163,8 @@ fn generated_tiles() {
         for r in 0..map.grid.rows() {
             let row: String = (0..map.grid.cols)
                 .map(|c| match map.grid.get(r, c) {
-                    FILL => '.',
+                    BUSH => '.',
+                    DOCK => 'D',
                     CLEARING => ' ',
                     DECO_ROCK => '^',
                     DUNE => ':',

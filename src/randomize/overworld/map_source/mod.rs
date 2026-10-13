@@ -37,6 +37,10 @@ pub(crate) struct WorldMap {
     pub(crate) hammer_gated: Vec<Pos>,
     /// Path cells no lock may take (a generated river's `$BA` crossings).
     pub(crate) no_locks: Vec<Pos>,
+    /// Where a generated world parks its canoe: the water beside its first
+    /// dock. The pipeline moves the world's canoe sprite there. `None` keeps
+    /// the sprite where the ROM has it.
+    pub(crate) canoe: Option<Pos>,
 }
 
 impl WorldMap {

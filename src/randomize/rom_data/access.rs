@@ -330,6 +330,19 @@ pub(crate) fn write_map_sprite(
     rom.write_byte(id_off, id);
 }
 
+/// Move `world_idx`'s canoe (map object `$10`, `MAPOBJ_CANOE`) to a grid
+/// cell. The engine finds one canoe per map, so the first slot holding one is
+/// the canoe. `false` if the world has none.
+pub(crate) fn move_canoe(rom: &mut Rom, world_idx: usize, (row, col): (usize, usize)) -> bool {
+    let Some(slot) = (0..MAP_OBJ_SLOTS).find(|&slot| {
+        rom.read_byte(map_obj_slot_offset(rom, MAP_OBJ_IDS_MASTER, world_idx, slot)) == 0x10
+    }) else {
+        return false;
+    };
+    write_map_sprite_position(rom, world_idx, slot, row, col);
+    true
+}
+
 /// True if a map-object slot id is a Hammer Bro sprite (0x03–0x06).
 fn is_hb_sprite_id(id: u8) -> bool {
     (0x03..=0x06).contains(&id)
