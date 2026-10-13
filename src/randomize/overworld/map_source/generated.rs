@@ -58,6 +58,10 @@ struct Layout {
     loop_sizes: Vec<usize>,
     /// The secret area's nodes (see [`grow_pocket`]); empty without one.
     pocket: Vec<Pos>,
+    /// The nodes of each island the start's cannot walk to, joined later by
+    /// the builder's pipes; empty without a split. The airship is on the
+    /// first.
+    islands: Vec<Vec<Pos>>,
 }
 
 /// The targets a layout must meet, or it is thrown away and redrawn.
@@ -73,10 +77,35 @@ struct Targets {
     start_to_target: (usize, usize),
     rocks: (usize, usize),
     /// A secret area's node count, counted in `nodes`: a small tree in the
-    /// map's last scroll view with one way in (see [`grow_pocket`]). A world
-    /// with one starts on the left edge.
+    /// map's last scroll view with one way in (see [`grow_pocket`]).
     pocket: Option<(usize, usize)>,
+    /// Where the start may go (see [`Start`]).
+    start: Start,
+    /// The world's pipe pairs (`VANILLA_PIPE_PAIRS`). With `n` of them the
+    /// layout splits into islands `n - 1` times, plus once more
+    /// [`EXTRA_SPLIT`] of the time; the builder's connectivity phase joins
+    /// each island with a pair and leaves any spare for routing.
+    pipe_pairs: usize,
 }
+
+/// Where a layout's start goes.
+#[derive(Clone, Copy, Debug)]
+enum Start {
+    /// One of the [`CORNER`] nodes in a corner picked at random.
+    Corner,
+    /// On, or one node from, the vanilla start or the vanilla airship (a coin
+    /// picks which): the two places vanilla and the Start<->Airship swap
+    /// start a player. Never in the pocket.
+    NearVanilla,
+}
+
+/// How often a world with pipes splits once more than its pipe pairs less
+/// one (user, 2026-10-13).
+const EXTRA_SPLIT: f64 = 0.25;
+
+/// Each island past the start's gets this share, in percent, of the nodes
+/// not yet dealt, so the far side holds something worth the trip.
+const ISLAND_SHARE: (usize, usize) = (25, 50);
 
 /// The proposal agreed for W1 on 2026-10-11. Vanilla W1 is 21 nodes, 2
 /// loops, 3 dead ends, 9 hops, 1 rock shortcut.
@@ -87,6 +116,8 @@ const W1_TARGETS: Targets = Targets {
     start_to_target: (7, 11),
     rocks: (0, 2),
     pocket: None,
+    start: Start::Corner,
+    pipe_pairs: 0,
 };
 
 /// W2, first guesses around vanilla: 47 nodes, 3 loops, 7 dead ends, 15 hops,
@@ -99,6 +130,8 @@ const W2_TARGETS: Targets = Targets {
     start_to_target: (13, 17),
     rocks: (0, 2),
     pocket: Some((5, 7)),
+    start: Start::NearVanilla,
+    pipe_pairs: 1,
 };
 
 /// The layout targets for `world_idx`, for the worlds that have them.
@@ -122,26 +155,37 @@ const FARTHEST_FEW: usize = 3;
 const MAX_SQUARES: usize = 1;
 
 /// Draw layouts until one meets `targets`, or give up after `attempts`. The
-/// start is one of the [`CORNER`] nodes in a corner picked at random, once,
-/// so a corner that is harder to fill is not drawn less often. `anchor` (the
-/// vanilla start) only sets the lattice's parity.
+/// start is picked once (see [`Start`]), so a start that is harder to fill
+/// around is not drawn less often. `anchor` (the vanilla start) sets the
+/// lattice's parity; it and `airship` (the vanilla airship) are where a
+/// [`Start::NearVanilla`] start goes.
 fn generate<R: Rng>(
     rows: usize,
     cols: usize,
     anchor: Pos,
+    airship: Pos,
     targets: Targets,
     attempts: usize,
     rng: &mut R,
 ) -> Option<Layout> {
     let cells = lattice(rows, cols, anchor);
+    if let Start::NearVanilla = targets.start {
+        let near = if rng.random::<bool>() { anchor } else { airship };
+        let around: Vec<Pos> = cells
+            .iter()
+            .copied()
+            .filter(|&p| manhattan(p, near) <= 2)
+            .filter(|p| targets.pocket.is_none() || p.1 < POCKET_COL)
+            .collect();
+        let start = *around.choose(rng)?;
+        return (0..attempts).find_map(|_| try_once(rows, cols, anchor, start, targets, rng));
+    }
     let (top, bottom) = (cells.iter().map(|p| p.0).min()?, cells.iter().map(|p| p.0).max()?);
     let (left, right) = (cells.iter().map(|p| p.1).min()?, cells.iter().map(|p| p.1).max()?);
     let (row_edge, col_edge) = (
         if rng.random::<bool>() { top } else { bottom },
         if rng.random::<bool>() { left } else { right },
     );
-    // Both coins are tossed either way, so W1 draws the same maps.
-    let col_edge = if targets.pocket.is_some() { left } else { col_edge };
     let corner: Vec<Pos> = cells
         .iter()
         .copied()
@@ -186,7 +230,17 @@ pub(crate) fn world_map<R: Rng>(
         }
     })?;
     let vanilla_start = vanilla.entry_pos[start_idx];
-    let layout = generate(old.rows(), old.cols, vanilla_start, targets, 1000, rng)?;
+    let airship_idx =
+        (0..vanilla.entry_pos.len()).find(|&i| AIRSHIP_ENTRIES.contains(&(world_idx, i)))?;
+    let layout = generate(
+        old.rows(),
+        old.cols,
+        vanilla_start,
+        vanilla.entry_pos[airship_idx],
+        targets,
+        1000,
+        rng,
+    )?;
     let start = layout.start;
 
     // The frame (first and last column) stays as vanilla drew it; everything
@@ -210,8 +264,6 @@ pub(crate) fn world_map<R: Rng>(
     // Entries onto nodes: the start and the airship go where the layout put
     // them, the rest are dealt at random onto the remaining nodes. Entries off the
     // grid (unused rows in the pointer table) stay where they are.
-    let airship_idx =
-        (0..vanilla.entry_pos.len()).find(|&i| AIRSHIP_ENTRIES.contains(&(world_idx, i)))?;
     let mut free: Vec<Pos> =
         layout.nodes.iter().copied().filter(|&n| n != start && n != layout.target).collect();
     free.shuffle(rng);
@@ -840,64 +892,85 @@ fn try_once<R: Rng>(
     let main: Vec<Pos> = cells.iter().copied().filter(|p| !walled.contains(p)).collect();
     let pocket_size = targets.pocket.map(|(lo, hi)| rng.random_range(lo..=hi));
 
-    //    First a waypoint, reached by a winding path from the start, so every
-    //    layout crosses the map. It lands in a staircase on the side away
-    //    from the start's column: on the row farthest from the start's row
-    //    only the far column qualifies, and each row nearer allows one more
-    //    column in. (A start bottom-left puts it bottom-right.) Each step of
-    //    the path moves toward the waypoint's column or row, chosen at random.
-    // From the ordered lattice, never the set: a HashSet iterates in a
-    // different order every run, which made the same seed draw different maps.
-    let far_end = |values: Vec<usize>, from: usize| {
-        let (lo, hi) = (*values.iter().min()?, *values.iter().max()?);
-        Some(if from - lo < hi - from { hi } else { lo })
+    let main_nodes = targets.nodes - pocket_size.unwrap_or(0);
+    let splits = match targets.pipe_pairs {
+        0 => 0,
+        n => n - 1 + usize::from(rng.random_bool(EXTRA_SPLIT)),
     };
-    let far_row = far_end(main.iter().map(|p| p.0).collect(), start.0)?;
-    let far_col = far_end(main.iter().map(|p| p.1).collect(), start.1)?;
-    let corner: Vec<Pos> = main
-        .iter()
-        .copied()
-        .filter(|&(r, c)| c.abs_diff(far_col) / 2 <= r.abs_diff(far_row) / 2)
-        .collect();
-    let waypoint = *corner.choose(rng)?;
-    let mut at = start;
-    while at != waypoint {
-        let mut steps = Vec::new();
-        if at.1 < waypoint.1 {
-            steps.push((at.0, at.1 + 2));
-        }
-        if at.1 > waypoint.1 {
-            steps.push((at.0, at.1 - 2));
-        }
-        if at.0 < waypoint.0 {
-            steps.push((at.0 + 2, at.1));
-        }
-        if at.0 > waypoint.0 {
-            steps.push((at.0 - 2, at.1));
-        }
-        let &next = steps.choose(rng)?;
-        in_tree.insert(next);
-        nodes.push(next);
-        tree.push(ordered(at, next));
-        at = next;
-    }
-    while nodes.len() + pocket_size.unwrap_or(0) < targets.nodes {
-        let free = |n: Pos| -> Vec<Pos> {
-            neighbours(n, &on_lattice)
-                .into_iter()
-                .filter(|m| !in_tree.contains(m) && !walled.contains(m))
-                .collect()
+    let mut islands: Vec<Vec<Pos>> = Vec::new();
+
+    if splits == 0 {
+        //    First a waypoint, reached by a winding path from the start, so every
+        //    layout crosses the map. It lands in a staircase on the side away
+        //    from the start's column: on the row farthest from the start's row
+        //    only the far column qualifies, and each row nearer allows one more
+        //    column in. (A start bottom-left puts it bottom-right.) Each step of
+        //    the path moves toward the waypoint's column or row, chosen at random.
+        // From the ordered lattice, never the set: a HashSet iterates in a
+        // different order every run, which made the same seed draw different maps.
+        let far_end = |values: Vec<usize>, from: usize| {
+            let (lo, hi) = (*values.iter().min()?, *values.iter().max()?);
+            Some(if from - lo < hi - from { hi } else { lo })
         };
-        let growable: Vec<Pos> = nodes.iter().copied().filter(|&n| !free(n).is_empty()).collect();
-        let from = if rng.random_bool(EXTEND_NEWEST) {
-            *growable.last()?
-        } else {
-            *growable.choose(rng)?
-        };
-        let &to = free(from).choose(rng)?;
-        in_tree.insert(to);
-        nodes.push(to);
-        tree.push(ordered(from, to));
+        let far_row = far_end(main.iter().map(|p| p.0).collect(), start.0)?;
+        let far_col = far_end(main.iter().map(|p| p.1).collect(), start.1)?;
+        let corner: Vec<Pos> = main
+            .iter()
+            .copied()
+            .filter(|&(r, c)| c.abs_diff(far_col) / 2 <= r.abs_diff(far_row) / 2)
+            .collect();
+        let waypoint = *corner.choose(rng)?;
+        let mut at = start;
+        while at != waypoint {
+            let mut steps = Vec::new();
+            if at.1 < waypoint.1 {
+                steps.push((at.0, at.1 + 2));
+            }
+            if at.1 > waypoint.1 {
+                steps.push((at.0, at.1 - 2));
+            }
+            if at.0 < waypoint.0 {
+                steps.push((at.0 + 2, at.1));
+            }
+            if at.0 > waypoint.0 {
+                steps.push((at.0 - 2, at.1));
+            }
+            let &next = steps.choose(rng)?;
+            in_tree.insert(next);
+            nodes.push(next);
+            tree.push(ordered(at, next));
+            at = next;
+        }
+        while nodes.len() < main_nodes {
+            let free = |n: Pos| -> Vec<Pos> {
+                neighbours(n, &on_lattice)
+                    .into_iter()
+                    .filter(|m| !in_tree.contains(m) && !walled.contains(m))
+                    .collect()
+            };
+            let growable: Vec<Pos> =
+                nodes.iter().copied().filter(|&n| !free(n).is_empty()).collect();
+            let from = if rng.random_bool(EXTEND_NEWEST) {
+                *growable.last()?
+            } else {
+                *growable.choose(rng)?
+            };
+            let &to = free(from).choose(rng)?;
+            in_tree.insert(to);
+            nodes.push(to);
+            tree.push(ordered(from, to));
+        }
+    } else {
+        //    Islands instead: grown together from seeds spread apart, never
+        //    side by side, so an empty band at least one node wide lies
+        //    between any two for water or scenery to fill.
+        let grown = grow_islands(&main, &on_lattice, start, splits, main_nodes, rng)?;
+        for island in &grown.nodes {
+            nodes.extend(island.iter().filter(|&&n| n != start));
+            in_tree.extend(island);
+        }
+        tree.extend(grown.links);
+        islands = grown.nodes[1..].to_vec();
     }
     //    The pocket, last: grown into the strip from a mouth beside a node
     //    the main tree reached.
@@ -970,17 +1043,22 @@ fn try_once<R: Rng>(
         links.push((a, b, kind));
     }
 
-    // 4. The target: a dead end at the right distance, not reached from above,
+    // 4. The target: a dead end at the hop distance, not reached from above,
     //    with a row above it for the castle top.
     let degree = degrees(&nodes, &links);
     let hops = path_hops(start, &links);
+    //    On an island, the first: any distance, since the builder decides
+    //    where its pipe lands.
     let candidates: Vec<Pos> = nodes
         .iter()
         .copied()
         .filter(|&n| n != start && degree[&n] == 1 && n.0 >= 2 && !walled.contains(&n))
-        .filter(|&n| {
-            let d = hops.get(&n).copied().unwrap_or(usize::MAX);
-            (targets.start_to_target.0..=targets.start_to_target.1).contains(&d)
+        .filter(|&n| match islands.first() {
+            Some(far) => far.contains(&n),
+            None => {
+                let d = hops.get(&n).copied().unwrap_or(usize::MAX);
+                (targets.start_to_target.0..=targets.start_to_target.1).contains(&d)
+            }
         })
         .filter(|&n| !links.iter().any(|&(a, b, _)| (a, b) == ((n.0 - 2, n.1), n)))
         .collect();
@@ -991,7 +1069,77 @@ fn try_once<R: Rng>(
         return None;
     }
 
-    Some(Layout { rows, cols, nodes, links, start, target, loop_sizes, pocket })
+    Some(Layout { rows, cols, nodes, links, start, target, loop_sizes, pocket, islands })
+}
+
+/// A layout's islands, the start's first, and the links that grew them.
+struct Islands {
+    nodes: Vec<Vec<Pos>>,
+    links: Vec<(Pos, Pos)>,
+}
+
+/// Grow `splits + 1` islands over `main` with `total` nodes between them,
+/// the first from `start`. Each later island's seed is among the
+/// [`FARTHEST_FEW`] cells farthest from the seeds already down, and it gets
+/// [`ISLAND_SHARE`] of the nodes not yet dealt; the start's island keeps the
+/// rest. They grow a node at a time, the island picked at random among those
+/// short of their count, the same way the single tree grows. A node is never
+/// placed beside another island's node, so islands never touch.
+fn grow_islands<R: Rng>(
+    main: &[Pos],
+    on_lattice: &HashSet<Pos>,
+    start: Pos,
+    splits: usize,
+    total: usize,
+    rng: &mut R,
+) -> Option<Islands> {
+    let mut seeds = vec![start];
+    for _ in 0..splits {
+        let gap = |p: Pos| seeds.iter().map(|&s| manhattan(p, s)).min().unwrap_or(0);
+        let mut far: Vec<(usize, Pos)> =
+            main.iter().copied().filter(|&p| gap(p) > 2).map(|p| (gap(p), p)).collect();
+        far.sort_by(|x, y| y.0.cmp(&x.0).then(x.1.cmp(&y.1)));
+        let &(_, seed) = far.get(..FARTHEST_FEW.min(far.len()))?.choose(rng)?;
+        seeds.push(seed);
+    }
+    let mut quotas = vec![0; seeds.len()];
+    let mut left = total;
+    for quota in quotas.iter_mut().skip(1) {
+        *quota = left * rng.random_range(ISLAND_SHARE.0..=ISLAND_SHARE.1) / 100;
+        left -= *quota;
+    }
+    quotas[0] = left;
+
+    let in_main: HashSet<Pos> = main.iter().copied().collect();
+    let mut owner: HashMap<Pos, usize> = seeds.iter().enumerate().map(|(i, &s)| (s, i)).collect();
+    let mut islands: Vec<Vec<Pos>> = seeds.iter().map(|&s| vec![s]).collect();
+    let mut links = Vec::new();
+    loop {
+        let short: Vec<usize> =
+            (0..islands.len()).filter(|&i| islands[i].len() < quotas[i]).collect();
+        let Some(&i) = short.choose(rng) else { break };
+        let free = |n: Pos| -> Vec<Pos> {
+            neighbours(n, on_lattice)
+                .into_iter()
+                .filter(|m| in_main.contains(m) && !owner.contains_key(m))
+                .filter(|&m| {
+                    neighbours(m, on_lattice).iter().all(|o| owner.get(o).is_none_or(|&j| j == i))
+                })
+                .collect()
+        };
+        let growable: Vec<Pos> =
+            islands[i].iter().copied().filter(|&n| !free(n).is_empty()).collect();
+        let from = if rng.random_bool(EXTEND_NEWEST) {
+            *growable.last()?
+        } else {
+            *growable.choose(rng)?
+        };
+        let &to = free(from).choose(rng)?;
+        owner.insert(to, i);
+        islands[i].push(to);
+        links.push(ordered(from, to));
+    }
+    Some(Islands { nodes: islands, links })
 }
 
 /// The first column of the pocket's strip: the map's last scroll view, which
@@ -1081,7 +1229,8 @@ fn path_hops(start: Pos, links: &[(Pos, Pos, Link)]) -> HashMap<Pos, usize> {
 #[cfg(test)]
 impl Layout {
     /// One character per map tile: `S` start, `A` target, `o` node, `-` and
-    /// `|` paths, `R` a rock, `p` a node in the secret area.
+    /// `|` paths, `R` a rock, `p` a node in the secret area, `x` `y` `z` a node
+    /// on an island the start cannot walk to.
     fn ascii(&self) -> String {
         let mut cells = vec![vec![' '; self.cols]; self.rows];
         for &(r, c) in &self.nodes {
@@ -1089,6 +1238,11 @@ impl Layout {
         }
         for &(r, c) in &self.pocket {
             cells[r][c] = 'p';
+        }
+        for (k, island) in self.islands.iter().enumerate() {
+            for &(r, c) in island {
+                cells[r][c] = ['x', 'y', 'z'][k.min(2)];
+            }
         }
         cells[self.start.0][self.start.1] = 'S';
         cells[self.target.0][self.target.1] = 'A';
@@ -1107,14 +1261,15 @@ impl Layout {
     fn summary(&self) -> String {
         let hops = path_hops(self.start, &self.links).get(&self.target).copied();
         format!(
-            "nodes {}  loops {} {:?}  dead ends {}  junctions {}  rocks {}  pocket {}  start->airship {}",
+            "nodes {}  loops {} {:?}  dead ends {}  junctions {}  rocks {}  pocket {}  islands {:?}  start->airship {}",
             self.nodes.len(),
-            self.links.len() + 1 - self.nodes.len(),
+            self.links.len() + 1 + self.islands.len() - self.nodes.len(),
             self.loop_sizes,
             self.dead_ends(),
             self.junctions(),
             self.links.iter().filter(|l| l.2 == Link::Rock).count(),
             self.pocket.len(),
+            self.islands.iter().map(Vec::len).collect::<Vec<_>>(),
             hops.map_or("-".to_string(), |h| h.to_string()),
         )
     }
@@ -1152,7 +1307,12 @@ fn generated_layouts() {
     let targets = targets(world - 1).expect("LAYOUT_WORLD has targets");
     let grid = &maps[world - 1].grid;
     let start = crate::randomize::rom_data::find_start(grid).expect("the world has a start");
-    println!("\nW{world} start (anchor): {start:?}; targets: {targets:?}");
+    let entries = &maps[world - 1].entry_pos;
+    let airship = (0..entries.len())
+        .find(|&i| AIRSHIP_ENTRIES.contains(&(world - 1, i)))
+        .map(|i| entries[i])
+        .expect("the world has an airship");
+    println!("\nW{world} start {start:?}, airship {airship:?} (vanilla); targets: {targets:?}");
     println!(
         "Vanilla: {}",
         [
@@ -1167,7 +1327,7 @@ fn generated_layouts() {
     let (mut loops, mut squares, mut loop_total, mut junctions) = (0, 0, 0, 0);
     for seed in 1..=seeds {
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
-        match generate(grid.rows(), grid.cols, start, targets, 1000, &mut rng) {
+        match generate(grid.rows(), grid.cols, start, airship, targets, 1000, &mut rng) {
             Some(layout) => {
                 built += 1;
                 loops += layout.loop_sizes.len();
