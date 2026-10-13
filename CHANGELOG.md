@@ -9,6 +9,8 @@ deploys.
 
 ## [Unreleased]
 
+## [2.5.0] - 2026-10-12
+
 ### Added
 
 - **Most hints.** A new setting between Some and Full: away locks show their
@@ -50,7 +52,6 @@ deploys.
 - **World colours no longer scramble the map's suit palettes.** They could
   change which palette a suit used on the map, and could give the P-Wing
   garbage colours.
-
 - **World 4's empty island spots are land again.** The spot two nodes below
   the start and the Toad House spot on the bottom row drew as water when
   nothing was placed there.
