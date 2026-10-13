@@ -84,15 +84,15 @@ struct Targets {
     /// [`EXTRA_SPLIT`] of the time; the builder's connectivity phase joins
     /// each island with a pair and leaves any spare for routing.
     pipe_pairs: usize,
+    /// Each island past the start's gets this share, in percent, of the nodes
+    /// not yet dealt: (25, 50) makes islands of a size, a low range one big
+    /// mainland with small satellites.
+    island_share: (usize, usize),
 }
 
 /// How often a world with pipes splits once more than its pipe pairs less
 /// one (user, 2026-10-13).
 const EXTRA_SPLIT: f64 = 0.25;
-
-/// Each island past the start's gets this share, in percent, of the nodes
-/// not yet dealt, so the far side holds something worth the trip.
-const ISLAND_SHARE: (usize, usize) = (25, 50);
 
 /// The proposal agreed for W1 on 2026-10-11. Vanilla W1 is 21 nodes, 2
 /// loops, 3 dead ends, 9 hops, 1 rock shortcut.
@@ -104,6 +104,7 @@ const W1_TARGETS: Targets = Targets {
     rocks: (0, 2),
     pocket: None,
     pipe_pairs: 0,
+    island_share: (25, 50),
 };
 
 /// W2, first guesses around vanilla: 47 nodes, 3 loops, 7 dead ends, 15 hops,
@@ -117,13 +118,70 @@ const W2_TARGETS: Targets = Targets {
     rocks: (0, 2),
     pocket: Some((5, 7)),
     pipe_pairs: 1,
+    island_share: (25, 50),
 };
 
-/// The layout targets for `world_idx`, for the worlds that have them.
-fn targets(world_idx: usize) -> Option<Targets> {
+/// How one world is generated: its layout, then its scenery, step by step in
+/// order, then its ground in every cell nothing took. A new world is a new
+/// recipe; a new kind of scenery is a new [`Step`] any recipe can use.
+struct Recipe {
+    layout: Targets,
+    /// Every cell nothing else takes. (Generation marks empty cells `FILL`
+    /// throughout and swaps this in last.)
+    ground: u8,
+    scenery: &'static [Step],
+}
+
+/// One kind of scenery. Each sees a cell as free only while it is still
+/// `FILL`; water marks its cells `WATER_PENDING` as it is added and is drawn
+/// in one pass after the last step, so water that meets water joins with a
+/// proper shore.
+#[derive(Clone, Copy)]
+enum Step {
+    /// In each big open region, half the time, a lake ([`grow_lake`]).
+    Lakes,
+    /// Most of the time a river joining two lakes ([`add_river`]).
+    River,
+    /// Sometimes a moat beside the castle ([`add_moat`]).
+    Moat,
+    /// The pocket strip's open space as one lake, a palm on an island
+    /// ([`add_oasis`]).
+    Oasis,
+    /// One-tile pools with palms beside them ([`add_pools`]).
+    Pools,
+    /// Patches of dotted sand ([`add_dunes`]).
+    Dunes,
+    /// Clusters of rock or `other` in each open region ([`decorate`]).
+    Clusters { other: u8 },
+    /// A few single tiles off the paths ([`scatter`]).
+    Scatter { tile: u8, count: (usize, usize) },
+}
+
+const W1_RECIPE: Recipe = Recipe {
+    layout: W1_TARGETS,
+    ground: FILL,
+    scenery: &[Step::Lakes, Step::River, Step::Moat, Step::Clusters { other: CLEARING }],
+};
+
+/// Plain sand; dotted sand in patches; palms where W1 has clearings; one big
+/// oasis where vanilla draws its III (user, 2026-10-13).
+const W2_RECIPE: Recipe = Recipe {
+    layout: W2_TARGETS,
+    ground: CLEARING,
+    scenery: &[
+        Step::Oasis,
+        Step::Pools,
+        Step::Dunes,
+        Step::Clusters { other: PALM },
+        Step::Scatter { tile: PYRAMID, count: PYRAMIDS },
+    ],
+};
+
+/// The recipe for `world_idx`, for the worlds that have one.
+fn recipe(world_idx: usize) -> Option<&'static Recipe> {
     match world_idx {
-        0 => Some(W1_TARGETS),
-        1 => Some(W2_TARGETS),
+        0 => Some(&W1_RECIPE),
+        1 => Some(&W2_RECIPE),
         _ => None,
     }
 }
@@ -179,16 +237,14 @@ const ROCK: (u8, u8) = (ROCK_BREAK_H, ROCK_BREAK_V);
 /// vanilla map, which supplies the frame, the start, and each entry's tile).
 /// `None` if no layout met the targets; the caller keeps vanilla then.
 ///
-/// Only World 1 is drawn so far; World 2 has a layout, judged as ASCII.
+/// Worlds 1 and 2 so far.
 pub(crate) fn world_map<R: Rng>(
     vanilla: &WorldMap,
     world_idx: usize,
     rng: &mut R,
 ) -> Option<WorldMap> {
-    if world_idx != 0 {
-        return None;
-    }
-    let targets = targets(world_idx)?;
+    let recipe = recipe(world_idx)?;
+    let targets = recipe.layout;
     let old = &vanilla.grid;
     let on_grid = |p: Pos| p.0 < old.rows() && p.1 < old.cols;
     let start_idx = (0..vanilla.entry_pos.len()).find(|&i| {
@@ -270,26 +326,44 @@ pub(crate) fn world_map<R: Rng>(
     let air = vanilla.entry_pos[airship_idx];
     grid.set(layout.target.0 - 1, layout.target.1, old.get(air.0 - 1, air.1));
 
-    // Water, all drawn together at the end: lakes in the big open regions,
-    // most of the time a river joining two lakes, sometimes a moat. Then the
-    // decoration clusters fill what is left. The order matters: each step
-    // sees a cell as free only while it is still bush `FILL`, and water marks
-    // its cells `WATER_PENDING` as it is added, so it is never decorated over
-    // and decorative rocks keep clear of it.
+    // The recipe's scenery, then its water, then its ground.
     let mut water = Water::default();
-    for region in empty_regions(&grid) {
-        if region.len() >= LAKE_MIN_REGION && rng.random_bool(LAKE_CHANCE) {
-            grow_lake(&mut grid, &region, None, &mut water, rng);
+    for &step in recipe.scenery {
+        match step {
+            Step::Lakes => {
+                for region in empty_regions(&grid) {
+                    if region.len() >= LAKE_MIN_REGION && rng.random_bool(LAKE_CHANCE) {
+                        grow_lake(&mut grid, &region, None, &mut water, rng);
+                    }
+                }
+            }
+            Step::River => {
+                if rng.random_bool(RIVER_CHANCE) {
+                    add_river(&mut grid, &mut water, rng);
+                }
+            }
+            Step::Moat => {
+                if rng.random_bool(MOAT_CHANCE) {
+                    add_moat(&mut grid, layout.target, &mut water);
+                }
+            }
+            Step::Oasis => add_oasis(&mut grid, &mut water),
+            Step::Pools => add_pools(&mut grid, rng),
+            Step::Dunes => add_dunes(&mut grid, rng),
+            Step::Clusters { other } => decorate(&mut grid, other, rng),
+            Step::Scatter { tile, count } => {
+                scatter(&mut grid, tile, count, rng);
+            }
         }
     }
-    if rng.random_bool(RIVER_CHANCE) {
-        add_river(&mut grid, &mut water, rng);
-    }
-    if rng.random_bool(MOAT_CHANCE) {
-        add_moat(&mut grid, layout.target, &mut water);
-    }
-    decorate(&mut grid, rng);
     water.draw(&mut grid);
+    for r in 0..grid.rows() {
+        for c in 1..grid.cols - 1 {
+            if grid.get(r, c) == FILL {
+                grid.set(r, c, recipe.ground);
+            }
+        }
+    }
 
     Some(WorldMap {
         grid,
@@ -302,17 +376,159 @@ pub(crate) fn world_map<R: Rng>(
     })
 }
 
-/// Plain ground (all four quadrants blank): W1's clearings.
+/// Plain ground (all four quadrants blank): W1's clearings, and W2's ground.
 const CLEARING: u8 = 0x42;
+
+/// `TILE_DANCINGPALM`.
+const PALM: u8 = 0xBB;
+/// Dotted sand: vanilla W2's ground, here grown in patches like lakes.
+const DUNE: u8 = 0x43;
+/// `TILE_POOL`, a one-tile oasis. Completable on its page, so never on rows
+/// 7 or 8 (they share one completion bit) and never beside a path.
+const POOL: u8 = 0xBF;
+/// A small pyramid. Also the pyramid level's tile, so never beside a path.
+const PYRAMID: u8 = 0x69;
+
+/// Pyramids per desert map (vanilla W2 has 7 as scenery).
+const PYRAMIDS: (usize, usize) = (2, 5);
+/// Pools per desert map (vanilla W2 has 5), each with palms beside it.
+const POOLS: (usize, usize) = (1, 3);
+/// Palms beside each pool.
+const POOL_PALMS: (usize, usize) = (1, 2);
+/// Regions at least this big may get a dune patch, this often.
+const DUNE_MIN_REGION: usize = 6;
+const DUNE_CHANCE: f64 = 0.6;
+
+/// Whether `p` may take a one-tile piece of scenery that must stay off
+/// paths and off rows 7 and 8.
+fn scenery_spot(grid: &Grid, p: Pos) -> bool {
+    grid.get(p.0, p.1) == FILL && p.0 + 2 < grid.rows() && clear_of_paths(grid, p)
+}
+
+/// Place a few of `tile`, one cell each, at random [`scenery_spot`]s.
+fn scatter<R: Rng>(grid: &mut Grid, tile: u8, count: (usize, usize), rng: &mut R) -> Vec<Pos> {
+    let mut placed = Vec::new();
+    for _ in 0..rng.random_range(count.0..=count.1) {
+        let spots: Vec<Pos> = (0..grid.rows())
+            .flat_map(|r| (1..grid.cols - 1).map(move |c| (r, c)))
+            .filter(|&p| scenery_spot(grid, p))
+            .collect();
+        let Some(&(r, c)) = spots.choose(rng) else { break };
+        grid.set(r, c, tile);
+        placed.push((r, c));
+    }
+    placed
+}
+
+/// Small oases: a pool with a palm or two beside it.
+fn add_pools<R: Rng>(grid: &mut Grid, rng: &mut R) {
+    for (r, c) in scatter(grid, POOL, POOLS, rng) {
+        let mut beside: Vec<Pos> = [(r.wrapping_sub(1), c), (r + 1, c), (r, c - 1), (r, c + 1)]
+            .into_iter()
+            .filter(|&(nr, nc)| nr < grid.rows() && nc > 0 && nc + 1 < grid.cols)
+            .filter(|&(nr, nc)| grid.get(nr, nc) == FILL)
+            .collect();
+        beside.shuffle(rng);
+        for (pr, pc) in beside.into_iter().take(rng.random_range(POOL_PALMS.0..=POOL_PALMS.1)) {
+            grid.set(pr, pc, PALM);
+        }
+    }
+}
+
+/// Patches of dotted sand, grown as blobs in the bigger open regions.
+fn add_dunes<R: Rng>(grid: &mut Grid, rng: &mut R) {
+    for region in empty_regions(grid) {
+        if region.len() >= DUNE_MIN_REGION && rng.random_bool(DUNE_CHANCE) {
+            let Some(&seed) = region.choose(rng) else { continue };
+            let size = rng.random_range(3..=MAX_LAKE.min(region.len() / 2).max(3));
+            for (r, c) in grow_blob(&region, seed, size, rng) {
+                grid.set(r, c, DUNE);
+            }
+        }
+    }
+}
+
+/// The big oasis: the largest open region in the pocket's strip, all of it
+/// water, with a palm on an island at its deepest cell when it has one (a
+/// cell with water all round). Water cells with no tile for their picture
+/// are trimmed back to sand. Takes no random draws: the strip decides it.
+fn add_oasis(grid: &mut Grid, water: &mut Water) {
+    let strip: Vec<Pos> = empty_regions(grid)
+        .into_iter()
+        .flat_map(|region| {
+            let in_strip: Vec<Pos> = region.into_iter().filter(|p| p.1 >= POCKET_COL).collect();
+            connected_pieces(&in_strip)
+        })
+        .max_by(|a, b| a.len().cmp(&b.len()).then(b.cmp(a)))
+        .unwrap_or_default();
+    let mut lake = strip;
+    lake.sort();
+    let inside: HashSet<Pos> = lake.iter().copied().collect();
+    // How many rings of lake surround a cell: 1 or more is an island spot.
+    let depth = |(r, c): Pos| {
+        let mut k = 0;
+        while r > k
+            && c > k
+            && (r - k - 1..=r + k + 1)
+                .all(|y| (c - k - 1..=c + k + 1).all(|x| inside.contains(&(y, x))))
+        {
+            k += 1;
+        }
+        k
+    };
+    let island = lake.iter().copied().filter(|&p| depth(p) >= 1).max_by_key(|&p| depth(p));
+    lake.retain(|&p| Some(p) != island);
+
+    let before = water.cells.len();
+    water.cells.extend(&lake);
+    loop {
+        let bad: Vec<Pos> = water.undrawable().into_iter().filter(|p| lake.contains(p)).collect();
+        let Some(&p) = bad.first() else { break };
+        lake.retain(|&q| q != p);
+        water.cells.retain(|&q| q != p);
+    }
+    water.cells.truncate(before);
+    if lake.len() >= 2 && water.try_add(grid, &lake, &[], &[]) {
+        if let Some((r, c)) = island {
+            grid.set(r, c, PALM);
+        }
+        water.lakes.push(lake);
+    }
+}
+
+/// `cells` split into 4-connected pieces.
+fn connected_pieces(cells: &[Pos]) -> Vec<Vec<Pos>> {
+    let mut left: HashSet<Pos> = cells.iter().copied().collect();
+    let mut pieces = Vec::new();
+    for &start in cells {
+        if !left.remove(&start) {
+            continue;
+        }
+        let mut piece = vec![start];
+        let mut i = 0;
+        while i < piece.len() {
+            let (r, c) = piece[i];
+            i += 1;
+            for n in [(r.wrapping_sub(1), c), (r + 1, c), (r, c.wrapping_sub(1)), (r, c + 1)] {
+                if left.remove(&n) {
+                    piece.push(n);
+                }
+            }
+        }
+        pieces.push(piece);
+    }
+    pieces
+}
 /// A rock that never breaks. It looks exactly like a breakable one, so it is
 /// only ever placed where no path or node touches it.
 const DECO_ROCK: u8 = 0x53;
 
 /// Scenery (milestone 3, decorations D1 + D2). The empty cells still bush
 /// fill after the water is placed fall into separate regions; each region big
-/// enough gets a few clusters of clearing or rock, grown as a blob from a
-/// random cell. Tiny regions, usually wedged between paths, stay bushes.
-fn decorate<R: Rng>(grid: &mut Grid, rng: &mut R) {
+/// enough gets a few clusters of rock or `other` (W1's clearings, W2's
+/// palms), grown as a blob from a random cell. Tiny regions, usually wedged
+/// between paths, stay as they are.
+fn decorate<R: Rng>(grid: &mut Grid, other: u8, rng: &mut R) {
     for region in empty_regions(grid) {
         if region.len() < MIN_DECORATED_REGION {
             continue;
@@ -326,7 +542,7 @@ fn decorate<R: Rng>(grid: &mut Grid, rng: &mut R) {
                 .collect();
             let Some(&seed) = allowed.choose(rng) else { continue };
             let size = rng.random_range(2..=MAX_CLUSTER.min(region.len() / 2).max(2));
-            let tile = if rock { DECO_ROCK } else { CLEARING };
+            let tile = if rock { DECO_ROCK } else { other };
             for (r, c) in grow_blob(&allowed, seed, size, rng) {
                 grid.set(r, c, tile);
             }
@@ -932,7 +1148,8 @@ fn try_once<R: Rng>(
         //    Islands instead: grown together from seeds spread apart, never
         //    side by side, so an empty band at least one node wide lies
         //    between any two for water or scenery to fill.
-        let grown = grow_islands(&main, &on_lattice, start, splits, main_nodes, rng)?;
+        let grown =
+            grow_islands(&main, &on_lattice, start, splits, main_nodes, targets.island_share, rng)?;
         for island in &grown.nodes {
             nodes.extend(island.iter().filter(|&&n| n != start));
             in_tree.extend(island);
@@ -1049,7 +1266,7 @@ struct Islands {
 /// Grow `splits + 1` islands over `main` with `total` nodes between them,
 /// the first from `start`. Each later island's seed is among the
 /// [`FARTHEST_FEW`] cells farthest from the seeds already down, and it gets
-/// [`ISLAND_SHARE`] of the nodes not yet dealt; the start's island keeps the
+/// `share` percent of the nodes not yet dealt; the start's island keeps the
 /// rest. They grow a node at a time, the island picked at random among those
 /// short of their count, the same way the single tree grows. A node is never
 /// placed beside another island's node, so islands never touch.
@@ -1059,6 +1276,7 @@ fn grow_islands<R: Rng>(
     start: Pos,
     splits: usize,
     total: usize,
+    share: (usize, usize),
     rng: &mut R,
 ) -> Option<Islands> {
     let mut seeds = vec![start];
@@ -1073,7 +1291,7 @@ fn grow_islands<R: Rng>(
     let mut quotas = vec![0; seeds.len()];
     let mut left = total;
     for quota in quotas.iter_mut().skip(1) {
-        *quota = left * rng.random_range(ISLAND_SHARE.0..=ISLAND_SHARE.1) / 100;
+        *quota = left * rng.random_range(share.0..=share.1) / 100;
         left -= *quota;
     }
     quotas[0] = left;
@@ -1272,7 +1490,7 @@ fn generated_layouts() {
     };
     let maps = super::vanilla::load(&rom, false, false);
     let world: usize = std::env::var("LAYOUT_WORLD").ok().and_then(|s| s.parse().ok()).unwrap_or(1);
-    let targets = targets(world - 1).expect("LAYOUT_WORLD has targets");
+    let targets = recipe(world - 1).expect("LAYOUT_WORLD has a recipe").layout;
     let grid = &maps[world - 1].grid;
     let start = crate::randomize::rom_data::find_start(grid).expect("the world has a start");
     let entries = &maps[world - 1].entry_pos;
@@ -1326,17 +1544,18 @@ fn generated_layouts() {
     }
 }
 
-/// The stranding check for generated World 1: across seeds, the builder must
+/// The stranding check for a generated world (`CENSUS_WORLD`, default 1):
+/// across seeds, the builder must
 /// leave the airship reachable from the start (locks open, the builder's own
 /// convention, and rocks shut), and the whole pipeline must run without
 /// panicking. `CENSUS_SEEDS` seeds, default 50.
 ///
 /// ```sh
-/// CENSUS_SEEDS=500 cargo test --release --lib generated_w1_is_completable -- --ignored --nocapture
+/// CENSUS_SEEDS=500 cargo test --release --lib generated_is_completable -- --ignored --nocapture
 /// ```
 #[test]
 #[ignore]
-fn generated_w1_is_completable() {
+fn generated_is_completable() {
     use crate::randomize::overworld::build::{BuildFlags, OverworldData, build};
     use crate::randomize::overworld::helpers::find_target;
     use crate::randomize::overworld::map_walker::walk_map;
@@ -1351,6 +1570,8 @@ fn generated_w1_is_completable() {
     };
     let rom = crate::rom::Rom::from_bytes(&raw).unwrap();
     let seeds: u64 = std::env::var("CENSUS_SEEDS").ok().and_then(|s| s.parse().ok()).unwrap_or(50);
+    let wi: usize =
+        std::env::var("CENSUS_WORLD").ok().and_then(|s| s.parse().ok()).unwrap_or(1) - 1;
 
     // The builder alone, many seeds.
     // Three arms by seed: everything shuffled; Toad Houses and spades left
@@ -1367,7 +1588,7 @@ fn generated_w1_is_completable() {
         };
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
         let mut maps = super::vanilla::load(&rom, false, false);
-        let Some(w1) = world_map(&maps[0], 0, &mut rng) else { continue };
+        let Some(w1) = world_map(&maps[wi], wi, &mut rng) else { continue };
         // Rows 7 and 8 share one completion bit: a completable or removable
         // tile on row 7 must never sit above a node on row 8.
         let last = w1.grid.rows() - 1;
@@ -1380,7 +1601,7 @@ fn generated_w1_is_completable() {
                 row78_conflicts.push((seed, c));
             }
         }
-        maps[0] = w1;
+        maps[wi] = w1;
         generated += 1;
         let mut catalog = NodeCatalog::from_maps(&rom, maps, false);
         if swap {
@@ -1402,7 +1623,7 @@ fn generated_w1_is_completable() {
                 ..Default::default()
             },
         );
-        let w1 = &result.worlds[0];
+        let w1 = &result.worlds[wi];
         let bridges: Vec<Pos> = (0..w1.grid.rows())
             .flat_map(|r| (0..w1.grid.cols).map(move |c| (r, c)))
             .filter(|&(r, c)| w1.grid.get(r, c) == BRIDGE_TILE)
@@ -1417,21 +1638,21 @@ fn generated_w1_is_completable() {
             !w1.locks.iter().any(|l| crossings.contains(&l.pos)),
             "seed {seed}: a lock took a \\$BA crossing, which has no water-gap form",
         );
-        let castle = find_target(&w1.grid, 0).expect("generated W1 has an airship");
+        let castle = find_target(&w1.grid, wi).expect("the generated world has an airship");
         with_moat += usize::from(
             bridges.contains(&(castle.0, castle.1 - 1))
                 || bridges.contains(&(castle.0, castle.1 + 1)),
         );
         let start = crate::randomize::rom_data::find_start(&w1.grid);
-        let target = find_target(&w1.grid, 0).expect("generated W1 has an airship");
-        let reachable = walk_map(&w1.grid, &w1.pipe_pairs, start, 0).nodes.contains(&target);
+        let target = find_target(&w1.grid, wi).expect("the generated world has an airship");
+        let reachable = walk_map(&w1.grid, &w1.pipe_pairs, start, wi).nodes.contains(&target);
         if swap && !reachable {
             stranded_by_swap.push(seed);
             continue;
         }
-        assert!(reachable, "seed {seed}: generated W1's airship is unreachable from the start");
+        assert!(reachable, "seed {seed}: the generated airship is unreachable from the start");
     }
-    println!("builder: {generated} of {seeds} seeds generated a W1, all completable");
+    println!("builder: {generated} of {seeds} seeds generated a W{}, all completable", wi + 1);
     assert!(
         row78_conflicts.is_empty(),
         "a completable or removable tile above a bottom-row node (seed, column): {row78_conflicts:?}",
@@ -1446,7 +1667,8 @@ fn generated_w1_is_completable() {
     );
 
     // The whole pipeline, fewer seeds: the writer and every later stage.
-    let options = crate::Options { generated_worlds: 1, palettes: false, ..Default::default() };
+    let options =
+        crate::Options { generated_worlds: 1 << wi, palettes: false, ..Default::default() };
     for seed in 0..seeds.min(20) {
         crate::generate_patched_rom(&raw, seed, &options, None)
             .unwrap_or_else(|e| panic!("seed {seed}: pipeline failed: {e}"));
@@ -1457,7 +1679,7 @@ fn generated_w1_is_completable() {
 /// The same seed must draw the same map. Each `HashSet` iterates in its own
 /// order, so a choice made from one shows up here as two different maps.
 #[test]
-fn generated_w1_is_deterministic() {
+fn generated_worlds_are_deterministic() {
     use rand::SeedableRng;
     use rand_chacha::ChaCha8Rng;
 
@@ -1469,24 +1691,28 @@ fn generated_w1_is_deterministic() {
         return;
     };
     let vanilla = super::vanilla::load(&rom, false, false);
-    for seed in 0..20 {
-        let draw = || world_map(&vanilla[0], 0, &mut ChaCha8Rng::seed_from_u64(seed)).unwrap();
-        let (a, b) = (draw(), draw());
-        assert_eq!(a.grid.tiles, b.grid.tiles, "seed {seed}: two draws differ");
-        assert_eq!(a.entry_pos, b.entry_pos, "seed {seed}: two draws place entries differently");
+    for (wi, map) in vanilla.iter().enumerate().take(2) {
+        for seed in 0..20 {
+            let draw = || world_map(map, wi, &mut ChaCha8Rng::seed_from_u64(seed)).unwrap();
+            let (a, b) = (draw(), draw());
+            assert_eq!(a.grid.tiles, b.grid.tiles, "W{} seed {seed}: two draws differ", wi + 1);
+            assert_eq!(a.entry_pos, b.entry_pos, "W{} seed {seed}: entries differ", wi + 1);
+        }
     }
 }
 
-/// Generated W1 as drawn tiles, before the builder places anything:
-/// `.` bush, ` ` clearing, `^` rock (decorative), `~` water, `=` bridge, `+` path over water, `-` `|` paths, `R` breakable
-/// rock, `o` node, `S` start, `A` airship, `a` castle top, `#` frame.
+/// A generated world (`LAYOUT_WORLD`, default 1) as drawn tiles, before the
+/// builder places anything: `.` bush, ` ` clearing or plain sand, `:` dotted
+/// sand, `^` rock (decorative), `T` palm, `O` pool, `M` pyramid, `~` water,
+/// `=` bridge, `+` path over water, `-` `|` paths, `R` breakable rock, `o`
+/// node, `S` start, `A` airship, `a` castle top, `#` frame.
 ///
 /// ```sh
-/// cargo test --release --lib generated_w1_tiles -- --ignored --nocapture
+/// LAYOUT_WORLD=2 cargo test --release --lib generated_tiles -- --ignored --nocapture
 /// ```
 #[test]
 #[ignore]
-fn generated_w1_tiles() {
+fn generated_tiles() {
     use rand::SeedableRng;
     use rand_chacha::ChaCha8Rng;
 
@@ -1499,8 +1725,10 @@ fn generated_w1_tiles() {
     };
     let vanilla = super::vanilla::load(&rom, false, false);
     let seeds: u64 = std::env::var("LAYOUT_SEEDS").ok().and_then(|s| s.parse().ok()).unwrap_or(6);
+    let wi: usize =
+        std::env::var("LAYOUT_WORLD").ok().and_then(|s| s.parse().ok()).unwrap_or(1) - 1;
     for seed in 1..=seeds {
-        let map = world_map(&vanilla[0], 0, &mut ChaCha8Rng::seed_from_u64(seed)).unwrap();
+        let map = world_map(&vanilla[wi], wi, &mut ChaCha8Rng::seed_from_u64(seed)).unwrap();
         println!("\n--- seed {seed}");
         for r in 0..map.grid.rows() {
             let row: String = (0..map.grid.cols)
@@ -1508,6 +1736,10 @@ fn generated_w1_tiles() {
                     FILL => '.',
                     CLEARING => ' ',
                     DECO_ROCK => '^',
+                    DUNE => ':',
+                    PALM => 'T',
+                    POOL => 'O',
+                    PYRAMID => 'M',
                     0x45 | 0x49 => '-',
                     0x46 => '|',
                     0x51 | 0x52 => 'R',
