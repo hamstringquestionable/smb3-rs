@@ -45,8 +45,9 @@ const W5_IDX: usize = 4;
 /// record the swap on `catalog.start_airship_swapped[wi]`. Downstream phases
 /// pick up the new positions automatically.
 ///
-/// A generated world is never swapped: it already places its own start, in a
-/// random corner, and draws its map around it. Its coin is still flipped, so
+/// A generated world is never swapped: it already places its own start, on
+/// or beside either of the two spots a swap would pick, and draws its map
+/// around it. Its coin is still flipped, so
 /// the other worlds' swaps do not change.
 pub(crate) fn pick_swaps<R: Rng>(catalog: &mut NodeCatalog, rng: &mut R) {
     for wi in 0..7 {

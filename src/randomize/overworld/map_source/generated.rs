@@ -79,24 +79,11 @@ struct Targets {
     /// A secret area's node count, counted in `nodes`: a small tree in the
     /// map's last scroll view with one way in (see [`grow_pocket`]).
     pocket: Option<(usize, usize)>,
-    /// Where the start may go (see [`Start`]).
-    start: Start,
     /// The world's pipe pairs (`VANILLA_PIPE_PAIRS`). With `n` of them the
     /// layout splits into islands `n - 1` times, plus once more
     /// [`EXTRA_SPLIT`] of the time; the builder's connectivity phase joins
     /// each island with a pair and leaves any spare for routing.
     pipe_pairs: usize,
-}
-
-/// Where a layout's start goes.
-#[derive(Clone, Copy, Debug)]
-enum Start {
-    /// One of the [`CORNER`] nodes in a corner picked at random.
-    Corner,
-    /// On, or one node from, the vanilla start or the vanilla airship (a coin
-    /// picks which): the two places vanilla and the Start<->Airship swap
-    /// start a player. Never in the pocket.
-    NearVanilla,
 }
 
 /// How often a world with pipes splits once more than its pipe pairs less
@@ -116,7 +103,6 @@ const W1_TARGETS: Targets = Targets {
     start_to_target: (7, 11),
     rocks: (0, 2),
     pocket: None,
-    start: Start::Corner,
     pipe_pairs: 0,
 };
 
@@ -130,7 +116,6 @@ const W2_TARGETS: Targets = Targets {
     start_to_target: (13, 17),
     rocks: (0, 2),
     pocket: Some((5, 7)),
-    start: Start::NearVanilla,
     pipe_pairs: 1,
 };
 
@@ -154,11 +139,13 @@ const FARTHEST_FEW: usize = 3;
 /// layout may have. Not banned outright: one now and then reads fine.
 const MAX_SQUARES: usize = 1;
 
-/// Draw layouts until one meets `targets`, or give up after `attempts`. The
-/// start is picked once (see [`Start`]), so a start that is harder to fill
-/// around is not drawn less often. `anchor` (the vanilla start) sets the
-/// lattice's parity; it and `airship` (the vanilla airship) are where a
-/// [`Start::NearVanilla`] start goes.
+/// Draw layouts until one meets `targets`, or give up after `attempts`.
+///
+/// The start goes on, or one node from, `anchor` (the vanilla start) or
+/// `airship` (the vanilla airship), a coin picking which: the two places
+/// vanilla and the Start<->Airship swap start a player. Never in the pocket.
+/// It is picked once, so a start that is harder to fill around is not drawn
+/// less often. `anchor` also sets the lattice's parity.
 fn generate<R: Rng>(
     rows: usize,
     cols: usize,
@@ -169,35 +156,16 @@ fn generate<R: Rng>(
     rng: &mut R,
 ) -> Option<Layout> {
     let cells = lattice(rows, cols, anchor);
-    if let Start::NearVanilla = targets.start {
-        let near = if rng.random::<bool>() { anchor } else { airship };
-        let around: Vec<Pos> = cells
-            .iter()
-            .copied()
-            .filter(|&p| manhattan(p, near) <= 2)
-            .filter(|p| targets.pocket.is_none() || p.1 < POCKET_COL)
-            .collect();
-        let start = *around.choose(rng)?;
-        return (0..attempts).find_map(|_| try_once(rows, cols, anchor, start, targets, rng));
-    }
-    let (top, bottom) = (cells.iter().map(|p| p.0).min()?, cells.iter().map(|p| p.0).max()?);
-    let (left, right) = (cells.iter().map(|p| p.1).min()?, cells.iter().map(|p| p.1).max()?);
-    let (row_edge, col_edge) = (
-        if rng.random::<bool>() { top } else { bottom },
-        if rng.random::<bool>() { left } else { right },
-    );
-    let corner: Vec<Pos> = cells
+    let near = if rng.random::<bool>() { anchor } else { airship };
+    let around: Vec<Pos> = cells
         .iter()
         .copied()
-        .filter(|&(r, c)| r.abs_diff(row_edge) < 2 * CORNER && c.abs_diff(col_edge) < 2 * CORNER)
+        .filter(|&p| manhattan(p, near) <= 2)
+        .filter(|p| targets.pocket.is_none() || p.1 < POCKET_COL)
         .collect();
-    let start = *corner.choose(rng)?;
+    let start = *around.choose(rng)?;
     (0..attempts).find_map(|_| try_once(rows, cols, anchor, start, targets, rng))
 }
-
-/// The start corner's size in nodes each way: 2 x 2 nodes, a 4 x 4 block of
-/// tiles.
-const CORNER: usize = 2;
 
 /// The dancing bush (`TILE_DANCINGBUSH`): every empty cell starts as it, and
 /// what water and decoration leave stays it. Vanilla W1 fills its empty space
