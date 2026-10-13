@@ -64,8 +64,10 @@ const CANOE_EDGES: &[(usize, TeleportEdge)] = &[
 /// [`TeleportEdge`]s (world tag stripped). This is the SINGLE place the
 /// world-scope filter and the `8s are Wild` gate live — every consumer
 /// (reachability check, BFS walk, builder placement, progression debug) reads
-/// canoe edges through here rather than touching `CANOE_EDGES` directly, so a
-/// new consumer cannot accidentally bypass the gate.
+/// canoe edges through here, or through [`super::canoe_edges`] when it holds a grid
+/// (which prefers a generated world's own docks), rather than touching
+/// `CANOE_EDGES` directly, so a new consumer cannot accidentally bypass the
+/// gate.
 ///
 /// When `eights_are_wild` is false the W8 docks/sprite are never written, so
 /// the W8 edges must be excluded to keep the walker's view consistent with the

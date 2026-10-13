@@ -441,7 +441,7 @@ impl WalkGraph {
         let walk = walk_map(&grid, &built.pipe_pairs, Some(start), built.world_idx);
 
         // Canoe (boat) — same model as progression.rs: one boat, rides move it.
-        let canoe_edges = rom_data::active_canoe_edges(built.world_idx, built.grid.eights_are_wild);
+        let canoe_edges = rom_data::canoe_edges(built.world_idx, &built.grid);
         let canoe_pair_set: FastSet<(Pos, Pos)> =
             canoe_edges.iter().flat_map(|&(a, b)| [(a, b), (b, a)]).collect();
         let initial_boat = boat_code(canoe_edges.first().map(|&(a, _)| a));

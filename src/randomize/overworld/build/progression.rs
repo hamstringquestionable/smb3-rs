@@ -143,7 +143,7 @@ fn analyze_with_pre_opened_mask(built: &BuiltWorld, initial_mask: u32) -> Requir
     //     without the boat leaves you stranded (no canoe edge usable from
     //     that island).
     let canoe_edges: Vec<((usize, usize), (usize, usize))> =
-        rom_data::active_canoe_edges(built.world_idx, built.grid.eights_are_wild);
+        rom_data::canoe_edges(built.world_idx, &built.grid);
     let canoe_pair_set: HashSet<((usize, usize), (usize, usize))> =
         canoe_edges.iter().flat_map(|&(a, b)| [(a, b), (b, a)]).collect();
     let initial_boat: Option<(usize, usize)> = canoe_edges.first().map(|&(a, _)| a);
@@ -575,7 +575,7 @@ pub(crate) fn dump_required_progression(built: &BuiltWorld) {
     let target = find_target(&built.grid, built.world_idx);
 
     let canoes: Vec<((usize, usize), (usize, usize))> =
-        rom_data::active_canoe_edges(built.world_idx, built.grid.eights_are_wild);
+        rom_data::canoe_edges(built.world_idx, &built.grid);
 
     eprintln!("\n--- W{} ---", built.world_idx + 1);
     eprintln!(

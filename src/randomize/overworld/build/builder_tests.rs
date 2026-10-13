@@ -133,6 +133,7 @@ fn test_builder_schedule_runs_phases_in_order() {
             cols: 4,
             eights_are_wild: false,
             vanilla_layout: false,
+            canoe_edges: None,
         },
         slots: Vec::new(),
         locks: Vec::new(),
@@ -2371,7 +2372,7 @@ fn canoe_requirement_census() {
             let mut this_seed = false;
             for built in &build.worlds {
                 let wi = built.world_idx;
-                if rom_data::active_canoe_edges(wi, built.grid.eights_are_wild).is_empty() {
+                if rom_data::canoe_edges(wi, &built.grid).is_empty() {
                     continue;
                 }
                 worlds_with_canoe += 1;

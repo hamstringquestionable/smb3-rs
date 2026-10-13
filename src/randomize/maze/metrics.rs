@@ -306,7 +306,7 @@ impl ShortestBound {
                     }
                 }
             }
-            let canoes = rom_data::active_canoe_edges(w, g.eights_are_wild);
+            let canoes = rom_data::canoe_edges(w, g);
             for &(a, b) in state.worlds[w].pipe_pairs.iter().chain(canoes.iter()) {
                 edges[idx((w, a))].push((idx((w, b)), None));
                 edges[idx((w, b))].push((idx((w, a)), None));

@@ -519,6 +519,7 @@ mod tests {
             cols: 2,
             eights_are_wild: false,
             vanilla_layout: false,
+            canoe_edges: None,
         };
         // A hand-trap draws the ring marker regardless of its neighbors.
         assert_eq!(mini_tile_at(&g, 0, 1, &[]), HAND_TRAP_MINI);
