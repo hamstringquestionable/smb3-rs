@@ -425,6 +425,31 @@ fn add_sea<R: Rng>(
         }
         docks.iter().all(|w| seen.contains(w))
     };
+    // Whether the cells around `p` keep its open sides joined without it: if
+    // so, making `p` land cannot split the sea, and the full search is
+    // skipped. Walking the eight cells round `p`, each is beside the next, so
+    // its open sides are joined when they all fall in one open run.
+    let locally_joined = |solid: &HashMap<Pos, usize>, (r, c): Pos| {
+        let (u, d, l, rr) = (r.wrapping_sub(1), r + 1, c.wrapping_sub(1), c + 1);
+        let ring = [(u, l), (u, c), (u, rr), (r, rr), (d, rr), (d, c), (d, l), (r, l)];
+        let open: Vec<bool> = ring.iter().map(|&q| inside(q) && !solid.contains_key(&q)).collect();
+        let Some(gap) = open.iter().position(|o| !o) else { return true };
+        let mut runs_with_a_side = 0;
+        let mut in_run_with_side = false;
+        for k in 1..=8 {
+            let i = (gap + k) % 8;
+            if open[i] {
+                in_run_with_side |= i % 2 == 1;
+            } else {
+                runs_with_a_side += usize::from(in_run_with_side);
+                in_run_with_side = false;
+            }
+        }
+        runs_with_a_side <= 1
+    };
+    // Every add after the first keeps the docks joined, so the shortcut holds;
+    // a sea already split refuses every add, as the full search would.
+    let start_joined = joined(&solid);
     let add = |solid: &mut HashMap<Pos, usize>, (r, c): Pos, island: usize| {
         let touches_another = (r.saturating_sub(1)..=r + 1).any(|y| {
             (c.saturating_sub(1)..=c + 1).any(|x| solid.get(&(y, x)).is_some_and(|&o| o != island))
@@ -437,7 +462,7 @@ fn add_sea<R: Rng>(
             return false;
         }
         solid.insert((r, c), island);
-        let kept = joined(solid);
+        let kept = start_joined && (locally_joined(solid, (r, c)) || joined(solid));
         if !kept {
             solid.remove(&(r, c));
         }
@@ -1073,21 +1098,13 @@ struct Water {
 }
 
 impl Water {
-    fn wet(&self, p: Pos) -> bool {
-        self.cells.contains(&p)
-            || self.bridges.contains(&p)
-            || self.crossings.contains(&p)
-            || self.paths.iter().any(|&(q, _)| q == p)
-            || self.nodes.contains(&p)
-    }
-
     /// The picture a water cell needs: an edge middle is water when that
     /// neighbour is wet, a corner when both edges beside it and the diagonal
     /// are. Off the map is land, except a sea's edges (`sea_bounds`).
-    fn picture(&self, (r, c): Pos) -> String {
+    fn picture(&self, wet: &HashSet<Pos>, (r, c): Pos) -> String {
         let at = |dr: isize, dc: isize| {
             let (nr, nc) = (r as isize + dr, c as isize + dc);
-            let inside = nr >= 0 && nc >= 0 && self.wet((nr as usize, nc as usize));
+            let inside = nr >= 0 && nc >= 0 && wet.contains(&(nr as usize, nc as usize));
             match self.sea_bounds {
                 None => inside,
                 Some(_) if nr < 0 => true,
@@ -1113,7 +1130,25 @@ impl Water {
 
     /// Water cells whose picture has no water tile.
     fn undrawable(&self) -> Vec<Pos> {
-        self.cells.iter().copied().filter(|&p| water_tile(&self.picture(p)).is_none()).collect()
+        let wet = self.wet_set();
+        self.cells
+            .iter()
+            .copied()
+            .filter(|&p| water_tile(&self.picture(&wet, p)).is_none())
+            .collect()
+    }
+
+    /// Every wet cell, for the picture lookups: water, bridges, crossings,
+    /// paths over water and water nodes.
+    fn wet_set(&self) -> HashSet<Pos> {
+        self.cells
+            .iter()
+            .chain(&self.bridges)
+            .chain(&self.crossings)
+            .chain(self.paths.iter().map(|(p, _)| p))
+            .chain(&self.nodes)
+            .copied()
+            .collect()
     }
 
     /// Add water only if every water cell still has a tile afterwards, and
@@ -1142,10 +1177,11 @@ impl Water {
     }
 
     fn draw(&self, grid: &mut Grid) {
+        let wet = self.wet_set();
         let tiles: Vec<(Pos, u8)> = self
             .cells
             .iter()
-            .map(|&p| (p, water_tile(&self.picture(p)).expect("only drawable water is kept")))
+            .map(|&p| (p, water_tile(&self.picture(&wet, p)).expect("only drawable water is kept")))
             .collect();
         for ((r, c), t) in tiles {
             grid.set(r, c, t);
@@ -1667,12 +1703,17 @@ fn try_once<R: Rng>(
         let current: Vec<(Pos, Pos, Link)> =
             tree.iter().chain(&extra).map(|&(a, b)| (a, b, Link::Path)).collect();
         let squares_left = loop_sizes.iter().filter(|&&s| s == 4).count() < MAX_SQUARES;
-        let mut scored: Vec<(usize, (Pos, Pos))> = spare
-            .iter()
-            .filter(|p| !extra.contains(p))
-            .map(|&(a, b)| (path_hops(a, &current).get(&b).copied().unwrap_or(0), (a, b)))
-            .filter(|&(hops, _)| hops != 3 || squares_left)
-            .collect();
+        // One search per node a pair starts from, over one adjacency.
+        let adj = adjacency(&current);
+        let mut from: HashMap<Pos, HashMap<Pos, usize>> = HashMap::new();
+        let mut scored: Vec<(usize, (Pos, Pos))> = Vec::new();
+        for &(a, b) in spare.iter().filter(|p| !extra.contains(p)) {
+            let hops = from.entry(a).or_insert_with(|| hops_from(&adj, a));
+            let hops = hops.get(&b).copied().unwrap_or(0);
+            if hops != 3 || squares_left {
+                scored.push((hops, (a, b)));
+            }
+        }
         scored.sort_by(|x, y| y.0.cmp(&x.0).then(x.1.cmp(&y.1)));
         let &(hops, pair) = scored.get(..FARTHEST_FEW.min(scored.len()))?.choose(rng)?;
         loop_sizes.push(hops + 1);
@@ -1734,15 +1775,13 @@ fn try_once<R: Rng>(
         }
         let mut order: Vec<usize> = (0..islands.len()).collect();
         order.shuffle(rng);
-        let mut homes: Vec<&[Pos]> =
+        let homes: Vec<&[Pos]> =
             vec![
                 mainland.as_slice();
                 rng.random_range(targets.mainland_docks.0..=targets.mainland_docks.1)
             ];
-        homes.extend(order.iter().take(dock_islands).map(|&i| islands[i].as_slice()));
-        for home in homes {
-            let spots: Vec<(Pos, Pos)> = home
-                .iter()
+        let spots = |home: &[Pos], docks: &[(Pos, Pos)]| -> Vec<(Pos, Pos)> {
+            home.iter()
                 .copied()
                 .filter(|&n| n != start && !docks.iter().any(|d| d.0 == n))
                 .flat_map(|(r, c)| {
@@ -1751,8 +1790,27 @@ fn try_once<R: Rng>(
                         .filter(|w| sea.contains(w))
                         .map(move |w| ((r, c), w))
                 })
-                .collect();
-            docks.push(*spots.choose(rng)?);
+                .collect()
+        };
+        for home in homes {
+            let here = spots(home, &docks);
+            docks.push(*here.choose(rng)?);
+        }
+        //    Dock islands in a random order; one with no node on the open sea
+        //    is passed over and stays a pipe island, while the pipes go round.
+        let mut docked = 0;
+        for &i in &order {
+            if docked == dock_islands {
+                break;
+            }
+            let here = spots(&islands[i], &docks);
+            if let Some(&spot) = here.choose(rng) {
+                docks.push(spot);
+                docked += 1;
+            }
+        }
+        if islands.len() - docked > targets.pipe_pairs {
+            return None;
         }
     }
 
@@ -1760,22 +1818,36 @@ fn try_once<R: Rng>(
     //    with a row above it for the castle top.
     let degree = degrees(&nodes, &links);
     let hops = path_hops(start, &links);
-    //    On an island, the first: any distance, since the builder decides
-    //    where its pipe lands.
-    let candidates: Vec<Pos> = nodes
-        .iter()
-        .copied()
-        .filter(|&n| n != start && degree[&n] == 1 && n.0 >= 2 && !walled.contains(&n))
-        .filter(|&n| !docks.iter().any(|d| d.0 == n))
-        .filter(|&n| match islands.first() {
-            Some(far) => far.contains(&n),
-            None => {
-                let d = hops.get(&n).copied().unwrap_or(usize::MAX);
+    //    On an island any distance will do, since the builder decides where
+    //    its pipe lands.
+    //    On islands, the farthest island that has a spot for it.
+    let fits = |n: Pos| {
+        n != start
+            && degree[&n] == 1
+            && n.0 >= 2
+            && !walled.contains(&n)
+            && !docks.iter().any(|d| d.0 == n)
+            && !links.iter().any(|&(a, b, _)| (a, b) == ((n.0 - 2, n.1), n))
+    };
+    let candidates: Vec<Pos> = if islands.is_empty() {
+        nodes
+            .iter()
+            .copied()
+            .filter(|&n| fits(n))
+            .filter(|n| {
+                let d = hops.get(n).copied().unwrap_or(usize::MAX);
                 (targets.start_to_target.0..=targets.start_to_target.1).contains(&d)
-            }
-        })
-        .filter(|&n| !links.iter().any(|&(a, b, _)| (a, b) == ((n.0 - 2, n.1), n)))
-        .collect();
+            })
+            .collect()
+    } else {
+        islands
+            .iter()
+            .map(|island| {
+                nodes.iter().copied().filter(|n| island.contains(n) && fits(*n)).collect::<Vec<_>>()
+            })
+            .find(|c| !c.is_empty())
+            .unwrap_or_default()
+    };
     let &target = candidates.choose(rng)?;
 
     let dead_ends = degree.iter().filter(|&(&n, &d)| d == 1 && n != start).count();
@@ -1801,7 +1873,9 @@ struct Islands {
 /// `share` percent of the nodes not yet dealt; the start's island keeps the
 /// rest. They grow a node at a time, the island picked at random among those
 /// short of their count, the same way the single tree grows. A node is never
-/// placed beside another island's node, so islands never touch.
+/// placed beside another island's node, so islands never touch. An island
+/// boxed in before its count stops there (two nodes at least), and the start's
+/// island takes the rest.
 fn grow_islands<R: Rng>(
     main: &[Pos],
     on_lattice: &HashSet<Pos>,
@@ -1847,6 +1921,16 @@ fn grow_islands<R: Rng>(
         };
         let growable: Vec<Pos> =
             islands[i].iter().copied().filter(|&n| !free(n).is_empty()).collect();
+        // An island boxed in by its neighbours stops where it is, and the
+        // start's island takes the nodes it was short, if it has two already.
+        if growable.is_empty() {
+            if i == 0 || islands[i].len() < 2 {
+                return None;
+            }
+            quotas[0] += quotas[i] - islands[i].len();
+            quotas[i] = islands[i].len();
+            continue;
+        }
         let from = if rng.random_bool(EXTEND_NEWEST) {
             *growable.last()?
         } else {
@@ -1970,6 +2054,11 @@ fn degrees(nodes: &[Pos], links: &[(Pos, Pos, Link)]) -> HashMap<Pos, usize> {
 /// Hops from `start` over path links only: the route a player without a
 /// hammer can walk.
 fn path_hops(start: Pos, links: &[(Pos, Pos, Link)]) -> HashMap<Pos, usize> {
+    hops_from(&adjacency(links), start)
+}
+
+/// Each node's neighbours over path links.
+fn adjacency(links: &[(Pos, Pos, Link)]) -> HashMap<Pos, Vec<Pos>> {
     let mut adj: HashMap<Pos, Vec<Pos>> = HashMap::new();
     for &(a, b, kind) in links {
         if kind == Link::Path {
@@ -1977,6 +2066,11 @@ fn path_hops(start: Pos, links: &[(Pos, Pos, Link)]) -> HashMap<Pos, usize> {
             adj.entry(b).or_default().push(a);
         }
     }
+    adj
+}
+
+/// Hops from `start` over an [`adjacency`].
+fn hops_from(adj: &HashMap<Pos, Vec<Pos>>, start: Pos) -> HashMap<Pos, usize> {
     let mut hops = HashMap::from([(start, 0)]);
     let mut queue = VecDeque::from([start]);
     while let Some(n) = queue.pop_front() {
@@ -2187,6 +2281,7 @@ fn generated_is_completable() {
             }
         }
         let docks = w1.grid.canoe_edges.clone();
+        let maps_entry_pos = w1.entry_pos.clone();
         maps[wi] = w1;
         generated += 1;
         let mut catalog = NodeCatalog::from_maps(&rom, maps, false);
@@ -2243,6 +2338,13 @@ fn generated_is_completable() {
             continue;
         }
         assert!(reachable, "seed {seed}: the generated airship is unreachable from the start");
+        let reach = walk_map(&w1.grid, &w1.pipe_pairs, start, wi).nodes;
+        let stranded: Vec<Pos> = maps_entry_pos
+            .iter()
+            .copied()
+            .filter(|&(r, c)| r < w1.grid.rows() && c < w1.grid.cols && !reach.contains(&(r, c)))
+            .collect();
+        assert!(stranded.is_empty(), "seed {seed}: nodes no route reaches: {stranded:?}");
     }
     println!("builder: {generated} of {seeds} seeds generated a W{}, all completable", wi + 1);
     assert!(
