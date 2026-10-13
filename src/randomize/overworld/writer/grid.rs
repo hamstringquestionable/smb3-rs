@@ -181,11 +181,11 @@ pub(super) fn write_tile_grid<R: Rng>(
     // removable pairing and the hammer rows that must agree with it. One
     // allocator spans all eight worlds — see `LockTiles`.
     //
-    // **World 8 never shows a digit**, even on full hints: its away locks wear
-    // the nub, as on some-hints. Their fortresses are the beta `$6A`, which
-    // already says "World 8" from the other end.
+    // **On Most, World 8 shows no digit**: its away locks wear the nub, as on
+    // some-hints. Their fortresses are the beta `$6A`, which already says
+    // "World 8" from the other end. Full numbers them like any other world.
     let lock_hints = match hints {
-        crate::HintMode::Full if wi == rom_data::W8_IDX => crate::HintMode::Partial,
+        crate::HintMode::Most if wi == rom_data::W8_IDX => crate::HintMode::Partial,
         h => h,
     };
     for lock in &built.locks {

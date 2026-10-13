@@ -281,9 +281,9 @@ mod tests {
             rom.read_range(FS_HAMMER_TABLES, n).to_vec()
         };
 
-        // Both hint modes, because they allocate different tiles and the hammer
+        // Every hint mode, because they allocate different tiles and the hammer
         // has to know both. It knew only one family once already.
-        for hints in [crate::HintMode::Full, crate::HintMode::Partial] {
+        for hints in [crate::HintMode::Full, crate::HintMode::Most, crate::HintMode::Partial] {
             let rom = build(crate::Tri::On, crate::Tri::Off, hints);
             let allocated = crate::randomize::overworld::lock_keys::allocated_pairs_on_rom(&rom);
             let water = |revealed: u8| revealed == rom_data::BRIDGE_TILE;
