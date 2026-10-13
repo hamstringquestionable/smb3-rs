@@ -185,10 +185,11 @@ enum Step {
     Clusters { other: u8, rock_share: f64 },
     /// A few single tiles off the paths ([`scatter`]).
     Scatter { tile: u8, count: (usize, usize) },
-    /// Water as the ground ([`add_sea`]): land on each node's side `margin`
-    /// of the time, grown by `land` of the open cells, and bush islets; the
-    /// rest is sea. First in a recipe, so the steps after it decorate the land.
-    Sea { margin: f64, land: f64 },
+    /// Water as the ground ([`add_sea`]): `water_nodes` of the nodes that can
+    /// be drawn in the sea, land on each land node's side `margin` of the
+    /// time, grown by `land` of the open cells, and bush islets; the rest is
+    /// sea. First in a recipe, so the steps after it decorate the land.
+    Sea { margin: f64, land: f64, water_nodes: f64 },
 }
 
 const W1_RECIPE: Recipe = Recipe {
@@ -233,7 +234,7 @@ const W3_RECIPE: Recipe = Recipe {
     layout: W3_TARGETS,
     ground: CLEARING,
     scenery: &[
-        Step::Sea { margin: 0.25, land: 0.04 },
+        Step::Sea { margin: 0.25, land: 0.04, water_nodes: 0.5 },
         Step::Clusters { other: BUSH, rock_share: 0.0 },
         Step::Scatter { tile: PALM, count: (1, 3) },
         Step::Scatter { tile: POOL, count: (0, 2) },
@@ -304,12 +305,18 @@ const BUSH: u8 = 0xB4;
 /// `TILE_DOCK`: the canoe is boarded from here, and the only tile it lands at.
 const DOCK: u8 = 0x4B;
 
-/// How often a horizontal path over a sea is a bridge, which can become a
-/// water gap; otherwise `$B9`, a path over water. Vanilla W3 has 5 bridges
-/// and 8 horizontal paths over water.
+/// How often a horizontal path over a sea between two land nodes is a
+/// bridge, which can become a water gap; otherwise `$B9`, a path over water.
+/// Vanilla W3 has 5 bridges and 8 horizontal paths over water.
 const BRIDGE_SHARE: f64 = 0.4;
-/// `TILE_HORZPATHWLB`.
-const HORZ_PATH_OVER_WATER: u8 = 0xB9;
+
+/// Paths over water (`smb3_rom_reference.md`, "Paths over water"), by axis
+/// and by which ends are water nodes: `[land-land, land-water, water-land,
+/// water-water]`, the first end being the left or upper one. Land-land
+/// horizontal is a bridge or `$B9` ([`BRIDGE_SHARE`]); vertical is `$BA`
+/// ([`CROSSING`]).
+const HORZ_OVER_WATER: [u8; 4] = [0xB9, 0xB7, 0xB8, 0xAC];
+const VERT_OVER_WATER: [u8; 4] = [CROSSING, 0xAA, 0xAB, 0xB0];
 
 /// Bush islets out in open water per sea map.
 const ISLETS: (usize, usize) = (2, 4);
@@ -317,33 +324,81 @@ const ISLETS: (usize, usize) = (2, 4);
 /// island grows from it.
 const ISLET: usize = usize::MAX;
 
-/// Water first (W3). Land is what is drawn so far (paths, nodes, the castle
-/// top), each of a node's four neighbours `margin` of the time, then `land`
-/// of the open cells grown on
-/// from the shore, then a few one-cell islets of bush out in the open. Every
-/// other cell is sea. Land belongs to the island it grew from, and never
-/// touches another island's, so separate islands always show water between. Land never takes a dock's water tile, nor a cell whose
-/// loss would cut one dock's water off from another's.
+/// Water first (W3).
 ///
-/// A path with sea on both sides becomes a bridge (horizontal) or a `$BA`
-/// crossing (vertical); its ends are nodes, which are always land. Sea cells
-/// with no tile for their picture become land, and `false` if that cuts the
-/// docks apart (the world then keeps vanilla).
+/// **Water nodes.** `water_nodes` of the nodes that can be are drawn in the
+/// sea, not on land: a node with a path from its left or from above (the path
+/// the pickup's island blank, `$AE` `$B5` `$AF` `$B6`, keys off), and not the
+/// start, the airship or a dock. Its sides and the sides of its paths stay
+/// sea, and its paths take the over-water tile for their ends
+/// ([`HORZ_OVER_WATER`], [`VERT_OVER_WATER`]), so a run of them reads as open
+/// water while the walker sees one island.
+///
+/// **Land** is what is drawn so far (paths, nodes, the castle top), each side
+/// of a land node `margin` of the time, then `land` of the open cells grown
+/// on from the shore, then a few one-cell islets of bush out in the open.
+/// Every other cell is sea. Land belongs to the island it grew from and never
+/// touches another island's, so separate islands always show water between;
+/// it never takes a cell that must stay sea (a dock's water, a water node's
+/// sides), nor one whose loss would cut one dock's water off from another's.
+///
+/// A path with sea both sides takes its over-water tile. Sea cells with no
+/// tile for their picture become land; `false` if that takes a cell that must
+/// stay sea or cuts the docks apart (the draw is retried).
 fn add_sea<R: Rng>(
     grid: &mut Grid,
     water: &mut Water,
     layout: &Layout,
-    margin: f64,
-    land: f64,
+    (margin, land, water_nodes): (f64, f64, f64),
     rng: &mut R,
 ) -> bool {
     let (rows, cols) = (grid.rows(), grid.cols);
     let inside = |(r, c): Pos| r < rows && c >= 1 && c + 1 < cols;
     let around =
         |(r, c): Pos| [(r.wrapping_sub(1), c), (r + 1, c), (r, c.wrapping_sub(1)), (r, c + 1)];
+    let mid = |a: Pos, b: Pos| ((a.0 + b.0) / 2, (a.1 + b.1) / 2);
+    // A link's two cells beside it, across its axis.
+    let beside = |a: Pos, b: Pos| {
+        let (r, c) = mid(a, b);
+        if a.0 == b.0 { [(r.wrapping_sub(1), c), (r + 1, c)] } else { [(r, c - 1), (r, c + 1)] }
+    };
     let cells: Vec<Pos> = (0..rows).flat_map(|r| (1..cols - 1).map(move |c| (r, c))).collect();
-    let wet: Vec<Pos> = layout.docks.iter().map(|d| d.1).collect();
+    let docks: Vec<Pos> = layout.docks.iter().map(|d| d.1).collect();
     water.sea_bounds = Some((rows, cols));
+
+    let fixed =
+        |n: Pos| n == layout.start || n == layout.target || layout.docks.iter().any(|d| d.0 == n);
+    let joined_from_above_or_left =
+        |n: Pos| layout.links.iter().any(|&(_, b, kind)| kind == Link::Path && b == n);
+    let on_rock =
+        |n: Pos| layout.links.iter().any(|&(a, b, k)| k == Link::Rock && (a == n || b == n));
+    let mut wet_nodes: HashSet<Pos> = layout
+        .nodes
+        .iter()
+        .copied()
+        .filter(|&n| !fixed(n) && !on_rock(n) && joined_from_above_or_left(n))
+        .filter(|_| rng.random_bool(water_nodes))
+        .collect();
+    // The cells a water node needs kept sea: its sides, and its paths' sides.
+    let empty: HashSet<Pos> =
+        cells.iter().copied().filter(|&(r, c)| grid.get(r, c) == FILL).collect();
+    let needs = |n: Pos| {
+        let mut cells: Vec<Pos> = around(n).into_iter().filter(|p| empty.contains(p)).collect();
+        for &(a, b, _) in layout.links.iter().filter(|&&(a, b, _)| a == n || b == n) {
+            cells.extend(beside(a, b).into_iter().filter(|&p| inside(p)));
+        }
+        cells
+    };
+    let keep_for = |wet_nodes: &HashSet<Pos>| {
+        let mut keep: HashSet<Pos> = docks.iter().copied().collect();
+        for &n in wet_nodes {
+            keep.extend(needs(n));
+        }
+        keep
+    };
+    let mut keep = keep_for(&wet_nodes);
+    let nodes_before = water.nodes.len();
+    water.nodes.extend(&wet_nodes);
 
     // Land, keyed by the island it belongs to (0 the start's, k + 1 the
     // layout's k-th), so islands never grow into each other: no land is
@@ -358,7 +413,7 @@ fn add_sea<R: Rng>(
 
     // Whether every dock's water is still one sea, with `solid` as land.
     let joined = |solid: &HashMap<Pos, usize>| {
-        let Some(&first) = wet.first() else { return true };
+        let Some(&first) = docks.first() else { return true };
         let mut seen = HashSet::from([first]);
         let mut queue = vec![first];
         while let Some(p) = queue.pop() {
@@ -368,14 +423,14 @@ fn add_sea<R: Rng>(
                 }
             }
         }
-        wet.iter().all(|w| seen.contains(w))
+        docks.iter().all(|w| seen.contains(w))
     };
     let add = |solid: &mut HashMap<Pos, usize>, (r, c): Pos, island: usize| {
         let touches_another = (r.saturating_sub(1)..=r + 1).any(|y| {
             (c.saturating_sub(1)..=c + 1).any(|x| solid.get(&(y, x)).is_some_and(|&o| o != island))
         });
         if !inside((r, c))
-            || wet.contains(&(r, c))
+            || keep.contains(&(r, c))
             || solid.contains_key(&(r, c))
             || touches_another
         {
@@ -389,7 +444,7 @@ fn add_sea<R: Rng>(
         kept
     };
 
-    for &n in &layout.nodes {
+    for &n in layout.nodes.iter().filter(|n| !wet_nodes.contains(n)) {
         for p in around(n) {
             if rng.random_bool(margin) {
                 add(&mut solid, p, island_of(n));
@@ -407,6 +462,7 @@ fn add_sea<R: Rng>(
             .filter_map(|p| {
                 around(p)
                     .iter()
+                    .filter(|n| !wet_nodes.contains(n))
                     .find_map(|n| solid.get(n))
                     .filter(|&&o| o != ISLET)
                     .map(|&o| (p, o))
@@ -432,7 +488,8 @@ fn add_sea<R: Rng>(
     }
 
     // The sea, trimmed until every cell of it has a tile. Whether a
-    // horizontal path over it is a bridge is decided once per link.
+    // land-to-land horizontal path over it is a bridge is decided once per
+    // link.
     let bridged: Vec<bool> = layout.links.iter().map(|_| rng.random_bool(BRIDGE_SHARE)).collect();
     let mut sea: Vec<Pos> = cells.iter().copied().filter(|p| !solid.contains_key(p)).collect();
     let paths_before = water.paths.len();
@@ -444,17 +501,17 @@ fn add_sea<R: Rng>(
         let (mut bridges, mut crossings) = (Vec::new(), Vec::new());
         water.paths.truncate(paths_before);
         for (&(a, b, kind), &bridge) in layout.links.iter().zip(&bridged) {
-            let (r, c) = ((a.0 + b.0) / 2, (a.1 + b.1) / 2);
-            if kind != Link::Path {
+            if kind != Link::Path || !beside(a, b).iter().all(|p| in_sea.contains(p)) {
                 continue;
             }
-            if a.0 == b.0
-                && in_sea.contains(&(r.wrapping_sub(1), c))
-                && in_sea.contains(&(r + 1, c))
-            {
-                if bridge { bridges.push((r, c)) } else { water.paths.push((r, c)) }
-            } else if a.1 == b.1 && in_sea.contains(&(r, c - 1)) && in_sea.contains(&(r, c + 1)) {
-                crossings.push((r, c));
+            let ends =
+                usize::from(wet_nodes.contains(&a)) * 2 + usize::from(wet_nodes.contains(&b));
+            let cell = mid(a, b);
+            match (a.0 == b.0, ends) {
+                (true, 0) if bridge => bridges.push(cell),
+                (false, 0) => crossings.push(cell),
+                (true, _) => water.paths.push((cell, HORZ_OVER_WATER[ends])),
+                (false, _) => water.paths.push((cell, VERT_OVER_WATER[ends])),
             }
         }
         if water.try_add(grid, &sea, &bridges, &crossings) {
@@ -468,8 +525,25 @@ fn add_sea<R: Rng>(
         water.cells.truncate(before.0);
         water.bridges.truncate(before.1);
         water.crossings.truncate(before.2);
-        if bad.is_empty() {
+        if bad.is_empty() || bad.iter().any(|p| docks.contains(p)) {
             return false;
+        }
+        // A cell a water node needs kept sea has no tile: that node goes back
+        // to land, and the cell can then be trimmed like any other.
+        let stuck: Vec<Pos> = bad.iter().copied().filter(|p| keep.contains(p)).collect();
+        if !stuck.is_empty() {
+            let demoted: Vec<Pos> = wet_nodes
+                .iter()
+                .copied()
+                .filter(|&n| needs(n).iter().any(|p| stuck.contains(p)))
+                .collect();
+            for n in &demoted {
+                wet_nodes.remove(n);
+            }
+            keep = keep_for(&wet_nodes);
+            water.nodes.truncate(nodes_before);
+            water.nodes.extend(&wet_nodes);
+            continue;
         }
         sea.retain(|p| !bad.contains(p));
         solid.extend(bad.into_iter().map(|p| (p, ISLET)));
@@ -566,7 +640,7 @@ fn draw_once<R: Rng>(vanilla: &WorldMap, world_idx: usize, rng: &mut R) -> Optio
         on_grid(p).then(|| old.get(p.0, p.1))
     };
     let dealt_elsewhere = |i: usize| i == start_idx || i == airship_idx;
-    let dock_entries: Vec<usize> = (0..entry_pos.len())
+    let pinned_entries: Vec<usize> = (0..entry_pos.len())
         .filter(|&i| vanilla_tile(i) == Some(DOCK))
         .chain(
             (0..entry_pos.len())
@@ -574,15 +648,30 @@ fn draw_once<R: Rng>(vanilla: &WorldMap, world_idx: usize, rng: &mut R) -> Optio
                 .filter(|&i| vanilla_tile(i).is_some_and(|t| VALID_BLANK_TILES.contains(&t))),
         )
         .collect();
-    if dock_entries.iter().filter(|&&i| vanilla_tile(i) == Some(DOCK)).count() > dock_nodes.len() {
+    if pinned_entries.iter().filter(|&&i| vanilla_tile(i) == Some(DOCK)).count() > dock_nodes.len()
+    {
         return None; // A vanilla dock entry with no dock would draw a stray dock.
     }
-    let docked: Vec<usize> = dock_entries.into_iter().take(dock_nodes.len()).collect();
-    for (&i, &p) in docked.iter().zip(&dock_nodes) {
+    // Every island but the start's also takes a spare Hammer Bro level, on
+    // its first free node: the pickup always lifts those, so the builder has
+    // somewhere to land the island's pipe. An island of only fixed nodes (the
+    // airship and a Toad House the flags keep) could never be joined.
+    let anchors: Vec<Pos> = layout
+        .islands
+        .iter()
+        .filter_map(|island| island.iter().copied().find(|n| free.contains(n)))
+        .collect();
+    free.retain(|n| !anchors.contains(n));
+    let placed: Vec<usize> =
+        pinned_entries.into_iter().take(dock_nodes.len() + anchors.len()).collect();
+    if placed.len() < dock_nodes.len() + anchors.len() {
+        return None;
+    }
+    for (&i, &p) in placed.iter().zip(dock_nodes.iter().chain(&anchors)) {
         entry_pos[i] = p;
     }
     for (i, pos) in entry_pos.iter_mut().enumerate() {
-        if !dealt_elsewhere(i) && !docked.contains(&i) && on_grid(vanilla.entry_pos[i]) {
+        if !dealt_elsewhere(i) && !placed.contains(&i) && on_grid(vanilla.entry_pos[i]) {
             *pos = free.pop()?;
         }
     }
@@ -591,7 +680,8 @@ fn draw_once<R: Rng>(vanilla: &WorldMap, world_idx: usize, rng: &mut R) -> Optio
     }
 
     // Each entry shows its own tile. A blank one (a Hammer Bro level's cell)
-    // is redrawn for its new neighbours, after every entry is down.
+    // is drawn for its neighbours once every path and water tile is final, at
+    // the end; until then it keeps the entry's tile.
     let mut blanks = Vec::new();
     for (i, &pos) in entry_pos.iter().enumerate() {
         let from = vanilla.entry_pos[i];
@@ -604,16 +694,13 @@ fn draw_once<R: Rng>(vanilla: &WorldMap, world_idx: usize, rng: &mut R) -> Optio
             blanks.push(pos);
         }
     }
-    for pos in blanks {
-        let tile = blank_tile_from_neighbors(&grid, world_idx, pos.0, pos.1);
-        grid.set(pos.0, pos.1, tile);
-    }
     // Docks, and the canoe joining them: from the first, where the canoe
     // parks, to every other (the walker opens all of them once the first is
     // reached on foot).
     for &(r, c) in &dock_nodes {
         grid.set(r, c, DOCK);
     }
+    blanks.retain(|p| !dock_nodes.contains(p));
     if let Some((&first, rest)) = dock_nodes.split_first() {
         grid.canoe_edges = Some(rest.iter().map(|&d| (first, d)).collect());
     }
@@ -659,14 +746,21 @@ fn draw_once<R: Rng>(vanilla: &WorldMap, world_idx: usize, rng: &mut R) -> Optio
             Step::Scatter { tile, count } => {
                 scatter(&mut grid, &built, tile, count, rng);
             }
-            Step::Sea { margin, land } => {
-                if !add_sea(&mut grid, &mut water, &layout, margin, land, rng) {
+            Step::Sea { margin, land, water_nodes } => {
+                if !add_sea(&mut grid, &mut water, &layout, (margin, land, water_nodes), rng) {
                     return None;
                 }
             }
         }
     }
     water.draw(&mut grid);
+    // Blanks last, so each reads its final paths: the pickup keeps a blank
+    // it finds (`blank_tile_for`), and W3's water nodes need the island blank
+    // their over-water path calls for.
+    for &pos in &blanks {
+        let tile = blank_tile_from_neighbors(&grid, world_idx, pos.0, pos.1);
+        grid.set(pos.0, pos.1, tile);
+    }
     for r in 0..grid.rows() {
         for c in 1..grid.cols - 1 {
             if grid.get(r, c) == FILL {
@@ -682,7 +776,12 @@ fn draw_once<R: Rng>(vanilla: &WorldMap, world_idx: usize, rng: &mut R) -> Optio
         hb_sprites: Vec::new(),
         gaps: Vec::new(),
         hammer_gated: Vec::new(),
-        no_locks: water.crossings.iter().chain(&water.paths).copied().collect(),
+        no_locks: water
+            .crossings
+            .iter()
+            .copied()
+            .chain(water.paths.iter().map(|&(p, _)| p))
+            .collect(),
         canoe: layout.docks.first().map(|d| d.1),
     })
 }
@@ -959,10 +1058,13 @@ struct Water {
     /// (path over water, land at both ends). It has no water-gap form, so
     /// no lock may take it (`WorldMap::no_locks`).
     crossings: Vec<Pos>,
-    /// A horizontal path over a sea drawn as `$B9` (`TILE_HORZPATHWLB`, path
-    /// over water, land both ends): walkable, and it looks like water. Like a
-    /// crossing it has no water-gap form, so no lock may take it.
-    paths: Vec<Pos>,
+    /// A path over a sea and the over-water tile it is drawn as
+    /// ([`HORZ_OVER_WATER`], [`VERT_OVER_WATER`]): walkable, and it looks like
+    /// water. Like a crossing it has no water-gap form, so no lock may take it.
+    paths: Vec<(Pos, u8)>,
+    /// Nodes drawn in the sea ([`add_sea`]): wet to the water beside them,
+    /// though their own tile is the node's.
+    nodes: Vec<Pos>,
     /// A sea's map size, `(rows, cols)` ([`add_sea`]): the open sea runs off
     /// the top, left and right edges and over the frame columns, as vanilla
     /// W3's does, and meets land only along the bottom. `None` for lakes,
@@ -975,7 +1077,8 @@ impl Water {
         self.cells.contains(&p)
             || self.bridges.contains(&p)
             || self.crossings.contains(&p)
-            || self.paths.contains(&p)
+            || self.paths.iter().any(|&(q, _)| q == p)
+            || self.nodes.contains(&p)
     }
 
     /// The picture a water cell needs: an edge middle is water when that
@@ -1053,8 +1156,8 @@ impl Water {
         for &(r, c) in &self.crossings {
             grid.set(r, c, CROSSING);
         }
-        for &(r, c) in &self.paths {
-            grid.set(r, c, HORZ_PATH_OVER_WATER);
+        for &((r, c), tile) in &self.paths {
+            grid.set(r, c, tile);
         }
     }
 }
@@ -2050,6 +2153,11 @@ fn generated_is_completable() {
         );
         let w1 = &result.worlds[wi];
         assert_eq!(w1.grid.canoe_edges, docks, "seed {seed}: the builder lost the generated docks");
+        for &(a, b) in docks.iter().flatten() {
+            for (r, c) in [a, b] {
+                assert_eq!(w1.grid.get(r, c), DOCK, "seed {seed}: dock ({r},{c}) was built over");
+            }
+        }
         let bridges: Vec<Pos> = (0..w1.grid.rows())
             .flat_map(|r| (0..w1.grid.cols).map(move |c| (r, c)))
             .filter(|&(r, c)| w1.grid.get(r, c) == BRIDGE_TILE)
@@ -2203,7 +2311,8 @@ fn generated_tiles() {
                     0x82..=0xA9 => '~',
                     BRIDGE_TILE => '=',
                     CROSSING => '+',
-                    HORZ_PATH_OVER_WATER => '_',
+                    0xAC | 0xB7..=0xB9 => '_',
+                    0xAA | 0xAB | 0xB0 => '!',
                     TILE_START => 'S',
                     0xC9 => 'A',
                     0xC8 => 'a',
