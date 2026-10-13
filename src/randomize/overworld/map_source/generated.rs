@@ -233,7 +233,7 @@ const W3_RECIPE: Recipe = Recipe {
     layout: W3_TARGETS,
     ground: CLEARING,
     scenery: &[
-        Step::Sea { margin: 0.5, land: 0.1 },
+        Step::Sea { margin: 0.25, land: 0.04 },
         Step::Clusters { other: BUSH, rock_share: 0.0 },
         Step::Scatter { tile: PALM, count: (1, 3) },
         Step::Scatter { tile: POOL, count: (0, 2) },
@@ -303,6 +303,13 @@ const FILL: u8 = 0xFF;
 const BUSH: u8 = 0xB4;
 /// `TILE_DOCK`: the canoe is boarded from here, and the only tile it lands at.
 const DOCK: u8 = 0x4B;
+
+/// How often a horizontal path over a sea is a bridge, which can become a
+/// water gap; otherwise `$B9`, a path over water. Vanilla W3 has 5 bridges
+/// and 8 horizontal paths over water.
+const BRIDGE_SHARE: f64 = 0.4;
+/// `TILE_HORZPATHWLB`.
+const HORZ_PATH_OVER_WATER: u8 = 0xB9;
 
 /// Bush islets out in open water per sea map.
 const ISLETS: (usize, usize) = (2, 4);
@@ -424,15 +431,19 @@ fn add_sea<R: Rng>(
         }
     }
 
-    // The sea, trimmed until every cell of it has a tile.
+    // The sea, trimmed until every cell of it has a tile. Whether a
+    // horizontal path over it is a bridge is decided once per link.
+    let bridged: Vec<bool> = layout.links.iter().map(|_| rng.random_bool(BRIDGE_SHARE)).collect();
     let mut sea: Vec<Pos> = cells.iter().copied().filter(|p| !solid.contains_key(p)).collect();
+    let paths_before = water.paths.len();
     loop {
         if !joined(&solid) {
             return false;
         }
         let in_sea: HashSet<Pos> = sea.iter().copied().collect();
         let (mut bridges, mut crossings) = (Vec::new(), Vec::new());
-        for &(a, b, kind) in &layout.links {
+        water.paths.truncate(paths_before);
+        for (&(a, b, kind), &bridge) in layout.links.iter().zip(&bridged) {
             let (r, c) = ((a.0 + b.0) / 2, (a.1 + b.1) / 2);
             if kind != Link::Path {
                 continue;
@@ -441,7 +452,7 @@ fn add_sea<R: Rng>(
                 && in_sea.contains(&(r.wrapping_sub(1), c))
                 && in_sea.contains(&(r + 1, c))
             {
-                bridges.push((r, c));
+                if bridge { bridges.push((r, c)) } else { water.paths.push((r, c)) }
             } else if a.1 == b.1 && in_sea.contains(&(r, c - 1)) && in_sea.contains(&(r, c + 1)) {
                 crossings.push((r, c));
             }
@@ -671,7 +682,7 @@ fn draw_once<R: Rng>(vanilla: &WorldMap, world_idx: usize, rng: &mut R) -> Optio
         hb_sprites: Vec::new(),
         gaps: Vec::new(),
         hammer_gated: Vec::new(),
-        no_locks: water.crossings.clone(),
+        no_locks: water.crossings.iter().chain(&water.paths).copied().collect(),
         canoe: layout.docks.first().map(|d| d.1),
     })
 }
@@ -948,6 +959,10 @@ struct Water {
     /// (path over water, land at both ends). It has no water-gap form, so
     /// no lock may take it (`WorldMap::no_locks`).
     crossings: Vec<Pos>,
+    /// A horizontal path over a sea drawn as `$B9` (`TILE_HORZPATHWLB`, path
+    /// over water, land both ends): walkable, and it looks like water. Like a
+    /// crossing it has no water-gap form, so no lock may take it.
+    paths: Vec<Pos>,
     /// A sea's map size, `(rows, cols)` ([`add_sea`]): the open sea runs off
     /// the top, left and right edges and over the frame columns, as vanilla
     /// W3's does, and meets land only along the bottom. `None` for lakes,
@@ -957,7 +972,10 @@ struct Water {
 
 impl Water {
     fn wet(&self, p: Pos) -> bool {
-        self.cells.contains(&p) || self.bridges.contains(&p) || self.crossings.contains(&p)
+        self.cells.contains(&p)
+            || self.bridges.contains(&p)
+            || self.crossings.contains(&p)
+            || self.paths.contains(&p)
     }
 
     /// The picture a water cell needs: an edge middle is water when that
@@ -1034,6 +1052,9 @@ impl Water {
         }
         for &(r, c) in &self.crossings {
             grid.set(r, c, CROSSING);
+        }
+        for &(r, c) in &self.paths {
+            grid.set(r, c, HORZ_PATH_OVER_WATER);
         }
     }
 }
@@ -2182,6 +2203,7 @@ fn generated_tiles() {
                     0x82..=0xA9 => '~',
                     BRIDGE_TILE => '=',
                     CROSSING => '+',
+                    HORZ_PATH_OVER_WATER => '_',
                     TILE_START => 'S',
                     0xC9 => 'A',
                     0xC8 => 'a',
