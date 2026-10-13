@@ -1330,8 +1330,9 @@ fn grow_islands<R: Rng>(
 
 /// The first column of the pocket's strip: the map's last scroll view, which
 /// holds nothing else. Vanilla W2's secret area starts at column 22, entered
-/// from (0,20).
-const POCKET_COL: usize = 22;
+/// from (0,20); one node column further out, its tiles cannot be seen from
+/// the main map without going over (user, 2026-10-13).
+const POCKET_COL: usize = 24;
 
 /// A secret area: a small tree in the strip, joined to the main map by one
 /// link from a main node into its mouth (vanilla W2's area behind the (0,21)
