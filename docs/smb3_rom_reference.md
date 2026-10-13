@@ -3051,6 +3051,40 @@ dock tile (`0x4B`) so the player can board it. See the randomizer's
 `write_map_sprite` and W8 `CANOE_EDGES` (mainland `(5,6)` → islands
 `(3,8)/(5,10)/(5,12)`).
 
+**How the canoe moves** (`Map_CheckDoMove`, `prg010.asm` ~line 3378; read
+2026-10-13 for generated W3). One function handles walking and sailing:
+
+1. **Boarding.** On a dock (`TILE_DOCK` `$4B`), a direction press looks for a
+   canoe exactly one tile that way (`Map_CanoeCheck*Off`): a cardinal
+   neighbour of the dock. The search covers map-object slots 7 down to 1,
+   never slot 0, and stops at the first canoe, so **one canoe per map**.
+2. **In the canoe**, the target tile is tested in order:
+   - in the direction's walkable list (`Map_Object_Valid_Left/Right/Down/Up`:
+     path, bridge and over-water path tiles only, by axis; no node tiles):
+     a normal 2-tile walk, *with `Map_InCanoe_Flag` still set*. A lattice map
+     never offers this, since both ends of every path cell are nodes;
+   - `$4B` dock: the flag clears and the player steps off. **The only exit.**
+   - `$82`–`$A9` (`TILE_WATER_INVT` up to, not including,
+     `TILE_VERTPATHWLU`): the canoe moves one tile (16 units). **Any water
+     tile**, including the water gap `$9D`;
+   - below `$82`: bump. `$AA` and up: nothing.
+3. So **paths and bridges over water cut the canoe's water** (all are
+   `$AA`+). A gap `$9D` is sailable while shut and blocks once its fortress
+   bridges it, so canoe reachability must never depend on a gap cell.
+
+The always-on canoe summon (`qol/canoe_summon.rs`, A on a dock calls the boat
+to the adjacent water; replaced by `maze::canoe_gate` when item gates are on)
+means a parked canoe never strands anyone. The death-respawn fix
+(`qol/canoe.rs`) is position-independent.
+
+**Paths over water.** Water on both sides of the path; the variant says which
+ends meet land:
+
+| | Water both ends | Land top / left | Land bottom / right | Land both ends |
+|---|---|---|---|---|
+| Vertical | `$B0` `TILE_VERTPATHW` | `$AA` `…WLU` | `$AB` `…WLL` | `$BA` `…WLB` |
+| Horizontal | `$AC` `TILE_HORZPATHW` | `$B7` `…WLL` | `$B8` `…WLR` | `$B9` `…WLB` |
+
 ### World-Map Object March Validation (PRG011)
 
 How wandering map objects (Hammer Bros, N-Spade, white toad house, coin ship)
