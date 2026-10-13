@@ -1699,9 +1699,10 @@ fn try_once<R: Rng>(
 
     // 3b. Docks: one on each of `dock_islands` islands picked at random, and
     //     one or two on the start's island, each a node with a free tile
-    //     beside it for the canoe's water. Every dock's water must lie in
-    //     one open area, which paths and nodes cut; the canoe parks beside
-    //     the first.
+    //     beside it for the canoe's water. That tile is always in the open
+    //     sea, the largest open area (paths and nodes cut it), so every dock
+    //     is on the one sea; a tile in a pocket enclosed by paths would
+    //     strand its dock. The canoe parks beside the first.
     let mut docks: Vec<(Pos, Pos)> = Vec::new();
     if dock_islands > 0 {
         let taken: HashSet<Pos> = nodes
@@ -1710,6 +1711,27 @@ fn try_once<R: Rng>(
             .chain(links.iter().map(|&(a, b, _)| ((a.0 + b.0) / 2, (a.1 + b.1) / 2)))
             .collect();
         let open = |(r, c): Pos| r < rows && c >= 1 && c + 1 < cols && !taken.contains(&(r, c));
+        let mut sea: HashSet<Pos> = HashSet::new();
+        let mut seen: HashSet<Pos> = HashSet::new();
+        for p in (0..rows).flat_map(|r| (1..cols - 1).map(move |c| (r, c))) {
+            if !open(p) || !seen.insert(p) {
+                continue;
+            }
+            let mut area = vec![p];
+            let mut i = 0;
+            while i < area.len() {
+                let (r, c) = area[i];
+                i += 1;
+                for n in [(r.wrapping_sub(1), c), (r + 1, c), (r, c.wrapping_sub(1)), (r, c + 1)] {
+                    if open(n) && seen.insert(n) {
+                        area.push(n);
+                    }
+                }
+            }
+            if area.len() > sea.len() {
+                sea = area.into_iter().collect();
+            }
+        }
         let mut order: Vec<usize> = (0..islands.len()).collect();
         order.shuffle(rng);
         let mut homes: Vec<&[Pos]> =
@@ -1726,23 +1748,11 @@ fn try_once<R: Rng>(
                 .flat_map(|(r, c)| {
                     [(r.wrapping_sub(1), c), (r + 1, c), (r, c.wrapping_sub(1)), (r, c + 1)]
                         .into_iter()
-                        .filter(|&w| open(w))
+                        .filter(|w| sea.contains(w))
                         .map(move |w| ((r, c), w))
                 })
                 .collect();
             docks.push(*spots.choose(rng)?);
-        }
-        let mut sea = HashSet::from([docks[0].1]);
-        let mut queue = vec![docks[0].1];
-        while let Some((r, c)) = queue.pop() {
-            for n in [(r.wrapping_sub(1), c), (r + 1, c), (r, c.wrapping_sub(1)), (r, c + 1)] {
-                if open(n) && sea.insert(n) {
-                    queue.push(n);
-                }
-            }
-        }
-        if !docks.iter().all(|d| sea.contains(&d.1)) {
-            return None;
         }
     }
 
