@@ -63,6 +63,9 @@ struct Layout {
     /// the builder's pipes; empty without a split. The airship is on the
     /// first.
     islands: Vec<Vec<Pos>>,
+    /// Each dock and the water tile beside it the canoe boards from; the
+    /// canoe parks beside the first, on the start's island.
+    docks: Vec<(Pos, Pos)>,
 }
 
 /// The targets a layout must meet, or it is thrown away and redrawn.
@@ -89,6 +92,10 @@ struct Targets {
     /// not yet dealt: (25, 50) makes islands of a size, a low range one big
     /// mainland with small satellites.
     island_share: (usize, usize),
+    /// Islands reached by canoe, on top of the pipe splits: each gets a dock
+    /// (`$4B`, `TILE_DOCK`), and the start's island gets `mainland_docks` more.
+    dock_islands: (usize, usize),
+    mainland_docks: (usize, usize),
 }
 
 /// How often a world with pipes splits once more than its pipe pairs less
@@ -106,6 +113,8 @@ const W1_TARGETS: Targets = Targets {
     pocket: None,
     pipe_pairs: 0,
     island_share: (25, 50),
+    dock_islands: (0, 0),
+    mainland_docks: (0, 0),
 };
 
 /// W2, first guesses around vanilla: 47 nodes, 3 loops, 7 dead ends, 15 hops,
@@ -120,6 +129,24 @@ const W2_TARGETS: Targets = Targets {
     pocket: Some((5, 7)),
     pipe_pairs: 1,
     island_share: (25, 50),
+    dock_islands: (0, 0),
+    mainland_docks: (0, 0),
+};
+
+/// W3, first guesses (user, 2026-10-13): one big mainland and small islands,
+/// many of them reached by canoe. Vanilla W3 is 52 nodes, 4 loops, 16 dead
+/// ends, walk pieces 42/5/3/2, two canoe islands.
+const W3_TARGETS: Targets = Targets {
+    nodes: 52,
+    loops: (2, 5),
+    dead_ends: (8, 22),
+    start_to_target: (13, 20),
+    rocks: (0, 2),
+    pocket: None,
+    pipe_pairs: 3,
+    island_share: (4, 10),
+    dock_islands: (3, 5),
+    mainland_docks: (1, 2),
 };
 
 /// How one world is generated: its layout, then its scenery, step by step in
@@ -195,11 +222,16 @@ const W2_RECIPE: Recipe = Recipe {
     ],
 };
 
+/// W3's layout; its water-first drawing is not written yet, so
+/// [`world_map`] does not draw it.
+const W3_RECIPE: Recipe = Recipe { layout: W3_TARGETS, ground: FILL, scenery: &[] };
+
 /// The recipe for `world_idx`, for the worlds that have one.
 fn recipe(world_idx: usize) -> Option<&'static Recipe> {
     match world_idx {
         0 => Some(&W1_RECIPE),
         1 => Some(&W2_RECIPE),
+        2 => Some(&W3_RECIPE),
         _ => None,
     }
 }
@@ -266,6 +298,9 @@ pub(crate) fn world_map<R: Rng>(
     rng: &mut R,
 ) -> Option<WorldMap> {
     let recipe = recipe(world_idx)?;
+    if world_idx == 2 {
+        return None; // W3 is judged as ASCII layouts until it can be drawn.
+    }
     let targets = recipe.layout;
     let old = &vanilla.grid;
     let on_grid = |p: Pos| p.0 < old.rows() && p.1 < old.cols;
@@ -1132,9 +1167,14 @@ fn try_once<R: Rng>(
         0 => 0,
         n => n - 1 + usize::from(rng.random_bool(EXTRA_SPLIT)),
     };
+    let dock_islands = match targets.dock_islands {
+        (_, 0) => 0,
+        (lo, hi) => rng.random_range(lo..=hi),
+    };
     let mut islands: Vec<Vec<Pos>> = Vec::new();
+    let mut mainland: Vec<Pos> = Vec::new();
 
-    if splits == 0 {
+    if splits + dock_islands == 0 {
         //    First a waypoint, reached by a winding path from the start, so every
         //    layout crosses the map. It lands in a staircase on the side away
         //    from the start's column: on the row farthest from the start's row
@@ -1199,13 +1239,21 @@ fn try_once<R: Rng>(
         //    Islands instead: grown together from seeds spread apart, never
         //    side by side, so an empty band at least one node wide lies
         //    between any two for water or scenery to fill.
-        let grown =
-            grow_islands(&main, &on_lattice, start, splits, main_nodes, targets.island_share, rng)?;
+        let grown = grow_islands(
+            &main,
+            &on_lattice,
+            start,
+            splits + dock_islands,
+            main_nodes,
+            targets.island_share,
+            rng,
+        )?;
         for island in &grown.nodes {
             nodes.extend(island.iter().filter(|&&n| n != start));
             in_tree.extend(island);
         }
         tree.extend(grown.links);
+        mainland = grown.nodes[0].clone();
         islands = grown.nodes[1..].to_vec();
     }
     //    The pocket, last: grown into the strip from a mouth beside a node
@@ -1279,6 +1327,55 @@ fn try_once<R: Rng>(
         links.push((a, b, kind));
     }
 
+    // 3b. Docks: one on each of `dock_islands` islands picked at random, and
+    //     one or two on the start's island, each a node with a free tile
+    //     beside it for the canoe's water. Every dock's water must lie in
+    //     one open area, which paths and nodes cut; the canoe parks beside
+    //     the first.
+    let mut docks: Vec<(Pos, Pos)> = Vec::new();
+    if dock_islands > 0 {
+        let taken: HashSet<Pos> = nodes
+            .iter()
+            .copied()
+            .chain(links.iter().map(|&(a, b, _)| ((a.0 + b.0) / 2, (a.1 + b.1) / 2)))
+            .collect();
+        let open = |(r, c): Pos| r < rows && c >= 1 && c + 1 < cols && !taken.contains(&(r, c));
+        let mut order: Vec<usize> = (0..islands.len()).collect();
+        order.shuffle(rng);
+        let mut homes: Vec<&[Pos]> =
+            vec![
+                mainland.as_slice();
+                rng.random_range(targets.mainland_docks.0..=targets.mainland_docks.1)
+            ];
+        homes.extend(order.iter().take(dock_islands).map(|&i| islands[i].as_slice()));
+        for home in homes {
+            let spots: Vec<(Pos, Pos)> = home
+                .iter()
+                .copied()
+                .filter(|&n| n != start && !docks.iter().any(|d| d.0 == n))
+                .flat_map(|(r, c)| {
+                    [(r.wrapping_sub(1), c), (r + 1, c), (r, c.wrapping_sub(1)), (r, c + 1)]
+                        .into_iter()
+                        .filter(|&w| open(w))
+                        .map(move |w| ((r, c), w))
+                })
+                .collect();
+            docks.push(*spots.choose(rng)?);
+        }
+        let mut sea = HashSet::from([docks[0].1]);
+        let mut queue = vec![docks[0].1];
+        while let Some((r, c)) = queue.pop() {
+            for n in [(r.wrapping_sub(1), c), (r + 1, c), (r, c.wrapping_sub(1)), (r, c + 1)] {
+                if open(n) && sea.insert(n) {
+                    queue.push(n);
+                }
+            }
+        }
+        if !docks.iter().all(|d| sea.contains(&d.1)) {
+            return None;
+        }
+    }
+
     // 4. The target: a dead end at the hop distance, not reached from above,
     //    with a row above it for the castle top.
     let degree = degrees(&nodes, &links);
@@ -1289,6 +1386,7 @@ fn try_once<R: Rng>(
         .iter()
         .copied()
         .filter(|&n| n != start && degree[&n] == 1 && n.0 >= 2 && !walled.contains(&n))
+        .filter(|&n| !docks.iter().any(|d| d.0 == n))
         .filter(|&n| match islands.first() {
             Some(far) => far.contains(&n),
             None => {
@@ -1305,7 +1403,7 @@ fn try_once<R: Rng>(
         return None;
     }
 
-    Some(Layout { rows, cols, nodes, links, start, target, loop_sizes, pocket, islands })
+    Some(Layout { rows, cols, nodes, links, start, target, loop_sizes, pocket, islands, docks })
 }
 
 /// A layout's islands, the start's first, and the links that grew them.
@@ -1342,7 +1440,7 @@ fn grow_islands<R: Rng>(
     let mut quotas = vec![0; seeds.len()];
     let mut left = total;
     for quota in quotas.iter_mut().skip(1) {
-        *quota = left * rng.random_range(share.0..=share.1) / 100;
+        *quota = (left * rng.random_range(share.0..=share.1) / 100).max(2);
         left -= *quota;
     }
     quotas[0] = left;
@@ -1468,7 +1566,8 @@ fn path_hops(start: Pos, links: &[(Pos, Pos, Link)]) -> HashMap<Pos, usize> {
 impl Layout {
     /// One character per map tile: `S` start, `A` target, `o` node, `-` and
     /// `|` paths, `R` a rock, `p` a node in the secret area, `x` `y` `z` a node
-    /// on an island the start cannot walk to.
+    /// on an island the start cannot walk to, `D` a dock, `~` the water it
+    /// boards from, `c` where the canoe parks.
     fn ascii(&self) -> String {
         let mut cells = vec![vec![' '; self.cols]; self.rows];
         for &(r, c) in &self.nodes {
@@ -1481,6 +1580,10 @@ impl Layout {
             for &(r, c) in island {
                 cells[r][c] = ['x', 'y', 'z'][k.min(2)];
             }
+        }
+        for (k, &((r, c), (wr, wc))) in self.docks.iter().enumerate() {
+            cells[r][c] = 'D';
+            cells[wr][wc] = if k == 0 { 'c' } else { '~' };
         }
         cells[self.start.0][self.start.1] = 'S';
         cells[self.target.0][self.target.1] = 'A';
@@ -1499,7 +1602,7 @@ impl Layout {
     fn summary(&self) -> String {
         let hops = path_hops(self.start, &self.links).get(&self.target).copied();
         format!(
-            "nodes {}  loops {} {:?}  dead ends {}  junctions {}  rocks {}  pocket {}  islands {:?}  start->airship {}",
+            "nodes {}  loops {} {:?}  dead ends {}  junctions {}  rocks {}  pocket {}  islands {:?}  docks {}  start->airship {}",
             self.nodes.len(),
             self.links.len() + 1 + self.islands.len() - self.nodes.len(),
             self.loop_sizes,
@@ -1508,6 +1611,7 @@ impl Layout {
             self.links.iter().filter(|l| l.2 == Link::Rock).count(),
             self.pocket.len(),
             self.islands.iter().map(Vec::len).collect::<Vec<_>>(),
+            self.docks.len(),
             hops.map_or("-".to_string(), |h| h.to_string()),
         )
     }
@@ -1556,6 +1660,7 @@ fn generated_layouts() {
         [
             "W1 nodes 21  loops 2  dead ends 3  junctions 5  rocks 1  start->airship 9",
             "W2 nodes 47  loops 3  dead ends 7  junctions 10  pocket 6  start->airship 15",
+            "W3 nodes 52  loops 4  dead ends 16  junctions 15  islands 5/3/2  docks 3",
         ][world - 1]
     );
 
