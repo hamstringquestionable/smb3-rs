@@ -14,6 +14,7 @@ use rand::seq::SliceRandom;
 use rand_chacha::ChaCha8Rng;
 
 use super::graph::{Knobs, PAD_BUDGET};
+use super::routes::{CensusParams, RouteModel, StageKind, census};
 use super::{GenReport, GlobalState, IDENTITY_SPINE, MazeEdge};
 
 use crate::randomize::maze::item_keys::Key;
@@ -2548,8 +2549,7 @@ fn a_fortress_tile_says_where_its_lock_is() {
                 } else if lock.world == W8_IDX {
                     (LockHint::World8, "its lock is in World 8", 2)
                 } else {
-                    // Every away fortress wears the nub.
-                    (LockHint::Elsewhere { marked: true }, "its lock is in another world", 1)
+                    (LockHint::Elsewhere, "its lock is in another world", 1)
                 };
                 assert_eq!(
                     slot.lock_hint,
@@ -2603,7 +2603,7 @@ fn a_shipped_maze_clears_the_content_floor() {
             let (_, state, report) = generated(&raw, seed, &knobs, k);
             assert!(
                 report.content >= super::CONTENT_FLOOR || report.deals == super::MAX_DEALS,
-                "seed {seed} K={k} shipped {} levels after only {} deals\n{}",
+                "seed {seed} K={k} shipped a shortest-route bound of {} after only {} deals\n{}",
                 report.content,
                 report.deals,
                 report.spheres.spoiler()
@@ -2623,10 +2623,11 @@ fn a_shipped_maze_clears_the_content_floor() {
                 report.spheres.spoiler()
             );
             if report.deals < super::MAX_DEALS {
+                let bound = super::metrics::shortest_lower_bound(&state).unwrap_or(0);
                 assert_eq!(
-                    cost.content, report.content,
-                    "seed {seed} K={k}: report says {} but the shipped maze prices at {}",
-                    report.content, cost.content
+                    bound, report.content,
+                    "seed {seed} K={k}: report says {} but the shipped maze prices at {bound}",
+                    report.content
                 );
             }
             if report.deals == super::MAX_DEALS && report.content < super::CONTENT_FLOOR {
@@ -3558,4 +3559,155 @@ fn a_key_inside_the_reach_opens_the_canoe_gate() {
         return;
     }
     panic!("no seed in 0..60 required the boat — the census says ~18% should");
+}
+
+// ---------------------------------------------------------------------------
+// Route census — the model lives in `super::routes`
+// ---------------------------------------------------------------------------
+
+/// **How long, and how varied, are a maze's routes?** One seed per run, one
+/// `ROUTECSV` line out, so a batch runs seeds in parallel processes.
+///
+/// A route is a minimal set of levels, forts and airships that finishes the
+/// game; its size is how many of those it plays (airships included — they
+/// take time and have to be played).
+///
+/// * **Shortest, exactly.** Guided players find a short route; then
+///   `RouteModel::shortest_within` searches for anything smaller, with the
+///   budget one under the best found, so the estimate has almost no slack to
+///   waste. "proven" says the search finished.
+/// * **Spread, by random play.** `ROUTE_SAMPLES` uniformly random players,
+///   each shrunk to a minimal route: what routes a player stumbles into, how
+///   long the typical one is, and what share sit within 10% of the shortest.
+///   Exhaustive enumeration is not possible here — the partial sets on the way
+///   to a route outnumber the routes by orders of magnitude — so the route
+///   count is a lower bound.
+///
+/// Env: `ROUTE_SEED` (1), `ROUTE_WANDS` (shipped K), `ROUTE_HAMMERS` (0),
+/// `ROUTE_SAMPLES` (1000), `ROUTE_GUIDED` (20), `ROUTE_EXACT_CAP` (200,000
+/// sets), `ROUTE_EXACT_SECS` (60), `ROUTE_THREADS` (1; 0 = every core — the
+/// figures do not change with it, only the time).
+///
+/// CSV: `seed,k,lazy_lf,est0,guided_best,shortest,shortest_lf,proven,typical,
+/// within10,distinct,samples,stuck,secs,deals`. `deals` is how many deals the
+/// generator paid for (harness builds only). `typical` is the median size over
+/// the random samples; `within10` the share of them within 10% of `shortest`.
+#[test]
+#[ignore]
+fn maze_route_census() {
+    use std::time::Duration;
+
+    let Some(raw) = load_rom() else { return };
+    let env = |k: &str, d: u64| std::env::var(k).ok().and_then(|s| s.parse().ok()).unwrap_or(d);
+    let seed = env("ROUTE_SEED", 1);
+    let k = env("ROUTE_WANDS", u64::from(crate::Options::default().maze_wands)) as u8;
+    let hammers = env("ROUTE_HAMMERS", 0) as usize;
+    let samples = env("ROUTE_SAMPLES", 1000) as usize;
+    let guided = env("ROUTE_GUIDED", 20) as usize;
+    let cap = env("ROUTE_EXACT_CAP", 200_000) as usize;
+    let limit = Duration::from_secs(env("ROUTE_EXACT_SECS", 60));
+
+    // `ROUTE_FLAGS` measures the maze a real seed + flag key produces, through
+    // the shipping pipeline (K comes from the key). Without it, the census
+    // harness builds one from its own rolled flag arms.
+    let flags = std::env::var("ROUTE_FLAGS").ok();
+    let (state, k, deals) = match &flags {
+        Some(key) => {
+            let options = crate::Options::from_flag_key(key).expect("ROUTE_FLAGS decodes");
+            assert!(options.world_maze, "ROUTE_FLAGS is not a world-maze key");
+            let bytes = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes").unwrap();
+            crate::randomize_rom_with_overworld_capture(&bytes, seed, &options, None)
+                .expect("the pipeline runs");
+            let state = super::LAST_MAZE
+                .with(|slot| slot.borrow_mut().take())
+                .expect("the pipeline generated a maze");
+            let k = state.wands_required;
+            (state, k, None)
+        }
+        None => {
+            let (_, state, report) = generated(&raw, seed, &Knobs::default(), k);
+            (state, k, Some(report.deals))
+        }
+    };
+    let lazy = super::metrics::completion_cost(&state);
+    // One thread by default: batches run seeds in parallel processes already.
+    let threads = env("ROUTE_THREADS", 1) as usize;
+    let params =
+        CensusParams { samples, guided, hammers, exact_cap: cap, exact_limit: limit, threads };
+    let c = census(&state, &params, seed ^ 0x2007_00E5);
+
+    let mut sizes: Vec<usize> =
+        c.routes.iter().flat_map(|(r, n)| std::iter::repeat_n(c.played(r), *n)).collect();
+    sizes.sort_unstable();
+    let short = c.shortest.as_ref().map(|s| c.played(s));
+    let short_lf = c.shortest.as_ref().map(|s| {
+        s.iter().filter(|&&i| matches!(c.stages[i].0, StageKind::Level | StageKind::Fort)).count()
+    });
+    let typical = sizes.get(sizes.len() / 2).copied();
+    let within10 = short.map_or(0.0, |s| {
+        sizes.iter().filter(|&&z| z * 10 <= s * 11).count() as f64 / sizes.len().max(1) as f64
+    });
+    let show = |v: Option<usize>| v.map_or(String::from("-"), |v| v.to_string());
+    eprintln!(
+        "ROUTECSV,{seed},{k},{},{},{},{},{},{},{},{:.3},{},{samples},{},{:.1},{}",
+        lazy.content,
+        show(c.lower_bound),
+        show(c.guided_best),
+        show(short),
+        show(short_lf),
+        u8::from(c.proven),
+        show(typical),
+        within10,
+        c.routes.len(),
+        c.stuck,
+        c.secs,
+        show(deals)
+    );
+}
+
+/// **What the content floor would cost per deal**: the lazy score
+/// (`metrics::completion_cost`, today's floor) against the lock-aware
+/// lower bound on the shortest route (building [`RouteModel`]'s move graph
+/// plus one `estimate`), on the same mazes. Native timing; the browser runs
+/// the maze layer ~1.3x slower. `ROUTE_WANDS` sets K.
+#[test]
+#[ignore]
+fn floor_cost_census() {
+    use std::time::Instant;
+    let Some(raw) = load_rom() else { return };
+    let k = std::env::var("ROUTE_WANDS").ok().and_then(|s| s.parse().ok()).unwrap_or(3u8);
+    let seeds = census_seeds(200);
+    let mut states = Vec::new();
+    for seed in 0..seeds {
+        states.push(generated(&raw, seed, &Knobs::default(), k).1);
+    }
+    let reps = 5;
+    let clock = Instant::now();
+    let mut sink = 0usize;
+    for _ in 0..reps {
+        for s in &states {
+            sink += super::metrics::completion_cost(s).content;
+        }
+    }
+    let lazy = clock.elapsed().as_secs_f64() * 1000.0 / (reps * states.len()) as f64;
+    let clock = Instant::now();
+    for _ in 0..reps {
+        for s in &states {
+            sink += RouteModel::new(s, k, 0).estimate(0).unwrap_or(0);
+        }
+    }
+    let est = clock.elapsed().as_secs_f64() * 1000.0 / (reps * states.len()) as f64;
+    let clock = Instant::now();
+    for _ in 0..reps {
+        for s in &states {
+            sink += s.spheres().spheres.len();
+        }
+    }
+    let fix = clock.elapsed().as_secs_f64() * 1000.0 / (reps * states.len()) as f64;
+    eprintln!(
+        "K={k}, {} mazes x {reps}: lazy {lazy:.3} ms, estimate {est:.3} ms ({:.2}x), \
+         one global fixpoint {fix:.3} ms  [{sink}]",
+        states.len(),
+        est / lazy
+    );
 }

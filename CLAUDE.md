@@ -478,7 +478,7 @@ web/
   chr-viewer.html      # Plain CHR browser for the player's ROM
   visual-patches/      # Bundled optional IPS patches (they claim free space too)
 tools/
-  README.md            # INDEX OF ALL 16 TOOLS — read this before writing a throwaway script
+  README.md            # INDEX OF ALL 14 TOOLS — read this before writing a throwaway script
   rom_map.py           # ROM map generator + diagnostic modes (see below)
   rom_map.json         # Pre-built ROM map (gitignored, regenerate with rom_map.py)
   map_viz.py           # Renders any ROM's world maps as labelled ASCII (use this,
@@ -509,7 +509,7 @@ The airship shuffle (`overworld/airship_shuffle.rs`) runs before the catalog, at
 
 ## Tooling
 
-**`tools/README.md` indexes all 16 scripts** with a verified status for each.
+**`tools/README.md` indexes all 14 scripts** with a verified status for each.
 Read it before scanning the ROM by hand or writing a throwaway script. In
 particular `map_viz.py <rom.nes> --world N` renders any ROM's map as labelled
 ASCII; don't hand-decode tile grids.
@@ -519,7 +519,7 @@ allocation registry: `--free-space [--fit N]` for where a patch can go, and
 `--write-log` for what a run changed, which module owns each byte, and whether
 any patch overran its allocation. Don't write a script to scan for free space.
 
-Tier 1 (7) is live: `rom_map.py` plus the palette-codegen and visual-preview
+Tier 1 (5) is live: `rom_map.py` plus the palette-codegen and visual-preview
 pipelines that regenerate checked-in artifacts. Tier 2 (9) is working general
 diagnostics.
 

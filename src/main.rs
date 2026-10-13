@@ -88,13 +88,14 @@ fn parse_deja_vu(s: &str) -> Result<DejaVuMode, String> {
     }
 }
 
-/// clap value parser for `--hints` (off/some/full).
+/// clap value parser for `--hints` (off/some/most/full).
 fn parse_hints(s: &str) -> Result<HintMode, String> {
     match s {
         "off" => Ok(HintMode::Off),
         "some" => Ok(HintMode::Partial),
+        "most" => Ok(HintMode::Most),
         "full" => Ok(HintMode::Full),
-        _ => Err("valid values: off, some, full".to_string()),
+        _ => Err("valid values: off, some, most, full".to_string()),
     }
 }
 
@@ -490,11 +491,12 @@ struct Cli {
     deja_vu: DejaVuMode,
 
     /// World maze: how much the map tells you about which fortress opens which
-    /// lock — off, some, or full (default: some). `some` gives each fortress a
-    /// design saying whether its lock is local, elsewhere, or in World 8, and
-    /// tints a lock whose key is in another world; `full` keeps the designs and
-    /// stamps that lock with the world number *instead* of the tint. Ignored
-    /// outside `--world-maze`.
+    /// lock — off, some, most, or full (default: some). `some` gives each
+    /// fortress a design saying whether its lock is local, elsewhere, or in
+    /// World 8, and tints a lock whose key is in another world and gives it a
+    /// nub; `full` keeps the colours and stamps that lock with the world number
+    /// in place of the nub; `most` is `full` except World 8's locks, which stay
+    /// as on `some`. Ignored outside `--world-maze`.
     #[arg(long, default_value = "some", value_parser = parse_hints)]
     hints: HintMode,
 

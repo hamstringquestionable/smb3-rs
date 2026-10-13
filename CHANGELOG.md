@@ -9,6 +9,56 @@ deploys.
 
 ## [Unreleased]
 
+## [2.5.0] - 2026-10-13
+
+### Added
+
+- **Most hints.** A new setting between Some and Full: away locks show their
+  fortress's world number as on Full, except in World 8, where they wear the
+  nub as on Some.
+
+### Changed
+
+- **Full hints colour the map like Some.** A lock and fortress in the same
+  world are tan, and an away pair wears the odd colour, with the nub on the
+  fortress. Away locks still show their fortress's world number, World 8
+  included.
+- **World Maze seeds are never shorter than 10.** The maze's length check now
+  measures the quickest way to beat the game, counting levels, fortresses and
+  airships. Short seeds still turn up, but only about 1 in 8 is under 14 with
+  no wands required (1 in 30 with three), and none are under 10.
+- **The Hammer suit takes your player colour.** Its white parts become a light
+  tint of your colour and its black parts a dark tint.
+- **World colours give each kind of level one whole colour scheme.** Each map
+  and level style now gets a single scheme (classic, Recolored or Tuscan) and
+  its own small hue shift. Before, every group of four colours picked its
+  scheme separately, so one screen could mix all three, and the shifts were
+  grouped by guessed palette regions.
+
+### Fixed
+
+- **Paths run into breakable rocks.** A map node next to a rock you can break
+  with a hammer now draws its path leading into the rock, so the rock reads as
+  a shortcut rather than a wall.
+- **Player colours no longer recolour the Hammer suit's face.** The face is
+  kept, as it is for every other suit.
+- **World colours no longer mix two palettes in one colour group.** Every
+  swapped group of four colours was offset by two, so one group could end up
+  half vanilla and half Recolored.
+- **Player colours now show on the map and in the bonus games.** Before, the
+  map drew Mario in vanilla or world-shifted colours whatever you picked.
+- **Luigi keeps his colours on the map with World colours on.** The world
+  shift could turn Luigi into Mario on the map.
+- **World colours no longer scramble the map's suit palettes.** They could
+  change which palette a suit used on the map, and could give the P-Wing
+  garbage colours.
+- **World 4's empty island spots are land again.** The spot two nodes below
+  the start and the Toad House spot on the bottom row drew as water when
+  nothing was placed there.
+- **World 5's first fortress no longer drops a Thwomp on screen 1.** With
+  Rotodiscs and Thwomps both on Wild, the first Rotodisc could become a
+  standard dropping Thwomp; the other Thwomp kinds can still appear there.
+
 ## [2.4.0] - 2026-10-05
 
 ### Added

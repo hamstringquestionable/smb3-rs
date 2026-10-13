@@ -6,6 +6,7 @@ use capacity::is_completion_unsafe;
 
 /// Everything true about one world mid-build. A phase receives this, changes
 /// it, and the next phase sees the result — there is no other channel.
+#[cfg_attr(test, derive(Clone))]
 pub(crate) struct WorldState {
     pub(crate) world_idx: usize,
     /// Map tiles. Locks are NEVER stamped here — they live in `locks` as an
@@ -470,6 +471,7 @@ pub(crate) fn row78_partner(pos: Pos) -> Option<Pos> {
 // Reason: production only APPENDS reports (the build's own story); the
 // census/probe test harness is the reader.
 #[allow(dead_code)]
+#[cfg_attr(test, derive(Clone))]
 pub(crate) struct PhaseReport {
     pub(crate) phase: &'static str,
     pub(crate) actions: Vec<String>,

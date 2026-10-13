@@ -2,16 +2,16 @@ use rand::Rng;
 use rand::seq::IndexedRandom;
 
 use crate::randomize::cosmetic::palette_variants::{
-    PLAINS_SLOT3_VARIANTS, POOL_VARIANTS, ROTATE_ONLY_QUARTETS, SLICE1_WATER_VARIANTS,
-    SLICE2_VARIANTS, SLICE3_GIANT_VARIANTS, SLICE4_HEAD_VARIANTS, SLICE4_POST_VARIANTS,
-    SLICE4_TAIL_VARIANTS, SLOT_TAIL_VARIANTS, SLOT0_MAP_VARIANTS, SLOT1_MAP_VARIANTS,
-    SLOT2_VARIANTS, SLOT4_VARIANTS, SLOT5_VARIANTS, SLOT6_VARIANTS, SLOT7_VARIANTS, VariantGroup,
+    AIRSHIP_VARIANTS, BONUS_VARIANTS, DESERT_VARIANTS, FORT_VARIANTS, GIANT_VARIANTS,
+    HIGH_UP_VARIANTS, HILLS_UNDER_VARIANTS, ICE_VARIANTS, MAPS_VARIANTS, PIPE_MAZE_VARIANTS,
+    PLAINS_VARIANTS, PLANT_VARIANTS, ROTATE_ONLY_QUARTETS, SKY_VARIANTS, TOAD_VARIANTS,
+    TWO_P_VS_VARIANTS, VariantGroup, WATER_VARIANTS,
 };
 use crate::rom::Rom;
 
-/// Character sprite palette entries: [bg_mirror(0x00), body, highlight, outline(0x0F)].
+/// Character sprite palette entries: [bg_mirror(0x00), body, face, outline/accent].
 /// Byte 0 must stay 0x00 — it mirrors $3F00 (universal background color) via the PPU.
-/// Byte 3 is the outline/shadow color (0x0F). Only bytes 1-2 are randomized.
+/// Byte 2 is the face in every suit (see `FACE_BYTE`).
 const PALETTE_RANGES: &[(usize, &str)] = &[
     (0x10539, "Small/Big/Raccoon Mario"),
     (0x1053D, "Small/Big/Raccoon Luigi"),
@@ -27,7 +27,7 @@ const PALETTE_RANGES: &[(usize, &str)] = &[
 /// otherwise a random chromatic anchor is rolled — same as clicking a random
 /// swatch on the web grid. Either way the output goes through
 /// `apply_player_scheme`, so every roll is a coherent wardrobe (natural face,
-/// Luigi contrast, white Hammer suit) rather than independent byte picks.
+/// Luigi contrast, tinted Hammer suit) rather than independent byte picks.
 pub(crate) fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R, player_color: Option<u8>) {
     let anchor = player_color.filter(|&c| is_chromatic(c)).unwrap_or_else(|| {
         let row: u8 = rng.random_range(..4);
@@ -37,10 +37,12 @@ pub(crate) fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R, player_color: Option
     apply_player_scheme(rom, anchor);
 }
 
-/// NES skin-tone byte (pale orange) shared as the face/highlight color across
-/// the character palettes. Pinned during scheme generation so a recolored
-/// Mario keeps a natural face.
-const SKIN_TONE: u8 = 0x36;
+/// Index of the face color within every character palette quartet. Pinned
+/// during scheme generation so a recolored Mario keeps a natural face. Pinned
+/// by POSITION, not by value: vanilla uses 0x36 for every suit's face except
+/// the Hammer suit's darker 0x27, which a value pin missed — so the Hammer
+/// suit's face rotated with the scheme while the suit itself didn't change.
+const FACE_BYTE: usize = 2;
 
 /// Vanilla Small/Big Mario body hue (red, column 6) — the rotation origin
 /// for the player-color scheme.
@@ -55,20 +57,24 @@ fn is_chromatic(b: u8) -> bool {
 ///
 /// The vanilla palettes already encode the relationships that make the cast
 /// read correctly: Luigi's green sits +4 hues from Mario's red, the Fire suit
-/// keeps a red accent byte, the Hammer suit is white (achromatic), and every
+/// keeps a red accent byte, and every
 /// suit shares the skin-tone highlight. So the scheme is a single hue
 /// rotation of the vanilla wardrobe by (picked hue - vanilla red): every
 /// relative relationship survives, anchored on the pick. Deterministic — the
 /// same pick always produces the same wardrobe.
 ///
+/// The Hammer suit is the exception: it is white and black, which have no hue
+/// to rotate, so it is tinted from the pick instead (`HAMMER_SUIT`).
+///
 /// Two pins keep it looking intentional:
-/// - `SKIN_TONE` bytes never rotate (blue Mario has blue clothes, not a blue
+/// - the `FACE_BYTE` never rotates (blue Mario has blue clothes, not a blue
 ///   face);
 /// - Mario's body byte is set to the picked color EXACTLY (row included), so
 ///   what the player clicked is what Mario wears.
 ///
 /// Picking Mario's current color reproduces the current wardrobe
-/// byte-for-byte (vanilla red 0x16 on an unpatched ROM).
+/// byte-for-byte (vanilla red 0x16 on an unpatched ROM), except the Hammer
+/// suit, which always takes the tint.
 fn apply_player_scheme(rom: &mut Rom, anchor: u8) {
     debug_assert!(is_chromatic(anchor), "anchor {anchor:#04x} must be chromatic");
     // Rotation origin = the CURRENT Mario body hue, not a hard-coded vanilla
@@ -84,40 +90,139 @@ fn apply_player_scheme(rom: &mut Rom, anchor: u8) {
     let delta = ((anchor & 0x0F) + 12 - origin_hue) % 12;
 
     for &(offset, _name) in PALETTE_RANGES {
-        // Bytes 1-3: body, highlight, and the outline/accent byte (usually
-        // 0x0F black, which passes through — but the Fire suit carries a red
-        // accent there that should follow the scheme). Byte 0 stays 0x00.
-        for i in 1..4 {
+        // Bytes 1 and 3: body, and the outline/accent byte (usually 0x0F
+        // black, which passes through — but the Fire suit carries a red
+        // accent there that should follow the scheme). Byte 0 stays 0x00 and
+        // the face never moves.
+        for i in (1..4).filter(|&i| i != FACE_BYTE) {
             let b = rom.read_byte(offset + i);
-            if b != SKIN_TONE {
-                rom.write_byte(offset + i, rotate_hue(b, delta));
-            }
+            rom.write_byte(offset + i, rotate_hue(b, delta));
         }
     }
 
     // Mario wears exactly what the player clicked.
     let (mario_offset, _) = PALETTE_RANGES[0];
     rom.write_byte(mario_offset + 1, anchor);
+
+    // Hammer suit: white -> the pick's lightest row, black (which is also
+    // the outline) -> its darkest row. The face stays put.
+    let hue = anchor & 0x0F;
+    rom.write_byte(HAMMER_SUIT + 1, 0x30 | hue);
+    rom.write_byte(HAMMER_SUIT + 3, hue);
+
+    apply_map_wardrobe(rom, current_body, anchor, delta);
+}
+
+/// Hammer suit quartet, `[00, white 0x30, face, black 0x0F]` in vanilla.
+/// Has no chromatic suit byte, so `apply_player_scheme` tints it from the
+/// pick rather than rotating it.
+const HAMMER_SUIT: usize = PALETTE_RANGES[5].0;
+
+// The wardrobe outside a level. `PALETTE_RANGES` only dresses the Player
+// inside levels; these tables draw them on the map and in the bonus games,
+// so they must follow the same scheme or the map shows other colors.
+// Verified against the Rev 1 ROM; see `docs/smb3_rom_reference.md` →
+// "Palette Sets".
+
+/// `InitPals_Per_MapPUp` (PRG027): 9 × `[FF, body, face, accent]`, one per map
+/// power-up, shared by Mario and Luigi. Loaded when the map is drawn.
+const MAP_SUIT_PALS: usize = 0x3782B;
+/// `Map_PlayerPalFix` (PRG027): `[Mario body, Luigi body]`.
+const MAP_PLAYER_FIX: usize = 0x37820;
+/// `InvItem_PerPowerUp_Palette` / `…Palette2` (PRG026): Mario's then Luigi's
+/// 9 × `[body, face, accent, FF]`, loaded when an item is used on the map.
+/// Luigi's last entry has no `FF`, which is never written.
+const ITEM_SUIT_PALS: [usize; 2] = [0x3457F, 0x345A3];
+/// `Map_PostJC_PUpPP1` / `PUpPML` / `PUpPP2` (PRG010): 7 bodies, `[Mario,
+/// Luigi]` bodies, 7 accents. Loaded after Judgem's Cloud wears off.
+const JC_BODY: usize = 0x14DCA;
+const JC_PLAYER_FIX: usize = 0x14DD1;
+const JC_ACCENT: usize = 0x14DD3;
+/// `BonusGame_PlayerPal` (PRG027): Mario then Luigi, each `[0F, body, 30,
+/// face]` + `[0F, body, 30, accent]`. The third pair after them is left alone.
+const BONUS_PLAYER_PALS: usize = 0x37808;
+/// The map power-up number of the Hammer suit.
+const HAMMER_POWER: usize = 6;
+/// Two `CMP #$16 / BNE` sites (PRG027 map load, PRG010 after Judgem's Cloud)
+/// that swap Luigi's body in when a suit's body is Mario's red. The operand
+/// at +1 must equal Mario's body in the tables above, or Luigi wears Mario's
+/// colors on the map.
+const LUIGI_SWAP_CMPS: [usize; 2] = [0x378FF, 0x14E5D];
+
+/// Recolor the map and bonus-game wardrobe with the scheme
+/// `apply_player_scheme` used in levels: a body byte equal to Mario's base
+/// color `base` becomes the exact pick, every other body and accent byte
+/// rotates by `delta`, faces never move, and the Hammer suit takes the tint.
+///
+/// The `CMP` operands go through the same body rule as the table entries,
+/// so the Luigi swap keeps matching whatever Mario's body became. Only the
+/// immediate operand changes; each site is checked for `C9 __ D0` first.
+fn apply_map_wardrobe(rom: &mut Rom, base: u8, anchor: u8, delta: u8) {
+    let body = |b: u8| if b == base { anchor } else { rotate_hue(b, delta) };
+    let accent = |b: u8| rotate_hue(b, delta);
+    let tint = (0x30 | (anchor & 0x0F), anchor & 0x0F);
+    let recolor = |rom: &mut Rom, at: usize, f: &dyn Fn(u8) -> u8| {
+        let b = rom.read_byte(at);
+        rom.write_byte(at, f(b));
+    };
+
+    // `(body offset, accent offset, is the Hammer suit)` per power-up entry.
+    let mut suits: Vec<(usize, usize, bool)> = Vec::new();
+    for i in 0..9 {
+        let q = MAP_SUIT_PALS + 4 * i;
+        suits.push((q + 1, q + 3, i == HAMMER_POWER));
+        for table in ITEM_SUIT_PALS {
+            let q = table + 4 * i;
+            suits.push((q, q + 2, i == HAMMER_POWER));
+        }
+    }
+    for i in 0..7 {
+        suits.push((JC_BODY + i, JC_ACCENT + i, i == HAMMER_POWER));
+    }
+    for (body_at, accent_at, hammer) in suits {
+        if hammer {
+            rom.write_byte(body_at, tint.0);
+            rom.write_byte(accent_at, tint.1);
+        } else {
+            recolor(rom, body_at, &body);
+            recolor(rom, accent_at, &accent);
+        }
+    }
+
+    for at in [MAP_PLAYER_FIX, MAP_PLAYER_FIX + 1, JC_PLAYER_FIX, JC_PLAYER_FIX + 1] {
+        recolor(rom, at, &body);
+    }
+    for player in 0..2 {
+        let at = BONUS_PLAYER_PALS + 8 * player;
+        recolor(rom, at + 1, &body);
+        recolor(rom, at + 5, &body);
+        recolor(rom, at + 7, &accent);
+    }
+    for at in LUIGI_SWAP_CMPS {
+        if rom.read_byte(at) == 0xC9 && rom.read_byte(at + 2) == 0xD0 {
+            recolor(rom, at + 1, &body);
+        }
+    }
 }
 
 /// All variant-group regions applied by `randomize_themed`, in write order.
 const THEMED_REGIONS: &[&[VariantGroup]] = &[
-    SLOT0_MAP_VARIANTS,
-    SLOT1_MAP_VARIANTS,
-    SLOT2_VARIANTS,
-    PLAINS_SLOT3_VARIANTS,
-    SLOT4_VARIANTS,
-    SLOT5_VARIANTS,
-    SLOT6_VARIANTS,
-    SLOT7_VARIANTS,
-    SLOT_TAIL_VARIANTS,
-    POOL_VARIANTS,
-    SLICE1_WATER_VARIANTS,
-    SLICE2_VARIANTS,
-    SLICE3_GIANT_VARIANTS,
-    SLICE4_HEAD_VARIANTS,
-    SLICE4_TAIL_VARIANTS,
-    SLICE4_POST_VARIANTS,
+    MAPS_VARIANTS,
+    PLAINS_VARIANTS,
+    FORT_VARIANTS,
+    HILLS_UNDER_VARIANTS,
+    HIGH_UP_VARIANTS,
+    PLANT_VARIANTS,
+    WATER_VARIANTS,
+    TOAD_VARIANTS,
+    PIPE_MAZE_VARIANTS,
+    DESERT_VARIANTS,
+    AIRSHIP_VARIANTS,
+    GIANT_VARIANTS,
+    ICE_VARIANTS,
+    SKY_VARIANTS,
+    TWO_P_VS_VARIANTS,
+    BONUS_VARIANTS,
 ];
 
 /// A context-aware theme group: a set of palette regions that paint the same
@@ -136,64 +241,33 @@ struct ThemeGroup {
     shifts: &'static [u8],
 }
 
-/// Context-aware theme groups. Regions that light up the same screens share
-/// a group (plains BG in slot 3 and its slice-4 variants must shift
-/// together, or one screen would split into two themes).
+/// Context-aware theme groups: one per `PalSet_*` set of PRG027 (see
+/// `docs/smb3_rom_reference.md` → "Palette Sets"). A screen loads its BG and
+/// sprite colors from exactly one set, so one shift per set means no screen
+/// can split into two themes. Each set is 192 bytes from 0x36BE2.
 ///
 /// Shift sets are chosen from what each context's dominant hues tolerate on
 /// the NES wheel (1→C: blue→violet→magenta→red→orange→yellow→green→cyan):
 /// - plains/giant/water tolerate ±1 and -2 (spring / dusk / autumn / swamp
 ///   readings) but NOT +2 (magenta sky territory);
-/// - warm contexts (desert, lava) and identity-ish contexts (maps, sprite
-///   skin tones, the partially unmapped pool) stay within ±1.
+/// - every other set stays within ±1.
 const THEME_GROUPS: &[ThemeGroup] = &[
-    ThemeGroup {
-        name: "maps",
-        ranges: &[(0x36BE4, 0x36C54)], // slots 0-1 (W6 + W7 overworld maps)
-        shifts: &[0, 1, 11],
-    },
-    ThemeGroup {
-        name: "sprites/text",
-        ranges: &[(0x36C54, 0x36C8C)], // slot 2 (hammer bro sprites, HELP text)
-        shifts: &[0, 1, 11],
-    },
-    ThemeGroup {
-        name: "plains",
-        // slot 3 (plains BG+HUD), slot 5 (plains enemies / W7-5 BG),
-        // slice 4 head/tail/post (sky-land + plains variants)
-        ranges: &[(0x36C8C, 0x36CC4), (0x36CFC, 0x36D34), (0x37600, 0x377E0), (0x37808, 0x37850)],
-        shifts: &[0, 1, 11, 10],
-    },
-    ThemeGroup {
-        name: "giant",
-        ranges: &[(0x36CC4, 0x36CFC), (0x37400, 0x37600)], // slot 4 + slice 3
-        shifts: &[0, 1, 11, 10],
-    },
-    ThemeGroup {
-        name: "fortress",
-        ranges: &[(0x36D34, 0x36DA6)], // slots 6-7 (fortress HUD + BG)
-        shifts: &[0, 1, 11],
-    },
-    ThemeGroup {
-        name: "lava/bowser",
-        ranges: &[(0x36DA8, 0x36E20)], // slot tail (lava, rotodisc, bowser, donut)
-        shifts: &[0, 1, 11],
-    },
-    ThemeGroup {
-        name: "pool",
-        ranges: &[(0x36E20, 0x37000)], // mixed pool (water sprites at 0x36F00)
-        shifts: &[0, 1, 11],
-    },
-    ThemeGroup {
-        name: "water",
-        ranges: &[(0x37000, 0x37200)], // slice 1
-        shifts: &[0, 1, 11, 10],
-    },
-    ThemeGroup {
-        name: "desert/airship",
-        ranges: &[(0x37200, 0x37400)], // slice 2 (desert + fortress + airship)
-        shifts: &[0, 1, 11],
-    },
+    ThemeGroup { name: "maps", ranges: &[(0x36BE2, 0x36CA2)], shifts: &[0, 1, 11] },
+    ThemeGroup { name: "plains", ranges: &[(0x36CA2, 0x36D62)], shifts: &[0, 1, 11, 10] },
+    ThemeGroup { name: "fortress", ranges: &[(0x36D62, 0x36E22)], shifts: &[0, 1, 11] },
+    ThemeGroup { name: "hills/underground", ranges: &[(0x36E22, 0x36EE2)], shifts: &[0, 1, 11] },
+    ThemeGroup { name: "high-up", ranges: &[(0x36EE2, 0x36FA2)], shifts: &[0, 1, 11] },
+    ThemeGroup { name: "plant", ranges: &[(0x36FA2, 0x37062)], shifts: &[0, 1, 11] },
+    ThemeGroup { name: "water", ranges: &[(0x37062, 0x37122)], shifts: &[0, 1, 11, 10] },
+    ThemeGroup { name: "toad house", ranges: &[(0x37122, 0x371E2)], shifts: &[0, 1, 11] },
+    ThemeGroup { name: "pipe maze", ranges: &[(0x371E2, 0x372A2)], shifts: &[0, 1, 11] },
+    ThemeGroup { name: "desert", ranges: &[(0x372A2, 0x37362)], shifts: &[0, 1, 11] },
+    ThemeGroup { name: "airship", ranges: &[(0x37362, 0x37422)], shifts: &[0, 1, 11] },
+    ThemeGroup { name: "giant", ranges: &[(0x37422, 0x374E2)], shifts: &[0, 1, 11, 10] },
+    ThemeGroup { name: "ice", ranges: &[(0x374E2, 0x375A2)], shifts: &[0, 1, 11] },
+    ThemeGroup { name: "sky", ranges: &[(0x375A2, 0x37662)], shifts: &[0, 1, 11] },
+    ThemeGroup { name: "2p vs", ranges: &[(0x37662, 0x37722)], shifts: &[0, 1, 11] },
+    ThemeGroup { name: "bonus", ranges: &[(0x37722, 0x377E2)], shifts: &[0, 1, 11] },
 ];
 
 /// Look up the theme-group index owning a file offset. Every curated offset
@@ -205,59 +279,101 @@ fn theme_group_for(offset: usize) -> Option<usize> {
         .position(|g| g.ranges.iter().any(|&(start, end)| (start..end).contains(&offset)))
 }
 
+/// Where a palette set's colors come from, before its hue shift. One source
+/// is rolled per set, so every screen is a single designed scheme rather than
+/// a collage of sub-palettes from different ones.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum Source {
+    Vanilla,
+    /// "Super Mario Bros. 3 Recolored v1.0": `VariantGroup::variants[1]`.
+    /// Sub-palettes it left alone are vanilla.
+    Recolored,
+    /// Vanilla with every hue snapped to one of four families (`TUSCAN_COLS`).
+    Tuscan,
+}
+
+const SOURCES: [Source; 3] = [Source::Vanilla, Source::Recolored, Source::Tuscan];
+
+/// The "tuscan" family: hue column (1-C) -> one of four columns, from the
+/// Adobe "Tuscan Sun / Dusk Blue / Mint Leaf / Tomato" palette snapped to NES
+/// columns gold 7, indigo 2, teal C, coral 6. Blues go indigo, reds coral,
+/// oranges/yellows gold, greens teal. The luminance row is kept, so contrast
+/// within a sub-palette survives. Index 0 is unused (grays don't move).
+const TUSCAN_COLS: [u8; 13] = [0, 2, 2, 2, 6, 6, 6, 7, 7, 7, 0xC, 0xC, 0xC];
+
+/// Snap a chromatic byte's hue to the tuscan family; anything else (grays,
+/// blacks, `$FF` placeholders, non-color bytes) passes through.
+fn tuscan(byte: u8) -> u8 {
+    if !is_chromatic(byte) {
+        return byte;
+    }
+    (byte & 0x30) | TUSCAN_COLS[usize::from(byte & 0x0F)]
+}
+
+/// The 4 bytes `source` gives a sub-palette whose vanilla bytes are `vanilla`.
+fn from_source(source: Source, vanilla: [u8; 4], recolored: Option<[u8; 4]>) -> [u8; 4] {
+    match source {
+        Source::Vanilla => vanilla,
+        Source::Recolored => recolored.unwrap_or(vanilla),
+        Source::Tuscan => vanilla.map(tuscan),
+    }
+}
+
 /// Themed palette randomization across all tilesets.
 ///
-/// Two layers, both aesthetically safe by construction:
+/// Two rolls per palette set (`THEME_GROUPS`), both applied to the whole set
+/// so a screen stays one coherent scheme:
 ///
-/// 1. **Variant swap**: for each curated quartet position, pick ONE whole
-///    4-byte variant from a list of pre-validated options (vanilla +
-///    Recolored + hand-curated). Every emitted palette group was designed as
-///    a coherent unit — no flat color-pool mixing, no independent byte picks.
+/// 1. **Source**: vanilla, Recolored or tuscan (`Source`). Each was designed,
+///    or derived, as a complete scheme; mixing them per sub-palette made
+///    screens into collages of three designs.
 ///
-/// 2. **Context-aware hue rotation**: each theme group (plains, water,
-///    fortress, ...) rolls its own small hue shift from the group's allowed
-///    set and applies it to every chromatic byte the group owns. The NES
-///    color byte is `(luminance << 4) | hue`, so rotating the hue nibble
-///    while preserving the luminance nibble keeps every brightness/contrast
-///    relationship of the source palette intact — visibility is preserved by
-///    construction. Shifts are capped at 2 steps (~60°) and constrained per
-///    context, so water stays watery, lava stays warm, and skies never go
-///    magenta — subtle seasonal variation instead of a whole-wheel spin.
-///    Grays, blacks, whites (hue nibble 0/D/E/F) and non-color bytes
-///    (> 0x3C, 0xFF skip markers) pass through untouched.
+/// 2. **Hue shift**: a small rotation from the set's allowed list, applied
+///    to every chromatic byte. The NES color byte is `(row << 4) | hue`, and
+///    rotation keeps the row. That is NOT the same as keeping brightness:
+///    NES hues differ in lightness within a row (yellows and greens are far
+///    brighter than blues), and one step moves CIELAB L* by 6 on average,
+///    up to ~20 (measured 2026-10-09). Shifting a whole sub-palette together
+///    keeps most of its internal contrast. Grays, blacks, whites (hue nibble
+///    0/D/E/F) and non-color bytes (> 0x3C, `$FF` placeholders) pass through.
 ///
-/// Coverage: every quartet Recolored changed across the themed-slot table
-/// (slots 0-7 + tail), the palette pool at 0x36E20, and master-pool slices
-/// 1-4 (skipping the level-layout pointer table at 0x377E0-0x37807).
-/// Quartets Recolored kept at vanilla but which hold chromatic bytes are in
-/// `ROTATE_ONLY_QUARTETS`: they never variant-swap, but they DO hue-rotate,
-/// so a kept-vanilla green can't clash with rotated colors on the same screen.
+/// Coverage: every chromatic sub-palette of the 16 `PalSet_*` sets — the ones
+/// Recolored changed (`VariantGroup`s) and the ones it kept
+/// (`ROTATE_ONLY_QUARTETS`) — never touching `Palette_By_Tileset`
+/// (0x377E2-0x37807) or the wardrobe tables after it, which
+/// `apply_player_scheme` owns.
 pub(crate) fn randomize_themed<R: Rng>(rom: &mut Rom, rng: &mut R) {
     // World palettes only — the character wardrobe is `randomize()`'s job,
     // driven independently by the player-colors option.
 
-    // Roll one shift per theme group, in declaration order (deterministic
+    // Roll a source and a shift per set, in declaration order (deterministic
     // for a given RNG stream).
-    let group_shifts: Vec<u8> =
-        THEME_GROUPS.iter().map(|g| *g.shifts.choose(rng).unwrap()).collect();
-    let shift_for =
-        |offset: usize| -> u8 { theme_group_for(offset).map_or(0, |gi| group_shifts[gi]) };
+    let rolls: Vec<(Source, u8)> = THEME_GROUPS
+        .iter()
+        .map(|g| (*SOURCES.choose(rng).unwrap(), *g.shifts.choose(rng).unwrap()))
+        .collect();
+    let roll_for =
+        |offset: usize| theme_group_for(offset).map_or((Source::Vanilla, 0), |gi| rolls[gi]);
 
     for region in THEMED_REGIONS {
-        apply_variant_groups(rom, region, shift_for, rng);
+        for group in *region {
+            let (source, shift) = roll_for(group.offset);
+            let bytes = from_source(source, group.variants[0], Some(group.variants[1]));
+            rom.write_range(group.offset, &bytes.map(|b| rotate_hue(b, shift)));
+        }
     }
 
-    // Hue-rotate the kept-vanilla chromatic quartets in place.
+    // Sub-palettes Recolored kept: vanilla under both Vanilla and Recolored.
     for &offset in ROTATE_ONLY_QUARTETS {
-        let shift = shift_for(offset);
-        for i in 0..4 {
-            let b = rom.read_byte(offset + i);
-            rom.write_byte(offset + i, rotate_hue(b, shift));
-        }
+        let (source, shift) = roll_for(offset);
+        let mut vanilla = [0u8; 4];
+        vanilla.copy_from_slice(rom.read_range(offset, 4));
+        let bytes = from_source(source, vanilla, None);
+        rom.write_range(offset, &bytes.map(|b| rotate_hue(b, shift)));
     }
 }
 
-/// Rotate a NES color's hue around the 12-hue wheel, preserving luminance.
+/// Rotate a NES color's hue around the 12-hue wheel, keeping its luminance row.
 ///
 /// NES color byte layout: high nibble = luminance row (0-3), low nibble =
 /// hue column (1-C; 0 = gray/white, D-F = blacks/forbidden). Only chromatic
@@ -272,22 +388,6 @@ fn rotate_hue(byte: u8, shift: u8) -> u8 {
     }
     let rotated = ((hue - 1 + shift) % 12) + 1;
     (byte & 0xF0) | rotated
-}
-
-/// For each curated position, pick one 4-byte variant at random, hue-rotate
-/// its chromatic bytes by its theme group's shift, and write it.
-fn apply_variant_groups<R: Rng>(
-    rom: &mut Rom,
-    groups: &[VariantGroup],
-    shift_for: impl Fn(usize) -> u8,
-    rng: &mut R,
-) {
-    for group in groups {
-        let picked = group.variants.choose(rng).unwrap();
-        let shift = shift_for(group.offset);
-        let rotated = picked.map(|b| rotate_hue(b, shift));
-        rom.write_range(group.offset, &rotated);
-    }
 }
 
 #[cfg(test)]
@@ -371,9 +471,10 @@ mod tests {
     fn player_scheme_vanilla_anchor_is_identity() {
         // Picking Mario's vanilla red must reproduce the vanilla wardrobe
         // byte-for-byte — the free "classic" option.
+        // The Hammer suit is the exception: it always takes the tint.
         let mut rom = make_wardrobe_rom();
         apply_player_scheme(&mut rom, 0x16);
-        for &(offset, quartet) in VANILLA_WARDROBE {
+        for &(offset, quartet) in VANILLA_WARDROBE.iter().filter(|&&(o, _)| o != HAMMER_SUIT) {
             assert_eq!(
                 rom.read_range(offset, 4),
                 &quartet,
@@ -405,10 +506,11 @@ mod tests {
             rom
         };
 
-        // Identity: picking the reskin's current body color changes nothing.
+        // Identity: picking the reskin's current body color changes nothing
+        // (but the Hammer suit, which always takes the tint).
         let mut rom = make_reskin_rom();
         apply_player_scheme(&mut rom, 0x1A);
-        for &(offset, quartet) in reskin {
+        for &(offset, quartet) in reskin.iter().filter(|&&(o, _)| o != HAMMER_SUIT) {
             assert_eq!(
                 rom.read_range(offset, 4),
                 &quartet,
@@ -424,13 +526,13 @@ mod tests {
         assert_eq!(rom.read_byte(0x10539 + 1), 0x16, "body must be the exact pick");
         assert_eq!(rom.read_byte(0x1053D + 1), rotate_hue(0x16, delta));
         assert_eq!(rom.read_byte(0x10541 + 3), rotate_hue(0x1A, delta), "accent follows");
-        assert_eq!(rom.read_byte(0x10551 + 1), 0x30, "white suit stays white");
+        assert_eq!(rom.read_range(0x10551, 4), &[0x00, 0x36, 0x27, 0x06], "hammer tinted red");
     }
 
     #[test]
     fn player_scheme_structure() {
         // Anchor on blue (0x12): Mario wears exactly the pick, skin stays
-        // skin, the white Hammer suit stays white, and everything chromatic
+        // skin, the Hammer suit is tinted blue, and everything chromatic
         // rotates by the same delta (blue is 4 hues counterclockwise of red).
         let mut rom = make_wardrobe_rom();
         apply_player_scheme(&mut rom, 0x12);
@@ -443,19 +545,17 @@ mod tests {
         assert_eq!(rom.read_byte(0x1053D + 1), rotate_hue(0x2A, delta));
         // Fire suit: red accent byte follows the scheme (0x16 -> blue 0x12).
         assert_eq!(rom.read_byte(0x10541 + 3), 0x12);
-        // Hammer suit: white body is achromatic — must not rotate.
-        assert_eq!(rom.read_byte(0x10551 + 1), 0x30);
-        // Skin tone pinned everywhere it appears.
+        // Hammer suit: white -> light blue 0x32, black -> dark blue 0x02,
+        // face untouched.
+        assert_eq!(rom.read_range(0x10551, 4), &[0x00, 0x32, 0x27, 0x02]);
+        // Face pinned in every suit — including the Hammer suit's 0x27,
+        // which is not the usual 0x36 skin tone.
         for &(offset, quartet) in VANILLA_WARDROBE {
-            for (i, &vb) in quartet.iter().enumerate() {
-                if vb == SKIN_TONE {
-                    assert_eq!(
-                        rom.read_byte(offset + i),
-                        SKIN_TONE,
-                        "skin tone rotated at {offset:#06x}+{i}"
-                    );
-                }
-            }
+            assert_eq!(
+                rom.read_byte(offset + FACE_BYTE),
+                quartet[FACE_BYTE],
+                "face rotated at {offset:#06x}"
+            );
         }
     }
 
@@ -549,36 +649,82 @@ mod tests {
     }
 
     #[test]
-    fn themed_emits_rotated_curated_variants_only() {
-        // Every 4-byte write at a curated position must match one of the
-        // pre-registered variants rotated by its theme group's shift — ONE
-        // shift per group (coherent theme within each context, no per-quartet
-        // rainbow), drawn from the group's allowed set, and no free-byte picks.
-        for seed in [1u64, 42, 99, 777, 12345] {
+    fn each_palette_set_is_one_source_and_one_shift() {
+        // A screen loads all its colors from one PalSet set, so every
+        // sub-palette in a set must come from the SAME source with the SAME
+        // shift: no screen is a collage of vanilla, Recolored and tuscan.
+        // Stamp vanilla bytes everywhere so rotate-only quartets are real
+        // colors too, then find the one (source, shift) explaining each set.
+        let mut seen_sources = std::collections::HashSet::new();
+        for seed in 0u64..40 {
             let mut rom = make_test_rom();
+            for g in all_variant_groups() {
+                rom.write_range(g.offset, &g.variants[0]);
+            }
+            for &offset in ROTATE_ONLY_QUARTETS {
+                rom.write_range(offset, &[0x0F, 0x16, 0x2A, 0x21]);
+            }
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
             randomize_themed(&mut rom, &mut rng);
 
             for (gi, tg) in THEME_GROUPS.iter().enumerate() {
-                let group_quartets: Vec<&'static VariantGroup> = all_variant_groups()
-                    .into_iter()
-                    .filter(|g| theme_group_for(g.offset) == Some(gi))
-                    .collect();
-                let shift_matches = |shift: u8| -> bool {
-                    group_quartets.iter().all(|group| {
-                        let written = rom.read_range(group.offset, 4);
-                        group.variants.iter().any(|v| {
-                            v.iter().zip(written).all(|(&vb, &wb)| rotate_hue(vb, shift) == wb)
-                        })
-                    })
+                let explains = |source: Source, shift: u8| -> bool {
+                    let rot = |q: [u8; 4]| q.map(|b| rotate_hue(b, shift));
+                    let groups_ok = all_variant_groups()
+                        .into_iter()
+                        .filter(|g| theme_group_for(g.offset) == Some(gi))
+                        .all(|g| {
+                            let want = from_source(source, g.variants[0], Some(g.variants[1]));
+                            rom.read_range(g.offset, 4) == rot(want)
+                        });
+                    let kept_ok = ROTATE_ONLY_QUARTETS
+                        .iter()
+                        .filter(|&&o| theme_group_for(o) == Some(gi))
+                        .all(|&o| {
+                            let want = from_source(source, [0x0F, 0x16, 0x2A, 0x21], None);
+                            rom.read_range(o, 4) == rot(want)
+                        });
+                    groups_ok && kept_ok
                 };
+                let found: Vec<Source> = SOURCES
+                    .into_iter()
+                    .filter(|&src| tg.shifts.iter().any(|&sh| explains(src, sh)))
+                    .collect();
                 assert!(
-                    tg.shifts.iter().any(|&s| shift_matches(s)),
-                    "seed {seed}, group '{}': no allowed shift explains all written quartets",
-                    tg.name,
+                    !found.is_empty(),
+                    "seed {seed}, set '{}': no single source+shift",
+                    tg.name
                 );
+                seen_sources.extend(found);
             }
         }
+        assert_eq!(seen_sources.len(), SOURCES.len(), "every source should be rolled");
+    }
+
+    #[test]
+    fn variant_groups_are_vanilla_then_recolored() {
+        // `from_source` indexes `variants[0]`/`[1]` as vanilla/Recolored.
+        for g in all_variant_groups() {
+            assert_eq!(g.variants.len(), 2, "group {:#07x}", g.offset);
+            assert_ne!(g.variants[0], g.variants[1], "group {:#07x} is a no-op", g.offset);
+        }
+    }
+
+    #[test]
+    fn tuscan_keeps_rows_and_four_families() {
+        // Every chromatic color keeps its luminance row and lands on one of
+        // the four family columns; red and green stay apart (Koopa shells,
+        // mushroom vs 1-up); everything else passes through.
+        for b in 0u8..=0xFF {
+            let t = tuscan(b);
+            if is_chromatic(b) {
+                assert_eq!(t & 0x30, b & 0x30, "{b:#04x} changed row");
+                assert!([2, 6, 7, 0xC].contains(&(t & 0x0F)), "{b:#04x} -> {t:#04x}");
+            } else {
+                assert_eq!(t, b, "{b:#04x} must pass through");
+            }
+        }
+        assert_ne!(tuscan(0x16) & 0x0F, tuscan(0x1A) & 0x0F, "red and green merged");
     }
 
     #[test]
@@ -634,22 +780,7 @@ mod tests {
         // canary bytes (all >= 0x40, so hue rotation passes them through) in
         // each covered range and check them after running the randomizer.
         const REGIONS: &[(usize, usize, u8)] = &[
-            (0x36BE4, 0x36C1C, 0x40), // slot 0 (W6 map)
-            (0x36C1C, 0x36C54, 0x50), // slot 1 (W7 map)
-            (0x36C54, 0x36C8C, 0xA0), // slot 2
-            (0x36C8C, 0x36CC4, 0xC0), // slot 3
-            (0x36CC4, 0x36CFC, 0xD0), // slot 4
-            (0x36CFC, 0x36D34, 0xE0), // slot 5
-            (0x36D34, 0x36D6C, 0x90), // slot 6
-            (0x36D6C, 0x36DA6, 0x80), // slot 7
-            (0x36DA8, 0x36E20, 0x40), // slot tail
-            (0x36E20, 0x37000, 0x50), // pool
-            (0x37000, 0x37200, 0x70), // slice 1
-            (0x37200, 0x37400, 0x60), // slice 2
-            (0x37400, 0x37600, 0x50), // slice 3
-            (0x37600, 0x377E0, 0xB0), // slice 4 head
-            (0x37808, 0x37846, 0xC0), // slice 4 tail
-            (0x37844, 0x37850, 0x40), // slice 4 post
+            (0x36BE2, 0x377E2, 0x40), // the 16 PalSet_* sets
         ];
 
         let mut rom = make_test_rom();
@@ -698,43 +829,221 @@ mod tests {
                     "rotate-only quartet {offset:#08x} overlaps a variant group"
                 );
             }
-            let overlaps_ptr = offset + 4 > 0x377E0 && offset < 0x37808;
+            let overlaps_ptr = offset + 4 > 0x377E2 && offset < 0x37808;
             assert!(!overlaps_ptr, "rotate-only quartet {offset:#08x} overlaps pointer table");
         }
     }
 
     #[test]
     fn themed_does_not_touch_pointer_table() {
-        // The 40-byte region 0x377E0-0x37807 is a level-layout pointer table;
-        // painting it crashes the game. Themed randomizer must leave it alone.
+        // `Palette_By_Tileset` (0x377E2-0x37807, 19 words) is how
+        // `Setup_PalData` finds every palette set; painting it sends the
+        // loader to a garbage address and crashes the game.
         let mut rom = make_test_rom();
-        let vanilla: Vec<u8> = (0..0x28).map(|i| 0xAB + (i as u8 & 0x0F)).collect();
-        rom.write_range(0x377E0, &vanilla);
+        let vanilla: Vec<u8> = (0..0x26).map(|i| 0xAB + (i as u8 & 0x0F)).collect();
+        rom.write_range(0x377E2, &vanilla);
 
         let mut rng = ChaCha8Rng::seed_from_u64(42);
         randomize_themed(&mut rom, &mut rng);
 
         assert_eq!(
-            rom.read_range(0x377E0, 0x28),
+            rom.read_range(0x377E2, 0x26),
             &vanilla[..],
-            "pointer table 0x377E0-0x37807 must not be modified"
+            "pointer table 0x377E2-0x37807 must not be modified"
         );
+    }
+
+    /// The vanilla wardrobe outside levels, as `(file offset, bytes)`: the
+    /// bonus-game and map tables in PRG027, the item tables in PRG026, the
+    /// post-Judgem's-Cloud tables in PRG010, and the two `CMP #$16 / BNE`
+    /// Luigi-swap sites.
+    const VANILLA_MAP_WARDROBE: &[(usize, &[u8])] = &[
+        (
+            0x37808, // BonusGame_PlayerPal, Map_PlayerPalFix, InitPal_Per_MapPowerup, InitPals
+            &[
+                0x0F, 0x16, 0x30, 0x36, 0x0F, 0x16, 0x30, 0x21, 0x0F, 0x1A, 0x30, 0x36, 0x0F, 0x1A,
+                0x30, 0x31, 0x0F, 0x30, 0x30, 0x36, 0x0F, 0x30, 0x30, 0x17, 0x16, 0x1A, 0x00, 0x01,
+                0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0xFF, 0x16, 0x36, 0x0F, 0xFF, 0x16, 0x36,
+                0x0F, 0xFF, 0x27, 0x36, 0x16, 0xFF, 0x16, 0x36, 0x0F, 0xFF, 0x2A, 0x36, 0x0F, 0xFF,
+                0x17, 0x36, 0x0F, 0xFF, 0x30, 0x36, 0x0F, 0xFF, 0x30, 0x36, 0x0F, 0xFF, 0x16, 0x36,
+                0x0F,
+            ],
+        ),
+        (
+            0x3457F, // InvItem_PerPowerUp_Palette (Mario) + ...Palette2 (Luigi)
+            &[
+                0x16, 0x36, 0x0F, 0xFF, 0x16, 0x36, 0x0F, 0xFF, 0x27, 0x36, 0x16, 0xFF, 0x16, 0x36,
+                0x0F, 0xFF, 0x2A, 0x36, 0x0F, 0xFF, 0x17, 0x36, 0x0F, 0xFF, 0x30, 0x36, 0x0F, 0xFF,
+                0x30, 0x36, 0x0F, 0xFF, 0x16, 0x36, 0x0F, 0xFF, 0x1A, 0x36, 0x0F, 0xFF, 0x1A, 0x36,
+                0x0F, 0xFF, 0x27, 0x36, 0x16, 0xFF, 0x1A, 0x36, 0x0F, 0xFF, 0x2A, 0x36, 0x0F, 0xFF,
+                0x17, 0x36, 0x0F, 0xFF, 0x30, 0x36, 0x0F, 0xFF, 0x30, 0x36, 0x0F, 0xFF, 0x1A, 0x36,
+                0x0F,
+            ],
+        ),
+        (
+            0x14DCA, // Map_PostJC_PUpPP1, PUpPML, PUpPP2
+            &[
+                0x16, 0x16, 0x27, 0x16, 0x2A, 0x17, 0x30, 0x16, 0x1A, 0x0F, 0x0F, 0x16, 0x0F, 0x0F,
+                0x0F, 0x0F,
+            ],
+        ),
+        (0x378FF, &[0xC9, 0x16, 0xD0]),
+        (0x14E5D, &[0xC9, 0x16, 0xD0]),
+    ];
+
+    fn make_full_wardrobe_rom() -> Rom {
+        let mut rom = make_wardrobe_rom();
+        for &(offset, bytes) in VANILLA_MAP_WARDROBE {
+            rom.write_range(offset, bytes);
+        }
+        rom
+    }
+
+    #[test]
+    fn map_wardrobe_offsets_match_the_rom() {
+        // The fixture above was typed from the disassembly; this pins it,
+        // every offset and both `CMP` sites against the real ROM. Skipped
+        // where the ROM is absent, like the other ROM-backed tests.
+        let Ok(rom) = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes") else {
+            eprintln!("SKIP: requires the ROM, which is not included in the repo");
+            return;
+        };
+        for &(offset, bytes) in VANILLA_MAP_WARDROBE {
+            assert_eq!(&rom[offset..offset + bytes.len()], bytes, "at {offset:#07x}");
+        }
+    }
+
+    #[test]
+    fn themed_leaves_the_wardrobe_alone() {
+        // The player tables after `Palette_By_Tileset` belong to the
+        // player-color scheme. World colors used to rotate them, which broke
+        // two things: `InitPal_Per_MapPowerup` holds palette INDICES 00-08
+        // (P-Wing 08 -> 09 read `Setup_PalData`'s code as colors), and
+        // rotating Mario's 0x16 in `InitPals_Per_MapPUp` stopped the map's
+        // `CMP #$16` from swapping Luigi in, so Luigi wore Mario's colors.
+        let (offset, vanilla) = VANILLA_MAP_WARDROBE[0];
+        for seed in 0u64..32 {
+            let mut rom = make_test_rom();
+            rom.write_range(offset, vanilla);
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            randomize_themed(&mut rom, &mut rng);
+            assert_eq!(rom.read_range(offset, vanilla.len()), vanilla, "seed {seed}");
+        }
+    }
+
+    #[test]
+    fn map_wardrobe_follows_the_pick() {
+        // Anchor blue 0x12 (delta 8 from vanilla red): the map dresses Mario
+        // exactly like the level does.
+        let mut rom = make_full_wardrobe_rom();
+        apply_player_scheme(&mut rom, 0x12);
+        let luigi = rotate_hue(0x1A, 8);
+
+        // Map load: Mario's base body is the pick, Fire rotates, the Hammer
+        // suit takes the tint, faces stay, Judgem's Cloud stays white.
+        let suit = |i: usize| rom.read_range(MAP_SUIT_PALS + 4 * i + 1, 3).to_vec();
+        assert_eq!(suit(0), [0x12, 0x36, 0x0F]);
+        assert_eq!(suit(2), [rotate_hue(0x27, 8), 0x36, 0x12]);
+        assert_eq!(suit(HAMMER_POWER), [0x32, 0x36, 0x02]);
+        assert_eq!(suit(7), [0x30, 0x36, 0x0F]);
+        assert_eq!(rom.read_range(MAP_PLAYER_FIX, 2), &[0x12, luigi]);
+
+        // Items on the map: Mario's and Luigi's own tables.
+        assert_eq!(rom.read_byte(ITEM_SUIT_PALS[0]), 0x12);
+        assert_eq!(rom.read_byte(ITEM_SUIT_PALS[1]), luigi);
+        assert_eq!(rom.read_range(ITEM_SUIT_PALS[1] + 4 * HAMMER_POWER, 3), &[0x32, 0x36, 0x02]);
+
+        // After Judgem's Cloud, and the bonus games.
+        assert_eq!(rom.read_byte(JC_BODY), 0x12);
+        assert_eq!(rom.read_byte(JC_BODY + HAMMER_POWER), 0x32);
+        assert_eq!(rom.read_byte(JC_ACCENT + HAMMER_POWER), 0x02);
+        assert_eq!(rom.read_range(JC_PLAYER_FIX, 2), &[0x12, luigi]);
+        assert_eq!(rom.read_range(BONUS_PLAYER_PALS, 4), &[0x0F, 0x12, 0x30, 0x36]);
+        assert_eq!(rom.read_byte(BONUS_PLAYER_PALS + 9), luigi);
+    }
+
+    #[test]
+    fn luigi_swap_matches_mario_for_every_pick() {
+        // Both `CMP #$16` sites must compare against whatever Mario's body
+        // became, or Luigi wears Mario's colors on the map. Luigi's own body
+        // must never equal it, or Mario would get Luigi's.
+        for row in 0u8..4 {
+            for hue in 1u8..=0x0C {
+                let anchor = (row << 4) | hue;
+                let mut rom = make_full_wardrobe_rom();
+                apply_player_scheme(&mut rom, anchor);
+                let map_cmp = rom.read_byte(LUIGI_SWAP_CMPS[0] + 1);
+                let jc_cmp = rom.read_byte(LUIGI_SWAP_CMPS[1] + 1);
+                assert_eq!(map_cmp, rom.read_byte(MAP_SUIT_PALS + 1), "map load, {anchor:#04x}");
+                assert_eq!(jc_cmp, rom.read_byte(JC_BODY), "Judgem's Cloud, {anchor:#04x}");
+                assert_ne!(rom.read_byte(MAP_PLAYER_FIX + 1), map_cmp, "{anchor:#04x}");
+                assert_ne!(rom.read_byte(JC_PLAYER_FIX + 1), jc_cmp, "{anchor:#04x}");
+            }
+        }
+    }
+
+    #[test]
+    fn map_wardrobe_vanilla_anchor_changes_only_the_hammer_suit() {
+        let mut rom = make_full_wardrobe_rom();
+        apply_player_scheme(&mut rom, 0x16);
+        let hammer: Vec<usize> = vec![
+            MAP_SUIT_PALS + 4 * HAMMER_POWER + 1,
+            MAP_SUIT_PALS + 4 * HAMMER_POWER + 3,
+            ITEM_SUIT_PALS[0] + 4 * HAMMER_POWER,
+            ITEM_SUIT_PALS[0] + 4 * HAMMER_POWER + 2,
+            ITEM_SUIT_PALS[1] + 4 * HAMMER_POWER,
+            ITEM_SUIT_PALS[1] + 4 * HAMMER_POWER + 2,
+            JC_BODY + HAMMER_POWER,
+            JC_ACCENT + HAMMER_POWER,
+        ];
+        for &(offset, bytes) in VANILLA_MAP_WARDROBE {
+            for (k, &vb) in bytes.iter().enumerate() {
+                if !hammer.contains(&(offset + k)) {
+                    assert_eq!(rom.read_byte(offset + k), vb, "changed at {:#07x}", offset + k);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn luigi_swap_operand_needs_its_cmp() {
+        // The operand is only rewritten where the ROM really holds
+        // `CMP #imm / BNE`; anything else is left byte-for-byte.
+        let mut rom = make_full_wardrobe_rom();
+        rom.write_range(LUIGI_SWAP_CMPS[0], &[0xA9, 0x16, 0xD0]); // LDA #$16, not CMP
+        apply_player_scheme(&mut rom, 0x12);
+        assert_eq!(rom.read_byte(LUIGI_SWAP_CMPS[0] + 1), 0x16);
+        assert_eq!(rom.read_byte(LUIGI_SWAP_CMPS[1] + 1), 0x12);
     }
 
     #[test]
     fn no_variant_group_overlaps_pointer_table() {
         // Static sanity: no curated offset can fall inside the pointer-table
-        // crash trap, even transitively (offset + 3 still < 0x377E0, or
+        // crash trap, even transitively (offset + 3 still < 0x377E2, or
         // offset >= 0x37808).
         for group in all_variant_groups() {
             let start = group.offset;
             let end = group.offset + 4;
-            let overlaps = end > 0x377E0 && start < 0x37808;
+            let overlaps = end > 0x377E2 && start < 0x37808;
             assert!(
                 !overlaps,
-                "VariantGroup at {:#08x} overlaps pointer table 0x377E0-0x37807",
+                "VariantGroup at {:#08x} overlaps pointer table 0x377E2-0x37807",
                 group.offset
             );
+        }
+    }
+
+    #[test]
+    fn curated_offsets_sit_on_the_sub_palette_grid() {
+        // Every PalSet sub-palette starts at 0x36BE2 + 4n. A group off the
+        // grid straddles two sub-palettes, so independent picks could mix
+        // vanilla and Recolored halves of one.
+        let on_grid = |o: usize| (0x36BE2..0x377E2).contains(&o) && (o - 0x36BE2).is_multiple_of(4);
+        for group in all_variant_groups() {
+            assert!(on_grid(group.offset), "variant group {:#07x} off grid", group.offset);
+        }
+        for &offset in ROTATE_ONLY_QUARTETS {
+            assert!(on_grid(offset), "rotate-only quartet {offset:#07x} off grid");
         }
     }
 }

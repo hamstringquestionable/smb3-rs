@@ -497,6 +497,10 @@ pub(super) fn maze_model(
             rng,
         );
         randomize::maze::stamp_into(build, &state);
+        // Test builds only: hand the finished maze to `maze_route_census`, so
+        // it can measure the maze a real seed + flag key produces.
+        #[cfg(test)]
+        randomize::maze::LAST_MAZE.with(|slot| *slot.borrow_mut() = Some(state.clone()));
 
         // **The canoe gate's model half.** Beach every boat behind an Anchor,
         // then make sure an Anchor exists somewhere the player can get to
@@ -624,7 +628,12 @@ pub(super) fn maze_rom(
 }
 
 /// Stage 11: every lock in the game, and the 2-player Vs retirement.
-pub(super) fn locks(rom: &mut Rom, build: &BuildResult, written: &WrittenOverworld) {
+pub(super) fn locks(
+    rom: &mut Rom,
+    run: &Resolved,
+    build: &BuildResult,
+    written: &WrittenOverworld,
+) {
     // Every lock in the game, home and away, in one table — and with it the
     // rewritten fortress-FX effect that reads it. This is unconditional: the
     // effect replaces vanilla's outright, so a run that skipped it would leave
@@ -651,10 +660,10 @@ pub(super) fn locks(rom: &mut Rom, build: &BuildResult, written: &WrittenOverwor
         written.grids(rom),
         written.lock_tiles(),
     );
-    // The marked away fortress's art and crumble. A no-op unless some-hints
-    // stamped one, so every other mode's bytes are untouched.
+    // The away fortress $EB wears the nub. A no-op with hints off, so every
+    // other mode's bytes are untouched.
     rom.set_tag("away_family");
-    randomize::maze::away_family::apply(rom, written.grids(rom));
+    randomize::maze::away_family::apply(rom, run.hints);
 
     // Retire the 2-player Vs Challenge. Unconditional and order-free — it
     // splices three sites nothing else touches. See the module docs for why it
