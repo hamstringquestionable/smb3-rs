@@ -458,7 +458,7 @@ mod payload {
         /// a key from a seed that never touches the mode is byte-for-byte what
         /// it was before this field existed.
         ///
-        /// `Full` is the zero discriminant on purpose — see [`HintMode`]. A key
+        /// `Partial` (some) is the zero discriminant on purpose — see [`HintMode`]. A key
         /// minted before this option decodes to the hints it was minted with
         /// rather than to silence.
         pub(super) hints: HintMode,

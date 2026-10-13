@@ -269,7 +269,7 @@ pub enum DejaVuMode {
 /// lock. Inert outside the maze, where every lock is local and every fortress
 /// opens something in the world you are standing in.
 ///
-/// # The three rungs
+/// # The four rungs
 ///
 /// * **Off** — nothing is said. Fortresses wear one of their three designs at
 ///   random, as they did before any of this, and locks are the plain tiles.
@@ -277,14 +277,18 @@ pub enum DejaVuMode {
 ///   world, another one, or World 8; and a lock in the alternate colour is one
 ///   whose key is somewhere else. Two independent readings of the same fact,
 ///   from either end.
-/// * **Full** — as Partial, and the lock carries the *number* of the world its
-///   fortress is in.
+/// * **Most** — as Partial, and an away lock carries the *number* of the world
+///   its fortress is in — except in World 8, whose away locks stay as on
+///   Partial.
+/// * **Full** — as Most, World 8 included.
 ///
 /// # Why the order is not the ladder
 ///
 /// Declaration order is the flag-key wire format, and the key's whole
 /// compatibility story is that an unset field decodes as zero *and zero is the
-/// default* — see the `flag_key` module header. So `Partial` is declared first.
+/// default* — see the `flag_key` module header. So `Partial` is declared first,
+/// and `Most` last: it arrived after the other three had shipped, and a key
+/// minted with `Full` must keep meaning Full.
 /// [`HintMode::rung`] is the ladder; nothing should read the declaration order
 /// as one.
 #[derive(
@@ -315,16 +319,19 @@ pub enum HintMode {
     Full,
     /// No hints at all; fortress designs go back to being random.
     Off,
+    /// As Full, except World 8's away locks wear the nub instead of a number.
+    Most,
 }
 
 impl HintMode {
-    /// Position on the ladder — 0 Off, 1 Some, 2 Full — so callers can ask
-    /// "at least Some" without caring that the encoding is in the other order.
+    /// Position on the ladder — 0 Off, 1 Some, 2 Most, 3 Full — so callers can
+    /// ask "at least Some" without caring that the encoding is in another order.
     fn rung(self) -> u8 {
         match self {
             HintMode::Off => 0,
             HintMode::Partial => 1,
-            HintMode::Full => 2,
+            HintMode::Most => 2,
+            HintMode::Full => 3,
         }
     }
 
@@ -333,9 +340,10 @@ impl HintMode {
         self.rung() >= HintMode::Partial.rung()
     }
 
-    /// Do locks carry the world number, rather than only a colour?
+    /// Do locks carry the world number, rather than only a colour? On Most,
+    /// World 8's do not — the writer asks with Partial there.
     pub(crate) fn numbers_locks(self) -> bool {
-        self == HintMode::Full
+        self.rung() >= HintMode::Most.rung()
     }
 }
 

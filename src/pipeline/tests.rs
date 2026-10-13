@@ -369,6 +369,18 @@ fn flag_key_round_trip_all_wild() {
     assert_eq!(opts.wild_injections, decoded.wild_injections);
 }
 
+/// Every hint mode survives the key with the maze on — Most included, which
+/// took the field's last free value.
+#[test]
+fn flag_key_round_trips_every_hint_mode() {
+    use crate::HintMode::{Full, Most, Off, Partial};
+    for hints in [Off, Partial, Most, Full] {
+        let opts = Options { world_maze: true, hints, ..all_off_options() };
+        let decoded = Options::from_flag_key(&opts.to_flag_key()).unwrap();
+        assert_eq!(decoded.hints, hints);
+    }
+}
+
 #[test]
 fn flag_key_round_trip_all_off() {
     let opts = all_off_options();
@@ -2471,7 +2483,7 @@ fn maze_options_change_nothing_without_the_maze() {
     for seed in 1..=12u64 {
         let off = crate::generate_patched_rom(&bytes, seed, &opts(crate::HintMode::Off), None)
             .expect("generate");
-        for mode in [crate::HintMode::Partial, crate::HintMode::Full] {
+        for mode in [crate::HintMode::Partial, crate::HintMode::Most, crate::HintMode::Full] {
             let on =
                 crate::generate_patched_rom(&bytes, seed, &opts(mode), None).expect("generate");
             let diff = off.iter().zip(&on).filter(|(a, b)| a != b).count();

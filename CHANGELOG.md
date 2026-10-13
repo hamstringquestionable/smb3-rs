@@ -9,12 +9,20 @@ deploys.
 
 ## [Unreleased]
 
+## [2.5.0] - 2026-10-13
+
+### Added
+
+- **Most hints.** A new setting between Some and Full: away locks show their
+  fortress's world number as on Full, except in World 8, where they wear the
+  nub as on Some.
+
 ### Changed
 
 - **Full hints colour the map like Some.** A lock and fortress in the same
   world are tan, and an away pair wears the odd colour, with the nub on the
-  fortress. Away locks still show their fortress's world number, except in
-  World 8, where they wear the nub as on Some.
+  fortress. Away locks still show their fortress's world number, World 8
+  included.
 - **World Maze seeds are never shorter than 10.** The maze's length check now
   measures the quickest way to beat the game, counting levels, fortresses and
   airships. Short seeds still turn up, but only about 1 in 8 is under 14 with
@@ -44,7 +52,6 @@ deploys.
 - **World colours no longer scramble the map's suit palettes.** They could
   change which palette a suit used on the map, and could give the P-Wing
   garbage colours.
-
 - **World 4's empty island spots are land again.** The spot two nodes below
   the start and the Toad House spot on the bottom row drew as water when
   nothing was placed there.
