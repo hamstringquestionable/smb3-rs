@@ -77,16 +77,16 @@ mod tests {
     }
 
     /// **Every away fortress is the nubbed `$EB`, and its lock wears the nub
-    /// unless a digit owns the corner** — on both hinted modes.
+    /// unless a digit owns the corner** — on every hinted mode.
     ///
     /// Checked positionally on the written ROM against the maze's own pairing:
     /// a fortress's cell is `$EB` exactly when its hint is `Elsewhere`, and a
     /// lock wears [`MARK`] exactly when its fortress is in another world and
     /// it has no digit — every away lock on some-hints, only World 8's on
-    /// full. That includes a World 8 lock opened by a beta `$6A` fortress,
-    /// which keeps its own art. A fortress under a World 8 army sprite has had
-    /// its cell blanked by the writer, as every hint there is — skipped, not
-    /// failed.
+    /// most, none on full. That includes a World 8 lock opened by a beta `$6A`
+    /// fortress, which keeps its own art. A fortress under a World 8 army
+    /// sprite has had its cell blanked by the writer, as every hint there is —
+    /// skipped, not failed.
     #[test]
     fn an_away_fortress_opens_a_marked_lock() {
         let Ok(bytes) = std::fs::read(ROM_PATH) else {
@@ -98,7 +98,7 @@ mod tests {
             assert_ne!(lr(&rom, plain), MARK, "{plain:#04X}'s corner is already the nub");
         }
 
-        for hints in [crate::HintMode::Partial, crate::HintMode::Full] {
+        for hints in [crate::HintMode::Partial, crate::HintMode::Most, crate::HintMode::Full] {
             let mut pairs = [0usize; 3];
             for seed in 0..seeds() {
                 let Some((rom, build)) = build(&bytes, seed, true, hints) else { continue };
@@ -126,8 +126,11 @@ mod tests {
                 for (wi, w) in build.worlds.iter().enumerate() {
                     for lock in &w.locks {
                         let away = lock.fort.world != wi;
-                        let digit_owns_corner =
-                            hints == crate::HintMode::Full && wi != rom_data::W8_IDX;
+                        let digit_owns_corner = match hints {
+                            crate::HintMode::Full => true,
+                            crate::HintMode::Most => wi != rom_data::W8_IDX,
+                            _ => false,
+                        };
                         let tile = grids[wi].get(lock.pos.0, lock.pos.1);
                         assert_eq!(
                             lr(&rom, tile) == MARK,
