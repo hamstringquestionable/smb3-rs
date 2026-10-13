@@ -164,6 +164,21 @@ pub(crate) fn write_engine_scaffolding(rom: &mut Rom, catalog: &NodeCatalog) {
     move_airship_sprites(rom, catalog);
 }
 
+/// The first map column the camera shows when world `world_idx` starts with
+/// Mario at column `col`; the screen shows 16 from there. Half a screen back,
+/// rounded to a half-page stop, except W5's whole static screens (see
+/// [`build_position_tables`]). The generator reads it too, so a start never
+/// shows what is meant to be found by going over.
+pub(crate) fn start_camera_col(world_idx: usize, col: usize) -> usize {
+    let cols = MAP_TILE_GRIDS[world_idx].columns as i32;
+    let first = if world_idx == W5_IDX {
+        (col as i32 / 16) * 16 // W5: page-align to the start's static screen
+    } else {
+        (((col as i32 - 8) + 4).max(0) / 8) * 8 // round-to-8, floored at 0
+    };
+    first.clamp(0, (cols - 16).max(0)) as usize
+}
+
 /// Build and write the four per-world position tables (X/XHi/ScrL/ScrH) in
 /// PRG031 free space plus the vanilla `Map_Y_Starts` table, all derived from
 /// the catalog's (possibly swapped) Start positions.
@@ -192,13 +207,7 @@ fn build_position_tables(rom: &mut Rom, catalog: &NodeCatalog) {
         // other edge-scroll-skipped world but is never swapped, so its col-2 start
         // collapses to 0 regardless.) Page-0 / unswapped starts collapse to column 0
         // in either branch (identical to vanilla).
-        let cols = MAP_TILE_GRIDS[wi].columns as i32;
-        let col = if wi == W5_IDX {
-            (sc as i32 / 16) * 16 // W5: page-align to the start's static screen
-        } else {
-            (((sc as i32 - 8) + 4).max(0) / 8) * 8 // round-to-8, floored at 0
-        };
-        let col = col.clamp(0, (cols - 16).max(0));
+        let col = start_camera_col(wi, sc) as i32;
         scrl_tbl[wi] = if col & 8 != 0 { 0x80 } else { 0x00 };
         scrh_tbl[wi] = (col >> 4) as u8;
     }

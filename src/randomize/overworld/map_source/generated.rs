@@ -26,6 +26,7 @@ use crate::randomize::rom_data::{
 };
 
 use super::WorldMap;
+use crate::randomize::overworld::start_airship_swap::start_camera_col;
 
 /// What a link between two neighbouring nodes is.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -186,6 +187,9 @@ fn recipe(world_idx: usize) -> Option<&'static Recipe> {
     }
 }
 
+/// Layouts drawn before a world gives up and keeps vanilla.
+const ATTEMPTS: usize = 1000;
+
 /// How often the tree grows from its newest node rather than from any node.
 /// A first guess, to be judged on the ASCII layouts.
 const EXTEND_NEWEST: f64 = 0.75;
@@ -197,20 +201,21 @@ const FARTHEST_FEW: usize = 3;
 /// layout may have. Not banned outright: one now and then reads fine.
 const MAX_SQUARES: usize = 1;
 
-/// Draw layouts until one meets `targets`, or give up after `attempts`.
+/// Draw layouts until one meets `targets`, or give up after [`ATTEMPTS`].
 ///
 /// The start goes on, or one node from, `anchor` (the vanilla start) or
 /// `airship` (the vanilla airship), a coin picking which: the two places
-/// vanilla and the Start<->Airship swap start a player. Never in the pocket.
+/// vanilla and the Start<->Airship swap start a player. Never where the
+/// starting camera ([`start_camera_col`]) shows the pocket's strip.
 /// It is picked once, so a start that is harder to fill around is not drawn
 /// less often. `anchor` also sets the lattice's parity.
 fn generate<R: Rng>(
+    world_idx: usize,
     rows: usize,
     cols: usize,
     anchor: Pos,
     airship: Pos,
     targets: Targets,
-    attempts: usize,
     rng: &mut R,
 ) -> Option<Layout> {
     let cells = lattice(rows, cols, anchor);
@@ -219,10 +224,10 @@ fn generate<R: Rng>(
         .iter()
         .copied()
         .filter(|&p| manhattan(p, near) <= 2)
-        .filter(|p| targets.pocket.is_none() || p.1 < POCKET_COL)
+        .filter(|p| targets.pocket.is_none() || start_camera_col(world_idx, p.1) + 16 <= POCKET_COL)
         .collect();
     let start = *around.choose(rng)?;
-    (0..attempts).find_map(|_| try_once(rows, cols, anchor, start, targets, rng))
+    (0..ATTEMPTS).find_map(|_| try_once(rows, cols, anchor, start, targets, rng))
 }
 
 /// The dancing bush (`TILE_DANCINGBUSH`): every empty cell starts as it, and
@@ -257,12 +262,12 @@ pub(crate) fn world_map<R: Rng>(
     let airship_idx =
         (0..vanilla.entry_pos.len()).find(|&i| AIRSHIP_ENTRIES.contains(&(world_idx, i)))?;
     let layout = generate(
+        world_idx,
         old.rows(),
         old.cols,
         vanilla_start,
         vanilla.entry_pos[airship_idx],
         targets,
-        1000,
         rng,
     )?;
     let start = layout.start;
@@ -1514,7 +1519,7 @@ fn generated_layouts() {
     let (mut loops, mut squares, mut loop_total, mut junctions) = (0, 0, 0, 0);
     for seed in 1..=seeds {
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
-        match generate(grid.rows(), grid.cols, start, airship, targets, 1000, &mut rng) {
+        match generate(world - 1, grid.rows(), grid.cols, start, airship, targets, &mut rng) {
             Some(layout) => {
                 built += 1;
                 loops += layout.loop_sizes.len();
@@ -1529,7 +1534,7 @@ fn generated_layouts() {
             None => {
                 failed += 1;
                 if !quiet {
-                    println!("\n--- seed {seed}: no layout in 1000 attempts");
+                    println!("\n--- seed {seed}: no layout in {ATTEMPTS} attempts");
                 }
             }
         }
@@ -1675,6 +1680,30 @@ fn generated_is_completable() {
             .unwrap_or_else(|e| panic!("seed {seed}: pipeline failed: {e}"));
     }
     println!("pipeline: {} seeds ran end to end", seeds.min(20));
+}
+
+/// A generated W2's start never shows the pocket's strip: the starting camera
+/// ([`start_camera_col`]) must stop short of it, so the secret area is found
+/// only by going over.
+#[test]
+fn generated_w2_start_never_shows_the_pocket() {
+    use rand::SeedableRng;
+    use rand_chacha::ChaCha8Rng;
+
+    let Some(rom) = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes")
+        .ok()
+        .and_then(|d| crate::rom::Rom::from_bytes(&d).ok())
+    else {
+        eprintln!("SKIP: requires the ROM, which is not included in the repo");
+        return;
+    };
+    let vanilla = super::vanilla::load(&rom, false, false);
+    for seed in 0..50 {
+        let map = world_map(&vanilla[1], 1, &mut ChaCha8Rng::seed_from_u64(seed)).unwrap();
+        let start = crate::randomize::rom_data::find_start(&map.grid).unwrap();
+        let shown = start_camera_col(1, start.1) + 16;
+        assert!(shown <= POCKET_COL, "seed {seed}: start {start:?} shows up to column {shown}");
+    }
 }
 
 /// The same seed must draw the same map. Each `HashSet` iterates in its own
