@@ -420,7 +420,9 @@ enum Step {
     /// steps after it decorate the land. A horizontal path over the sea
     /// between land nodes is a bridge `bridges` of the time, else `$B9`.
     /// With `boxes`, each island's land is the rectangle its nodes span
-    /// (W7's island blocks), clipped where it would touch another's.
+    /// (W7's island blocks), clipped where it would touch another's. With
+    /// `within`, the sea is only in those columns, `[from, to)` (W8's navy on
+    /// its first screen), and never beside the frame: off it is land.
     Sea {
         margin: f64,
         land: f64,
@@ -430,6 +432,7 @@ enum Step {
         solid: bool,
         bridges: f64,
         boxes: bool,
+        within: Option<(usize, usize)>,
     },
     /// A river straight down a tile column between node columns, from the
     /// top of the map into the shore strip below, where it meets the sea as
@@ -506,6 +509,7 @@ const W3_RECIPE: Recipe = Recipe {
             solid: false,
             bridges: 0.6,
             boxes: false,
+            within: None,
         },
         Step::Clusters { other: BUSH, rock_share: 0.0 },
         Step::Scatter { tile: PALM, count: (1, 3) },
@@ -531,6 +535,7 @@ const W4_RECIPE: Recipe = Recipe {
             solid: true,
             bridges: 1.0,
             boxes: false,
+            within: None,
         },
         Step::Pools { pool: POOL, palm: PALM, count: (0, 2) },
         Step::Clusters { other: FLOWER, rock_share: 0.3 },
@@ -590,6 +595,7 @@ const W7_RECIPE: Recipe = Recipe {
             solid: true,
             bridges: 0.5,
             boxes: true,
+            within: None,
         },
         Step::Clusters { other: PLANT, rock_share: 0.0 },
         Step::Scatter { tile: FLOWER, count: (1, 3) },
@@ -597,13 +603,29 @@ const W7_RECIPE: Recipe = Recipe {
 };
 
 /// W8, dark land: fire on its first screen and bones after, as vanilla,
-/// with patches of open ground and clusters of fire.
+/// with patches of open ground and clusters of fire. The first screen is
+/// water first, as vanilla's navy: some nodes stand in the sea (user,
+/// 2026-10-14).
 const W8_RECIPE: Recipe = Recipe {
     layout: W8_TARGETS,
     ground: BONES,
     ground_before: Some((SCREEN_COLS, FIRE)),
     sky: None,
-    scenery: &[Step::Patches { tile: CLEARING }, Step::Clusters { other: FIRE, rock_share: 0.0 }],
+    scenery: &[
+        Step::Sea {
+            margin: 0.5,
+            land: 0.1,
+            water_nodes: 0.5,
+            islet: FIRE,
+            coast: false,
+            solid: false,
+            bridges: 0.6,
+            boxes: false,
+            within: Some((1, SCREEN_COLS)),
+        },
+        Step::Patches { tile: CLEARING },
+        Step::Clusters { other: FIRE, rock_share: 0.0 },
+    ],
 };
 
 /// W8's ground tiles: the fire of its first screen, the bones of the rest.
@@ -797,6 +819,7 @@ fn add_sea<R: Rng>(
     layout: &Layout,
     (margin, land, water_nodes, bridge_share): (f64, f64, f64, f64),
     (islet, coast, fill, boxes): (u8, bool, bool, bool),
+    within: Option<(usize, usize)>,
     rng: &mut R,
 ) -> bool {
     let (rows, cols) = (grid.rows(), grid.cols);
@@ -809,9 +832,12 @@ fn add_sea<R: Rng>(
         let (r, c) = mid(a, b);
         if a.0 == b.0 { [(r.wrapping_sub(1), c), (r + 1, c)] } else { [(r, c - 1), (r, c + 1)] }
     };
-    let cells: Vec<Pos> = (0..rows).flat_map(|r| (1..cols - 1).map(move |c| (r, c))).collect();
+    let (from, to) = within.unwrap_or((1, cols - 1));
+    let cells: Vec<Pos> = (0..rows).flat_map(|r| (from..to).map(move |c| (r, c))).collect();
     let docks: Vec<Pos> = layout.docks.iter().map(|d| d.1).collect();
-    water.sea_bounds = Some((rows, cols));
+    if within.is_none() {
+        water.sea_bounds = Some((rows, cols));
+    }
 
     let fixed = |n: Pos| {
         n == layout.start || Some(n) == layout.target || layout.docks.iter().any(|d| d.0 == n)
@@ -825,6 +851,7 @@ fn add_sea<R: Rng>(
         .iter()
         .copied()
         .filter(|&n| !fixed(n) && !on_rock(n) && joined_from_above_or_left(n))
+        .filter(|n| (from..to).contains(&n.1))
         .filter(|_| rng.random_bool(water_nodes))
         .collect();
     // The cells a water node needs kept sea: its sides, and its paths' sides.
@@ -883,6 +910,24 @@ fn add_sea<R: Rng>(
     for &(r, c) in cells.iter().filter(|&&(r, c)| grid.get(r, c) != FILL) {
         let nearest = layout.nodes.iter().copied().min_by_key(|&n| manhattan(n, (r, c)));
         solid.insert((r, c), nearest.map_or(0, island_of));
+    }
+    // A sea `within` columns keeps a rim of land against everything round
+    // it: cells past its columns, and frame inside them (anything drawn that
+    // is not the layout's). A water node's sea comes first.
+    if within.is_some() {
+        let in_cells: HashSet<Pos> = cells.iter().copied().collect();
+        let mut drawn: HashSet<Pos> = layout.nodes.iter().copied().collect();
+        drawn.extend(layout.links.iter().map(|&(a, b, _)| mid(a, b)));
+        let frame =
+            |p: Pos| !in_cells.contains(&p) || (grid.get(p.0, p.1) != FILL && !drawn.contains(&p));
+        for &(r, c) in cells.iter().filter(|&&(r, c)| grid.get(r, c) == FILL) {
+            let near_frame = r == 0
+                || (r - 1..=r + 1).any(|y| (c.saturating_sub(1)..=c + 1).any(|x| frame((y, x))));
+            if near_frame && !keep.contains(&(r, c)) {
+                let nearest = layout.nodes.iter().copied().min_by_key(|&n| manhattan(n, (r, c)));
+                solid.insert((r, c), nearest.map_or(0, island_of));
+            }
+        }
     }
 
     // Whether every dock's water is still one sea, with `solid` as land.
@@ -1403,10 +1448,20 @@ fn run_steps<R: Rng>(
                 let limits = RiverLimits { attempts: RIVER_ATTEMPTS, max_crossings, crossing_cost };
                 add_rivers_across(grid, water, count, limits, rng);
             }
-            Step::Sea { margin, land, water_nodes, islet, coast, solid, bridges, boxes } => {
+            Step::Sea {
+                margin,
+                land,
+                water_nodes,
+                islet,
+                coast,
+                solid,
+                bridges,
+                boxes,
+                within,
+            } => {
                 let shares = (margin, land, water_nodes, bridges);
                 let shape = (islet, coast, solid, boxes);
-                if !add_sea(grid, water, layout, shares, shape, rng) {
+                if !add_sea(grid, water, layout, shares, shape, within, rng) {
                     return false;
                 }
             }
