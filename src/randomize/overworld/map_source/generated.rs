@@ -26,6 +26,7 @@ use crate::randomize::rom_data::{
 };
 
 use super::WorldMap;
+use crate::randomize::overworld::build::is_completion_unsafe;
 use crate::randomize::overworld::start_airship_swap::start_camera_col;
 
 /// What a link between two neighbouring nodes is.
@@ -66,6 +67,9 @@ struct Layout {
     /// Each dock and the water tile beside it the canoe boards from; the
     /// canoe parks beside the first, on the start's island.
     docks: Vec<(Pos, Pos)>,
+    /// A tile column of sea through the start's island, crossed by bridges
+    /// ([`Targets::river_share`]).
+    river: Option<usize>,
 }
 
 /// The targets a layout must meet, or it is thrown away and redrawn.
@@ -96,6 +100,16 @@ struct Targets {
     /// (`$4B`, `TILE_DOCK`), and the start's island gets `mainland_docks` more.
     dock_islands: (usize, usize),
     mainland_docks: (usize, usize),
+    /// Pipe islands are seeded on the outermost node row or column (W4's
+    /// small island on the map's edge).
+    edge_islands: bool,
+    /// How many of the start's island's nodes may sit on the top or bottom
+    /// node row: `None` for no limit; W4 keeps its main island in the middle.
+    mainland_outer: Option<(usize, usize)>,
+    /// When the extra split comes up ([`EXTRA_SPLIT`]), how often it is a
+    /// river through the start's island instead, crossed by bridges: one
+    /// island still, divided to the eye.
+    river_share: f64,
 }
 
 /// How often a world with pipes splits once more than its pipe pairs less
@@ -115,6 +129,9 @@ const W1_TARGETS: Targets = Targets {
     island_share: (25, 50),
     dock_islands: (0, 0),
     mainland_docks: (0, 0),
+    edge_islands: false,
+    mainland_outer: None,
+    river_share: 0.0,
 };
 
 /// W2, first guesses around vanilla: 47 nodes, 3 loops, 7 dead ends, 15 hops,
@@ -131,6 +148,9 @@ const W2_TARGETS: Targets = Targets {
     island_share: (25, 50),
     dock_islands: (0, 0),
     mainland_docks: (0, 0),
+    edge_islands: false,
+    mainland_outer: None,
+    river_share: 0.0,
 };
 
 /// W3, first guesses (user, 2026-10-13): one big mainland and small islands,
@@ -147,6 +167,29 @@ const W3_TARGETS: Targets = Targets {
     island_share: (4, 10),
     dock_islands: (3, 5),
     mainland_docks: (1, 2),
+    edge_islands: false,
+    mainland_outer: None,
+    river_share: 0.0,
+};
+
+/// W4 (user, 2026-10-13): a small island on the map's edge and a main island
+/// in the middle rows (one node on an outer row now and then), its extra
+/// split a second pipe island or a river through the main island. Vanilla W4
+/// is 34 nodes, 2 loops, 10 dead ends, walk pieces 30/4, 2 pipe pairs.
+const W4_TARGETS: Targets = Targets {
+    nodes: 34,
+    loops: (2, 4),
+    dead_ends: (6, 13),
+    start_to_target: (11, 17),
+    rocks: (0, 2),
+    pocket: None,
+    pipe_pairs: 2,
+    island_share: (10, 20),
+    dock_islands: (0, 0),
+    mainland_docks: (0, 0),
+    edge_islands: true,
+    mainland_outer: Some((0, 1)),
+    river_share: 0.5,
 };
 
 /// How one world is generated: its layout, then its scenery, step by step in
@@ -187,9 +230,12 @@ enum Step {
     Scatter { tile: u8, count: (usize, usize) },
     /// Water as the ground ([`add_sea`]): `water_nodes` of the nodes that can
     /// be drawn in the sea, land on each land node's side `margin` of the
-    /// time, grown by `land` of the open cells, and bush islets; the rest is
-    /// sea. First in a recipe, so the steps after it decorate the land.
-    Sea { margin: f64, land: f64, water_nodes: f64 },
+    /// time, grown by `land` of the open cells, and `islet` islets; the rest
+    /// is sea. With `coast`, growth never takes the map's outer ring, so sea
+    /// runs round the land (W4). With `solid`, channels inside an island are
+    /// filled, so it reads as one landmass (W4). First in a recipe, so the
+    /// steps after it decorate the land.
+    Sea { margin: f64, land: f64, water_nodes: f64, islet: u8, coast: bool, solid: bool },
 }
 
 const W1_RECIPE: Recipe = Recipe {
@@ -234,10 +280,38 @@ const W3_RECIPE: Recipe = Recipe {
     layout: W3_TARGETS,
     ground: CLEARING,
     scenery: &[
-        Step::Sea { margin: 0.25, land: 0.04, water_nodes: 0.5 },
+        Step::Sea {
+            margin: 0.25,
+            land: 0.04,
+            water_nodes: 0.5,
+            islet: BUSH,
+            coast: false,
+            solid: false,
+        },
         Step::Clusters { other: BUSH, rock_share: 0.0 },
         Step::Scatter { tile: PALM, count: (1, 3) },
         Step::Scatter { tile: POOL, count: (0, 2) },
+    ],
+};
+
+/// W4: water first but land-heavy (vanilla is about half water): every node
+/// on land, the shore grown well out, fire flower and rock clusters, a few
+/// palms and pools, rock islets.
+const W4_RECIPE: Recipe = Recipe {
+    layout: W4_TARGETS,
+    ground: CLEARING,
+    scenery: &[
+        Step::Sea {
+            margin: 1.0,
+            land: 0.03,
+            water_nodes: 0.0,
+            islet: DECO_ROCK,
+            coast: true,
+            solid: true,
+        },
+        Step::Pools { pool: POOL, palm: PALM, count: (0, 2) },
+        Step::Clusters { other: FLOWER, rock_share: 0.3 },
+        Step::Scatter { tile: PALM, count: (1, 3) },
     ],
 };
 
@@ -247,6 +321,7 @@ fn recipe(world_idx: usize) -> Option<&'static Recipe> {
         0 => Some(&W1_RECIPE),
         1 => Some(&W2_RECIPE),
         2 => Some(&W3_RECIPE),
+        3 => Some(&W4_RECIPE),
         _ => None,
     }
 }
@@ -350,6 +425,7 @@ fn add_sea<R: Rng>(
     water: &mut Water,
     layout: &Layout,
     (margin, land, water_nodes): (f64, f64, f64),
+    (islet, coast, fill): (u8, bool, bool),
     rng: &mut R,
 ) -> bool {
     let (rows, cols) = (grid.rows(), grid.cols);
@@ -397,6 +473,12 @@ fn add_sea<R: Rng>(
         keep
     };
     let mut keep = keep_for(&wet_nodes);
+    // A river's column is sea wherever nothing is drawn: land never grows
+    // there, though a cell with no water tile may still be trimmed to land.
+    let river: HashSet<Pos> = layout
+        .river
+        .map(|rc| (0..rows).map(|r| (r, rc)).filter(|p| empty.contains(p)).collect())
+        .unwrap_or_default();
     let nodes_before = water.nodes.len();
     water.nodes.extend(&wet_nodes);
 
@@ -456,6 +538,7 @@ fn add_sea<R: Rng>(
         });
         if !inside((r, c))
             || keep.contains(&(r, c))
+            || river.contains(&(r, c))
             || solid.contains_key(&(r, c))
             || touches_another
         {
@@ -476,6 +559,32 @@ fn add_sea<R: Rng>(
             }
         }
     }
+    // A solid island: an open cell with land on two opposite sides is a
+    // channel inside it, and fills, until none is left.
+    if fill {
+        loop {
+            let channels: Vec<(Pos, usize)> = cells
+                .iter()
+                .copied()
+                .filter(|p| !solid.contains_key(p))
+                .filter(|&(r, c)| !coast || (r > 0 && r + 1 < rows && c > 1 && c + 2 < cols))
+                .filter_map(|(r, c)| {
+                    let side = |p: Pos| solid.get(&p).copied().filter(|&o| o != ISLET);
+                    let (n, s) = (side((r.wrapping_sub(1), c)), side((r + 1, c)));
+                    let (w, e) = (side((r, c.wrapping_sub(1))), side((r, c + 1)));
+                    let across = n.filter(|&o| s == Some(o)).or(w.filter(|&o| e == Some(o)));
+                    across.map(|o| ((r, c), o))
+                })
+                .collect();
+            let before = solid.len();
+            for (p, island) in channels {
+                add(&mut solid, p, island);
+            }
+            if solid.len() == before {
+                break;
+            }
+        }
+    }
     let target = (cells.iter().filter(|p| !solid.contains_key(p)).count() as f64 * land) as usize;
     let (mut grown, mut tries) = (0, 0);
     while grown < target && tries < 4 * target {
@@ -484,6 +593,7 @@ fn add_sea<R: Rng>(
             .iter()
             .copied()
             .filter(|p| !solid.contains_key(p))
+            .filter(|&(r, c)| !coast || (r > 0 && r + 1 < rows && c > 1 && c + 2 < cols))
             .filter_map(|p| {
                 around(p)
                     .iter()
@@ -574,7 +684,7 @@ fn add_sea<R: Rng>(
         solid.extend(bad.into_iter().map(|p| (p, ISLET)));
     }
     for (r, c) in islets {
-        grid.set(r, c, BUSH);
+        grid.set(r, c, islet);
     }
     true
 }
@@ -771,8 +881,10 @@ fn draw_once<R: Rng>(vanilla: &WorldMap, world_idx: usize, rng: &mut R) -> Optio
             Step::Scatter { tile, count } => {
                 scatter(&mut grid, &built, tile, count, rng);
             }
-            Step::Sea { margin, land, water_nodes } => {
-                if !add_sea(&mut grid, &mut water, &layout, (margin, land, water_nodes), rng) {
+            Step::Sea { margin, land, water_nodes, islet, coast, solid } => {
+                let shares = (margin, land, water_nodes);
+                let shape = (islet, coast, solid);
+                if !add_sea(&mut grid, &mut water, &layout, shares, shape, rng) {
                     return None;
                 }
             }
@@ -816,6 +928,9 @@ const CLEARING: u8 = 0x42;
 
 /// `TILE_DANCINGPALM`.
 const PALM: u8 = 0xBB;
+/// `TILE_DANCINGFLOWER`: a fire flower. Special only where Mario stands, so
+/// as scenery off the paths it is plain decoration (vanilla W4 has 20).
+const FLOWER: u8 = 0xBD;
 /// Dotted sand: vanilla W2's ground, here grown in patches like lakes.
 const DUNE: u8 = 0x43;
 /// `TILE_POOL`, a one-tile oasis. Completable on its page, so never on rows
@@ -993,10 +1108,14 @@ fn decorate<R: Rng>(grid: &mut Grid, other: u8, rock_share: f64, rng: &mut R) {
         }
         for _ in 0..1 + region.len() / CELLS_PER_CLUSTER {
             let rock = rng.random_bool(rock_share);
+            // A completable tile (W4's fire flower) stays off rows 7 and 8,
+            // which share one completion bit: it would bar the node below.
+            let low_ok = rock || !is_completion_unsafe(other);
             let allowed: Vec<Pos> = region
                 .iter()
                 .copied()
                 .filter(|&p| grid.get(p.0, p.1) == FILL && (!rock || clear_of_paths(grid, p)))
+                .filter(|&p| low_ok || p.0 + 2 < grid.rows())
                 .collect();
             let Some(&seed) = allowed.choose(rng) else { continue };
             let size = rng.random_range(2..=MAX_CLUSTER.min(region.len() / 2).max(2));
@@ -1569,9 +1688,15 @@ fn try_once<R: Rng>(
     let pocket_size = targets.pocket.map(|(lo, hi)| rng.random_range(lo..=hi));
 
     let main_nodes = targets.nodes - pocket_size.unwrap_or(0);
+    let mut river_wanted = false;
     let splits = match targets.pipe_pairs {
         0 => 0,
-        n => n - 1 + usize::from(rng.random_bool(EXTRA_SPLIT)),
+        n => {
+            let extra = rng.random_bool(EXTRA_SPLIT);
+            river_wanted =
+                extra && targets.river_share > 0.0 && rng.random_bool(targets.river_share);
+            n - 1 + usize::from(extra && !river_wanted)
+        }
     };
     let dock_islands = match targets.dock_islands {
         (_, 0) => 0,
@@ -1645,15 +1770,13 @@ fn try_once<R: Rng>(
         //    Islands instead: grown together from seeds spread apart, never
         //    side by side, so an empty band at least one node wide lies
         //    between any two for water or scenery to fill.
-        let grown = grow_islands(
-            &main,
-            &on_lattice,
-            start,
-            splits + dock_islands,
-            main_nodes,
-            targets.island_share,
-            rng,
-        )?;
+        let rules = IslandRules {
+            share: targets.island_share,
+            edge: targets.edge_islands,
+            outer: targets.mainland_outer.map(|(lo, hi)| rng.random_range(lo..=hi)),
+        };
+        let grown =
+            grow_islands(&main, &on_lattice, start, splits + dock_islands, main_nodes, rules, rng)?;
         for island in &grown.nodes {
             nodes.extend(island.iter().filter(|&&n| n != start));
             in_tree.extend(island);
@@ -1858,7 +1981,48 @@ fn try_once<R: Rng>(
         return None;
     }
 
-    Some(Layout { rows, cols, nodes, links, start, target, loop_sizes, pocket, islands, docks })
+    //    The river, if the extra split became one: the tile column between
+    //    node columns nearest the middle of the start's island, where a path
+    //    of the island crosses it.
+    let river = if river_wanted {
+        let mut columns: Vec<usize> = mainland.iter().map(|n| n.1).collect();
+        columns.sort();
+        columns.get(columns.len() / 2).map(|&c| c + 1).filter(|&middle| {
+            middle >= 3
+                && middle + 3 < cols
+                && links.iter().any(|&(a, b, _)| {
+                    a.0 == b.0 && (a.1 + b.1) / 2 == middle && mainland.contains(&a)
+                })
+        })
+    } else {
+        None
+    };
+
+    Some(Layout {
+        rows,
+        cols,
+        nodes,
+        links,
+        start,
+        target,
+        loop_sizes,
+        pocket,
+        islands,
+        docks,
+        river,
+    })
+}
+
+/// How [`grow_islands`] deals and places islands.
+#[derive(Clone, Copy)]
+struct IslandRules {
+    /// [`Targets::island_share`].
+    share: (usize, usize),
+    /// Seed the other islands on the outermost node row or column.
+    edge: bool,
+    /// How many more of the start's island's nodes may go on the top or
+    /// bottom node row; `None` for no limit.
+    outer: Option<usize>,
 }
 
 /// A layout's islands, the start's first, and the links that grew them.
@@ -1882,14 +2046,22 @@ fn grow_islands<R: Rng>(
     start: Pos,
     splits: usize,
     total: usize,
-    share: (usize, usize),
+    rules: IslandRules,
     rng: &mut R,
 ) -> Option<Islands> {
+    let share = rules.share;
+    let (top, bottom) = (main.iter().map(|p| p.0).min()?, main.iter().map(|p| p.0).max()?);
+    let (left, right) = (main.iter().map(|p| p.1).min()?, main.iter().map(|p| p.1).max()?);
+    let on_edge = |(r, c): Pos| r == top || r == bottom || c == left || c == right;
     let mut seeds = vec![start];
     for _ in 0..splits {
         let gap = |p: Pos| seeds.iter().map(|&s| manhattan(p, s)).min().unwrap_or(0);
-        let mut far: Vec<(usize, Pos)> =
-            main.iter().copied().filter(|&p| gap(p) > 2).map(|p| (gap(p), p)).collect();
+        let mut far: Vec<(usize, Pos)> = main
+            .iter()
+            .copied()
+            .filter(|&p| gap(p) > 2 && (!rules.edge || on_edge(p)))
+            .map(|p| (gap(p), p))
+            .collect();
         far.sort_by(|x, y| y.0.cmp(&x.0).then(x.1.cmp(&y.1)));
         let &(_, seed) = far.get(..FARTHEST_FEW.min(far.len()))?.choose(rng)?;
         seeds.push(seed);
@@ -1906,6 +2078,7 @@ fn grow_islands<R: Rng>(
     let mut owner: HashMap<Pos, usize> = seeds.iter().enumerate().map(|(i, &s)| (s, i)).collect();
     let mut islands: Vec<Vec<Pos>> = seeds.iter().map(|&s| vec![s]).collect();
     let mut links = Vec::new();
+    let mut outer_left = rules.outer;
     loop {
         let short: Vec<usize> =
             (0..islands.len()).filter(|&i| islands[i].len() < quotas[i]).collect();
@@ -1917,6 +2090,7 @@ fn grow_islands<R: Rng>(
                 .filter(|&m| {
                     neighbours(m, on_lattice).iter().all(|o| owner.get(o).is_none_or(|&j| j == i))
                 })
+                .filter(|m| i != 0 || outer_left != Some(0) || (m.0 != top && m.0 != bottom))
                 .collect()
         };
         let growable: Vec<Pos> =
@@ -1937,6 +2111,9 @@ fn grow_islands<R: Rng>(
             *growable.choose(rng)?
         };
         let &to = free(from).choose(rng)?;
+        if i == 0 && (to.0 == top || to.0 == bottom) {
+            outer_left = outer_left.map(|n| n - 1);
+        }
         owner.insert(to, i);
         islands[i].push(to);
         links.push(ordered(from, to));
@@ -2183,6 +2360,7 @@ fn generated_layouts() {
             "W1 nodes 21  loops 2  dead ends 3  junctions 5  rocks 1  start->airship 9",
             "W2 nodes 47  loops 3  dead ends 7  junctions 10  pocket 6  start->airship 15",
             "W3 nodes 52  loops 4  dead ends 16  junctions 15  islands 5/3/2  docks 3",
+            "W4 nodes 34  loops 2  dead ends 10  junctions 9  islands 30/4 (start on the 4)",
         ][world - 1]
     );
 
