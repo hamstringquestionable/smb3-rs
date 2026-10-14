@@ -595,9 +595,15 @@ pub(crate) const DEST_TO_WORLD: &[(u8, usize)] = &[
 pub(crate) struct MapGridInfo {
     pub(crate) file_offset: usize,
     pub(crate) columns: usize,
-    #[allow(dead_code)]
     pub(crate) screens: usize,
 }
+
+/// `World_Map_Max_PanR` (PRG010, file 0x14F44): per world, the right-hand
+/// scroll column the map camera may not pan past, `$10` a screen. Vanilla
+/// gives W4 `$30` for its two screens, so a node in its last column pans the
+/// camera onto a blank third screen; vanilla W4 never puts one there. W5 and
+/// W8 hold `$00` (they do not pan).
+pub(crate) const MAP_MAX_PAN_R: usize = 0x14F44;
 
 pub(crate) const MAP_TILE_GRIDS: [MapGridInfo; 8] = [
     MapGridInfo { file_offset: 0x185BA, columns: 16, screens: 1 }, // W1
