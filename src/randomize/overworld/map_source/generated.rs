@@ -115,6 +115,9 @@ struct Targets {
     /// river through the start's island instead, crossed by bridges: one
     /// island still, divided to the eye.
     river_share: f64,
+    /// A world's own chance of that river, extra split or not (W4: a river
+    /// through the main island on half the maps, for its bridges).
+    river_chance: f64,
     /// The world's one split ([`Targets::pipe_pairs`] less one) is a rock
     /// pocket rather than an island: a dead-end branch of 1-3 nodes whose
     /// only way in is a breakable rock (W6). The builder, which reads rocks
@@ -139,6 +142,7 @@ const W1_TARGETS: Targets = Targets {
     mainland_outer: None,
     extra_split: 0.25,
     river_share: 0.0,
+    river_chance: 0.0,
     rock_pocket: false,
 };
 
@@ -160,6 +164,7 @@ const W2_TARGETS: Targets = Targets {
     mainland_outer: None,
     extra_split: 0.25,
     river_share: 0.0,
+    river_chance: 0.0,
     rock_pocket: false,
 };
 
@@ -181,6 +186,7 @@ const W3_TARGETS: Targets = Targets {
     mainland_outer: None,
     extra_split: 0.25,
     river_share: 0.0,
+    river_chance: 0.0,
     rock_pocket: false,
 };
 
@@ -203,6 +209,7 @@ const W4_TARGETS: Targets = Targets {
     mainland_outer: Some((0, 1)),
     extra_split: 0.25,
     river_share: 0.5,
+    river_chance: 0.5,
     rock_pocket: false,
 };
 
@@ -226,6 +233,7 @@ const W5_TARGETS: Targets = Targets {
     mainland_outer: None,
     extra_split: 0.0,
     river_share: 0.0,
+    river_chance: 0.0,
     rock_pocket: false,
 };
 
@@ -247,6 +255,7 @@ const W6_TARGETS: Targets = Targets {
     mainland_outer: None,
     extra_split: 0.0,
     river_share: 0.0,
+    river_chance: 0.0,
     rock_pocket: true,
 };
 
@@ -272,8 +281,12 @@ struct Recipe {
 enum Step {
     /// In each big open region, half the time, a lake ([`grow_lake`]).
     Lakes,
-    /// Most of the time a river joining two lakes ([`add_river`]).
-    River,
+    /// `chance` of a river joining two lakes, crossing at most
+    /// `max_crossings` paths ([`add_river`]): each crossing of a horizontal
+    /// path is a bridge, which the builder may make a water gap. A crossing
+    /// costs the route `crossing_cost` steps: high, it skirts round paths
+    /// (W1); low, it cuts across them (W6, for its bridges).
+    River { chance: f64, max_crossings: usize, crossing_cost: u32 },
     /// Sometimes a moat beside the castle ([`add_moat`]).
     Moat,
     /// The pocket strip's open space as one lake, `island` on an island at
@@ -295,8 +308,17 @@ enum Step {
     /// is sea. With `coast`, growth never takes the map's outer ring, so sea
     /// runs round the land (W4). With `solid`, channels inside an island are
     /// filled, so it reads as one landmass (W4). First in a recipe, so the
-    /// steps after it decorate the land.
-    Sea { margin: f64, land: f64, water_nodes: f64, islet: u8, coast: bool, solid: bool },
+    /// steps after it decorate the land. A horizontal path over the sea
+    /// between land nodes is a bridge `bridges` of the time, else `$B9`.
+    Sea {
+        margin: f64,
+        land: f64,
+        water_nodes: f64,
+        islet: u8,
+        coast: bool,
+        solid: bool,
+        bridges: f64,
+    },
     /// A river straight down a tile column between node columns, from the
     /// top of the map into the shore strip below, where it meets the sea as
     /// `mouth` ([`add_ground_river`]). Paths crossing it become bridges.
@@ -305,6 +327,10 @@ enum Step {
     Moats { count: (usize, usize) },
     /// A wavy coast along the top edge, lined with `mountain` ([`add_coast`]).
     Coast { mountain: u8 },
+    /// `count` rivers from the top edge to the bottom one ([`add_rivers_across`]),
+    /// running on off both: north-south, they cross the paths on every node
+    /// row, and each of those crossings is a bridge.
+    RiverAcross { count: (usize, usize), max_crossings: usize, crossing_cost: u32 },
 }
 
 const W1_RECIPE: Recipe = Recipe {
@@ -314,7 +340,11 @@ const W1_RECIPE: Recipe = Recipe {
     // Vanilla W1 has 9 rock cells to 11 clearing cells.
     scenery: &[
         Step::Lakes,
-        Step::River,
+        Step::River {
+            chance: RIVER_CHANCE,
+            max_crossings: MAX_CROSSINGS,
+            crossing_cost: CROSSING_COST,
+        },
         Step::Moat,
         Step::Clusters { other: CLEARING, rock_share: 0.4 },
     ],
@@ -359,6 +389,7 @@ const W3_RECIPE: Recipe = Recipe {
             islet: BUSH,
             coast: false,
             solid: false,
+            bridges: 0.6,
         },
         Step::Clusters { other: BUSH, rock_share: 0.0 },
         Step::Scatter { tile: PALM, count: (1, 3) },
@@ -381,6 +412,7 @@ const W4_RECIPE: Recipe = Recipe {
             islet: DECO_ROCK,
             coast: true,
             solid: true,
+            bridges: 1.0,
         },
         Step::Pools { pool: POOL, palm: PALM, count: (0, 2) },
         Step::Clusters { other: FLOWER, rock_share: 0.3 },
@@ -413,9 +445,9 @@ const W6_RECIPE: Recipe = Recipe {
     sky: None,
     scenery: &[
         Step::Coast { mountain: TALL_ROCK },
-        Step::Moats { count: (1, 3) },
+        Step::Moats { count: (2, 4) },
         Step::Lakes,
-        Step::River,
+        Step::RiverAcross { count: (1, 2), max_crossings: 5, crossing_cost: 2 },
         Step::Clusters { other: TALL_ROCK, rock_share: 0.0 },
         Step::Scatter { tile: BUSH, count: (3, 6) },
     ],
@@ -548,15 +580,10 @@ const BUSH: u8 = 0xB4;
 /// `TILE_DOCK`: the canoe is boarded from here, and the only tile it lands at.
 const DOCK: u8 = 0x4B;
 
-/// How often a horizontal path over a sea between two land nodes is a
-/// bridge, which can become a water gap; otherwise `$B9`, a path over water.
-/// Vanilla W3 has 5 bridges and 8 horizontal paths over water.
-const BRIDGE_SHARE: f64 = 0.4;
-
 /// Paths over water (`smb3_rom_reference.md`, "Paths over water"), by axis
 /// and by which ends are water nodes: `[land-land, land-water, water-land,
 /// water-water]`, the first end being the left or upper one. Land-land
-/// horizontal is a bridge or `$B9` ([`BRIDGE_SHARE`]); vertical is `$BA`
+/// horizontal is a bridge or `$B9` (the `Sea` step's `bridges`); vertical is `$BA`
 /// ([`CROSSING`]).
 const HORZ_OVER_WATER: [u8; 4] = [0xB9, 0xB7, 0xB8, 0xAC];
 const VERT_OVER_WATER: [u8; 4] = [CROSSING, 0xAA, 0xAB, 0xB0];
@@ -592,7 +619,7 @@ fn add_sea<R: Rng>(
     grid: &mut Grid,
     water: &mut Water,
     layout: &Layout,
-    (margin, land, water_nodes): (f64, f64, f64),
+    (margin, land, water_nodes, bridge_share): (f64, f64, f64, f64),
     (islet, coast, fill): (u8, bool, bool),
     rng: &mut R,
 ) -> bool {
@@ -813,7 +840,7 @@ fn add_sea<R: Rng>(
     // The sea, trimmed until every cell of it has a tile. Whether a
     // land-to-land horizontal path over it is a bridge is decided once per
     // link.
-    let bridged: Vec<bool> = layout.links.iter().map(|_| rng.random_bool(BRIDGE_SHARE)).collect();
+    let bridged: Vec<bool> = layout.links.iter().map(|_| rng.random_bool(bridge_share)).collect();
     let mut sea: Vec<Pos> = cells.iter().copied().filter(|p| !solid.contains_key(p)).collect();
     let paths_before = water.paths.len();
     loop {
@@ -1128,9 +1155,11 @@ fn run_steps<R: Rng>(
                     }
                 }
             }
-            Step::River => {
-                if rng.random_bool(RIVER_CHANCE) {
-                    add_river(grid, water, rng);
+            Step::River { chance, max_crossings, crossing_cost } => {
+                if rng.random_bool(chance) {
+                    let limits =
+                        RiverLimits { attempts: RIVER_ATTEMPTS, max_crossings, crossing_cost };
+                    add_river(grid, water, limits, rng);
                 }
             }
             Step::Moat => {
@@ -1148,8 +1177,12 @@ fn run_steps<R: Rng>(
             Step::GroundRiver { mouth } => add_ground_river(grid, water, mouth, rng),
             Step::Moats { count } => add_moats(grid, water, layout, count, rng),
             Step::Coast { mountain } => add_coast(grid, water, mountain, rng),
-            Step::Sea { margin, land, water_nodes, islet, coast, solid } => {
-                let shares = (margin, land, water_nodes);
+            Step::RiverAcross { count, max_crossings, crossing_cost } => {
+                let limits = RiverLimits { attempts: RIVER_ATTEMPTS, max_crossings, crossing_cost };
+                add_rivers_across(grid, water, count, limits, rng);
+            }
+            Step::Sea { margin, land, water_nodes, islet, coast, solid, bridges } => {
+                let shares = (margin, land, water_nodes, bridges);
                 let shape = (islet, coast, solid);
                 if !add_sea(grid, water, layout, shares, shape, rng) {
                     return false;
@@ -1160,10 +1193,10 @@ fn run_steps<R: Rng>(
     true
 }
 
-/// Routes tried, and paths crossed at most, by a river across an area (W4,
-/// W5), where it must cross the island's rows of paths rather than skirt
-/// round them.
-const AREA_RIVER: (usize, usize) = (RIVER_ATTEMPTS, 5);
+/// A river across an area (W4, W5), where it must cross the island's rows of
+/// paths rather than skirt round them.
+const AREA_RIVER: RiverLimits =
+    RiverLimits { attempts: RIVER_ATTEMPTS, max_crossings: 5, crossing_cost: CROSSING_COST };
 
 /// W5's ground river ([`carve_river`]): from the top edge of the map, where
 /// its water runs on off the map as vanilla's does, down into a shore-strip
@@ -1190,6 +1223,48 @@ fn add_ground_river<R: Rng>(grid: &mut Grid, water: &mut Water, mouth: u8, rng: 
             false
         }
     });
+}
+
+/// `count` rivers ([`carve_river`]) from the top edge, or water there, to
+/// the bottom edge, the water running on off both, each well away from the
+/// last so they do not run together.
+fn add_rivers_across<R: Rng>(
+    grid: &mut Grid,
+    water: &mut Water,
+    count: (usize, usize),
+    limits: RiverLimits,
+    rng: &mut R,
+) {
+    let last = grid.rows() - 1;
+    let mut used: Vec<usize> = Vec::new();
+    for _ in 0..rng.random_range(count.0..=count.1) {
+        let away = |c: usize| used.iter().all(|&u| u.abs_diff(c) >= 8);
+        let from: Vec<Pos> = (1..grid.cols - 1)
+            .map(|c| (0, c))
+            .filter(|&(r, c)| away(c) && (grid.get(r, c) == FILL || water.cells.contains(&(r, c))))
+            .collect();
+        let to: Vec<Pos> = (1..grid.cols - 1)
+            .map(|c| (last, c))
+            .filter(|&(r, c)| grid.get(r, c) == FILL)
+            .collect();
+        carve_river(grid, water, (&from, &to), limits, rng, |grid, water, river| {
+            let mut cells = river.cells.clone();
+            cells.push(river.end);
+            if !water.cells.contains(&river.start) {
+                cells.push(river.start);
+            }
+            let edges = (water.open_top, water.open_bottom);
+            water.open_top = true;
+            water.open_bottom = Some(grid.rows());
+            let added = water.try_add(grid, &cells, &river.bridges, &river.crossings);
+            if added {
+                used.push(river.end.1);
+            } else {
+                (water.open_top, water.open_bottom) = edges;
+            }
+            added
+        });
+    }
 }
 
 /// Turn every interior `from` cell into `to`.
@@ -1487,6 +1562,9 @@ struct Water {
     sea_bounds: Option<(usize, usize)>,
     /// Water runs on off the top edge (W5's ground river, as vanilla's).
     open_top: bool,
+    /// The map's row count when water also runs on off the bottom edge
+    /// (W6's rivers across the map).
+    open_bottom: Option<usize>,
 }
 
 impl Water {
@@ -1499,6 +1577,7 @@ impl Water {
             let inside = nr >= 0 && nc >= 0 && wet.contains(&(nr as usize, nc as usize));
             match self.sea_bounds {
                 None if nr < 0 => self.open_top,
+                None if self.open_bottom.is_some_and(|rows| nr as usize >= rows) => true,
                 None => inside,
                 Some(_) if nr < 0 => true,
                 Some((rows, _)) if nr as usize >= rows => false,
@@ -1596,11 +1675,11 @@ const CROSSING: u8 = 0xBA;
 /// Stands in for a water cell until [`Water::draw`] picks its tile, so later
 /// passes see the cell as taken.
 const WATER_PENDING: u8 = 0x8D;
-/// Chance a layout gets a river (project owner, 2026-10-12).
+/// W1's chance of a river (project owner, 2026-10-12).
 const RIVER_CHANCE: f64 = 0.75;
-/// Most paths a river may cross.
+/// Most paths W1's river may cross.
 const MAX_CROSSINGS: usize = 3;
-/// Extra cost of crossing a path, so a river crosses only when it must.
+/// W1's cost of crossing a path, so its river crosses only when it must.
 const CROSSING_COST: u32 = 6;
 /// Random extra cost per cell, up to this: what makes the river wander.
 const RIVER_NOISE: u32 = 20;
@@ -1617,7 +1696,7 @@ const END_LAKE_REGION: usize = 6;
 /// horizontal path straight north-south (a `$B3` bridge) and a vertical path
 /// straight east-west (`$BA`), never a node. Water has no tile for a channel
 /// ending on land, so a river always runs lake to lake.
-fn add_river<R: Rng>(grid: &mut Grid, water: &mut Water, rng: &mut R) {
+fn add_river<R: Rng>(grid: &mut Grid, water: &mut Water, limits: RiverLimits, rng: &mut R) {
     while water.lakes.len() < 2 {
         let near: Vec<Pos> = water.lakes.iter().flatten().copied().collect();
         let mut spots: Vec<(usize, Pos, usize)> = Vec::new();
@@ -1644,7 +1723,6 @@ fn add_river<R: Rng>(grid: &mut Grid, water: &mut Water, rng: &mut R) {
     }
     let (a, b) = farthest_lakes(&water.lakes);
     let (from, to) = (water.lakes[a].clone(), water.lakes[b].clone());
-    let limits = (RIVER_ATTEMPTS, MAX_CROSSINGS);
     carve_river(grid, water, (&from, &to), limits, rng, |grid, water, river| {
         water.try_add(grid, &river.cells, &river.bridges, &river.crossings)
     });
@@ -1674,14 +1752,14 @@ fn farthest_lakes(lakes: &[Vec<Pos>]) -> (usize, usize) {
 
 /// River cells, bridges and crossings: the cheapest route from a cell of
 /// `from` to a cell of `to`. A step onto an empty cell costs 1 plus its
-/// noise; a step over a path costs [`CROSSING_COST`] and lands on the cell
+/// noise; a step over a path costs `crossing_cost` and lands on the cell
 /// beyond, which must be empty or the destination lake.
 fn route(
     grid: &Grid,
     water: &Water,
-    from: &[Pos],
-    to: &[Pos],
+    (from, to): (&[Pos], &[Pos]),
     noise: &[Vec<u32>],
+    crossing_cost: u32,
 ) -> Option<River> {
     use std::cmp::Reverse;
     use std::collections::BinaryHeap;
@@ -1724,7 +1802,7 @@ fn route(
                 if !(to.contains(&beyond) || open(beyond)) {
                     continue;
                 }
-                (beyond, Some(next), CROSSING_COST + noise[beyond.0][beyond.1])
+                (beyond, Some(next), crossing_cost + noise[beyond.0][beyond.1])
             } else {
                 continue;
             };
@@ -1762,6 +1840,15 @@ struct River {
     end: Pos,
 }
 
+/// How hard [`carve_river`] tries and how freely its river crosses paths.
+#[derive(Clone, Copy)]
+struct RiverLimits {
+    attempts: usize,
+    max_crossings: usize,
+    /// What a crossing costs the route, in steps ([`route`]).
+    crossing_cost: u32,
+}
+
 /// The river every world uses. Up to `attempts` routes from a cell
 /// of `from` to a cell of `to`, each with fresh noise so it wanders
 /// ([`route`]); the first crossing at most `max_crossings` paths that
@@ -1772,18 +1859,18 @@ fn carve_river<R: Rng>(
     grid: &mut Grid,
     water: &mut Water,
     (from, to): (&[Pos], &[Pos]),
-    (attempts, max_crossings): (usize, usize),
+    limits: RiverLimits,
     rng: &mut R,
     mut accept: impl FnMut(&mut Grid, &mut Water, &River) -> bool,
 ) -> bool {
-    for _ in 0..attempts {
+    for _ in 0..limits.attempts {
         let noise: Vec<Vec<u32>> = (0..grid.rows())
             .map(|_| (0..grid.cols).map(|_| rng.random_range(0..RIVER_NOISE)).collect())
             .collect();
-        let Some(river) = route(grid, water, from, to, &noise) else {
+        let Some(river) = route(grid, water, (from, to), &noise, limits.crossing_cost) else {
             return false;
         };
-        if river.bridges.len() + river.crossings.len() > max_crossings {
+        if river.bridges.len() + river.crossings.len() > limits.max_crossings {
             continue;
         }
         if accept(grid, water, &river) {
@@ -2084,6 +2171,9 @@ fn try_once<R: Rng>(
             n - 1 + usize::from(extra && !river_wanted)
         }
     };
+    if !river_wanted && targets.river_chance > 0.0 {
+        river_wanted = rng.random_bool(targets.river_chance);
+    }
     let dock_islands = match targets.dock_islands {
         (_, 0) => 0,
         (lo, hi) => rng.random_range(lo..=hi),
@@ -2861,6 +2951,7 @@ fn generated_is_completable() {
     let (mut with_river, mut with_gap, mut with_moat) = (0, 0, 0);
     let mut row78_conflicts = Vec::new();
     let mut stranded_by_swap: Vec<u64> = Vec::new();
+    let mut stranded_nodes: Vec<(u64, Vec<Pos>)> = Vec::new();
     for seed in 0..seeds {
         let (shuffle, swap) = match seed % 3 {
             0 => (true, false),
@@ -2946,12 +3037,20 @@ fn generated_is_completable() {
             .copied()
             .filter(|&(r, c)| r < w1.grid.rows() && c < w1.grid.cols && !reach.contains(&(r, c)))
             .collect();
-        assert!(stranded.is_empty(), "seed {seed}: nodes no route reaches: {stranded:?}");
+        // Not a failure: only the airship must be reachable (user,
+        // 2026-10-13). Reported, to see how often the builder strands one.
+        if !stranded.is_empty() {
+            stranded_nodes.push((seed, stranded));
+        }
     }
     println!("builder: {generated} of {seeds} seeds generated a W{}, all completable", wi + 1);
     assert!(
         row78_conflicts.is_empty(),
         "a completable or removable tile above a bottom-row node (seed, column): {row78_conflicts:?}",
+    );
+    println!(
+        "  {} seeds leave a node no route reaches (allowed): {stranded_nodes:?}",
+        stranded_nodes.len()
     );
     println!(
         "  stranded with Start <-> Airship swap on: {} of {} {stranded_by_swap:?}",
