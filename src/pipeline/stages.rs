@@ -31,6 +31,11 @@ pub(super) struct Resolved {
     eights_are_wild: bool,
     antechamber_shuffle: bool,
     piranha_active: bool,
+    /// The piranha mode the run uses: the option, except that a run with
+    /// generated worlds never has it off (user, 2026-10-13). Their maps move
+    /// the plant levels, and only a shuffle moves the plants' sprites with
+    /// them, the way Hammer Bro shuffle must be on to place the bros.
+    piranha: PiranhaMode,
     hints: crate::HintMode,
 }
 
@@ -94,6 +99,10 @@ pub(super) fn resolve(seed: u64, options: &Options, rng: &mut ChaCha8Rng) -> Res
     // there. The key still encodes what the player chose; this
     // only decides what the run does with it.
     let hints = if options.world_maze { options.hints } else { crate::HintMode::Off };
+    let piranha = match options.piranha_shuffle {
+        PiranhaMode::Off if options.generated_worlds != 0 => PiranhaMode::On,
+        mode => mode,
+    };
 
     Resolved {
         whistles_removed,
@@ -105,7 +114,8 @@ pub(super) fn resolve(seed: u64, options: &Options, rng: &mut ChaCha8Rng) -> Res
         more_hammer_rocks,
         eights_are_wild,
         antechamber_shuffle,
-        piranha_active: options.piranha_shuffle != PiranhaMode::Off,
+        piranha_active: piranha != PiranhaMode::Off,
+        piranha,
         hints,
     }
 }
@@ -575,7 +585,7 @@ pub(super) fn write_overworld(
         rng,
         randomize::overworld::writer::WriteFlags {
             shuffle_hammer_bros: options.shuffle_hammer_bros,
-            piranha: options.piranha_shuffle,
+            piranha: run.piranha,
             friendlier_levels: options.friendlier_levels,
             hints: run.hints,
             deja_vu: options.deja_vu,
