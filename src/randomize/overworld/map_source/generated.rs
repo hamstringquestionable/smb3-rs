@@ -264,6 +264,10 @@ enum Step {
     /// filled, so it reads as one landmass (W4). First in a recipe, so the
     /// steps after it decorate the land.
     Sea { margin: f64, land: f64, water_nodes: f64, islet: u8, coast: bool, solid: bool },
+    /// A river straight down a tile column between node columns, from the
+    /// top of the map into the shore strip below, where it meets the sea as
+    /// `mouth` ([`add_ground_river`]). Paths crossing it become bridges.
+    GroundRiver { mouth: u8 },
 }
 
 const W1_RECIPE: Recipe = Recipe {
@@ -353,8 +357,16 @@ const W5_RECIPE: Recipe = Recipe {
     layout: W5_TARGETS,
     ground: CLEARING,
     sky: Some((SKY_GROUND, &[Step::Scatter { tile: STAR, count: (3, 6) }])),
-    scenery: &[Step::Clusters { other: BUSH, rock_share: 0.0 }],
+    scenery: &[
+        Step::GroundRiver { mouth: RIVER_MOUTH },
+        Step::Clusters { other: BUSH, rock_share: 0.0 },
+    ],
 };
+
+/// W5's shore-strip tile where its river meets the sea.
+const RIVER_MOUTH: u8 = 0x91;
+/// The plain shore-strip tile a river mouth is cut into.
+const SHORE: u8 = 0x85;
 
 /// The sky's ground: a sky blank with nothing on it.
 const SKY_GROUND: u8 = 0xD7;
@@ -411,7 +423,7 @@ fn areas(world_idx: usize, vanilla: &Grid) -> Option<Areas> {
         .flat_map(|r| (16..vanilla.cols - 1).map(move |c| (r, c)))
         .filter(|&(r, c)| !sky_frame(vanilla.get(r, c)))
         .collect();
-    Some(Areas { ground, sky, frame_fixes: vec![((7, 3), 0x85)] })
+    Some(Areas { ground, sky, frame_fixes: vec![((7, 3), SHORE)] })
 }
 
 /// What a layout is drawn on: the map's size and, for a world in areas, the
@@ -1058,6 +1070,7 @@ fn run_steps<R: Rng>(
             Step::Scatter { tile, count } => {
                 scatter(grid, built, tile, count, rng);
             }
+            Step::GroundRiver { mouth } => add_ground_river(grid, water, mouth, rng),
             Step::Sea { margin, land, water_nodes, islet, coast, solid } => {
                 let shares = (margin, land, water_nodes);
                 let shape = (islet, coast, solid);
@@ -1068,6 +1081,45 @@ fn run_steps<R: Rng>(
         }
     }
     true
+}
+
+/// A river straight down one tile column between node columns (an odd
+/// one, so it never runs along a vertical path), picked at random among the
+/// columns where it can run: water from the top while the cells are empty or
+/// paths (the paths become bridges) into a shore-strip cell below, which
+/// becomes the river's `mouth`, with no water beside it on the way (it keeps
+/// off the coast). Nothing is drawn if it would leave a water cell without a
+/// tile.
+fn add_ground_river<R: Rng>(grid: &mut Grid, water: &mut Water, mouth: u8, rng: &mut R) {
+    let course = |c: usize| -> Option<(Vec<Pos>, Vec<Pos>, usize)> {
+        let (mut cells, mut bridges) = (Vec::new(), Vec::new());
+        let mut r = 0;
+        while r < grid.rows() && matches!(grid.get(r, c), FILL | 0x45) {
+            if [grid.get(r, c - 1), grid.get(r, c + 1)].iter().any(|t| (0x82..=0xA9).contains(t)) {
+                return None;
+            }
+            if grid.get(r, c) == FILL {
+                cells.push((r, c));
+            } else {
+                bridges.push((r, c));
+            }
+            r += 1;
+        }
+        (r > 0 && r < grid.rows() && grid.get(r, c) == SHORE).then_some((cells, bridges, r))
+    };
+    let columns: Vec<usize> =
+        (3..grid.cols - 2).step_by(2).filter(|&c| course(c).is_some()).collect();
+    let Some(&c) = columns.choose(rng) else { return };
+    let Some((cells, bridges, r)) = course(c) else { return };
+    let nodes_before = water.nodes.len();
+    water.nodes.push((r, c));
+    water.open_top = true;
+    if water.try_add(grid, &cells, &bridges, &[]) {
+        grid.set(r, c, mouth);
+    } else {
+        water.nodes.truncate(nodes_before);
+        water.open_top = false;
+    }
 }
 
 /// Turn every interior `from` cell into `to`.
@@ -1372,6 +1424,8 @@ struct Water {
     /// W3's does, and meets land only along the bottom. `None` for lakes,
     /// where everything off the map is land.
     sea_bounds: Option<(usize, usize)>,
+    /// Water runs on off the top edge (W5's ground river, as vanilla's).
+    open_top: bool,
 }
 
 impl Water {
@@ -1383,6 +1437,7 @@ impl Water {
             let (nr, nc) = (r as isize + dr, c as isize + dc);
             let inside = nr >= 0 && nc >= 0 && wet.contains(&(nr as usize, nc as usize));
             match self.sea_bounds {
+                None if nr < 0 => self.open_top,
                 None => inside,
                 Some(_) if nr < 0 => true,
                 Some((rows, _)) if nr as usize >= rows => false,
