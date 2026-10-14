@@ -53,8 +53,9 @@ struct Layout {
     /// Links between nodes two tiles apart, each pair stored once.
     links: Vec<(Pos, Pos, Link)>,
     start: Pos,
-    /// The airship (the castle in W8).
-    target: Pos,
+    /// The airship; `None` where the target is fixed (W8's castle, on its
+    /// untouched last screen).
+    target: Option<Pos>,
     /// Each loop link's length: the nodes around the loop it closed when it
     /// was added. 4 is a square, which gives the player no real choice.
     loop_sizes: Vec<usize>,
@@ -131,6 +132,17 @@ struct Targets {
     /// across (W7, as vanilla's do); otherwise an empty node slot keeps them
     /// apart.
     islands_touch: bool,
+    /// The layout places the airship. W8 has none: its castle is fixed, on
+    /// the last screen, which is left as vanilla drew it.
+    airship: bool,
+    /// One island per screen, of these node counts, the start's screen's
+    /// included (W8, whose screens are walled apart by its frame: vanilla's
+    /// counts), rather than islands seeded far apart; `pipe_pairs` is then
+    /// only the builder's.
+    per_screen: Option<&'static [usize]>,
+    /// With `per_screen`, one more island of `.1` nodes on screen `.0`: W8's
+    /// short pipe-only island at the top of its second screen's ring.
+    small_island: Option<(usize, usize)>,
 }
 
 /// The proposal agreed for W1 on 2026-10-11. Vanilla W1 is 21 nodes, 2
@@ -154,6 +166,9 @@ const W1_TARGETS: Targets = Targets {
     rock_pocket: false,
     even_islands: false,
     islands_touch: false,
+    airship: true,
+    per_screen: None,
+    small_island: None,
 };
 
 /// W2, first guesses around vanilla: 47 nodes, 3 loops, 7 dead ends, 15 hops,
@@ -178,6 +193,9 @@ const W2_TARGETS: Targets = Targets {
     rock_pocket: false,
     even_islands: false,
     islands_touch: false,
+    airship: true,
+    per_screen: None,
+    small_island: None,
 };
 
 /// W3, first guesses (user, 2026-10-13): one big mainland and small islands,
@@ -202,6 +220,9 @@ const W3_TARGETS: Targets = Targets {
     rock_pocket: false,
     even_islands: false,
     islands_touch: false,
+    airship: true,
+    per_screen: None,
+    small_island: None,
 };
 
 /// W4 (user, 2026-10-13): a small island on the map's edge and a main island
@@ -227,6 +248,9 @@ const W4_TARGETS: Targets = Targets {
     rock_pocket: false,
     even_islands: false,
     islands_touch: false,
+    airship: true,
+    per_screen: None,
+    small_island: None,
 };
 
 /// W5 (user, 2026-10-13): the ground and the sky are its two islands, each
@@ -253,6 +277,9 @@ const W5_TARGETS: Targets = Targets {
     rock_pocket: false,
     even_islands: false,
     islands_touch: false,
+    airship: true,
+    per_screen: None,
+    small_island: None,
 };
 
 /// W6 (user, 2026-10-13): long, three screens, one piece but for a rock
@@ -277,6 +304,9 @@ const W6_TARGETS: Targets = Targets {
     rock_pocket: true,
     even_islands: false,
     islands_touch: false,
+    airship: true,
+    per_screen: None,
+    small_island: None,
 };
 
 /// W7 (user, 2026-10-13): many islands close to one size, every one reached
@@ -301,6 +331,38 @@ const W7_TARGETS: Targets = Targets {
     rock_pocket: false,
     even_islands: true,
     islands_touch: true,
+    airship: true,
+    per_screen: None,
+    small_island: None,
+};
+
+/// W8 (user, 2026-10-14): its first three screens drawn afresh, one island
+/// each, joined by pipe as vanilla's are, plus vanilla's short pipe-only
+/// island on the second screen; the castle's screen is left alone. 35 nodes
+/// are its 41 entries less the six on that screen. Vanilla's three screens
+/// are 8, 10 and 17 nodes, 6 pipe pairs over the whole world.
+const W8_TARGETS: Targets = Targets {
+    nodes: 35,
+    loops: (1, 4),
+    dead_ends: (6, 16),
+    start_to_target: (0, 0),
+    rocks: (0, 1),
+    pocket: None,
+    pipe_pairs: 6,
+    island_share: (0, 0),
+    dock_islands: (0, 0),
+    mainland_docks: (0, 0),
+    edge_islands: false,
+    mainland_outer: None,
+    extra_split: 0.0,
+    river_share: 0.0,
+    river_chance: 0.0,
+    rock_pocket: false,
+    even_islands: false,
+    islands_touch: false,
+    airship: false,
+    per_screen: Some(&[8, 7, 17]),
+    small_island: Some((1, 3)),
 };
 
 /// How one world is generated: its layout, then its scenery, step by step in
@@ -311,6 +373,9 @@ struct Recipe {
     /// Every cell nothing else takes. (Generation marks empty cells `FILL`
     /// throughout and swaps this in last.)
     ground: u8,
+    /// Cells left of this column take this ground instead (W8: fire on its
+    /// first screen, bones after).
+    ground_before: Option<(usize, u8)>,
     scenery: &'static [Step],
     /// A sky area's own ground and scenery (W5): its cells are left alone
     /// by `scenery`, then get these.
@@ -383,6 +448,7 @@ enum Step {
 const W1_RECIPE: Recipe = Recipe {
     layout: W1_TARGETS,
     ground: BUSH,
+    ground_before: None,
     sky: None,
     // Vanilla W1 has 9 rock cells to 11 clearing cells.
     scenery: &[
@@ -402,6 +468,7 @@ const W1_RECIPE: Recipe = Recipe {
 const W2_RECIPE: Recipe = Recipe {
     layout: W2_TARGETS,
     ground: CLEARING,
+    ground_before: None,
     sky: None,
     // One-tile pieces first: they need cells touching no path or node, which
     // the crowded main map has few of, so the patches and clusters fill
@@ -427,6 +494,7 @@ const W2_RECIPE: Recipe = Recipe {
 const W3_RECIPE: Recipe = Recipe {
     layout: W3_TARGETS,
     ground: CLEARING,
+    ground_before: None,
     sky: None,
     scenery: &[
         Step::Sea {
@@ -451,6 +519,7 @@ const W3_RECIPE: Recipe = Recipe {
 const W4_RECIPE: Recipe = Recipe {
     layout: W4_TARGETS,
     ground: CLEARING,
+    ground_before: None,
     sky: None,
     scenery: &[
         Step::Sea {
@@ -474,6 +543,7 @@ const W4_RECIPE: Recipe = Recipe {
 const W5_RECIPE: Recipe = Recipe {
     layout: W5_TARGETS,
     ground: CLEARING,
+    ground_before: None,
     sky: Some((SKY_GROUND, &[Step::Scatter { tile: STAR, count: (3, 6) }])),
     scenery: &[
         Step::GroundRiver { mouth: RIVER_MOUTH },
@@ -491,6 +561,7 @@ const SHORE: u8 = 0x85;
 const W6_RECIPE: Recipe = Recipe {
     layout: W6_TARGETS,
     ground: CLEARING,
+    ground_before: None,
     sky: None,
     scenery: &[
         Step::Coast { mountain: TALL_ROCK },
@@ -507,6 +578,7 @@ const W6_RECIPE: Recipe = Recipe {
 const W7_RECIPE: Recipe = Recipe {
     layout: W7_TARGETS,
     ground: CLEARING,
+    ground_before: None,
     sky: None,
     scenery: &[
         Step::Sea {
@@ -523,6 +595,22 @@ const W7_RECIPE: Recipe = Recipe {
         Step::Scatter { tile: FLOWER, count: (1, 3) },
     ],
 };
+
+/// W8, dark land: fire on its first screen and bones after, as vanilla,
+/// with patches of open ground and clusters of fire.
+const W8_RECIPE: Recipe = Recipe {
+    layout: W8_TARGETS,
+    ground: BONES,
+    ground_before: Some((SCREEN_COLS, FIRE)),
+    sky: None,
+    scenery: &[Step::Patches { tile: CLEARING }, Step::Clusters { other: FIRE, rock_share: 0.0 }],
+};
+
+/// W8's ground tiles: the fire of its first screen, the bones of the rest.
+const FIRE: u8 = 0xD1;
+const BONES: u8 = 0xE2;
+/// W8's frame: the void round and between its screens.
+const VOID: u8 = 0xD8;
 
 /// The sky's ground: a sky blank with nothing on it.
 const SKY_GROUND: u8 = 0xD7;
@@ -544,6 +632,7 @@ fn recipe(world_idx: usize) -> Option<&'static Recipe> {
         4 => Some(&W5_RECIPE),
         5 => Some(&W6_RECIPE),
         6 => Some(&W7_RECIPE),
+        7 => Some(&W8_RECIPE),
         _ => None,
     }
 }
@@ -565,11 +654,22 @@ fn sky_frame(tile: u8) -> bool {
     matches!(tile, 0xC2..=0xC5 | 0xD0 | 0xD2..=0xD4 | 0xD6 | 0xCE | 0x42 | 0x57..=0x5D | 0x82..=0xA9)
 }
 
-/// The play areas for `world_idx`, if it is drawn in areas. W5's ground is
+/// W8's last screen, the castle's, which is left as vanilla drew it.
+const W8_LAST_SCREEN: usize = 3 * SCREEN_COLS;
+
+/// The play areas for `world_idx`, if it is drawn in areas. W8's is every
+/// cell of its first three screens inside the void frame. W5's ground is
 /// rows 0-6 up to column 11, and column 12 where vanilla has land (rows
 /// 0-2), so the shore tiles past it still meet land; its sky is every
 /// non-frame cell from column 16.
 fn areas(world_idx: usize, vanilla: &Grid) -> Option<Areas> {
+    if world_idx == 7 {
+        let ground = (0..vanilla.rows())
+            .flat_map(|r| (1..W8_LAST_SCREEN).map(move |c| (r, c)))
+            .filter(|&(r, c)| vanilla.get(r, c) != VOID)
+            .collect();
+        return Some(Areas { ground, sky: HashSet::new(), frame_fixes: Vec::new() });
+    }
     if world_idx != 4 {
         return None;
     }
@@ -617,7 +717,8 @@ const MAX_SQUARES: usize = 1;
 ///
 /// The start goes on, or one node from, `anchor` (the vanilla start) or
 /// `airship` (the vanilla airship), a coin picking which: the two places
-/// vanilla and the Start<->Airship swap start a player. Never where the
+/// vanilla and the Start<->Airship swap start a player (W8, with no
+/// airship, always near `anchor`). Never where the
 /// starting camera ([`start_camera_col`]) shows the pocket's strip.
 /// It is picked once, so a start that is harder to fill around is not drawn
 /// less often. `anchor` also sets the lattice's parity.
@@ -625,12 +726,15 @@ fn generate<R: Rng>(
     world_idx: usize,
     frame: &Frame,
     anchor: Pos,
-    airship: Pos,
+    airship: Option<Pos>,
     targets: Targets,
     rng: &mut R,
 ) -> Option<Layout> {
     let cells = lattice(frame, anchor);
-    let near = if rng.random::<bool>() { anchor } else { airship };
+    let near = match airship {
+        Some(airship) if !rng.random::<bool>() => airship,
+        _ => anchor,
+    };
     let around: Vec<Pos> = cells
         .iter()
         .copied()
@@ -709,8 +813,9 @@ fn add_sea<R: Rng>(
     let docks: Vec<Pos> = layout.docks.iter().map(|d| d.1).collect();
     water.sea_bounds = Some((rows, cols));
 
-    let fixed =
-        |n: Pos| n == layout.start || n == layout.target || layout.docks.iter().any(|d| d.0 == n);
+    let fixed = |n: Pos| {
+        n == layout.start || Some(n) == layout.target || layout.docks.iter().any(|d| d.0 == n)
+    };
     let joined_from_above_or_left =
         |n: Pos| layout.links.iter().any(|&(_, b, kind)| kind == Link::Path && b == n);
     let on_rock =
@@ -1035,14 +1140,18 @@ fn draw_once<R: Rng>(vanilla: &WorldMap, world_idx: usize, rng: &mut R) -> Optio
         }
     })?;
     let vanilla_start = vanilla.entry_pos[start_idx];
-    let airship_idx =
-        (0..vanilla.entry_pos.len()).find(|&i| AIRSHIP_ENTRIES.contains(&(world_idx, i)))?;
+    let airship_idx = match targets.airship {
+        true => Some(
+            (0..vanilla.entry_pos.len()).find(|&i| AIRSHIP_ENTRIES.contains(&(world_idx, i)))?,
+        ),
+        false => None,
+    };
     let areas = areas(world_idx, old);
     let layout = generate(
         world_idx,
         &frame_for(world_idx, old),
         vanilla_start,
-        vanilla.entry_pos[airship_idx],
+        airship_idx.map(|i| vanilla.entry_pos[i]),
         targets,
         rng,
     )?;
@@ -1075,7 +1184,8 @@ fn draw_once<R: Rng>(vanilla: &WorldMap, world_idx: usize, rng: &mut R) -> Optio
             }
         }
     }
-    if start.1 == vanilla_start.1 {
+    let stub = (start.0, start.1 - 1);
+    if start.1 == vanilla_start.1 && areas.as_ref().is_none_or(|a| a.ground.contains(&stub)) {
         grid.set(start.0, start.1 - 1, old.get(vanilla_start.0, vanilla_start.1 - 1));
     }
     for &(a, b, kind) in &layout.links {
@@ -1099,17 +1209,24 @@ fn draw_once<R: Rng>(vanilla: &WorldMap, world_idx: usize, rng: &mut R) -> Optio
         .nodes
         .iter()
         .copied()
-        .filter(|&n| n != start && n != layout.target && !dock_nodes.contains(&n))
+        .filter(|&n| n != start && Some(n) != layout.target && !dock_nodes.contains(&n))
         .collect();
     free.shuffle(rng);
     let mut entry_pos = vanilla.entry_pos.clone();
     entry_pos[start_idx] = start;
-    entry_pos[airship_idx] = layout.target;
+    if let (Some(i), Some(target)) = (airship_idx, layout.target) {
+        entry_pos[i] = target;
+    }
     let vanilla_tile = |i: usize| {
         let p = vanilla.entry_pos[i];
         on_grid(p).then(|| old.get(p.0, p.1))
     };
-    let dealt_elsewhere = |i: usize| i == start_idx || i == airship_idx;
+    // Entries outside the areas (W8's castle screen) stay where vanilla put
+    // them.
+    let outside =
+        |p: Pos| areas.as_ref().is_some_and(|a| !a.ground.contains(&p) && !a.sky.contains(&p));
+    let dealt_elsewhere =
+        |i: usize| i == start_idx || Some(i) == airship_idx || outside(vanilla.entry_pos[i]);
     let pinned_entries: Vec<usize> = (0..entry_pos.len())
         .filter(|&i| vanilla_tile(i) == Some(DOCK))
         .chain(
@@ -1177,8 +1294,10 @@ fn draw_once<R: Rng>(vanilla: &WorldMap, world_idx: usize, rng: &mut R) -> Optio
     }
 
     // The castle top sits above the airship, as in vanilla.
-    let air = vanilla.entry_pos[airship_idx];
-    grid.set(layout.target.0 - 1, layout.target.1, old.get(air.0 - 1, air.1));
+    if let (Some(i), Some(target)) = (airship_idx, layout.target) {
+        let air = vanilla.entry_pos[i];
+        grid.set(target.0 - 1, target.1, old.get(air.0 - 1, air.1));
+    }
 
     // Every cell drawn so far is a path, a node or the castle top: what
     // one-tile scenery must not touch.
@@ -1211,7 +1330,11 @@ fn draw_once<R: Rng>(vanilla: &WorldMap, world_idx: usize, rng: &mut R) -> Optio
     for r in 0..grid.rows() {
         for c in 1..grid.cols - 1 {
             if grid.get(r, c) == FILL {
-                grid.set(r, c, recipe.ground);
+                let ground = match recipe.ground_before {
+                    Some((col, tile)) if c < col => tile,
+                    _ => recipe.ground,
+                };
+                grid.set(r, c, ground);
             }
         }
     }
@@ -1260,8 +1383,10 @@ fn run_steps<R: Rng>(
                 }
             }
             Step::Moat => {
-                if rng.random_bool(MOAT_CHANCE) {
-                    add_moat(grid, layout.target, water, true);
+                if rng.random_bool(MOAT_CHANCE)
+                    && let Some(target) = layout.target
+                {
+                    add_moat(grid, target, water, true);
                 }
             }
             Step::Oasis { island } => add_oasis(grid, water, island),
@@ -2022,7 +2147,7 @@ fn add_moats<R: Rng>(
         .nodes
         .iter()
         .copied()
-        .filter(|&n| degree[&n] == 1 && n != layout.start && n != layout.target)
+        .filter(|&n| degree[&n] == 1 && n != layout.start && Some(n) != layout.target)
         .collect();
     ends.shuffle(rng);
     let mut left = rng.random_range(count.0..=count.1);
@@ -2259,6 +2384,7 @@ fn try_once<R: Rng>(
     let main_nodes = targets.nodes - pocket_size.unwrap_or(0);
     let mut river_wanted = false;
     let splits = match targets.pipe_pairs {
+        _ if targets.per_screen.is_some() => 0,
         0 => 0,
         _ if targets.rock_pocket => 0,
         n => {
@@ -2278,7 +2404,7 @@ fn try_once<R: Rng>(
     let mut islands: Vec<Vec<Pos>> = Vec::new();
     let mut mainland: Vec<Pos> = Vec::new();
 
-    if splits + dock_islands == 0 {
+    if splits + dock_islands == 0 && targets.per_screen.is_none() {
         //    First a waypoint, reached by a winding path from the start, so every
         //    layout crosses the map. It lands in a staircase on the side away
         //    from the start's column: on the row farthest from the start's row
@@ -2370,8 +2496,11 @@ fn try_once<R: Rng>(
             even: targets.even_islands,
             touch: targets.islands_touch,
         };
-        let grown =
-            grow_islands(&main, &on_lattice, start, splits + dock_islands, main_nodes, rules, rng)?;
+        let grown = if let Some(sizes) = targets.per_screen {
+            screen_islands(&main, &on_lattice, start, sizes, targets.small_island, rng)?
+        } else {
+            grow_islands(&main, &on_lattice, start, splits + dock_islands, main_nodes, rules, rng)?
+        };
         for island in &grown.nodes {
             nodes.extend(island.iter().filter(|&&n| n != start));
             in_tree.extend(island);
@@ -2593,7 +2722,10 @@ fn try_once<R: Rng>(
             .find(|c| !c.is_empty())
             .unwrap_or_default()
     };
-    let &target = candidates.choose(rng)?;
+    let target = match targets.airship {
+        true => Some(*candidates.choose(rng)?),
+        false => None,
+    };
 
     let dead_ends = degree.iter().filter(|&(&n, &d)| d == 1 && n != start).count();
     if !(targets.dead_ends.0..=targets.dead_ends.1).contains(&dead_ends) {
@@ -2692,7 +2824,53 @@ fn grow_islands<R: Rng>(
         }
         quotas[0] = left;
     }
+    grow_from(&seeds, quotas, main, on_lattice, rules, rng)
+}
 
+/// One island per screen of `main` of `sizes` nodes, the start's first,
+/// plus `small` (a screen and a node count): one more island there, seeded
+/// among the cells farthest from that screen's seed (W8).
+fn screen_islands<R: Rng>(
+    main: &[Pos],
+    on_lattice: &HashSet<Pos>,
+    start: Pos,
+    sizes: &[usize],
+    small: Option<(usize, usize)>,
+    rng: &mut R,
+) -> Option<Islands> {
+    let screen = |p: &Pos| p.1 / SCREEN_COLS;
+    let screens = main.iter().map(screen).max()? + 1;
+    let mut seeds = vec![start];
+    for s in (0..screens).filter(|&s| s != screen(&start)) {
+        let here: Vec<Pos> = main.iter().copied().filter(|p| screen(p) == s).collect();
+        seeds.push(*here.choose(rng)?);
+    }
+    let mut quotas: Vec<usize> = seeds.iter().map(|seed| sizes[screen(seed)]).collect();
+    if let Some((s, size)) = small {
+        let others: Vec<Pos> = seeds.iter().copied().filter(|p| screen(p) == s).collect();
+        let gap = |p: Pos| others.iter().map(|&o| manhattan(p, o)).min().unwrap_or(0);
+        let mut far: Vec<(usize, Pos)> =
+            main.iter().copied().filter(|p| screen(p) == s).map(|p| (gap(p), p)).collect();
+        far.sort_by(|x, y| y.0.cmp(&x.0).then(x.1.cmp(&y.1)));
+        let &(_, seed) = far.get(..FARTHEST_FEW.min(far.len()))?.choose(rng)?;
+        seeds.push(seed);
+        quotas.push(size);
+    }
+    let rules = IslandRules { share: (0, 0), edge: false, outer: None, even: false, touch: false };
+    grow_from(&seeds, quotas, main, on_lattice, rules, rng)
+}
+
+/// Grow islands from `seeds` to `quotas` nodes, a node at a time (see
+/// [`grow_islands`]).
+fn grow_from<R: Rng>(
+    seeds: &[Pos],
+    mut quotas: Vec<usize>,
+    main: &[Pos],
+    on_lattice: &HashSet<Pos>,
+    rules: IslandRules,
+    rng: &mut R,
+) -> Option<Islands> {
+    let (top, bottom) = (main.iter().map(|p| p.0).min()?, main.iter().map(|p| p.0).max()?);
     let in_main: HashSet<Pos> = main.iter().copied().collect();
     let mut owner: HashMap<Pos, usize> = seeds.iter().enumerate().map(|(i, &s)| (s, i)).collect();
     let mut islands: Vec<Vec<Pos>> = seeds.iter().map(|&s| vec![s]).collect();
@@ -2910,7 +3088,9 @@ impl Layout {
             cells[wr][wc] = if k == 0 { 'c' } else { '~' };
         }
         cells[self.start.0][self.start.1] = 'S';
-        cells[self.target.0][self.target.1] = 'A';
+        if let Some((r, c)) = self.target {
+            cells[r][c] = 'A';
+        }
         for &(a, b, kind) in &self.links {
             let mid = ((a.0 + b.0) / 2, (a.1 + b.1) / 2);
             cells[mid.0][mid.1] = match (kind, a.0 == b.0) {
@@ -2924,7 +3104,7 @@ impl Layout {
 
     /// The figures the inventory reports for a map, on this layout.
     fn summary(&self) -> String {
-        let hops = path_hops(self.start, &self.links).get(&self.target).copied();
+        let hops = self.target.and_then(|t| path_hops(self.start, &self.links).get(&t).copied());
         format!(
             "nodes {}  loops {} {:?}  dead ends {}  junctions {}  rocks {}  pocket {}  islands {:?}  docks {}  start->airship {}",
             self.nodes.len(),
@@ -2974,10 +3154,8 @@ fn generated_layouts() {
     let grid = &maps[world - 1].grid;
     let start = crate::randomize::rom_data::find_start(grid).expect("the world has a start");
     let entries = &maps[world - 1].entry_pos;
-    let airship = (0..entries.len())
-        .find(|&i| AIRSHIP_ENTRIES.contains(&(world - 1, i)))
-        .map(|i| entries[i])
-        .expect("the world has an airship");
+    let airship =
+        (0..entries.len()).find(|&i| AIRSHIP_ENTRIES.contains(&(world - 1, i))).map(|i| entries[i]);
     println!("\nW{world} start {start:?}, airship {airship:?} (vanilla); targets: {targets:?}");
     println!(
         "Vanilla: {}",
@@ -2989,6 +3167,7 @@ fn generated_layouts() {
             "W5 nodes 42  loops 3  dead ends 8  junctions 10  islands 22/20 (ground/sky)",
             "W6 nodes 57  loops 5  dead ends 10  junctions 15  rock pocket with a pipe  start->airship 23",
             "W7 nodes 46  loops 1  dead ends 16  junctions 6  islands 14/10/9/6/4/2/1 by 8 pipes",
+            "W8 nodes 35 (castle screen fixed)  islands 8/7/3/17 by screen, 6 pipes over the world",
         ][world - 1]
     );
 
@@ -3408,8 +3587,7 @@ fn generated_layouts_have_no_hooked_cross() {
         let start = crate::randomize::rom_data::find_start(grid).unwrap();
         let airship = (0..map.entry_pos.len())
             .find(|&i| AIRSHIP_ENTRIES.contains(&(wi, i)))
-            .map(|i| map.entry_pos[i])
-            .unwrap();
+            .map(|i| map.entry_pos[i]);
         let targets = recipe(wi).unwrap().layout;
         for seed in 0..50 {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);

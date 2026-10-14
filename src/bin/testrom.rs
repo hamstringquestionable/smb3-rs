@@ -101,8 +101,8 @@ struct Cli {
     require: Option<String>,
 
     /// Give this world a generated map instead of vanilla's layout
-    /// (experimental). Repeatable; only World 1 can be generated so far, and
-    /// only with Hammer Bro shuffle on. Implies --randomize.
+    /// (experimental). Repeatable; any world can be generated, only with
+    /// Hammer Bro shuffle on. Implies --randomize.
     #[arg(long, value_name = "N", value_parser = clap::value_parser!(u8).range(1..=8))]
     generate_world: Vec<u8>,
 

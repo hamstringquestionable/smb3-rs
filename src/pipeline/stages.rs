@@ -80,7 +80,9 @@ pub(super) fn resolve(seed: u64, options: &Options, rng: &mut ChaCha8Rng) -> Res
     let hammer_breaks_bridges = options.hammer_breaks_bridges.resolve(&mut maybe_rng);
     let troll_pipes = options.troll_pipes.resolve(&mut maybe_rng);
     let more_hammer_rocks = options.more_hammer_rocks.resolve(&mut maybe_rng);
-    let eights_are_wild = options.eights_are_wild.resolve(&mut maybe_rng);
+    // A generated W8 draws its own first screen, where the canoe docks were.
+    let eights_are_wild =
+        options.eights_are_wild.resolve(&mut maybe_rng) && options.generated_worlds & (1 << 7) == 0;
     let antechamber_shuffle = options.antechamber_shuffle.resolve(&mut maybe_rng);
 
     // **Hints describe a maze, so they are off without one.**
