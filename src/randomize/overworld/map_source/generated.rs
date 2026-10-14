@@ -349,8 +349,8 @@ enum Step {
     /// Water as the ground ([`add_sea`]): `water_nodes` of the nodes that can
     /// be drawn in the sea, land on each land node's side `margin` of the
     /// time, grown by `land` of the open cells, and `islet` islets; the rest
-    /// is sea. With `coast`, growth never takes the map's outer ring, so sea
-    /// runs round the land (W4). With `solid`, channels inside an island are
+    /// is sea. With `coast`, no land is added on the map's outer ring, so sea
+    /// runs all round every island (W4, W7). With `solid`, channels inside an island are
     /// filled, so it reads as one landmass (W4). First in a recipe, so the
     /// steps after it decorate the land. A horizontal path over the sea
     /// between land nodes is a bridge `bridges` of the time, else `$B9`.
@@ -823,7 +823,11 @@ fn add_sea<R: Rng>(
         let touches_another = (r.saturating_sub(1)..=r + 1).any(|y| {
             (c.saturating_sub(1)..=c + 1).any(|x| solid.get(&(y, x)).is_some_and(|&o| o != island))
         });
+        // With a coast no land goes on the outer ring, so every island has
+        // sea all round it.
+        let on_ring = r == 0 || r + 1 == rows || c <= 1 || c + 2 >= cols;
         if !inside((r, c))
+            || (coast && on_ring)
             || keep.contains(&(r, c))
             || river.contains(&(r, c))
             || solid.contains_key(&(r, c))
