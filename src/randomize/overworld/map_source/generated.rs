@@ -67,9 +67,9 @@ struct Layout {
     /// Each dock and the water tile beside it the canoe boards from; the
     /// canoe parks beside the first, on the start's island.
     docks: Vec<(Pos, Pos)>,
-    /// A tile column of sea through the start's island, crossed by bridges
-    /// ([`Targets::river_share`]).
-    river: Option<usize>,
+    /// A river of sea through the start's island, coast to coast, crossed
+    /// by bridges ([`Targets::river_share`]); [`add_sea`] routes it.
+    river: bool,
 }
 
 /// The targets a layout must meet, or it is thrown away and redrawn.
@@ -587,12 +587,32 @@ fn add_sea<R: Rng>(
         keep
     };
     let mut keep = keep_for(&wet_nodes);
-    // A river's column is sea wherever nothing is drawn: land never grows
-    // there, though a cell with no water tile may still be trimmed to land.
-    let river: HashSet<Pos> = layout
-        .river
-        .map(|rc| (0..rows).map(|r| (r, rc)).filter(|p| empty.contains(p)).collect())
-        .unwrap_or_default();
+    // A river ([`carve_river`]) from the top coast to the bottom one, near
+    // the middle of the start's island, crossing its paths: its course is sea,
+    // so land never grows there (a cell with no water tile may still be
+    // trimmed to land).
+    let mut river: HashSet<Pos> = HashSet::new();
+    if layout.river {
+        let mut columns: Vec<usize> = layout
+            .nodes
+            .iter()
+            .filter(|n| !layout.islands.iter().any(|i| i.contains(n)))
+            .map(|n| n.1)
+            .collect();
+        columns.sort();
+        let middle = columns.get(columns.len() / 2).copied().unwrap_or(cols / 2);
+        let edge = |r: usize| -> Vec<Pos> {
+            (1..cols - 1)
+                .map(|c| (r, c))
+                .filter(|&(r, c)| c.abs_diff(middle) <= 4 && grid.get(r, c) == FILL)
+                .collect()
+        };
+        let (top, bottom) = (edge(0), edge(rows - 1));
+        carve_river(grid, water, (&top, &bottom), AREA_RIVER, rng, |_, _, course| {
+            river = course.cells.iter().chain([&course.start, &course.end]).copied().collect();
+            true
+        });
+    }
     let nodes_before = water.nodes.len();
     water.nodes.extend(&wet_nodes);
 
@@ -1083,43 +1103,36 @@ fn run_steps<R: Rng>(
     true
 }
 
-/// A river straight down one tile column between node columns (an odd
-/// one, so it never runs along a vertical path), picked at random among the
-/// columns where it can run: water from the top while the cells are empty or
-/// paths (the paths become bridges) into a shore-strip cell below, which
-/// becomes the river's `mouth`, with no water beside it on the way (it keeps
-/// off the coast). Nothing is drawn if it would leave a water cell without a
-/// tile.
+/// Routes tried, and paths crossed at most, by a river across an area (W4,
+/// W5), where it must cross the island's rows of paths rather than skirt
+/// round them.
+const AREA_RIVER: (usize, usize) = (RIVER_ATTEMPTS, 5);
+
+/// W5's ground river ([`carve_river`]): from the top edge of the map, where
+/// its water runs on off the map as vanilla's does, down into a shore-strip
+/// cell, which becomes the river's `mouth` where it meets the sea.
 fn add_ground_river<R: Rng>(grid: &mut Grid, water: &mut Water, mouth: u8, rng: &mut R) {
-    let course = |c: usize| -> Option<(Vec<Pos>, Vec<Pos>, usize)> {
-        let (mut cells, mut bridges) = (Vec::new(), Vec::new());
-        let mut r = 0;
-        while r < grid.rows() && matches!(grid.get(r, c), FILL | 0x45) {
-            if [grid.get(r, c - 1), grid.get(r, c + 1)].iter().any(|t| (0x82..=0xA9).contains(t)) {
-                return None;
-            }
-            if grid.get(r, c) == FILL {
-                cells.push((r, c));
-            } else {
-                bridges.push((r, c));
-            }
-            r += 1;
+    let from: Vec<Pos> =
+        (1..grid.cols - 1).map(|c| (0, c)).filter(|&(r, c)| grid.get(r, c) == FILL).collect();
+    let to: Vec<Pos> = (0..grid.rows())
+        .flat_map(|r| (1..grid.cols - 1).map(move |c| (r, c)))
+        .filter(|&(r, c)| grid.get(r, c) == SHORE)
+        .collect();
+    carve_river(grid, water, (&from, &to), AREA_RIVER, rng, |grid, water, river| {
+        let mut cells = river.cells.clone();
+        cells.push(river.start);
+        let nodes_before = water.nodes.len();
+        water.nodes.push(river.end);
+        water.open_top = true;
+        if water.try_add(grid, &cells, &river.bridges, &river.crossings) {
+            grid.set(river.end.0, river.end.1, mouth);
+            true
+        } else {
+            water.nodes.truncate(nodes_before);
+            water.open_top = false;
+            false
         }
-        (r > 0 && r < grid.rows() && grid.get(r, c) == SHORE).then_some((cells, bridges, r))
-    };
-    let columns: Vec<usize> =
-        (3..grid.cols - 2).step_by(2).filter(|&c| course(c).is_some()).collect();
-    let Some(&c) = columns.choose(rng) else { return };
-    let Some((cells, bridges, r)) = course(c) else { return };
-    let nodes_before = water.nodes.len();
-    water.nodes.push((r, c));
-    water.open_top = true;
-    if water.try_add(grid, &cells, &bridges, &[]) {
-        grid.set(r, c, mouth);
-    } else {
-        water.nodes.truncate(nodes_before);
-        water.open_top = false;
-    }
+    });
 }
 
 /// Turn every interior `from` cell into `to`.
@@ -1583,20 +1596,10 @@ fn add_river<R: Rng>(grid: &mut Grid, water: &mut Water, rng: &mut R) {
     }
     let (a, b) = farthest_lakes(&water.lakes);
     let (from, to) = (water.lakes[a].clone(), water.lakes[b].clone());
-    for _ in 0..RIVER_ATTEMPTS {
-        let noise: Vec<Vec<u32>> = (0..grid.rows())
-            .map(|_| (0..grid.cols).map(|_| rng.random_range(0..RIVER_NOISE)).collect())
-            .collect();
-        let Some((cells, bridges, crossings)) = route(grid, water, &from, &to, &noise) else {
-            return;
-        };
-        if bridges.len() + crossings.len() > MAX_CROSSINGS {
-            continue;
-        }
-        if water.try_add(grid, &cells, &bridges, &crossings) {
-            return;
-        }
-    }
+    let limits = (RIVER_ATTEMPTS, MAX_CROSSINGS);
+    carve_river(grid, water, (&from, &to), limits, rng, |grid, water, river| {
+        water.try_add(grid, &river.cells, &river.bridges, &river.crossings)
+    });
 }
 
 /// How many of the farthest spots a river's end lake is picked from.
@@ -1631,7 +1634,7 @@ fn route(
     from: &[Pos],
     to: &[Pos],
     noise: &[Vec<u32>],
-) -> Option<(Vec<Pos>, Vec<Pos>, Vec<Pos>)> {
+) -> Option<River> {
     use std::cmp::Reverse;
     use std::collections::BinaryHeap;
 
@@ -1697,7 +1700,49 @@ fn route(
         }
         at = prev;
     }
-    Some((cells, bridges, crossings))
+    Some(River { cells, bridges, crossings, start: at, end })
+}
+
+/// A river's course from [`route`]: its water cells (not its two ends),
+/// the paths it crosses north-south (bridges) and east-west (crossings), and
+/// the cell of `from` it left and of `to` it reached.
+struct River {
+    cells: Vec<Pos>,
+    bridges: Vec<Pos>,
+    crossings: Vec<Pos>,
+    start: Pos,
+    end: Pos,
+}
+
+/// The river every world uses. Up to `attempts` routes from a cell
+/// of `from` to a cell of `to`, each with fresh noise so it wanders
+/// ([`route`]); the first crossing at most `max_crossings` paths that
+/// `accept` takes is the river, and `true`. W1 joins two lakes, W5's ground
+/// runs from the map's top edge into the shore, W4's crosses its island from
+/// coast to coast.
+fn carve_river<R: Rng>(
+    grid: &mut Grid,
+    water: &mut Water,
+    (from, to): (&[Pos], &[Pos]),
+    (attempts, max_crossings): (usize, usize),
+    rng: &mut R,
+    mut accept: impl FnMut(&mut Grid, &mut Water, &River) -> bool,
+) -> bool {
+    for _ in 0..attempts {
+        let noise: Vec<Vec<u32>> = (0..grid.rows())
+            .map(|_| (0..grid.cols).map(|_| rng.random_range(0..RIVER_NOISE)).collect())
+            .collect();
+        let Some(river) = route(grid, water, from, to, &noise) else {
+            return false;
+        };
+        if river.bridges.len() + river.crossings.len() > max_crossings {
+            continue;
+        }
+        if accept(grid, water, &river) {
+            return true;
+        }
+    }
+    false
 }
 
 /// Chance a castle whose path comes in from the side gets a moat.
@@ -2194,22 +2239,7 @@ fn try_once<R: Rng>(
         return None;
     }
 
-    //    The river, if the extra split became one: the tile column between
-    //    node columns nearest the middle of the start's island, where a path
-    //    of the island crosses it.
-    let river = if river_wanted {
-        let mut columns: Vec<usize> = mainland.iter().map(|n| n.1).collect();
-        columns.sort();
-        columns.get(columns.len() / 2).map(|&c| c + 1).filter(|&middle| {
-            middle >= 3
-                && middle + 3 < cols
-                && links.iter().any(|&(a, b, _)| {
-                    a.0 == b.0 && (a.1 + b.1) / 2 == middle && mainland.contains(&a)
-                })
-        })
-    } else {
-        None
-    };
+    let river = river_wanted;
 
     Some(Layout {
         rows,
