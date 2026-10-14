@@ -89,7 +89,7 @@ struct Targets {
     pocket: Option<(usize, usize)>,
     /// The world's pipe pairs (`VANILLA_PIPE_PAIRS`). With `n` of them the
     /// layout splits into islands `n - 1` times, plus once more
-    /// [`EXTRA_SPLIT`] of the time; the builder's connectivity phase joins
+    /// `extra_split` of the time; the builder's connectivity phase joins
     /// each island with a pair and leaves any spare for routing.
     pipe_pairs: usize,
     /// Each island past the start's gets this share, in percent, of the nodes
@@ -106,15 +106,14 @@ struct Targets {
     /// How many of the start's island's nodes may sit on the top or bottom
     /// node row: `None` for no limit; W4 keeps its main island in the middle.
     mainland_outer: Option<(usize, usize)>,
-    /// When the extra split comes up ([`EXTRA_SPLIT`]), how often it is a
+    /// How often a world with pipes splits once more than its pipe pairs
+    /// less one: 25% (user, 2026-10-13), none where there is no room (W5).
+    extra_split: f64,
+    /// When the extra split comes up (`extra_split`), how often it is a
     /// river through the start's island instead, crossed by bridges: one
     /// island still, divided to the eye.
     river_share: f64,
 }
-
-/// How often a world with pipes splits once more than its pipe pairs less
-/// one (user, 2026-10-13).
-const EXTRA_SPLIT: f64 = 0.25;
 
 /// The proposal agreed for W1 on 2026-10-11. Vanilla W1 is 21 nodes, 2
 /// loops, 3 dead ends, 9 hops, 1 rock shortcut.
@@ -131,6 +130,7 @@ const W1_TARGETS: Targets = Targets {
     mainland_docks: (0, 0),
     edge_islands: false,
     mainland_outer: None,
+    extra_split: 0.25,
     river_share: 0.0,
 };
 
@@ -150,6 +150,7 @@ const W2_TARGETS: Targets = Targets {
     mainland_docks: (0, 0),
     edge_islands: false,
     mainland_outer: None,
+    extra_split: 0.25,
     river_share: 0.0,
 };
 
@@ -169,6 +170,7 @@ const W3_TARGETS: Targets = Targets {
     mainland_docks: (1, 2),
     edge_islands: false,
     mainland_outer: None,
+    extra_split: 0.25,
     river_share: 0.0,
 };
 
@@ -189,7 +191,30 @@ const W4_TARGETS: Targets = Targets {
     mainland_docks: (0, 0),
     edge_islands: true,
     mainland_outer: Some((0, 1)),
+    extra_split: 0.25,
     river_share: 0.5,
+};
+
+/// W5 (user, 2026-10-13): the ground and the sky are its two islands, each
+/// in vanilla's play area for it ([`areas`]), joined by the tower or the
+/// pipe as the builder likes. 42 nodes go into 46 slots, so there is no room
+/// for an extra island. Vanilla W5 is 42 nodes, 3 loops, 8 dead ends, walk
+/// pieces 22/20.
+const W5_TARGETS: Targets = Targets {
+    nodes: 42,
+    loops: (2, 4),
+    dead_ends: (4, 12),
+    start_to_target: (13, 20),
+    rocks: (0, 0),
+    pocket: None,
+    pipe_pairs: 2,
+    island_share: (48, 52),
+    dock_islands: (0, 0),
+    mainland_docks: (0, 0),
+    edge_islands: false,
+    mainland_outer: None,
+    extra_split: 0.0,
+    river_share: 0.0,
 };
 
 /// How one world is generated: its layout, then its scenery, step by step in
@@ -201,6 +226,9 @@ struct Recipe {
     /// throughout and swaps this in last.)
     ground: u8,
     scenery: &'static [Step],
+    /// A sky area's own ground and scenery (W5): its cells are left alone
+    /// by `scenery`, then get these.
+    sky: Option<(u8, &'static [Step])>,
 }
 
 /// One kind of scenery. Each sees a cell as free only while it is still
@@ -241,6 +269,7 @@ enum Step {
 const W1_RECIPE: Recipe = Recipe {
     layout: W1_TARGETS,
     ground: BUSH,
+    sky: None,
     // Vanilla W1 has 9 rock cells to 11 clearing cells.
     scenery: &[
         Step::Lakes,
@@ -255,6 +284,7 @@ const W1_RECIPE: Recipe = Recipe {
 const W2_RECIPE: Recipe = Recipe {
     layout: W2_TARGETS,
     ground: CLEARING,
+    sky: None,
     // One-tile pieces first: they need cells touching no path or node, which
     // the crowded main map has few of, so the patches and clusters fill
     // around them rather than leaving them nowhere to go.
@@ -279,6 +309,7 @@ const W2_RECIPE: Recipe = Recipe {
 const W3_RECIPE: Recipe = Recipe {
     layout: W3_TARGETS,
     ground: CLEARING,
+    sky: None,
     scenery: &[
         Step::Sea {
             margin: 0.25,
@@ -300,6 +331,7 @@ const W3_RECIPE: Recipe = Recipe {
 const W4_RECIPE: Recipe = Recipe {
     layout: W4_TARGETS,
     ground: CLEARING,
+    sky: None,
     scenery: &[
         Step::Sea {
             margin: 1.0,
@@ -315,6 +347,25 @@ const W4_RECIPE: Recipe = Recipe {
     ],
 };
 
+/// W5: the ground area plain ground with boulders (bush, as vanilla's ground
+/// page); the sky area sky ground `$D7` with stars.
+const W5_RECIPE: Recipe = Recipe {
+    layout: W5_TARGETS,
+    ground: CLEARING,
+    sky: Some((SKY_GROUND, &[Step::Scatter { tile: STAR, count: (3, 6) }])),
+    scenery: &[Step::Clusters { other: BUSH, rock_share: 0.0 }],
+};
+
+/// The sky's ground: a sky blank with nothing on it.
+const SKY_GROUND: u8 = 0xD7;
+/// `TILE_WORLD5STAR`. Completable on its page, so (as one-tile scenery) it
+/// stays off rows 7 and 8.
+const STAR: u8 = 0xE9;
+/// Sky path tiles, `(horizontal, vertical)`.
+const SKY_PATH: (u8, u8) = (0xDA, 0xDB);
+/// Marks an empty sky cell until the sky's scenery runs (see [`FILL`]).
+const SKY_FILL: u8 = 0xFE;
+
 /// The recipe for `world_idx`, for the worlds that have one.
 fn recipe(world_idx: usize) -> Option<&'static Recipe> {
     match world_idx {
@@ -322,8 +373,60 @@ fn recipe(world_idx: usize) -> Option<&'static Recipe> {
         1 => Some(&W2_RECIPE),
         2 => Some(&W3_RECIPE),
         3 => Some(&W4_RECIPE),
+        4 => Some(&W5_RECIPE),
         _ => None,
     }
+}
+
+/// A world drawn in separate play areas (W5's ground and sky), read off its
+/// vanilla map. Every other cell is frame and stays as vanilla drew it: the
+/// void, the cloud edges, the shore strip, the miniature ground.
+struct Areas {
+    ground: HashSet<Pos>,
+    sky: HashSet<Pos>,
+    /// Frame cells drawn for vanilla's content, redrawn plain: W5's river
+    /// mouth on the shore strip, which no generated river meets.
+    frame_fixes: Vec<(Pos, u8)>,
+}
+
+/// W5's sky-page frame tiles: void, cloud edges, the miniature ground, the
+/// sea and its shores.
+fn sky_frame(tile: u8) -> bool {
+    matches!(tile, 0xC2..=0xC5 | 0xD0 | 0xD2..=0xD4 | 0xD6 | 0xCE | 0x42 | 0x57..=0x5D | 0x82..=0xA9)
+}
+
+/// The play areas for `world_idx`, if it is drawn in areas. W5's ground is
+/// rows 0-6 up to column 11, and column 12 where vanilla has land (rows
+/// 0-2), so the shore tiles past it still meet land; its sky is every
+/// non-frame cell from column 16.
+fn areas(world_idx: usize, vanilla: &Grid) -> Option<Areas> {
+    if world_idx != 4 {
+        return None;
+    }
+    let ground = (0..=6)
+        .flat_map(|r| (1..=11).map(move |c| (r, c)))
+        .chain([(0, 12), (1, 12), (2, 12)])
+        .collect();
+    let sky = (0..vanilla.rows())
+        .flat_map(|r| (16..vanilla.cols - 1).map(move |c| (r, c)))
+        .filter(|&(r, c)| !sky_frame(vanilla.get(r, c)))
+        .collect();
+    Some(Areas { ground, sky, frame_fixes: vec![((7, 3), 0x85)] })
+}
+
+/// What a layout is drawn on: the map's size and, for a world in areas, the
+/// cells nodes may take (`None`: any lattice cell). Sky nodes keep two
+/// columns clear of the screen edge, as vanilla's do.
+struct Frame {
+    rows: usize,
+    cols: usize,
+    nodes: Option<HashSet<Pos>>,
+}
+
+fn frame_for(world_idx: usize, vanilla: &Grid) -> Frame {
+    let nodes = areas(world_idx, vanilla)
+        .map(|a| a.ground.iter().chain(a.sky.iter().filter(|p| p.1 >= 18)).copied().collect());
+    Frame { rows: vanilla.rows(), cols: vanilla.cols, nodes }
 }
 
 /// Layouts drawn before a world gives up and keeps vanilla.
@@ -350,14 +453,13 @@ const MAX_SQUARES: usize = 1;
 /// less often. `anchor` also sets the lattice's parity.
 fn generate<R: Rng>(
     world_idx: usize,
-    rows: usize,
-    cols: usize,
+    frame: &Frame,
     anchor: Pos,
     airship: Pos,
     targets: Targets,
     rng: &mut R,
 ) -> Option<Layout> {
-    let cells = lattice(rows, cols, anchor);
+    let cells = lattice(frame, anchor);
     let near = if rng.random::<bool>() { anchor } else { airship };
     let around: Vec<Pos> = cells
         .iter()
@@ -366,7 +468,7 @@ fn generate<R: Rng>(
         .filter(|p| targets.pocket.is_none() || start_camera_col(world_idx, p.1) + 16 <= POCKET_COL)
         .collect();
     let start = *around.choose(rng)?;
-    (0..ATTEMPTS).find_map(|_| try_once(rows, cols, anchor, start, targets, rng))
+    (0..ATTEMPTS).find_map(|_| try_once(frame, anchor, start, targets, rng))
 }
 
 /// Marks an empty cell while a map is generated: every interior cell starts
@@ -725,10 +827,10 @@ fn draw_once<R: Rng>(vanilla: &WorldMap, world_idx: usize, rng: &mut R) -> Optio
     let vanilla_start = vanilla.entry_pos[start_idx];
     let airship_idx =
         (0..vanilla.entry_pos.len()).find(|&i| AIRSHIP_ENTRIES.contains(&(world_idx, i)))?;
+    let areas = areas(world_idx, old);
     let layout = generate(
         world_idx,
-        old.rows(),
-        old.cols,
+        &frame_for(world_idx, old),
         vanilla_start,
         vanilla.entry_pos[airship_idx],
         targets,
@@ -741,17 +843,40 @@ fn draw_once<R: Rng>(vanilla: &WorldMap, world_idx: usize, rng: &mut R) -> Optio
     // entrance stub, the path running off the edge of the map.
     let mut grid = old.clone();
     grid.vanilla_layout = false;
-    for r in 0..grid.rows() {
-        for c in 1..grid.cols - 1 {
-            grid.set(r, c, FILL);
+    match &areas {
+        // In areas, only their cells are drawn afresh; the sky's start as
+        // `SKY_FILL`, so the ground's scenery leaves them alone.
+        Some(a) => {
+            for &((r, c), tile) in &a.frame_fixes {
+                grid.set(r, c, tile);
+            }
+            for &(r, c) in &a.ground {
+                grid.set(r, c, FILL);
+            }
+            for &(r, c) in &a.sky {
+                grid.set(r, c, SKY_FILL);
+            }
+        }
+        None => {
+            for r in 0..grid.rows() {
+                for c in 1..grid.cols - 1 {
+                    grid.set(r, c, FILL);
+                }
+            }
         }
     }
     if start.1 == vanilla_start.1 {
         grid.set(start.0, start.1 - 1, old.get(vanilla_start.0, vanilla_start.1 - 1));
     }
     for &(a, b, kind) in &layout.links {
-        let (horiz, vert) = if kind == Link::Rock { ROCK } else { PATH };
-        grid.set((a.0 + b.0) / 2, (a.1 + b.1) / 2, if a.0 == b.0 { horiz } else { vert });
+        let cell = ((a.0 + b.0) / 2, (a.1 + b.1) / 2);
+        let in_sky = areas.as_ref().is_some_and(|a| a.sky.contains(&cell));
+        let (horiz, vert) = match kind {
+            Link::Rock => ROCK,
+            Link::Path if in_sky => SKY_PATH,
+            Link::Path => PATH,
+        };
+        grid.set(cell.0, cell.1, if a.0 == b.0 { horiz } else { vert });
     }
 
     // Entries onto nodes: the start and the airship go where the layout put
@@ -848,47 +973,21 @@ fn draw_once<R: Rng>(vanilla: &WorldMap, world_idx: usize, rng: &mut R) -> Optio
     // one-tile scenery must not touch.
     let built: HashSet<Pos> = (0..grid.rows())
         .flat_map(|r| (1..grid.cols - 1).map(move |c| (r, c)))
-        .filter(|&(r, c)| grid.get(r, c) != FILL)
+        .filter(|&(r, c)| grid.get(r, c) != FILL && grid.get(r, c) != SKY_FILL)
         .collect();
 
-    // The recipe's scenery, then its water, then its ground.
+    // The recipe's scenery, then a sky's, then the water, then the ground.
     let mut water = Water::default();
-    for &step in recipe.scenery {
-        match step {
-            Step::Lakes => {
-                for region in empty_regions(&grid) {
-                    if region.len() >= LAKE_MIN_REGION && rng.random_bool(LAKE_CHANCE) {
-                        grow_lake(&mut grid, &region, None, &mut water, rng);
-                    }
-                }
-            }
-            Step::River => {
-                if rng.random_bool(RIVER_CHANCE) {
-                    add_river(&mut grid, &mut water, rng);
-                }
-            }
-            Step::Moat => {
-                if rng.random_bool(MOAT_CHANCE) {
-                    add_moat(&mut grid, layout.target, &mut water);
-                }
-            }
-            Step::Oasis { island } => add_oasis(&mut grid, &mut water, island),
-            Step::Pools { pool, palm, count } => {
-                add_pools(&mut grid, &built, pool, palm, count, rng)
-            }
-            Step::Patches { tile } => add_patches(&mut grid, tile, rng),
-            Step::Clusters { other, rock_share } => decorate(&mut grid, other, rock_share, rng),
-            Step::Scatter { tile, count } => {
-                scatter(&mut grid, &built, tile, count, rng);
-            }
-            Step::Sea { margin, land, water_nodes, islet, coast, solid } => {
-                let shares = (margin, land, water_nodes);
-                let shape = (islet, coast, solid);
-                if !add_sea(&mut grid, &mut water, &layout, shares, shape, rng) {
-                    return None;
-                }
-            }
+    if !run_steps(recipe.scenery, &mut grid, &mut water, &layout, &built, rng) {
+        return None;
+    }
+    if let Some((sky_ground, sky_steps)) = recipe.sky {
+        swap_tiles(&mut grid, FILL, recipe.ground);
+        swap_tiles(&mut grid, SKY_FILL, FILL);
+        if !run_steps(sky_steps, &mut grid, &mut water, &layout, &built, rng) {
+            return None;
         }
+        swap_tiles(&mut grid, FILL, sky_ground);
     }
     water.draw(&mut grid);
     // Blanks last, so each reads its final paths: the pickup keeps a blank
@@ -921,6 +1020,65 @@ fn draw_once<R: Rng>(vanilla: &WorldMap, world_idx: usize, rng: &mut R) -> Optio
             .collect(),
         canoe: layout.docks.first().map(|d| d.1),
     })
+}
+
+/// Run scenery steps over `grid`, in order. `false` if a step's drawing
+/// failed (the map is drawn again).
+fn run_steps<R: Rng>(
+    steps: &[Step],
+    grid: &mut Grid,
+    water: &mut Water,
+    layout: &Layout,
+    built: &HashSet<Pos>,
+    rng: &mut R,
+) -> bool {
+    for &step in steps {
+        match step {
+            Step::Lakes => {
+                for region in empty_regions(grid) {
+                    if region.len() >= LAKE_MIN_REGION && rng.random_bool(LAKE_CHANCE) {
+                        grow_lake(grid, &region, None, water, rng);
+                    }
+                }
+            }
+            Step::River => {
+                if rng.random_bool(RIVER_CHANCE) {
+                    add_river(grid, water, rng);
+                }
+            }
+            Step::Moat => {
+                if rng.random_bool(MOAT_CHANCE) {
+                    add_moat(grid, layout.target, water);
+                }
+            }
+            Step::Oasis { island } => add_oasis(grid, water, island),
+            Step::Pools { pool, palm, count } => add_pools(grid, built, pool, palm, count, rng),
+            Step::Patches { tile } => add_patches(grid, tile, rng),
+            Step::Clusters { other, rock_share } => decorate(grid, other, rock_share, rng),
+            Step::Scatter { tile, count } => {
+                scatter(grid, built, tile, count, rng);
+            }
+            Step::Sea { margin, land, water_nodes, islet, coast, solid } => {
+                let shares = (margin, land, water_nodes);
+                let shape = (islet, coast, solid);
+                if !add_sea(grid, water, layout, shares, shape, rng) {
+                    return false;
+                }
+            }
+        }
+    }
+    true
+}
+
+/// Turn every interior `from` cell into `to`.
+fn swap_tiles(grid: &mut Grid, from: u8, to: u8) {
+    for r in 0..grid.rows() {
+        for c in 1..grid.cols - 1 {
+            if grid.get(r, c) == from {
+                grid.set(r, c, to);
+            }
+        }
+    }
 }
 
 /// Plain ground (all four quadrants blank): W1's clearings, and W2's ground.
@@ -1631,11 +1789,11 @@ fn clear_of_paths(grid: &Grid, (r, c): Pos) -> bool {
 /// Nodes sit two tiles apart, because a map move is two tiles: on the
 /// vanilla start's row and column parity. Column 0 is left out: it is where
 /// the start's entrance path runs off the edge of the map.
-fn lattice(rows: usize, cols: usize, anchor: Pos) -> Vec<Pos> {
+fn lattice(frame: &Frame, anchor: Pos) -> Vec<Pos> {
     let mut cells = Vec::new();
-    for r in (anchor.0 % 2..rows).step_by(2) {
-        for c in (anchor.1 % 2..cols).step_by(2) {
-            if c > 0 {
+    for r in (anchor.0 % 2..frame.rows).step_by(2) {
+        for c in (anchor.1 % 2..frame.cols).step_by(2) {
+            if c > 0 && frame.nodes.as_ref().is_none_or(|n| n.contains(&(r, c))) {
                 cells.push((r, c));
             }
         }
@@ -1660,14 +1818,14 @@ fn ordered(a: Pos, b: Pos) -> (Pos, Pos) {
 }
 
 fn try_once<R: Rng>(
-    rows: usize,
-    cols: usize,
+    frame: &Frame,
     anchor: Pos,
     start: Pos,
     targets: Targets,
     rng: &mut R,
 ) -> Option<Layout> {
-    let cells = lattice(rows, cols, anchor);
+    let (rows, cols) = (frame.rows, frame.cols);
+    let cells = lattice(frame, anchor);
     let on_lattice: HashSet<Pos> = cells.iter().copied().collect();
 
     // 1. A random tree grown from the start until it has the node count. Most
@@ -1692,7 +1850,7 @@ fn try_once<R: Rng>(
     let splits = match targets.pipe_pairs {
         0 => 0,
         n => {
-            let extra = rng.random_bool(EXTRA_SPLIT);
+            let extra = targets.extra_split > 0.0 && rng.random_bool(targets.extra_split);
             river_wanted =
                 extra && targets.river_share > 0.0 && rng.random_bool(targets.river_share);
             n - 1 + usize::from(extra && !river_wanted)
@@ -2361,6 +2519,7 @@ fn generated_layouts() {
             "W2 nodes 47  loops 3  dead ends 7  junctions 10  pocket 6  start->airship 15",
             "W3 nodes 52  loops 4  dead ends 16  junctions 15  islands 5/3/2  docks 3",
             "W4 nodes 34  loops 2  dead ends 10  junctions 9  islands 30/4 (start on the 4)",
+            "W5 nodes 42  loops 3  dead ends 8  junctions 10  islands 22/20 (ground/sky)",
         ][world - 1]
     );
 
@@ -2370,7 +2529,7 @@ fn generated_layouts() {
     let (mut loops, mut squares, mut loop_total, mut junctions) = (0, 0, 0, 0);
     for seed in 1..=seeds {
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
-        match generate(world - 1, grid.rows(), grid.cols, start, airship, targets, &mut rng) {
+        match generate(world - 1, &frame_for(world - 1, grid), start, airship, targets, &mut rng) {
             Some(layout) => {
                 built += 1;
                 loops += layout.loop_sizes.len();
@@ -2777,7 +2936,7 @@ fn generated_layouts_have_no_hooked_cross() {
         for seed in 0..50 {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
             if let Some(layout) =
-                generate(wi, grid.rows(), grid.cols, start, airship, targets, &mut rng)
+                generate(wi, &frame_for(wi, grid), start, airship, targets, &mut rng)
             {
                 assert!(!hooked_cross(&layout.links), "W{} seed {seed}", wi + 1);
             }
