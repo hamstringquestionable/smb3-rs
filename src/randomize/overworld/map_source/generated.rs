@@ -70,6 +70,8 @@ struct Layout {
     /// A river of sea through the start's island, coast to coast, crossed
     /// by bridges ([`Targets::river_share`]); [`add_sea`] routes it.
     river: bool,
+    /// The rock pocket's nodes ([`Targets::rock_pocket`]); empty without one.
+    rock_pocket: Vec<Pos>,
 }
 
 /// The targets a layout must meet, or it is thrown away and redrawn.
@@ -113,6 +115,11 @@ struct Targets {
     /// river through the start's island instead, crossed by bridges: one
     /// island still, divided to the eye.
     river_share: f64,
+    /// The world's one split ([`Targets::pipe_pairs`] less one) is a rock
+    /// pocket rather than an island: a dead-end branch of 1-3 nodes whose
+    /// only way in is a breakable rock (W6). The builder, which reads rocks
+    /// as shut, joins it with a pipe: vanilla W6's pipe behind a rock.
+    rock_pocket: bool,
 }
 
 /// The proposal agreed for W1 on 2026-10-11. Vanilla W1 is 21 nodes, 2
@@ -132,6 +139,7 @@ const W1_TARGETS: Targets = Targets {
     mainland_outer: None,
     extra_split: 0.25,
     river_share: 0.0,
+    rock_pocket: false,
 };
 
 /// W2, first guesses around vanilla: 47 nodes, 3 loops, 7 dead ends, 15 hops,
@@ -152,6 +160,7 @@ const W2_TARGETS: Targets = Targets {
     mainland_outer: None,
     extra_split: 0.25,
     river_share: 0.0,
+    rock_pocket: false,
 };
 
 /// W3, first guesses (user, 2026-10-13): one big mainland and small islands,
@@ -172,6 +181,7 @@ const W3_TARGETS: Targets = Targets {
     mainland_outer: None,
     extra_split: 0.25,
     river_share: 0.0,
+    rock_pocket: false,
 };
 
 /// W4 (user, 2026-10-13): a small island on the map's edge and a main island
@@ -193,6 +203,7 @@ const W4_TARGETS: Targets = Targets {
     mainland_outer: Some((0, 1)),
     extra_split: 0.25,
     river_share: 0.5,
+    rock_pocket: false,
 };
 
 /// W5 (user, 2026-10-13): the ground and the sky are its two islands, each
@@ -215,6 +226,28 @@ const W5_TARGETS: Targets = Targets {
     mainland_outer: None,
     extra_split: 0.0,
     river_share: 0.0,
+    rock_pocket: false,
+};
+
+/// W6 (user, 2026-10-13): long, three screens, one piece but for a rock
+/// pocket (its pipe split; one per seed, never more). Vanilla W6 is 57
+/// nodes, 5 loops, 10 dead ends, 23 hops start to castle.
+const W6_TARGETS: Targets = Targets {
+    nodes: 57,
+    loops: (3, 6),
+    dead_ends: (6, 14),
+    start_to_target: (19, 27),
+    rocks: (0, 1),
+    pocket: None,
+    pipe_pairs: 2,
+    island_share: (25, 50),
+    dock_islands: (0, 0),
+    mainland_docks: (0, 0),
+    edge_islands: false,
+    mainland_outer: None,
+    extra_split: 0.0,
+    river_share: 0.0,
+    rock_pocket: true,
 };
 
 /// How one world is generated: its layout, then its scenery, step by step in
@@ -268,6 +301,10 @@ enum Step {
     /// top of the map into the shore strip below, where it meets the sea as
     /// `mouth` ([`add_ground_river`]). Paths crossing it become bridges.
     GroundRiver { mouth: u8 },
+    /// Moats round `count` dead ends entered from the side ([`add_moats`]).
+    Moats { count: (usize, usize) },
+    /// A wavy coast along the top edge, lined with `mountain` ([`add_coast`]).
+    Coast { mountain: u8 },
 }
 
 const W1_RECIPE: Recipe = Recipe {
@@ -368,6 +405,22 @@ const RIVER_MOUTH: u8 = 0x91;
 /// The plain shore-strip tile a river mouth is cut into.
 const SHORE: u8 = 0x85;
 
+/// W6, ice land: a wavy coast along the top lined with peaks, a few moats,
+/// lakes and a river, peak clusters and bushes.
+const W6_RECIPE: Recipe = Recipe {
+    layout: W6_TARGETS,
+    ground: CLEARING,
+    sky: None,
+    scenery: &[
+        Step::Coast { mountain: TALL_ROCK },
+        Step::Moats { count: (1, 3) },
+        Step::Lakes,
+        Step::River,
+        Step::Clusters { other: TALL_ROCK, rock_share: 0.0 },
+        Step::Scatter { tile: BUSH, count: (3, 6) },
+    ],
+};
+
 /// The sky's ground: a sky blank with nothing on it.
 const SKY_GROUND: u8 = 0xD7;
 /// `TILE_WORLD5STAR`. Completable on its page, so (as one-tile scenery) it
@@ -386,6 +439,7 @@ fn recipe(world_idx: usize) -> Option<&'static Recipe> {
         2 => Some(&W3_RECIPE),
         3 => Some(&W4_RECIPE),
         4 => Some(&W5_RECIPE),
+        5 => Some(&W6_RECIPE),
         _ => None,
     }
 }
@@ -951,6 +1005,7 @@ fn draw_once<R: Rng>(vanilla: &WorldMap, world_idx: usize, rng: &mut R) -> Optio
     let anchors: Vec<Pos> = layout
         .islands
         .iter()
+        .chain((!layout.rock_pocket.is_empty()).then_some(&layout.rock_pocket))
         .filter_map(|island| island.iter().copied().find(|n| free.contains(n)))
         .collect();
     free.retain(|n| !anchors.contains(n));
@@ -1080,7 +1135,7 @@ fn run_steps<R: Rng>(
             }
             Step::Moat => {
                 if rng.random_bool(MOAT_CHANCE) {
-                    add_moat(grid, layout.target, water);
+                    add_moat(grid, layout.target, water, true);
                 }
             }
             Step::Oasis { island } => add_oasis(grid, water, island),
@@ -1091,6 +1146,8 @@ fn run_steps<R: Rng>(
                 scatter(grid, built, tile, count, rng);
             }
             Step::GroundRiver { mouth } => add_ground_river(grid, water, mouth, rng),
+            Step::Moats { count } => add_moats(grid, water, layout, count, rng),
+            Step::Coast { mountain } => add_coast(grid, water, mountain, rng),
             Step::Sea { margin, land, water_nodes, islet, coast, solid } => {
                 let shares = (margin, land, water_nodes);
                 let shape = (islet, coast, solid);
@@ -1275,16 +1332,7 @@ fn add_oasis(grid: &mut Grid, water: &mut Water, island_tile: u8) {
     let island = lake.iter().copied().filter(|&p| depth(p) >= 1).max_by_key(|&p| depth(p));
     lake.retain(|&p| Some(p) != island);
 
-    let before = water.cells.len();
-    water.cells.extend(&lake);
-    loop {
-        let bad: Vec<Pos> = water.undrawable().into_iter().filter(|p| lake.contains(p)).collect();
-        let Some(&p) = bad.first() else { break };
-        lake.retain(|&q| q != p);
-        water.cells.retain(|&q| q != p);
-    }
-    water.cells.truncate(before);
-    if lake.len() >= 2 && water.try_add(grid, &lake, &[], &[]) {
+    if let Some(lake) = add_trimmed(grid, water, lake, 2) {
         if let Some((r, c)) = island {
             grid.set(r, c, island_tile);
         }
@@ -1748,30 +1796,99 @@ fn carve_river<R: Rng>(
 /// Chance a castle whose path comes in from the side gets a moat.
 const MOAT_CHANCE: f64 = 0.5;
 
-/// A moat: water on every cell around the castle and its top, with the
-/// castle's path crossing it on a bridge. Only when that path comes in from
-/// the side, because a path from below would need a vertical bridge and none
-/// exists. Every cell of the ring must be empty (or already water); a moat
-/// that would leave any water cell without a tile is not added.
-fn add_moat(grid: &mut Grid, (r, c): Pos, water: &mut Water) {
-    if r < 2 || r + 1 >= grid.rows() || c < 2 || c + 2 >= grid.cols {
-        return;
+/// A moat: water on every cell around a node (and, when `tall`, the
+/// castle top above it), with the node's path crossing it on a bridge. Only
+/// when that path comes in from the side, because a path from below would
+/// need a vertical bridge and none exists. Every cell of the ring must be
+/// empty (or already water); a moat that would leave any water cell without
+/// a tile is not added. `true` if it was.
+fn add_moat(grid: &mut Grid, (r, c): Pos, water: &mut Water, tall: bool) -> bool {
+    let top = if tall { 2 } else { 1 };
+    if r < top || r + 1 >= grid.rows() || c < 2 || c + 2 >= grid.cols {
+        return false;
     }
     let Some(entry) =
         [(r, c - 1), (r, c + 1)].into_iter().find(|&(er, ec)| grid.get(er, ec) == PATH.0)
     else {
-        return;
+        return false;
     };
-    let ring: Vec<Pos> = (r - 2..=r + 1)
+    let ring: Vec<Pos> = (r - top..=r + 1)
         .flat_map(|rr| (c - 1..=c + 1).map(move |cc| (rr, cc)))
-        .filter(|&p| p != (r - 1, c) && p != (r, c) && p != entry)
+        .filter(|&p| (!tall || p != (r - 1, c)) && p != (r, c) && p != entry)
         .collect();
     let free = |(rr, cc): Pos| grid.get(rr, cc) == FILL || water.cells.contains(&(rr, cc));
     if !ring.iter().all(|&p| free(p)) {
-        return;
+        return false;
     }
     let new: Vec<Pos> = ring.into_iter().filter(|p| !water.cells.contains(p)).collect();
-    water.try_add(grid, &new, &[entry], &[]);
+    water.try_add(grid, &new, &[entry], &[])
+}
+
+/// Moats ([`add_moat`]) round `count` dead ends entered from the side, not
+/// the start or the castle (its moat is [`Step::Moat`]), picked at random.
+fn add_moats<R: Rng>(
+    grid: &mut Grid,
+    water: &mut Water,
+    layout: &Layout,
+    count: (usize, usize),
+    rng: &mut R,
+) {
+    let degree = degrees(&layout.nodes, &layout.links);
+    let mut ends: Vec<Pos> = layout
+        .nodes
+        .iter()
+        .copied()
+        .filter(|&n| degree[&n] == 1 && n != layout.start && n != layout.target)
+        .collect();
+    ends.shuffle(rng);
+    let mut left = rng.random_range(count.0..=count.1);
+    for n in ends {
+        if left == 0 {
+            break;
+        }
+        left -= usize::from(add_moat(grid, n, water, false));
+    }
+}
+
+/// How the coast runs: each column it may step up or down a row, this often.
+const COAST_STEP: f64 = 0.35;
+/// Deepest the coast runs into the map, in rows.
+const COAST_DEPTH: isize = 3;
+/// How often a land cell on the coast is a mountain.
+const COAST_MOUNTAIN: f64 = 0.7;
+
+/// A coast along the top edge (W6): sea down from the edge, its depth
+/// stepping up or down a row now and then so the coastline is never
+/// straight, and stopping above anything drawn. The sea runs on off the
+/// map. Most land cells along the coast are `mountain`.
+fn add_coast<R: Rng>(grid: &mut Grid, water: &mut Water, mountain: u8, rng: &mut R) {
+    let mut depth = rng.random_range(1..=2_i64) as isize;
+    let (mut sea, mut lining) = (Vec::new(), Vec::new());
+    for c in 1..grid.cols - 1 {
+        if rng.random_bool(COAST_STEP) {
+            depth = (depth + if rng.random_bool(0.5) { 1 } else { -1 }).clamp(0, COAST_DEPTH);
+        }
+        let mut r = 0;
+        while (r as isize) < depth && grid.get(r, c) == FILL {
+            sea.push((r, c));
+            r += 1;
+        }
+        if r < grid.rows() && grid.get(r, c) == FILL {
+            lining.push((r, c));
+        }
+    }
+    water.open_top = true;
+    let Some(sea) = add_trimmed(grid, water, sea, 2) else { return };
+    for (r, c) in lining {
+        let below_sea = r > 0 && sea.contains(&(r - 1, c));
+        if below_sea
+            && grid.get(r, c) == FILL
+            && r + 2 < grid.rows()
+            && rng.random_bool(COAST_MOUNTAIN)
+        {
+            grid.set(r, c, mountain);
+        }
+    }
 }
 
 /// Grow a lake inside `region`, from `seed` or a random cell, and add it to
@@ -1787,23 +1904,33 @@ fn grow_lake<R: Rng>(
 ) -> bool {
     let Some(seed) = seed.or_else(|| region.choose(rng).copied()) else { return false };
     let size = rng.random_range(4..=MAX_LAKE.min(region.len() / 2).max(4));
-    let mut lake = grow_blob(region, seed, size, rng);
-    // Trim against the water already there, then take it back out:
-    // `try_add` makes the final, all-or-nothing addition.
+    let lake = grow_blob(region, seed, size, rng);
+    let Some(lake) = add_trimmed(grid, water, lake, 2) else { return false };
+    water.lakes.push(lake);
+    true
+}
+
+/// Add water `cells`, first trimming those with no tile for their picture
+/// one at a time (against the water already there), then adding the rest all
+/// or nothing. `None`, with nothing added, if fewer than `min` are left or
+/// they would leave other water without a tile. Lakes, the oasis and the
+/// coast share it.
+fn add_trimmed(
+    grid: &mut Grid,
+    water: &mut Water,
+    mut cells: Vec<Pos>,
+    min: usize,
+) -> Option<Vec<Pos>> {
     let before = water.cells.len();
-    water.cells.extend(&lake);
+    water.cells.extend(&cells);
     loop {
-        let bad: Vec<Pos> = water.undrawable().into_iter().filter(|p| lake.contains(p)).collect();
+        let bad: Vec<Pos> = water.undrawable().into_iter().filter(|p| cells.contains(p)).collect();
         let Some(&p) = bad.first() else { break };
-        lake.retain(|&q| q != p);
+        cells.retain(|&q| q != p);
         water.cells.retain(|&q| q != p);
     }
     water.cells.truncate(before);
-    if lake.len() < 2 || !water.try_add(grid, &lake, &[], &[]) {
-        return false;
-    }
-    water.lakes.push(lake);
-    true
+    (cells.len() >= min && water.try_add(grid, &cells, &[], &[])).then_some(cells)
 }
 
 /// Regions smaller than this stay bushes.
@@ -1949,6 +2076,7 @@ fn try_once<R: Rng>(
     let mut river_wanted = false;
     let splits = match targets.pipe_pairs {
         0 => 0,
+        _ if targets.rock_pocket => 0,
         n => {
             let extra = targets.extra_split > 0.0 && rng.random_bool(targets.extra_split);
             river_wanted =
@@ -1984,26 +2112,46 @@ fn try_once<R: Rng>(
             .filter(|&(r, c)| c.abs_diff(far_col) / 2 <= r.abs_diff(far_row) / 2)
             .collect();
         let waypoint = *corner.choose(rng)?;
+        // A world three screens wide or more goes by a waypoint on each
+        // screen between, so the path crosses the whole map.
+        let mut stops: Vec<Pos> = Vec::new();
+        for screen in 1..cols / SCREEN_COLS - 1 {
+            let band: Vec<Pos> = main
+                .iter()
+                .copied()
+                .filter(|p| p.1 / SCREEN_COLS == screen && *p != start)
+                .collect();
+            stops.push(*band.choose(rng)?);
+        }
+        if start.1 > waypoint.1 {
+            stops.reverse();
+        }
+        stops.push(waypoint);
         let mut at = start;
-        while at != waypoint {
-            let mut steps = Vec::new();
-            if at.1 < waypoint.1 {
-                steps.push((at.0, at.1 + 2));
+        for waypoint in stops {
+            while at != waypoint {
+                let mut steps = Vec::new();
+                if at.1 < waypoint.1 {
+                    steps.push((at.0, at.1 + 2));
+                }
+                if at.1 > waypoint.1 {
+                    steps.push((at.0, at.1 - 2));
+                }
+                if at.0 < waypoint.0 {
+                    steps.push((at.0 + 2, at.1));
+                }
+                if at.0 > waypoint.0 {
+                    steps.push((at.0 - 2, at.1));
+                }
+                let &next = steps.choose(rng)?;
+                if in_tree.insert(next) {
+                    nodes.push(next);
+                }
+                if !tree.contains(&ordered(at, next)) {
+                    tree.push(ordered(at, next));
+                }
+                at = next;
             }
-            if at.1 > waypoint.1 {
-                steps.push((at.0, at.1 - 2));
-            }
-            if at.0 < waypoint.0 {
-                steps.push((at.0 + 2, at.1));
-            }
-            if at.0 > waypoint.0 {
-                steps.push((at.0 - 2, at.1));
-            }
-            let &next = steps.choose(rng)?;
-            in_tree.insert(next);
-            nodes.push(next);
-            tree.push(ordered(at, next));
-            at = next;
         }
         while nodes.len() < main_nodes {
             let free = |n: Pos| -> Vec<Pos> {
@@ -2119,6 +2267,32 @@ fn try_once<R: Rng>(
         links.push((a, b, kind));
     }
 
+    // 3a. The rock pocket: a link whose loss cuts off 1-3 nodes (not the
+    //     start), which becomes a breakable rock. Never a vertical link down
+    //     onto the bottom row, as for every rock (rows 7 and 8 share a
+    //     completion bit).
+    let mut rock_pocket: Vec<Pos> = Vec::new();
+    if targets.rock_pocket {
+        let mut cuts: Vec<(usize, Vec<Pos>)> = Vec::new();
+        for (i, &(a, b, kind)) in links.iter().enumerate() {
+            let onto_bottom = a.1 == b.1 && a.0.max(b.0) == rows - 1;
+            if kind != Link::Path || onto_bottom {
+                continue;
+            }
+            let rest: Vec<(Pos, Pos, Link)> =
+                links.iter().enumerate().filter(|&(j, _)| j != i).map(|(_, &l)| l).collect();
+            let reached = path_hops(start, &rest);
+            let cut: Vec<Pos> =
+                nodes.iter().copied().filter(|n| !reached.contains_key(n)).collect();
+            if (1..=3).contains(&cut.len()) && !cut.iter().any(|n| walled.contains(n)) {
+                cuts.push((i, cut));
+            }
+        }
+        let (i, cut) = cuts.choose(rng)?.clone();
+        links[i].2 = Link::Rock;
+        rock_pocket = cut;
+    }
+
     // 3b. Docks: one on each of `dock_islands` islands picked at random, and
     //     one or two on the start's island, each a node with a free tile
     //     beside it for the canoe's water. That tile is always in the open
@@ -2208,6 +2382,7 @@ fn try_once<R: Rng>(
             && n.0 >= 2
             && !walled.contains(&n)
             && !docks.iter().any(|d| d.0 == n)
+            && !rock_pocket.contains(&n)
             && !links.iter().any(|&(a, b, _)| (a, b) == ((n.0 - 2, n.1), n))
     };
     let candidates: Vec<Pos> = if islands.is_empty() {
@@ -2253,6 +2428,7 @@ fn try_once<R: Rng>(
         islands,
         docks,
         river,
+        rock_pocket,
     })
 }
 
@@ -2369,6 +2545,9 @@ fn grow_islands<R: Rng>(
 /// from (0,20); one node column further out, its tiles cannot be seen from
 /// the main map without going over (user, 2026-10-13).
 const POCKET_COL: usize = 24;
+
+/// Map columns per screen.
+const SCREEN_COLS: usize = 16;
 
 /// A secret area: a small tree in the strip, joined to the main map by one
 /// link from a main node into its mouth (vanilla W2's area behind the (0,21)
@@ -2605,6 +2784,7 @@ fn generated_layouts() {
             "W3 nodes 52  loops 4  dead ends 16  junctions 15  islands 5/3/2  docks 3",
             "W4 nodes 34  loops 2  dead ends 10  junctions 9  islands 30/4 (start on the 4)",
             "W5 nodes 42  loops 3  dead ends 8  junctions 10  islands 22/20 (ground/sky)",
+            "W6 nodes 57  loops 5  dead ends 10  junctions 15  rock pocket with a pipe  start->airship 23",
         ][world - 1]
     );
 
