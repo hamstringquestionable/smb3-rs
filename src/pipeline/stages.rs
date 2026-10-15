@@ -329,6 +329,24 @@ pub(super) fn overworld_catalog(
                     rom.set_tag("overworld/generated_canoe");
                     randomize::rom_data::move_canoe(rom, wi, canoe);
                 }
+                if let Some((castle, help)) = generated.castle {
+                    use randomize::rom_data::{AIRSHIP_OBJ_SLOT, HELP_OBJ_SLOT};
+                    rom.set_tag("overworld/generated_castle_sprites");
+                    randomize::rom_data::write_map_sprite_position(
+                        rom,
+                        wi,
+                        AIRSHIP_OBJ_SLOT,
+                        castle.0,
+                        castle.1,
+                    );
+                    randomize::rom_data::write_map_sprite_position(
+                        rom,
+                        wi,
+                        HELP_OBJ_SLOT,
+                        help.0,
+                        help.1,
+                    );
+                }
                 if let Some(limit) = generated.pan_limit {
                     rom.set_tag("overworld/generated_pan_limit");
                     rom.write_byte(randomize::rom_data::MAP_MAX_PAN_R + wi, limit);

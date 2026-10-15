@@ -44,6 +44,10 @@ pub(crate) struct WorldMap {
     /// How far right a generated world's camera pans (`Map_Max_PanR`'s unit,
     /// `$10` a screen). `None` keeps the ROM's.
     pub(crate) pan_limit: Option<u8>,
+    /// Where a generated world's castle (its airship entry) and HELP bubble
+    /// are: the pipeline moves the airship and HELP sprites there. `None`
+    /// keeps them where the ROM has them.
+    pub(crate) castle: Option<(Pos, Pos)>,
 }
 
 impl WorldMap {

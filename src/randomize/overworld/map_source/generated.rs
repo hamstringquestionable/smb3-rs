@@ -1497,7 +1497,18 @@ fn draw_once<R: Rng>(
             .collect(),
         canoe: layout.docks.first().map(|d| d.1),
         pan_limit: recipe.pans_to_width.then_some((old.cols / SCREEN_COLS * 0x10) as u8),
+        castle: layout.target.map(|t| (t, help_bubble(t, old.cols, areas.as_ref()))),
     })
+}
+
+/// Where the HELP bubble floats: right of the castle top, as vanilla's does
+/// in every world, unless that cell is the frame (a castle on the last node
+/// column); then above it (user, 2026-10-15). The castle always has two rows
+/// above it ([`try_once`]), so the second always exists.
+fn help_bubble(castle: Pos, cols: usize, areas: Option<&Areas>) -> Pos {
+    let right = (castle.0 - 1, castle.1 + 1);
+    let drawn = |p: &Pos| areas.is_none_or(|a| a.ground.contains(p) || a.sky.contains(p));
+    if right.1 + 1 < cols && drawn(&right) { right } else { (castle.0 - 2, castle.1) }
 }
 
 /// Run scenery steps over `grid`, in order. `false` if a step's drawing
@@ -3426,6 +3437,7 @@ fn generated_is_completable() {
     let mut row78_conflicts = Vec::new();
     let mut stranded_by_swap: Vec<u64> = Vec::new();
     let mut stranded_nodes: Vec<(u64, Vec<Pos>)> = Vec::new();
+    let mut helps_above = 0;
     for seed in 0..seeds {
         let (shuffle, swap) = match seed % 3 {
             0 => (true, false),
@@ -3438,6 +3450,13 @@ fn generated_is_completable() {
         let recipes = RECIPES[wi];
         let recipe = recipes[(seed / 3) as usize % recipes.len()];
         let Some(w1) = draw_with(&maps[wi], wi, recipe, &mut rng) else { continue };
+        // HELP floats right of the castle top, or above it at the frame.
+        if let Some((castle, help)) = w1.castle {
+            let (right, above) = ((castle.0 - 1, castle.1 + 1), (castle.0 - 2, castle.1));
+            assert!(help == right || help == above, "seed {seed}: HELP at {help:?}");
+            assert!(help.1 >= 1 && help.1 + 1 < w1.grid.cols, "seed {seed}: HELP on the frame");
+            helps_above += usize::from(help == above);
+        }
         // Rows 7 and 8 share one completion bit: a completable or removable
         // tile on row 7 must never sit above a node on row 8.
         let last = w1.grid.rows() - 1;
@@ -3545,6 +3564,7 @@ fn generated_is_completable() {
         crate::generate_patched_rom(&raw, seed, &options, None)
             .unwrap_or_else(|e| panic!("seed {seed}: pipeline failed: {e}"));
     }
+    println!("  HELP above the castle (right is the frame): {helps_above}");
     println!("pipeline: {} seeds ran end to end", seeds.min(20));
 }
 
