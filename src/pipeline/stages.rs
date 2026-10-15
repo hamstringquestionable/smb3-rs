@@ -329,12 +329,9 @@ pub(super) fn overworld_catalog(
                     rom.set_tag("overworld/generated_canoe");
                     randomize::rom_data::move_canoe(rom, wi, canoe);
                 }
-                // The camera pans as far as the map is wide (W4's vanilla
-                // limit is a screen past it); W5 and W8 do not pan.
-                if wi != 4 && wi != 7 {
-                    let screens = randomize::rom_data::MAP_TILE_GRIDS[wi].screens;
+                if let Some(limit) = generated.pan_limit {
                     rom.set_tag("overworld/generated_pan_limit");
-                    rom.write_byte(randomize::rom_data::MAP_MAX_PAN_R + wi, (screens * 0x10) as u8);
+                    rom.write_byte(randomize::rom_data::MAP_MAX_PAN_R + wi, limit);
                 }
                 *map = generated;
             }

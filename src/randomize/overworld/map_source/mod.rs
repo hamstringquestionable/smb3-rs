@@ -41,6 +41,9 @@ pub(crate) struct WorldMap {
     /// dock. The pipeline moves the world's canoe sprite there. `None` keeps
     /// the sprite where the ROM has it.
     pub(crate) canoe: Option<Pos>,
+    /// How far right a generated world's camera pans (`Map_Max_PanR`'s unit,
+    /// `$10` a screen). `None` keeps the ROM's.
+    pub(crate) pan_limit: Option<u8>,
 }
 
 impl WorldMap {

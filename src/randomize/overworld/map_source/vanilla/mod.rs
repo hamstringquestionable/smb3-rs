@@ -108,6 +108,7 @@ fn read_tiles(rom: &Rom) -> Vec<WorldMap> {
                     .collect(),
                 no_locks: Vec::new(),
                 canoe: None,
+                pan_limit: None,
             }
         })
         .collect()

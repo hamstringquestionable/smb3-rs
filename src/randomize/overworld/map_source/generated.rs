@@ -61,6 +61,8 @@ struct Layout {
     loop_sizes: Vec<usize>,
     /// The secret area's nodes (see [`grow_pocket`]); empty without one.
     pocket: Vec<Pos>,
+    /// The first column of the secret area's strip ([`PocketTarget`]).
+    strip_col: Option<usize>,
     /// The nodes of each island the start's cannot walk to, joined later by
     /// the builder's pipes; empty without a split. The airship is on the
     /// first.
@@ -75,21 +77,26 @@ struct Layout {
     rock_pocket: Vec<Pos>,
 }
 
+/// A secret area's node count (counted in the world's nodes) and the first
+/// column of its strip, which holds nothing else.
+#[derive(Clone, Copy, Debug)]
+struct PocketTarget {
+    nodes: (usize, usize),
+    from_col: usize,
+}
+
 /// The targets a layout must meet, or it is thrown away and redrawn.
 #[derive(Clone, Copy, Debug)]
 struct Targets {
-    /// The world's pointer-entry count: one node per entry. Spare nodes hold
-    /// Hammer Bro levels, as in vanilla.
-    nodes: usize,
     /// Links added on top of a tree. Each one is exactly one loop.
     loops: (usize, usize),
     dead_ends: (usize, usize),
     /// Fewest hops from the start to the target, on paths alone.
     start_to_target: (usize, usize),
     rocks: (usize, usize),
-    /// A secret area's node count, counted in `nodes`: a small tree in the
-    /// map's last scroll view with one way in (see [`grow_pocket`]).
-    pocket: Option<(usize, usize)>,
+    /// A secret area: a small tree in a strip of its own, the map's last
+    /// scroll view, with one way in (see [`grow_pocket`]).
+    pocket: Option<PocketTarget>,
     /// The world's pipe pairs (`VANILLA_PIPE_PAIRS`). With `n` of them the
     /// layout splits into islands `n - 1` times, plus once more
     /// `extra_split` of the time; the builder's connectivity phase joins
@@ -148,7 +155,6 @@ struct Targets {
 /// The proposal agreed for W1 on 2026-10-11. Vanilla W1 is 21 nodes, 2
 /// loops, 3 dead ends, 9 hops, 1 rock shortcut.
 const W1_TARGETS: Targets = Targets {
-    nodes: 21,
     loops: (3, 5),
     dead_ends: (2, 5),
     start_to_target: (7, 11),
@@ -175,12 +181,11 @@ const W1_TARGETS: Targets = Targets {
 /// and the secret area behind the (0,21) rock, 6 nodes. The pocket has no
 /// rock at its mouth (user, 2026-10-13); rocks go elsewhere.
 const W2_TARGETS: Targets = Targets {
-    nodes: 47,
     loops: (2, 4),
     dead_ends: (5, 9),
     start_to_target: (13, 17),
     rocks: (0, 2),
-    pocket: Some((5, 7)),
+    pocket: Some(PocketTarget { nodes: (5, 7), from_col: W2_POCKET_COL }),
     pipe_pairs: 1,
     island_share: (25, 50),
     dock_islands: (0, 0),
@@ -202,7 +207,6 @@ const W2_TARGETS: Targets = Targets {
 /// many of them reached by canoe. Vanilla W3 is 52 nodes, 4 loops, 16 dead
 /// ends, walk pieces 42/5/3/2, two canoe islands.
 const W3_TARGETS: Targets = Targets {
-    nodes: 52,
     loops: (2, 5),
     dead_ends: (8, 22),
     start_to_target: (13, 20),
@@ -230,7 +234,6 @@ const W3_TARGETS: Targets = Targets {
 /// split a second pipe island or a river through the main island. Vanilla W4
 /// is 34 nodes, 2 loops, 10 dead ends, walk pieces 30/4, 2 pipe pairs.
 const W4_TARGETS: Targets = Targets {
-    nodes: 34,
     loops: (2, 4),
     dead_ends: (6, 13),
     start_to_target: (11, 17),
@@ -259,7 +262,6 @@ const W4_TARGETS: Targets = Targets {
 /// for an extra island. Vanilla W5 is 42 nodes, 3 loops, 8 dead ends, walk
 /// pieces 22/20.
 const W5_TARGETS: Targets = Targets {
-    nodes: 42,
     loops: (2, 4),
     dead_ends: (4, 12),
     start_to_target: (13, 20),
@@ -286,7 +288,6 @@ const W5_TARGETS: Targets = Targets {
 /// pocket (its pipe split; one per seed, never more). Vanilla W6 is 57
 /// nodes, 5 loops, 10 dead ends, 23 hops start to castle.
 const W6_TARGETS: Targets = Targets {
-    nodes: 57,
     loops: (3, 6),
     dead_ends: (6, 14),
     start_to_target: (19, 27),
@@ -313,7 +314,6 @@ const W6_TARGETS: Targets = Targets {
 /// only by pipe. Vanilla W7 is 46 nodes, 1 loop, 16 dead ends, walk pieces
 /// 14/10/9/6/4/2/1, 8 pipe pairs.
 const W7_TARGETS: Targets = Targets {
-    nodes: 46,
     loops: (0, 3),
     dead_ends: (8, 22),
     start_to_target: (11, 17),
@@ -342,7 +342,6 @@ const W7_TARGETS: Targets = Targets {
 /// are its 41 entries less the six on that screen. Vanilla's three screens
 /// are 8, 10 and 17 nodes, 6 pipe pairs over the whole world.
 const W8_TARGETS: Targets = Targets {
-    nodes: 35,
     loops: (1, 4),
     dead_ends: (6, 16),
     start_to_target: (0, 0),
@@ -370,6 +369,12 @@ const W8_TARGETS: Targets = Targets {
 /// recipe; a new kind of scenery is a new [`Step`] any recipe can use.
 struct Recipe {
     layout: Targets,
+    /// Where the map is drawn; the rest stays as vanilla drew it.
+    area: Area,
+    /// The camera pans as far as the map is wide (W4's vanilla limit is a
+    /// screen past it). Off where vanilla's pan must stand: W5 (whose sky is
+    /// not panned to) and W8 (whose castle screen is kept).
+    pans_to_width: bool,
     /// Every cell nothing else takes. (Generation marks empty cells `FILL`
     /// throughout and swaps this in last.)
     ground: u8,
@@ -450,6 +455,8 @@ enum Step {
 
 const W1_RECIPE: Recipe = Recipe {
     layout: W1_TARGETS,
+    area: Area::Whole,
+    pans_to_width: true,
     ground: BUSH,
     ground_before: None,
     sky: None,
@@ -470,6 +477,8 @@ const W1_RECIPE: Recipe = Recipe {
 /// oasis where vanilla draws its III (user, 2026-10-13).
 const W2_RECIPE: Recipe = Recipe {
     layout: W2_TARGETS,
+    area: Area::Whole,
+    pans_to_width: true,
     ground: CLEARING,
     ground_before: None,
     sky: None,
@@ -496,6 +505,8 @@ const W2_RECIPE: Recipe = Recipe {
 /// a few palms and pools, as vanilla has.
 const W3_RECIPE: Recipe = Recipe {
     layout: W3_TARGETS,
+    area: Area::Whole,
+    pans_to_width: true,
     ground: CLEARING,
     ground_before: None,
     sky: None,
@@ -522,6 +533,8 @@ const W3_RECIPE: Recipe = Recipe {
 /// palms and pools, rock islets.
 const W4_RECIPE: Recipe = Recipe {
     layout: W4_TARGETS,
+    area: Area::Whole,
+    pans_to_width: true,
     ground: CLEARING,
     ground_before: None,
     sky: None,
@@ -547,6 +560,13 @@ const W4_RECIPE: Recipe = Recipe {
 /// page); the sky area sky ground `$D7` with stars.
 const W5_RECIPE: Recipe = Recipe {
     layout: W5_TARGETS,
+    area: Area::GroundAndSky {
+        ground: &[Rect { rows: (0, 6), cols: (1, 11) }, Rect { rows: (0, 2), cols: (12, 12) }],
+        sky_from: SCREEN_COLS,
+        sky_frame: w5_sky_frame,
+        fixes: &[((7, 3), SHORE)],
+    },
+    pans_to_width: false,
     ground: CLEARING,
     ground_before: None,
     sky: Some((SKY_GROUND, &[Step::Scatter { tile: STAR, count: (3, 6) }])),
@@ -565,6 +585,8 @@ const SHORE: u8 = 0x85;
 /// lakes and a river, peak clusters and bushes.
 const W6_RECIPE: Recipe = Recipe {
     layout: W6_TARGETS,
+    area: Area::Whole,
+    pans_to_width: true,
     ground: CLEARING,
     ground_before: None,
     sky: None,
@@ -582,6 +604,8 @@ const W6_RECIPE: Recipe = Recipe {
 /// few fire flowers.
 const W7_RECIPE: Recipe = Recipe {
     layout: W7_TARGETS,
+    area: Area::Whole,
+    pans_to_width: true,
     ground: CLEARING,
     ground_before: None,
     sky: None,
@@ -608,6 +632,8 @@ const W7_RECIPE: Recipe = Recipe {
 /// 2026-10-14).
 const W8_RECIPE: Recipe = Recipe {
     layout: W8_TARGETS,
+    area: Area::InsideFrame { frame: VOID, to_col: 3 * SCREEN_COLS },
+    pans_to_width: false,
     ground: BONES,
     ground_before: Some((SCREEN_COLS, FIRE)),
     sky: None,
@@ -644,66 +670,99 @@ const SKY_PATH: (u8, u8) = (0xDA, 0xDB);
 /// Marks an empty sky cell until the sky's scenery runs (see [`FILL`]).
 const SKY_FILL: u8 = 0xFE;
 
-/// The recipe for `world_idx`, for the worlds that have one.
-fn recipe(world_idx: usize) -> Option<&'static Recipe> {
-    match world_idx {
-        0 => Some(&W1_RECIPE),
-        1 => Some(&W2_RECIPE),
-        2 => Some(&W3_RECIPE),
-        3 => Some(&W4_RECIPE),
-        4 => Some(&W5_RECIPE),
-        5 => Some(&W6_RECIPE),
-        6 => Some(&W7_RECIPE),
-        7 => Some(&W8_RECIPE),
-        _ => None,
-    }
+/// Each world's recipes; [`world_map`] draws with one picked at random. A
+/// new look for a world is a new recipe in its list, and nothing else.
+const RECIPES: [&[&Recipe]; 8] = [
+    &[&W1_RECIPE],
+    &[&W2_RECIPE],
+    &[&W3_RECIPE],
+    &[&W4_RECIPE],
+    &[&W5_RECIPE],
+    &[&W6_RECIPE],
+    &[&W7_RECIPE],
+    &[&W8_RECIPE],
+];
+
+/// Where a recipe draws, read off the world's vanilla map. Every other
+/// cell is frame and stays as vanilla drew it.
+#[derive(Clone, Copy)]
+enum Area {
+    /// The whole map but its first and last columns.
+    Whole,
+    /// Every cell left of `to_col` whose vanilla tile is not `frame` (W8:
+    /// inside its void, the castle's screen kept).
+    InsideFrame { frame: u8, to_col: usize },
+    /// Separate ground and sky areas (W5). The ground is `ground`'s
+    /// rectangles; the sky every cell from column `sky_from` that `sky_frame` does not
+    /// call frame. `fixes` are frame cells drawn for vanilla's content,
+    /// redrawn plain.
+    GroundAndSky {
+        ground: &'static [Rect],
+        sky_from: usize,
+        sky_frame: fn(u8) -> bool,
+        fixes: &'static [(Pos, u8)],
+    },
 }
 
-/// A world drawn in separate play areas (W5's ground and sky), read off its
-/// vanilla map. Every other cell is frame and stays as vanilla drew it: the
-/// void, the cloud edges, the shore strip, the miniature ground.
+/// Map cells from `rows.0` to `rows.1` and `cols.0` to `cols.1`, inclusive.
+#[derive(Clone, Copy)]
+struct Rect {
+    rows: (usize, usize),
+    cols: (usize, usize),
+}
+
+/// A recipe's [`Area`] on its map: every other cell is frame and stays as
+/// vanilla drew it (the void, the cloud edges, the shore strip, the
+/// miniature ground).
 struct Areas {
     ground: HashSet<Pos>,
     sky: HashSet<Pos>,
     /// Frame cells drawn for vanilla's content, redrawn plain: W5's river
     /// mouth on the shore strip, which no generated river meets.
     frame_fixes: Vec<(Pos, u8)>,
+    /// Where sky nodes start: two columns past the sky's edge, as vanilla's.
+    sky_nodes_from: usize,
 }
 
 /// W5's sky-page frame tiles: void, cloud edges, the miniature ground, the
 /// sea and its shores.
-fn sky_frame(tile: u8) -> bool {
+fn w5_sky_frame(tile: u8) -> bool {
     matches!(tile, 0xC2..=0xC5 | 0xD0 | 0xD2..=0xD4 | 0xD6 | 0xCE | 0x42 | 0x57..=0x5D | 0x82..=0xA9)
 }
 
-/// W8's last screen, the castle's, which is left as vanilla drew it.
-const W8_LAST_SCREEN: usize = 3 * SCREEN_COLS;
-
-/// The play areas for `world_idx`, if it is drawn in areas. W8's is every
-/// cell of its first three screens inside the void frame. W5's ground is
-/// rows 0-6 up to column 11, and column 12 where vanilla has land (rows
-/// 0-2), so the shore tiles past it still meet land; its sky is every
-/// non-frame cell from column 16.
-fn areas(world_idx: usize, vanilla: &Grid) -> Option<Areas> {
-    if world_idx == 7 {
-        let ground = (0..vanilla.rows())
-            .flat_map(|r| (1..W8_LAST_SCREEN).map(move |c| (r, c)))
-            .filter(|&(r, c)| vanilla.get(r, c) != VOID)
-            .collect();
-        return Some(Areas { ground, sky: HashSet::new(), frame_fixes: Vec::new() });
+/// `area` on `vanilla`; `None` for the whole map. W5's ground is rows 0-6
+/// up to column 11, and column 12 where vanilla has land (rows 0-2), so the
+/// shore tiles past it still meet land; its sky is every non-frame cell from
+/// column 16. W8's is every cell of its first three screens inside the void.
+fn areas(area: &Area, vanilla: &Grid) -> Option<Areas> {
+    match *area {
+        Area::Whole => None,
+        Area::InsideFrame { frame, to_col } => {
+            let ground = (0..vanilla.rows())
+                .flat_map(|r| (1..to_col).map(move |c| (r, c)))
+                .filter(|&(r, c)| vanilla.get(r, c) != frame)
+                .collect();
+            Some(Areas {
+                ground,
+                sky: HashSet::new(),
+                frame_fixes: Vec::new(),
+                sky_nodes_from: to_col,
+            })
+        }
+        Area::GroundAndSky { ground, sky_from, sky_frame, fixes } => {
+            let ground = ground
+                .iter()
+                .flat_map(|&Rect { rows: (r0, r1), cols: (c0, c1) }| {
+                    (r0..=r1).flat_map(move |r| (c0..=c1).map(move |c| (r, c)))
+                })
+                .collect();
+            let sky = (0..vanilla.rows())
+                .flat_map(|r| (sky_from..vanilla.cols - 1).map(move |c| (r, c)))
+                .filter(|&(r, c)| !sky_frame(vanilla.get(r, c)))
+                .collect();
+            Some(Areas { ground, sky, frame_fixes: fixes.to_vec(), sky_nodes_from: sky_from + 2 })
+        }
     }
-    if world_idx != 4 {
-        return None;
-    }
-    let ground = (0..=6)
-        .flat_map(|r| (1..=11).map(move |c| (r, c)))
-        .chain([(0, 12), (1, 12), (2, 12)])
-        .collect();
-    let sky = (0..vanilla.rows())
-        .flat_map(|r| (16..vanilla.cols - 1).map(move |c| (r, c)))
-        .filter(|&(r, c)| !sky_frame(vanilla.get(r, c)))
-        .collect();
-    Some(Areas { ground, sky, frame_fixes: vec![((7, 3), SHORE)] })
 }
 
 /// What a layout is drawn on: the map's size and, for a world in areas, the
@@ -715,10 +774,24 @@ struct Frame {
     nodes: Option<HashSet<Pos>>,
 }
 
-fn frame_for(world_idx: usize, vanilla: &Grid) -> Frame {
-    let nodes = areas(world_idx, vanilla)
-        .map(|a| a.ground.iter().chain(a.sky.iter().filter(|p| p.1 >= 18)).copied().collect());
+fn frame_for(areas: Option<&Areas>, vanilla: &Grid) -> Frame {
+    let nodes = areas.map(|a| {
+        let sky = a.sky.iter().filter(|p| p.1 >= a.sky_nodes_from);
+        a.ground.iter().chain(sky).copied().collect()
+    });
     Frame { rows: vanilla.rows(), cols: vanilla.cols, nodes }
+}
+
+/// The entries a recipe deals, one to a node: every entry on the map and
+/// inside its areas. (The others stay where vanilla put them.)
+fn dealt_entries(vanilla: &WorldMap, areas: Option<&Areas>) -> usize {
+    let grid = &vanilla.grid;
+    vanilla
+        .entry_pos
+        .iter()
+        .filter(|p| p.0 < grid.rows() && p.1 < grid.cols)
+        .filter(|p| areas.is_none_or(|a| a.ground.contains(p) || a.sky.contains(p)))
+        .count()
 }
 
 /// Layouts drawn before a world gives up and keeps vanilla.
@@ -750,6 +823,7 @@ fn generate<R: Rng>(
     anchor: Pos,
     airship: Option<Pos>,
     targets: Targets,
+    node_count: usize,
     rng: &mut R,
 ) -> Option<Layout> {
     let cells = lattice(frame, anchor);
@@ -761,10 +835,12 @@ fn generate<R: Rng>(
         .iter()
         .copied()
         .filter(|&p| manhattan(p, near) <= 2)
-        .filter(|p| targets.pocket.is_none() || start_camera_col(world_idx, p.1) + 16 <= POCKET_COL)
+        .filter(|p| {
+            targets.pocket.is_none_or(|k| start_camera_col(world_idx, p.1) + 16 <= k.from_col)
+        })
         .collect();
     let start = *around.choose(rng)?;
-    (0..ATTEMPTS).find_map(|_| try_once(frame, anchor, start, targets, rng))
+    (0..ATTEMPTS).find_map(|_| try_once(frame, anchor, start, targets, node_count, rng))
 }
 
 /// Marks an empty cell while a map is generated: every interior cell starts
@@ -1158,13 +1234,30 @@ const ROCK: (u8, u8) = (ROCK_BREAK_H, ROCK_BREAK_V);
 /// vanilla map, which supplies the frame, the start, and each entry's tile).
 /// `None` if no draw succeeded in [`DRAWS`] tries; the caller keeps vanilla then.
 ///
-/// Worlds 1 to 3 so far.
+/// The recipe is one of the world's [`RECIPES`], picked at random; a world
+/// with one takes no draw for it.
 pub(crate) fn world_map<R: Rng>(
     vanilla: &WorldMap,
     world_idx: usize,
     rng: &mut R,
 ) -> Option<WorldMap> {
-    (0..DRAWS).find_map(|_| draw_once(vanilla, world_idx, rng))
+    let recipes = RECIPES.get(world_idx)?;
+    let recipe = match recipes.len() {
+        0 => return None,
+        1 => recipes[0],
+        n => recipes[rng.random_range(..n)],
+    };
+    draw_with(vanilla, world_idx, recipe, rng)
+}
+
+/// [`world_map`] with `recipe`.
+fn draw_with<R: Rng>(
+    vanilla: &WorldMap,
+    world_idx: usize,
+    recipe: &Recipe,
+    rng: &mut R,
+) -> Option<WorldMap> {
+    (0..DRAWS).find_map(|_| draw_once(vanilla, world_idx, recipe, rng))
 }
 
 /// Whole maps drawn before a world gives up and keeps vanilla. A draw can
@@ -1173,8 +1266,12 @@ pub(crate) fn world_map<R: Rng>(
 const DRAWS: usize = 20;
 
 /// One attempt at [`world_map`].
-fn draw_once<R: Rng>(vanilla: &WorldMap, world_idx: usize, rng: &mut R) -> Option<WorldMap> {
-    let recipe = recipe(world_idx)?;
+fn draw_once<R: Rng>(
+    vanilla: &WorldMap,
+    world_idx: usize,
+    recipe: &Recipe,
+    rng: &mut R,
+) -> Option<WorldMap> {
     let targets = recipe.layout;
     let old = &vanilla.grid;
     let on_grid = |p: Pos| p.0 < old.rows() && p.1 < old.cols;
@@ -1191,13 +1288,14 @@ fn draw_once<R: Rng>(vanilla: &WorldMap, world_idx: usize, rng: &mut R) -> Optio
         ),
         false => None,
     };
-    let areas = areas(world_idx, old);
+    let areas = areas(&recipe.area, old);
     let layout = generate(
         world_idx,
-        &frame_for(world_idx, old),
+        &frame_for(areas.as_ref(), old),
         vanilla_start,
         airship_idx.map(|i| vanilla.entry_pos[i]),
         targets,
+        dealt_entries(vanilla, areas.as_ref()),
         rng,
     )?;
     let start = layout.start;
@@ -1398,6 +1496,7 @@ fn draw_once<R: Rng>(vanilla: &WorldMap, world_idx: usize, rng: &mut R) -> Optio
             .chain(water.paths.iter().map(|&(p, _)| p))
             .collect(),
         canoe: layout.docks.first().map(|d| d.1),
+        pan_limit: recipe.pans_to_width.then_some((old.cols / SCREEN_COLS * 0x10) as u8),
     })
 }
 
@@ -1434,7 +1533,11 @@ fn run_steps<R: Rng>(
                     add_moat(grid, target, water, true);
                 }
             }
-            Step::Oasis { island } => add_oasis(grid, water, island),
+            Step::Oasis { island } => {
+                if let Some(col) = layout.strip_col {
+                    add_oasis(grid, water, col, island);
+                }
+            }
             Step::Pools { pool, palm, count } => add_pools(grid, built, pool, palm, count, rng),
             Step::Patches { tile } => add_patches(grid, tile, rng),
             Step::Clusters { other, rock_share } => decorate(grid, other, rock_share, rng),
@@ -1657,11 +1760,11 @@ fn add_patches<R: Rng>(grid: &mut Grid, tile: u8, rng: &mut R) {
 /// water, with `island_tile` on an island at its deepest cell when it has one (a
 /// cell with water all round). Water cells with no tile for their picture
 /// are trimmed back to ground. Takes no random draws: the strip decides it.
-fn add_oasis(grid: &mut Grid, water: &mut Water, island_tile: u8) {
+fn add_oasis(grid: &mut Grid, water: &mut Water, strip_col: usize, island_tile: u8) {
     let strip: Vec<Pos> = empty_regions(grid)
         .into_iter()
         .flat_map(|region| {
-            let in_strip: Vec<Pos> = region.into_iter().filter(|p| p.1 >= POCKET_COL).collect();
+            let in_strip: Vec<Pos> = region.into_iter().filter(|p| p.1 >= strip_col).collect();
             connected_pieces(&in_strip)
         })
         .max_by(|a, b| a.len().cmp(&b.len()).then(b.cmp(a)))
@@ -2413,6 +2516,7 @@ fn try_once<R: Rng>(
     anchor: Pos,
     start: Pos,
     targets: Targets,
+    node_count: usize,
     rng: &mut R,
 ) -> Option<Layout> {
     let (rows, cols) = (frame.rows, frame.cols);
@@ -2430,13 +2534,13 @@ fn try_once<R: Rng>(
     // it, and the waypoint and airship ignore it, so it hangs off the main map
     // by one link. Empty without a pocket.
     let walled: HashSet<Pos> = match targets.pocket {
-        Some(_) => cells.iter().copied().filter(|p| p.1 >= POCKET_COL).collect(),
+        Some(k) => cells.iter().copied().filter(|p| p.1 >= k.from_col).collect(),
         None => HashSet::new(),
     };
     let main: Vec<Pos> = cells.iter().copied().filter(|p| !walled.contains(p)).collect();
-    let pocket_size = targets.pocket.map(|(lo, hi)| rng.random_range(lo..=hi));
+    let pocket_size = targets.pocket.map(|k| rng.random_range(k.nodes.0..=k.nodes.1));
 
-    let main_nodes = targets.nodes - pocket_size.unwrap_or(0);
+    let main_nodes = node_count - pocket_size.unwrap_or(0);
     let mut river_wanted = false;
     let splits = match targets.pipe_pairs {
         _ if targets.per_screen.is_some() => 0,
@@ -2801,6 +2905,7 @@ fn try_once<R: Rng>(
         target,
         loop_sizes,
         pocket,
+        strip_col: targets.pocket.map(|k| k.from_col),
         islands,
         docks,
         river,
@@ -2976,11 +3081,11 @@ fn grow_from<R: Rng>(
     Some(Islands { nodes: islands, links })
 }
 
-/// The first column of the pocket's strip: the map's last scroll view, which
-/// holds nothing else. Vanilla W2's secret area starts at column 22, entered
-/// from (0,20); one node column further out, its tiles cannot be seen from
-/// the main map without going over (user, 2026-10-13).
-const POCKET_COL: usize = 24;
+/// W2's pocket strip: the map's last scroll view. Vanilla W2's secret area
+/// starts at column 22, entered from (0,20); one node column further out,
+/// its tiles cannot be seen from the main map without going over (user,
+/// 2026-10-13).
+const W2_POCKET_COL: usize = 24;
 
 /// Map columns per screen.
 const SCREEN_COLS: usize = 16;
@@ -3193,9 +3298,6 @@ impl Layout {
 #[test]
 #[ignore]
 fn generated_layouts() {
-    use rand::SeedableRng;
-    use rand_chacha::ChaCha8Rng;
-
     let Some(rom) = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes")
         .ok()
         .and_then(|d| crate::rom::Rom::from_bytes(&d).ok())
@@ -3205,12 +3307,36 @@ fn generated_layouts() {
     };
     let maps = super::vanilla::load(&rom, false, false);
     let world: usize = std::env::var("LAYOUT_WORLD").ok().and_then(|s| s.parse().ok()).unwrap_or(1);
-    let targets = recipe(world - 1).expect("LAYOUT_WORLD has a recipe").layout;
     let grid = &maps[world - 1].grid;
     let start = crate::randomize::rom_data::find_start(grid).expect("the world has a start");
     let entries = &maps[world - 1].entry_pos;
     let airship =
         (0..entries.len()).find(|&i| AIRSHIP_ENTRIES.contains(&(world - 1, i))).map(|i| entries[i]);
+    let recipes = RECIPES[world - 1];
+    for (k, recipe) in recipes.iter().enumerate() {
+        if recipes.len() > 1 {
+            println!("\n=== recipe {} of {}", k + 1, recipes.len());
+        }
+        let areas = areas(&recipe.area, grid);
+        let frame = frame_for(areas.as_ref(), grid);
+        let node_count = dealt_entries(&maps[world - 1], areas.as_ref());
+        layout_report(world, start, airship, recipe.layout, &frame, node_count);
+    }
+}
+
+/// `generated_layouts` for one recipe.
+#[cfg(test)]
+fn layout_report(
+    world: usize,
+    start: Pos,
+    airship: Option<Pos>,
+    targets: Targets,
+    frame: &Frame,
+    node_count: usize,
+) {
+    use rand::SeedableRng;
+    use rand_chacha::ChaCha8Rng;
+
     println!("\nW{world} start {start:?}, airship {airship:?} (vanilla); targets: {targets:?}");
     println!(
         "Vanilla: {}",
@@ -3232,7 +3358,7 @@ fn generated_layouts() {
     let (mut loops, mut squares, mut loop_total, mut junctions) = (0, 0, 0, 0);
     for seed in 1..=seeds {
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
-        match generate(world - 1, &frame_for(world - 1, grid), start, airship, targets, &mut rng) {
+        match generate(world - 1, frame, start, airship, targets, node_count, &mut rng) {
             Some(layout) => {
                 built += 1;
                 loops += layout.loop_sizes.len();
@@ -3308,7 +3434,10 @@ fn generated_is_completable() {
         };
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
         let mut maps = super::vanilla::load(&rom, false, false);
-        let Some(w1) = world_map(&maps[wi], wi, &mut rng) else { continue };
+        // Each of the world's recipes in turn, every arm over each.
+        let recipes = RECIPES[wi];
+        let recipe = recipes[(seed / 3) as usize % recipes.len()];
+        let Some(w1) = draw_with(&maps[wi], wi, recipe, &mut rng) else { continue };
         // Rows 7 and 8 share one completion bit: a completable or removable
         // tile on row 7 must never sit above a node on row 8.
         let last = w1.grid.rows() - 1;
@@ -3419,11 +3548,11 @@ fn generated_is_completable() {
     println!("pipeline: {} seeds ran end to end", seeds.min(20));
 }
 
-/// A generated W2's start never shows the pocket's strip: the starting camera
-/// ([`start_camera_col`]) must stop short of it, so the secret area is found
-/// only by going over.
+/// A generated world's start never shows its pocket's strip: the starting
+/// camera ([`start_camera_col`]) must stop short of it, so the secret area is
+/// found only by going over. Every recipe with a pocket.
 #[test]
-fn generated_w2_start_never_shows_the_pocket() {
+fn generated_start_never_shows_the_pocket() {
     use rand::SeedableRng;
     use rand_chacha::ChaCha8Rng;
 
@@ -3435,11 +3564,61 @@ fn generated_w2_start_never_shows_the_pocket() {
         return;
     };
     let vanilla = super::vanilla::load(&rom, false, false);
-    for seed in 0..50 {
-        let map = world_map(&vanilla[1], 1, &mut ChaCha8Rng::seed_from_u64(seed)).unwrap();
-        let start = crate::randomize::rom_data::find_start(&map.grid).unwrap();
-        let shown = start_camera_col(1, start.1) + 16;
-        assert!(shown <= POCKET_COL, "seed {seed}: start {start:?} shows up to column {shown}");
+    for (wi, recipes) in RECIPES.iter().enumerate() {
+        for recipe in recipes.iter() {
+            let Some(pocket) = recipe.layout.pocket else { continue };
+            for seed in 0..50 {
+                let mut rng = ChaCha8Rng::seed_from_u64(seed);
+                let map = draw_with(&vanilla[wi], wi, recipe, &mut rng).unwrap();
+                let start = crate::randomize::rom_data::find_start(&map.grid).unwrap();
+                let shown = start_camera_col(wi, start.1) + 16;
+                assert!(
+                    shown <= pocket.from_col,
+                    "W{} seed {seed}: start {start:?} shows up to column {shown}",
+                    wi + 1
+                );
+            }
+        }
+    }
+}
+
+/// Every recipe fits its world, so it can be fed to the generator as it
+/// stands: per-screen island sizes add up to the entries it deals, a pocket's
+/// strip is on the map, and it draws a map on the first few seeds.
+#[test]
+fn recipes_fit_their_worlds() {
+    use rand::SeedableRng;
+    use rand_chacha::ChaCha8Rng;
+
+    let Some(rom) = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes")
+        .ok()
+        .and_then(|d| crate::rom::Rom::from_bytes(&d).ok())
+    else {
+        eprintln!("SKIP: requires the ROM, which is not included in the repo");
+        return;
+    };
+    let vanilla = super::vanilla::load(&rom, false, false);
+    for (wi, recipes) in RECIPES.iter().enumerate() {
+        for (k, recipe) in recipes.iter().enumerate() {
+            let at = format!("W{} recipe {}", wi + 1, k + 1);
+            let areas = areas(&recipe.area, &vanilla[wi].grid);
+            let dealt = dealt_entries(&vanilla[wi], areas.as_ref());
+            let targets = recipe.layout;
+            if let Some(sizes) = targets.per_screen {
+                let small = targets.small_island.map_or(0, |s| s.1);
+                assert_eq!(sizes.iter().sum::<usize>() + small, dealt, "{at}: screen sizes");
+            }
+            if let Some(pocket) = targets.pocket {
+                assert!(pocket.from_col < vanilla[wi].grid.cols, "{at}: pocket off the map");
+            }
+            for seed in 0..5 {
+                let mut rng = ChaCha8Rng::seed_from_u64(seed);
+                assert!(
+                    draw_with(&vanilla[wi], wi, recipe, &mut rng).is_some(),
+                    "{at} seed {seed}"
+                );
+            }
+        }
     }
 }
 
@@ -3458,7 +3637,7 @@ fn generated_worlds_are_deterministic() {
         return;
     };
     let vanilla = super::vanilla::load(&rom, false, false);
-    for (wi, map) in vanilla.iter().enumerate().take(2) {
+    for (wi, map) in vanilla.iter().enumerate() {
         for seed in 0..20 {
             let draw = || world_map(map, wi, &mut ChaCha8Rng::seed_from_u64(seed)).unwrap();
             let (a, b) = (draw(), draw());
@@ -3643,13 +3822,17 @@ fn generated_layouts_have_no_hooked_cross() {
         let airship = (0..map.entry_pos.len())
             .find(|&i| AIRSHIP_ENTRIES.contains(&(wi, i)))
             .map(|i| map.entry_pos[i]);
-        let targets = recipe(wi).unwrap().layout;
-        for seed in 0..50 {
-            let mut rng = ChaCha8Rng::seed_from_u64(seed);
-            if let Some(layout) =
-                generate(wi, &frame_for(wi, grid), start, airship, targets, &mut rng)
-            {
-                assert!(!hooked_cross(&layout.links), "W{} seed {seed}", wi + 1);
+        for recipe in RECIPES[wi] {
+            let areas = areas(&recipe.area, grid);
+            let frame = frame_for(areas.as_ref(), grid);
+            let node_count = dealt_entries(map, areas.as_ref());
+            for seed in 0..50 {
+                let mut rng = ChaCha8Rng::seed_from_u64(seed);
+                if let Some(layout) =
+                    generate(wi, &frame, start, airship, recipe.layout, node_count, &mut rng)
+                {
+                    assert!(!hooked_cross(&layout.links), "W{} seed {seed}", wi + 1);
+                }
             }
         }
     }
