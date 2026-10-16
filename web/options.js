@@ -396,7 +396,9 @@ export const SCHEMA = [
 		label: "Shuffle HammerBro Locations",
 		tip: "Spread the wandering Hammer Bros across all worlds (random spots, 1-3 per world) instead of their fixed vanilla locations.",
 		icon: MAP_HAMMER_BRO,
-		group: "map", inFlagKey: true },
+		group: "map", inFlagKey: true,
+		// A generated map has no bro spots of its own: the builder places them.
+		forcedByGenerated: true },
 	{ id: "hands_levels", type: "bool", default: true,
 		label: "Hand-Trap Levels", flavor: "It's a trap!",
 		tip: "Add visible hand-trap tiles. Walking onto one always grabs you and pulls you into a level.",
@@ -448,7 +450,10 @@ export const SCHEMA = [
 		label: "Piranha Shuffle",
 		tip: "Free the two W7 piranha plant levels into the level shuffle. On: their plants travel with them, guarding wherever they land. Wild: the plants scatter instead — one lands on a random level in each world, and stepping on a plant starts the level under it.",
 		icon: MAP_PIRANHA,
-		group: "map", inFlagKey: true },
+		group: "map", inFlagKey: true,
+		// A generated map moves the plant levels, and only a shuffle moves
+		// their plants with them.
+		forcedByGenerated: "on" },
 	{ id: "limit_bro_movement", type: "bool", default: false,
 		label: "Limit Bro Movement",
 		tip: "Gate Hammer Bro overworld Movements to increase race equality.",
@@ -1207,6 +1212,8 @@ export function assertPresetParity() {
 //                              value the ROM will use, greyed and badged, and
 //                              the player's own setting comes back when they
 //                              leave the mode.
+//   forcedByGenerated: <value> The same, for Generated Overworld: one of the
+//                              `FORCING_SWITCHES` below, which the maze is too.
 //
 // Every mode-specific option stays in the section it belongs to and keeps its
 // own row. Hiding one, or swapping two onto a shared row, was tried and dropped:
@@ -1234,15 +1241,40 @@ function isInert(entry, mode) {
 	return !!entry.mode && entry.mode !== mode;
 }
 
+// Options that, while on, pin others to a value: each names the schema key an
+// entry uses to say what it is pinned to. The first one on wins.
+const FORCING_SWITCHES = [
+	{ id: MODE_SWITCH, key: "forcedInMaze", label: "World Maze" },
+	{ id: "generated_overworld", key: "forcedByGenerated", label: "Generated Overworld" },
+];
+
+// Whether any switch can pin this entry.
+function isForceable(entry) {
+	return FORCING_SWITCHES.some(sw => entry[sw.key] !== undefined);
+}
+
+// The switch pinning this entry right now, and the value: `null` if none is.
+function activeForce(entry) {
+	for (const sw of FORCING_SWITCHES) {
+		if (entry[sw.key] === undefined) continue;
+		const host = SCHEMA.find(s => s.id === sw.id);
+		if (host && readValue(host)) return { value: entry[sw.key], label: sw.label };
+	}
+	return null;
+}
+
 function modeBadgeText(entry) {
-	if (entry.forcedInMaze !== undefined) {
-		return `Forced ${entry.forcedInMaze ? "on" : "off"} by World Maze`;
+	const force = activeForce(entry);
+	if (force) {
+		const v = force.value;
+		const shown = v === true ? "on" : v === false ? "off" : String(v);
+		return `Forced ${shown} by ${force.label}`;
 	}
 	return entry.mode === "maze" ? "Maze only" : "Standard only";
 }
 
-// What the player had before the maze pinned a forced option, so turning the
-// mode off gives it back. Kept out of the settings blob: `saveSettings` stores
+// What the player had before a switch pinned a forced option, so turning the
+// switch off gives it back. Kept out of the settings blob: `saveSettings` stores
 // what the inputs currently show, which while the maze is on is the forced
 // value — restoring a page in maze mode would otherwise eat the memo.
 const FORCED_MEMO_KEY = "smb3r-forced-memo";
@@ -1275,17 +1307,17 @@ function clearForcedMemo() {
 // Values first, before anything reads them: the maze pins World Order on, and
 // World Count's `enabledWhen` rides on that.
 function applyForcedValues() {
-	const forced = currentMode() === "maze";
 	const memo = loadForcedMemo();
 	let dirty = false;
 	for (const entry of SCHEMA) {
-		if (entry.forcedInMaze === undefined) continue;
-		if (forced) {
+		if (!isForceable(entry)) continue;
+		const force = activeForce(entry);
+		if (force) {
 			if (!(entry.id in memo)) {
 				memo[entry.id] = readValue(entry);
 				dirty = true;
 			}
-			writeValue(entry, entry.forcedInMaze);
+			writeValue(entry, force.value);
 		} else if (entry.id in memo) {
 			writeValue(entry, memo[entry.id]);
 			delete memo[entry.id];
@@ -1307,8 +1339,8 @@ function setBadge(entry, text) {
 export function applyModeStates() {
 	const mode = currentMode();
 	for (const entry of SCHEMA) {
-		if (entry.forcedInMaze !== undefined) {
-			const forced = mode === "maze";
+		if (isForceable(entry)) {
+			const forced = activeForce(entry) !== null;
 			applyEntryEnabled(entry, !forced);
 			setBadge(entry, forced ? modeBadgeText(entry) : null);
 			continue;
@@ -1708,7 +1740,7 @@ const RENDERERS = {
 // rather than only in a note at the top of a section. It renders empty and
 // hidden; `applyModeStates` fills it in for whichever mode the form is in.
 function modeBadge(entry) {
-	if (entry.forcedInMaze === undefined && !entry.mode) return null;
+	if (!isForceable(entry) && !entry.mode) return null;
 	return el("span", { class: "opt-badge", id: `badge-${entry.id}`, hidden: true });
 }
 

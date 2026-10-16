@@ -446,7 +446,7 @@ fn preset_modes_match_what_they_build() {
     assert!(bad.is_empty(), "preset sections disagree with their overrides: {bad:?}");
 }
 
-/// The mode keys (`mode`, `forcedInMaze`) hold the page's story about which
+/// The mode keys (`mode`, `forcedInMaze`, `forcedByGenerated`) hold the page's story about which
 /// options apply in which mode, and their failure modes are silent in a browser:
 /// a mode spelled wrong makes an option inert in *both* modes, since neither
 /// matches; an entry marked both mode-specific and forced has its value written
@@ -472,7 +472,7 @@ fn mode_markings_are_coherent() {
     let mut forced_count = 0;
     for (id, body) in entries.iter() {
         let mode = mode_of(body);
-        let forced = body.contains("forcedInMaze:");
+        let forced = body.contains("forcedInMaze:") || body.contains("forcedByGenerated:");
         if forced {
             forced_count += 1;
         }
