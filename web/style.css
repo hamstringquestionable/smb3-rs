@@ -247,6 +247,21 @@ legend {
     margin-bottom: 0.75rem;
 }
 
+/* A run's heading inside a section (Map's four), styled as the presets
+   panel's section labels. */
+.subgroup-label {
+    color: #6a6a85;
+    font-size: 0.65rem;
+    font-weight: bold;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin: 0.9rem 0 0.3rem;
+}
+
+.subgroup-label:first-of-type {
+    margin-top: 0.2rem;
+}
+
 /* A group note as a two-column key (term | meaning), e.g. the enemy modes. */
 .note-rows {
     display: grid;

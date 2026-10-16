@@ -573,3 +573,46 @@ fn item_options_match_rust_items() {
          sanitize_item will zero them on the way into the flag key",
     );
 }
+
+/// A section with `subgroups` draws only the rows that name one of them, so a
+/// row with no `subgroup`, or a misspelled one, silently vanishes from the
+/// page: nothing throws. Every row of such a section (pills and hosted rows
+/// excepted, which draw inside another) must name one it lists.
+#[test]
+fn subgroup_markings_name_their_sections_runs() {
+    let src = options_js();
+    let quoted_after = |body: &str, key: &str| -> Option<String> {
+        let at = body.find(key)? + key.len();
+        let rest = &body[at..];
+        Some(rest[..rest.find('"').expect("value is not terminated")].to_string())
+    };
+    let mut checked = 0;
+    for group in entries(array_block(&src, "GROUPS")) {
+        let Some(at) = group.find("subgroups:") else { continue };
+        let runs: BTreeSet<String> = group[at..]
+            .split("{ id: \"")
+            .skip(1)
+            .map(|s| s[..s.find('"').expect("subgroup id is not terminated")].to_string())
+            .collect();
+        let gid = entry_id(group);
+        for entry in entries(array_block(&src, "SCHEMA")) {
+            if quoted_after(entry, "group: \"").as_deref() != Some(gid) {
+                continue;
+            }
+            let id = entry_id(entry);
+            match quoted_after(entry, "subgroup: \"") {
+                Some(run) => assert!(
+                    runs.contains(&run),
+                    "SCHEMA entry `{id}` names subgroup `{run}`, which `{gid}` does not list: {runs:?}",
+                ),
+                None => assert!(
+                    entry.contains("pillOf:") || entry.contains("host:"),
+                    "SCHEMA entry `{id}` is in `{gid}`, which has subgroups, but names none — \
+                     it would not be drawn",
+                ),
+            }
+            checked += 1;
+        }
+    }
+    assert!(checked > 0, "no subgrouped entries parsed from {OPTIONS_JS} — parser drift");
+}
