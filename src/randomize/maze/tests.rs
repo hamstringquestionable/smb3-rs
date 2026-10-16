@@ -78,12 +78,21 @@ fn census_build_swaps(raw: &Rom, seed: u64) -> ((Rom, BuildResult), [bool; 8]) {
 /// is off, redistributed ones when it is on — and #274 showed on both, by
 /// different routes. A test that wants to cover the sprite rules has to build
 /// each arm; every other census stays on the `false` default.
+///
+/// `MAZE_GENERATE=1` builds over Generated Overworld maps instead, as the
+/// pipeline does with that option: all eight worlds generated (Start <->
+/// Airship on, each from its own RNG so the seed's other draws are
+/// unchanged), Hammer Bro shuffle on, and the More Hammer Rocks and 8s are
+/// Wild arms off, since Generated Overworld forces both off.
 fn census_build_arm(
     raw: &Rom,
     seed: u64,
     shuffle_hammer_bros: bool,
 ) -> ((Rom, BuildResult), [bool; 8]) {
+    let generate = std::env::var("MAZE_GENERATE").is_ok();
+    let shuffle_hammer_bros = shuffle_hammer_bros || generate;
     let (hammer_rocks, eights_wild) = match seed % 4 {
+        _ if generate => (false, false),
         2 => (true, false),
         3 => (false, true),
         _ => (false, false),
@@ -91,12 +100,29 @@ fn census_build_arm(
     let rom = qol_variant(raw, hammer_rocks, eights_wild);
     let mut rng = ChaCha8Rng::seed_from_u64(seed);
     let mut catalog = NodeCatalog::build(&rom, false);
+    if generate {
+        use crate::randomize::overworld::map_source::generated::world_map;
+        let mut maps = catalog.maps.clone();
+        for (wi, map) in maps.iter_mut().enumerate() {
+            let mut gen_rng = ChaCha8Rng::seed_from_u64(seed ^ 0x6E6E_5741 ^ wi as u64);
+            if let Some(generated) = world_map(map, wi, true, &mut gen_rng) {
+                *map = generated;
+            }
+        }
+        catalog = NodeCatalog::from_maps(&rom, maps, false);
+    }
     let mut swap_rng = ChaCha8Rng::seed_from_u64(seed);
     start_airship_swap::pick_swaps(&mut catalog, &mut swap_rng);
     let pickup = pick_up(
         &rom,
         &catalog,
-        PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true, ..Default::default() },
+        // The pickup lifts the bros only on generated maps, as the pipeline
+        // does there; the other arms keep what they always measured.
+        PickupFlags {
+            shuffle_spade_games: true,
+            shuffle_toad_houses: true,
+            shuffle_hammer_bros: generate,
+        },
     );
     let result = build(
         &rom,
@@ -647,8 +673,15 @@ fn no_pad_stands_on_a_map_sprite() {
                 SEALABLE_NEEDED,
                 &mut rng,
             );
+            // On Generated Overworld maps no sprite keeps a vanilla home: the
+            // bros are redistributed (the shuffle is forced on), the plants
+            // are replanted on levels, the canoe moves to its dock's water and
+            // HELP and the airship to the castle. Only the build's bros park.
+            let generated = std::env::var("MAZE_GENERATE").is_ok();
             for wi in 0..8 {
-                let mut parked: std::collections::HashSet<(usize, usize)> = if shuffle_bros {
+                let mut parked: std::collections::HashSet<(usize, usize)> = if generated {
+                    std::collections::HashSet::new()
+                } else if shuffle_bros {
                     rom_data::read_non_hb_sprite_positions(&rom, wi).into_iter().collect()
                 } else {
                     rom_data::read_map_sprite_positions(&rom, wi).into_iter().collect()
