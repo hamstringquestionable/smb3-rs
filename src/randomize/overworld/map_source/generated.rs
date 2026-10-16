@@ -812,8 +812,8 @@ const MAX_SQUARES: usize = 1;
 ///
 /// The start goes on, or one node from, `anchor` (the vanilla start) or
 /// `airship` (the vanilla airship), a coin picking which: the two places
-/// vanilla and the Start<->Airship swap start a player (W8, with no
-/// airship, always near `anchor`). Never where the
+/// vanilla and the Start<->Airship swap start a player. `airship` is `None`
+/// with the swap off, and for W8, which has none: always near `anchor`. Never where the
 /// starting camera ([`start_camera_col`]) shows the pocket's strip.
 /// It is picked once, so a start that is harder to fill around is not drawn
 /// less often. `anchor` also sets the lattice's parity.
@@ -1236,9 +1236,14 @@ const ROCK: (u8, u8) = (ROCK_BREAK_H, ROCK_BREAK_V);
 ///
 /// The recipe is one of the world's [`RECIPES`], picked at random; a world
 /// with one takes no draw for it.
+///
+/// `airship_starts` is Swap Start / Airship: with it, the start may go by the
+/// vanilla airship's spot as well as the vanilla start's ([`generate`]);
+/// without, only by the start's.
 pub(crate) fn world_map<R: Rng>(
     vanilla: &WorldMap,
     world_idx: usize,
+    airship_starts: bool,
     rng: &mut R,
 ) -> Option<WorldMap> {
     let recipes = RECIPES.get(world_idx)?;
@@ -1247,7 +1252,7 @@ pub(crate) fn world_map<R: Rng>(
         1 => recipes[0],
         n => recipes[rng.random_range(..n)],
     };
-    draw_with(vanilla, world_idx, recipe, rng)
+    draw_with(vanilla, world_idx, recipe, airship_starts, rng)
 }
 
 /// [`world_map`] with `recipe`.
@@ -1255,9 +1260,10 @@ fn draw_with<R: Rng>(
     vanilla: &WorldMap,
     world_idx: usize,
     recipe: &Recipe,
+    airship_starts: bool,
     rng: &mut R,
 ) -> Option<WorldMap> {
-    (0..DRAWS).find_map(|_| draw_once(vanilla, world_idx, recipe, rng))
+    (0..DRAWS).find_map(|_| draw_once(vanilla, world_idx, recipe, airship_starts, rng))
 }
 
 /// Whole maps drawn before a world gives up and keeps vanilla. A draw can
@@ -1270,6 +1276,7 @@ fn draw_once<R: Rng>(
     vanilla: &WorldMap,
     world_idx: usize,
     recipe: &Recipe,
+    airship_starts: bool,
     rng: &mut R,
 ) -> Option<WorldMap> {
     let targets = recipe.layout;
@@ -1293,7 +1300,7 @@ fn draw_once<R: Rng>(
         world_idx,
         &frame_for(areas.as_ref(), old),
         vanilla_start,
-        airship_idx.map(|i| vanilla.entry_pos[i]),
+        airship_idx.filter(|_| airship_starts).map(|i| vanilla.entry_pos[i]),
         targets,
         dealt_entries(vanilla, areas.as_ref()),
         rng,
@@ -3449,7 +3456,13 @@ fn generated_is_completable() {
         // Each of the world's recipes in turn, every arm over each.
         let recipes = RECIPES[wi];
         let recipe = recipes[(seed / 3) as usize % recipes.len()];
-        let Some(w1) = draw_with(&maps[wi], wi, recipe, &mut rng) else { continue };
+        let Some(w1) = draw_with(&maps[wi], wi, recipe, swap, &mut rng) else { continue };
+        // Without the swap, the start is on or beside the vanilla start.
+        if !swap {
+            let find = |g: &Grid| crate::randomize::rom_data::find_start(g).unwrap();
+            let (start, home) = (find(&w1.grid), find(&maps[wi].grid));
+            assert!(manhattan(start, home) <= 2, "seed {seed}: start {start:?}, vanilla {home:?}");
+        }
         // HELP floats right of the castle top, or above it at the frame.
         if let Some((castle, help)) = w1.castle {
             let (right, above) = ((castle.0 - 1, castle.1 + 1), (castle.0 - 2, castle.1));
@@ -3589,7 +3602,7 @@ fn generated_start_never_shows_the_pocket() {
             let Some(pocket) = recipe.layout.pocket else { continue };
             for seed in 0..50 {
                 let mut rng = ChaCha8Rng::seed_from_u64(seed);
-                let map = draw_with(&vanilla[wi], wi, recipe, &mut rng).unwrap();
+                let map = draw_with(&vanilla[wi], wi, recipe, true, &mut rng).unwrap();
                 let start = crate::randomize::rom_data::find_start(&map.grid).unwrap();
                 let shown = start_camera_col(wi, start.1) + 16;
                 assert!(
@@ -3634,7 +3647,7 @@ fn recipes_fit_their_worlds() {
             for seed in 0..5 {
                 let mut rng = ChaCha8Rng::seed_from_u64(seed);
                 assert!(
-                    draw_with(&vanilla[wi], wi, recipe, &mut rng).is_some(),
+                    draw_with(&vanilla[wi], wi, recipe, true, &mut rng).is_some(),
                     "{at} seed {seed}"
                 );
             }
@@ -3659,7 +3672,7 @@ fn generated_worlds_are_deterministic() {
     let vanilla = super::vanilla::load(&rom, false, false);
     for (wi, map) in vanilla.iter().enumerate() {
         for seed in 0..20 {
-            let draw = || world_map(map, wi, &mut ChaCha8Rng::seed_from_u64(seed)).unwrap();
+            let draw = || world_map(map, wi, true, &mut ChaCha8Rng::seed_from_u64(seed)).unwrap();
             let (a, b) = (draw(), draw());
             assert_eq!(a.grid.tiles, b.grid.tiles, "W{} seed {seed}: two draws differ", wi + 1);
             assert_eq!(a.entry_pos, b.entry_pos, "W{} seed {seed}: entries differ", wi + 1);
@@ -3695,7 +3708,7 @@ fn generated_tiles() {
     let wi: usize =
         std::env::var("LAYOUT_WORLD").ok().and_then(|s| s.parse().ok()).unwrap_or(1) - 1;
     for seed in 1..=seeds {
-        let map = world_map(&vanilla[wi], wi, &mut ChaCha8Rng::seed_from_u64(seed)).unwrap();
+        let map = world_map(&vanilla[wi], wi, true, &mut ChaCha8Rng::seed_from_u64(seed)).unwrap();
         println!("\n--- seed {seed}");
         for r in 0..map.grid.rows() {
             let row: String = (0..map.grid.cols)

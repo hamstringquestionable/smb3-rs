@@ -151,9 +151,12 @@ fn census_build(rom: &Rom, seed: u64) -> BuildResult {
     if std::env::var("CENSUS_GENERATE").is_ok() {
         let mut maps = catalog.maps.clone();
         let mut gen_rng = ChaCha8Rng::seed_from_u64(seed ^ 0x6E6E_5741);
-        if let Some(w1) =
-            crate::randomize::overworld::map_source::generated::world_map(&maps[0], 0, &mut gen_rng)
-        {
+        if let Some(w1) = crate::randomize::overworld::map_source::generated::world_map(
+            &maps[0],
+            0,
+            true,
+            &mut gen_rng,
+        ) {
             maps[0] = w1;
             catalog = NodeCatalog::from_maps(&rom, maps, false);
         }

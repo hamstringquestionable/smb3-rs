@@ -400,7 +400,7 @@ export const SCHEMA = [
 		enabledWhen: { world_order: true } },
 	{ id: "swap_start_airship", type: "bool", default: false,
 		label: "Swap Start / Airship", flavor: "Beat the map backwards.",
-		tip: "Each of Worlds 1-7 has a 50% chance to be played in reverse — Mario spawns where the airship usually lands.",
+		tip: "Each of Worlds 1-7 has a 50% chance to be played in reverse — Mario spawns where the airship usually lands. On a Generated Overworld, Mario may start by the airship's usual spot, and the castle goes wherever the new map puts it.",
 		icon: START_TILE,
 		group: "map", subgroup: "layout", inFlagKey: true },
 	{ id: "eights_are_wild", type: "tri", options: ON_OFF_MAYBE, default: "off",

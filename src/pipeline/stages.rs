@@ -340,8 +340,12 @@ pub(super) fn overworld_catalog(
     if run.shuffle_hammer_bros {
         for (wi, map) in maps.iter_mut().enumerate() {
             if run.generated_worlds & (1 << wi) != 0
-                && let Some(generated) =
-                    randomize::overworld::map_source::generated::world_map(map, wi, rng)
+                && let Some(generated) = randomize::overworld::map_source::generated::world_map(
+                    map,
+                    wi,
+                    options.swap_start_airship,
+                    rng,
+                )
             {
                 if let Some(canoe) = generated.canoe {
                     rom.set_tag("overworld/generated_canoe");
