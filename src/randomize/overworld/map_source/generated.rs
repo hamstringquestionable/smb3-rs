@@ -632,7 +632,7 @@ const W7_RECIPE: Recipe = Recipe {
 /// 2026-10-14).
 const W8_RECIPE: Recipe = Recipe {
     layout: W8_TARGETS,
-    area: Area::InsideFrame { frame: VOID, to_col: 3 * SCREEN_COLS },
+    area: Area::InsideFrame { frame: VOID, to_col: 3 * SCREEN_COLS, node_cols: (2, 12) },
     pans_to_width: false,
     ground: BONES,
     ground_before: Some((SCREEN_COLS, FIRE)),
@@ -690,8 +690,12 @@ enum Area {
     /// The whole map but its first and last columns.
     Whole,
     /// Every cell left of `to_col` whose vanilla tile is not `frame` (W8:
-    /// inside its void, the castle's screen kept).
-    InsideFrame { frame: u8, to_col: usize },
+    /// inside its void, the castle's screen kept), with nodes only in
+    /// `node_cols` of each screen (inclusive, counted from the screen's left
+    /// edge). W8's screens never scroll, so a node at a screen's edge is drawn
+    /// at the edge of the picture, half under the TV's overscan; vanilla keeps
+    /// W8's nodes in columns 2-12 (user, 2026-10-16).
+    InsideFrame { frame: u8, to_col: usize, node_cols: (usize, usize) },
     /// Separate ground and sky areas (W5). The ground is `ground`'s
     /// rectangles; the sky every cell from column `sky_from` that `sky_frame` does not
     /// call frame. `fixes` are frame cells drawn for vanilla's content,
@@ -722,6 +726,8 @@ struct Areas {
     frame_fixes: Vec<(Pos, u8)>,
     /// Where sky nodes start: two columns past the sky's edge, as vanilla's.
     sky_nodes_from: usize,
+    /// The columns of each screen nodes may take ([`Area::InsideFrame`]).
+    node_cols: (usize, usize),
 }
 
 /// W5's sky-page frame tiles: void, cloud edges, the miniature ground, the
@@ -737,7 +743,7 @@ fn w5_sky_frame(tile: u8) -> bool {
 fn areas(area: &Area, vanilla: &Grid) -> Option<Areas> {
     match *area {
         Area::Whole => None,
-        Area::InsideFrame { frame, to_col } => {
+        Area::InsideFrame { frame, to_col, node_cols } => {
             let ground = (0..vanilla.rows())
                 .flat_map(|r| (1..to_col).map(move |c| (r, c)))
                 .filter(|&(r, c)| vanilla.get(r, c) != frame)
@@ -747,6 +753,7 @@ fn areas(area: &Area, vanilla: &Grid) -> Option<Areas> {
                 sky: HashSet::new(),
                 frame_fixes: Vec::new(),
                 sky_nodes_from: to_col,
+                node_cols,
             })
         }
         Area::GroundAndSky { ground, sky_from, sky_frame, fixes } => {
@@ -760,7 +767,13 @@ fn areas(area: &Area, vanilla: &Grid) -> Option<Areas> {
                 .flat_map(|r| (sky_from..vanilla.cols - 1).map(move |c| (r, c)))
                 .filter(|&(r, c)| !sky_frame(vanilla.get(r, c)))
                 .collect();
-            Some(Areas { ground, sky, frame_fixes: fixes.to_vec(), sky_nodes_from: sky_from + 2 })
+            Some(Areas {
+                ground,
+                sky,
+                frame_fixes: fixes.to_vec(),
+                sky_nodes_from: sky_from + 2,
+                node_cols: (0, SCREEN_COLS - 1),
+            })
         }
     }
 }
@@ -777,7 +790,8 @@ struct Frame {
 fn frame_for(areas: Option<&Areas>, vanilla: &Grid) -> Frame {
     let nodes = areas.map(|a| {
         let sky = a.sky.iter().filter(|p| p.1 >= a.sky_nodes_from);
-        a.ground.iter().chain(sky).copied().collect()
+        let in_cols = |p: &&Pos| (a.node_cols.0..=a.node_cols.1).contains(&(p.1 % SCREEN_COLS));
+        a.ground.iter().chain(sky).filter(in_cols).copied().collect()
     });
     Frame { rows: vanilla.rows(), cols: vanilla.cols, nodes }
 }
@@ -3457,6 +3471,16 @@ fn generated_is_completable() {
         let recipes = RECIPES[wi];
         let recipe = recipes[(seed / 3) as usize % recipes.len()];
         let Some(w1) = draw_with(&maps[wi], wi, recipe, swap, &mut rng) else { continue };
+        // Nodes keep to their area's columns of each screen (W8's 2-12).
+        if let Some(a) = areas(&recipe.area, &maps[wi].grid) {
+            for p in w1.entry_pos.iter().filter(|p| a.ground.contains(p) || a.sky.contains(p)) {
+                let col = p.1 % SCREEN_COLS;
+                assert!(
+                    (a.node_cols.0..=a.node_cols.1).contains(&col),
+                    "seed {seed}: node {p:?} in column {col} of its screen"
+                );
+            }
+        }
         // Without the swap, the start is on or beside the vanilla start.
         if !swap {
             let find = |g: &Grid| crate::randomize::rom_data::find_start(g).unwrap();
