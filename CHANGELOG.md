@@ -9,6 +9,12 @@ deploys.
 
 ## [Unreleased]
 
+### Added
+
+- **Generated Overworld.** Every world's map is drawn from scratch each seed:
+  new paths, islands and scenery, in each world's own style. Turns on Hammer
+  Bro and Piranha shuffle.
+
 ## [2.5.0] - 2026-10-13
 
 ### Added

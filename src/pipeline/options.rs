@@ -828,12 +828,15 @@ pub struct Options {
     /// randomization seed.
     #[serde(default)]
     pub skip_rom_validation: bool,
-    /// Which worlds get a generated map instead of vanilla's layout, as a
-    /// bitmask: bit 0 is World 1. Experimental and hidden — `testrom` sets it,
-    /// the web app always sends 0, and it is not in the flag key. Only World 1
-    /// can be generated so far, and only with `shuffle_hammer_bros` on; any
-    /// other world asked for stays vanilla. See
-    /// `docs/procedural_maps_design.md`.
+    /// Generated Overworld: every world's map is drawn afresh from one of its
+    /// recipes instead of vanilla's layout. Forces Hammer Bro shuffle on (the
+    /// builder must place the bros) and Piranha Shuffle on.
+    #[serde(default)]
+    pub generated_overworld: bool,
+    /// Which worlds get a generated map, as a bitmask (bit 0 is World 1), on
+    /// top of `generated_overworld`'s all eight. `testrom --generate-world`
+    /// sets it to generate one world at a time; the web app always sends 0,
+    /// and it is not in the flag key. See `docs/procedural_maps_design.md`.
     #[serde(default)]
     pub generated_worlds: u8,
 }
@@ -920,6 +923,7 @@ impl Default for Options {
             starting_lives: default_starting_lives(),
             starting_items: Vec::new(),
             skip_rom_validation: false,
+            generated_overworld: false,
             generated_worlds: 0,
         }
     }

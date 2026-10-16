@@ -37,6 +37,12 @@ pub(super) struct Resolved {
     /// them, the way Hammer Bro shuffle must be on to place the bros.
     piranha: PiranhaMode,
     hints: crate::HintMode,
+    /// The worlds whose maps are generated, a bit each (bit 0 is World 1):
+    /// all eight with Generated Overworld, else `testrom`'s per-world mask.
+    generated_worlds: u8,
+    /// Hammer Bro shuffle as the run uses it: forced on with any generated
+    /// world, whose map the builder must place the bros on.
+    shuffle_hammer_bros: bool,
 }
 
 /// The maze's model-side decisions, handed from [`maze_model`] to [`maze_rom`].
@@ -81,8 +87,10 @@ pub(super) fn resolve(seed: u64, options: &Options, rng: &mut ChaCha8Rng) -> Res
     let troll_pipes = options.troll_pipes.resolve(&mut maybe_rng);
     let more_hammer_rocks = options.more_hammer_rocks.resolve(&mut maybe_rng);
     // A generated W8 draws its own first screen, where the canoe docks were.
+    let generated_worlds =
+        options.generated_worlds | if options.generated_overworld { 0xFF } else { 0 };
     let eights_are_wild =
-        options.eights_are_wild.resolve(&mut maybe_rng) && options.generated_worlds & (1 << 7) == 0;
+        options.eights_are_wild.resolve(&mut maybe_rng) && generated_worlds & (1 << 7) == 0;
     let antechamber_shuffle = options.antechamber_shuffle.resolve(&mut maybe_rng);
 
     // **Hints describe a maze, so they are off without one.**
@@ -102,7 +110,7 @@ pub(super) fn resolve(seed: u64, options: &Options, rng: &mut ChaCha8Rng) -> Res
     // only decides what the run does with it.
     let hints = if options.world_maze { options.hints } else { crate::HintMode::Off };
     let piranha = match options.piranha_shuffle {
-        PiranhaMode::Off if options.generated_worlds != 0 => PiranhaMode::On,
+        PiranhaMode::Off if generated_worlds != 0 => PiranhaMode::On,
         mode => mode,
     };
 
@@ -119,6 +127,8 @@ pub(super) fn resolve(seed: u64, options: &Options, rng: &mut ChaCha8Rng) -> Res
         piranha_active: piranha != PiranhaMode::Off,
         piranha,
         hints,
+        generated_worlds,
+        shuffle_hammer_bros: options.shuffle_hammer_bros || generated_worlds != 0,
     }
 }
 
@@ -316,12 +326,13 @@ pub(super) fn overworld_catalog(
         run.more_hammer_rocks,
         run.eights_are_wild,
     );
-    // Experimental: generated maps for the worlds `generated_worlds` names.
-    // Hammer Bro shuffle must be on, so the builder places the bros; a world
-    // the generator cannot draw keeps its vanilla map.
-    if options.shuffle_hammer_bros {
+    // Generated maps for the worlds `run.generated_worlds` names (all eight
+    // with Generated Overworld). Hammer Bro shuffle is on whenever one is
+    // (`resolve`), so the builder places the bros; a world the generator
+    // cannot draw keeps its vanilla map.
+    if run.shuffle_hammer_bros {
         for (wi, map) in maps.iter_mut().enumerate() {
-            if options.generated_worlds & (1 << wi) != 0
+            if run.generated_worlds & (1 << wi) != 0
                 && let Some(generated) =
                     randomize::overworld::map_source::generated::world_map(map, wi, rng)
             {
@@ -459,7 +470,7 @@ pub(super) fn overworld_build(
         randomize::overworld::pickup::PickupFlags {
             shuffle_spade_games: options.shuffle_spade_games,
             shuffle_toad_houses: options.shuffle_toad_houses,
-            shuffle_hammer_bros: options.shuffle_hammer_bros,
+            shuffle_hammer_bros: run.shuffle_hammer_bros,
         },
     );
     let data = randomize::overworld::build::OverworldData { pickup: &pickup, catalog };
@@ -470,7 +481,7 @@ pub(super) fn overworld_build(
         randomize::overworld::build::BuildFlags {
             shuffle_toad_houses: options.shuffle_toad_houses,
             eights_are_wild: run.eights_are_wild,
-            shuffle_hammer_bros: options.shuffle_hammer_bros,
+            shuffle_hammer_bros: run.shuffle_hammer_bros,
             world_maze: options.world_maze,
         },
     );
@@ -601,7 +612,7 @@ pub(super) fn write_overworld(
         &data,
         rng,
         randomize::overworld::writer::WriteFlags {
-            shuffle_hammer_bros: options.shuffle_hammer_bros,
+            shuffle_hammer_bros: run.shuffle_hammer_bros,
             piranha: run.piranha,
             friendlier_levels: options.friendlier_levels,
             hints: run.hints,
