@@ -365,6 +365,11 @@ export const SCHEMA = [
 		group: "rom-extras", host: "rom-extras", inFlagKey: false },
 
 	// --- Map ---
+	{ id: "generated_overworld", type: "bool", default: false,
+		label: "Generated Overworld", flavor: "Shapes.",
+		tip: "Draw every world's map from scratch: new paths, islands and scenery each seed, in each world's own style. Turns on Hammer Bro, Piranha and Spade shuffle, and turns off 8s are Wild and More hammer rocks. With Toad House shuffle off, each world keeps its own Toad Houses.",
+		icon: WORLD_TILES,
+		group: "map", inFlagKey: true },
 	{ id: "shuffle_spade_games", type: "bool", default: true,
 		label: "Shuffle Spade Games",
 		tip: "Move spade (card-matching) games to random spots on the map",
@@ -410,10 +415,6 @@ export const SCHEMA = [
 		label: "Swap Start / Airship", flavor: "Beat the map backwards.",
 		tip: "Each of Worlds 1-7 has a 50% chance to be played in reverse — Mario spawns where the airship usually lands.",
 		icon: START_TILE,
-		group: "map", inFlagKey: true },
-	{ id: "generated_overworld", type: "bool", default: false,
-		label: "Generated Overworld", flavor: "Shapes.",
-		tip: "Draw every world's map from scratch: new paths, islands and scenery each seed, in each world's own style. Turns on Hammer Bro, Piranha and Spade shuffle, and turns off 8s are Wild and More hammer rocks. With Toad House shuffle off, each world keeps its own Toad Houses.",
 		group: "map", inFlagKey: true },
 	{ id: "anchor_visuals", type: "bool", default: false,
 		label: "Oops all Anchors", flavor: "Anchors aweigh.",
