@@ -13,7 +13,8 @@ deploys.
 
 - **Generated Overworld.** Every world's map is drawn from scratch each seed:
   new paths, islands and scenery, in each world's own style. Turns on Hammer
-  Bro and Piranha shuffle.
+  Bro, Piranha and Spade shuffle, and turns off 8s are Wild and More hammer
+  rocks.
 
 ## [2.5.0] - 2026-10-13
 

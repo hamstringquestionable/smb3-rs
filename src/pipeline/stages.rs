@@ -43,6 +43,9 @@ pub(super) struct Resolved {
     /// Hammer Bro shuffle as the run uses it: forced on with any generated
     /// world, whose map the builder must place the bros on.
     shuffle_hammer_bros: bool,
+    /// Spade shuffle as the run uses it: forced on with every world
+    /// generated, which deals the spades to random nodes either way.
+    shuffle_spade_games: bool,
 }
 
 /// The maze's model-side decisions, handed from [`maze_model`] to [`maze_rom`].
@@ -85,10 +88,13 @@ pub(super) fn resolve(seed: u64, options: &Options, rng: &mut ChaCha8Rng) -> Res
     let hammer_breaks_locks = options.hammer_breaks_locks.resolve(&mut maybe_rng);
     let hammer_breaks_bridges = options.hammer_breaks_bridges.resolve(&mut maybe_rng);
     let troll_pipes = options.troll_pipes.resolve(&mut maybe_rng);
-    let more_hammer_rocks = options.more_hammer_rocks.resolve(&mut maybe_rng);
-    // A generated W8 draws its own first screen, where the canoe docks were.
     let generated_worlds =
         options.generated_worlds | if options.generated_overworld { 0xFF } else { 0 };
+    // Its rocks are cells of the vanilla W1 and W8 maps (and W1's shortcut), so
+    // with both generated there is nothing left for it to do.
+    let more_hammer_rocks =
+        options.more_hammer_rocks.resolve(&mut maybe_rng) && generated_worlds & 0x81 != 0x81;
+    // A generated W8 draws its own first screen, where the canoe docks were.
     let eights_are_wild =
         options.eights_are_wild.resolve(&mut maybe_rng) && generated_worlds & (1 << 7) == 0;
     let antechamber_shuffle = options.antechamber_shuffle.resolve(&mut maybe_rng);
@@ -129,6 +135,7 @@ pub(super) fn resolve(seed: u64, options: &Options, rng: &mut ChaCha8Rng) -> Res
         hints,
         generated_worlds,
         shuffle_hammer_bros: options.shuffle_hammer_bros || generated_worlds != 0,
+        shuffle_spade_games: options.shuffle_spade_games || generated_worlds == 0xFF,
     }
 }
 
@@ -468,7 +475,7 @@ pub(super) fn overworld_build(
         rom,
         catalog,
         randomize::overworld::pickup::PickupFlags {
-            shuffle_spade_games: options.shuffle_spade_games,
+            shuffle_spade_games: run.shuffle_spade_games,
             shuffle_toad_houses: options.shuffle_toad_houses,
             shuffle_hammer_bros: run.shuffle_hammer_bros,
         },
