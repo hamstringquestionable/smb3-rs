@@ -26,6 +26,12 @@ deploys.
   Locations" is now **Wandering Hammer Bros**, and Oops all Anchors moved to
   Items & Pickups.
 
+### Fixed
+
+- **A telepad or pipe on the right edge of a world's last screen no longer
+  shifts the view off the map.** World 1 never scrolls now, wherever you
+  arrive.
+
 ## [2.5.0] - 2026-10-13
 
 ### Added

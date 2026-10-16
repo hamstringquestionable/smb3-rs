@@ -7,7 +7,7 @@
 use crate::rom::Rom;
 
 use crate::randomize::rom_data::{
-    self, PIPE_MAP_SCRL_XHI, PIPE_MAP_X, PIPE_MAP_XHI, PIPE_MAP_Y, WORLDS,
+    self, MAP_TILE_GRIDS, PIPE_MAP_SCRL_XHI, PIPE_MAP_X, PIPE_MAP_XHI, PIPE_MAP_Y, WORLDS,
 };
 
 // ---------------------------------------------------------------------------
@@ -53,14 +53,21 @@ pub(crate) fn grid_pos_to_dest_nibbles(grid_row: usize, grid_col: usize) -> (u8,
 /// never be set for these worlds or it shifts the camera 128px right, cutting
 /// off half the visible screen. Vanilla confirms: no W5/W8 pipe scroll
 /// nibbles ever use the center flag.
-pub(crate) fn scroll_nibble(screen: u8, col_in_screen: u8, discrete_screens: bool) -> u8 {
-    if discrete_screens {
-        return screen;
+///
+/// Nor on a world's last screen, where there is no map to its right: the
+/// flag would show half a screen past the edge. W1 is one screen, so it never
+/// scrolls; an arrival on the right of it used to (user, 2026-10-16). The
+/// engine does not pan there either, since that screen is the world's
+/// `World_Map_Max_PanR` limit.
+pub(crate) fn scroll_nibble(world_idx: usize, screen: u8, col_in_screen: u8) -> u8 {
+    if world_idx == 4 || world_idx == 7 {
+        return screen; // W5, W8
     }
+    let last = (MAP_TILE_GRIDS[world_idx].screens - 1) as u8;
     let px = col_in_screen as u16 * 16;
     if px < 33 && screen > 0 {
         (screen - 1) | 0x8
-    } else if px > 208 {
+    } else if px > 208 && screen < last {
         screen | 0x8
     } else {
         screen
@@ -90,9 +97,8 @@ pub(super) fn write_pipe_dest(
     rom.write_byte(PIPE_MAP_X + dest_idx, (a_x << 4) | b_x);
     rom.write_byte(PIPE_MAP_Y + dest_idx, (a_y << 4) | b_y);
 
-    let discrete = world_idx == 4 || world_idx == 7; // W5, W8
-    let a_scrl = scroll_nibble(a_xhi, a_x, discrete);
-    let b_scrl = scroll_nibble(b_xhi, b_x, discrete);
+    let a_scrl = scroll_nibble(world_idx, a_xhi, a_x);
+    let b_scrl = scroll_nibble(world_idx, b_xhi, b_x);
     rom.write_byte(PIPE_MAP_SCRL_XHI + dest_idx, (a_scrl << 4) | b_scrl);
 }
 
@@ -171,5 +177,32 @@ pub(super) fn resort_pointer_table(rom: &mut Rom, world_idx: usize) {
     for s in 0..num_screens {
         let offset = entries.iter().position(|e| e.screen == s as u8).unwrap_or(n);
         rom.write_byte(init_file + s, offset as u8);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The centre flag scrolls half a screen right, so it only goes where
+    /// there is map to show: never on a world's last screen, so never in W1,
+    /// whose one screen is its last; never in W5 or W8, which snap per screen.
+    #[test]
+    fn the_camera_never_scrolls_past_the_last_screen() {
+        // A right-edge arrival (column 14, x = 224 > 208).
+        assert_eq!(scroll_nibble(0, 0, 14), 0, "W1 has one screen");
+        assert_eq!(scroll_nibble(1, 0, 14), 0x8, "W2 screen 0 has screen 1 to its right");
+        assert_eq!(scroll_nibble(1, 1, 14), 1, "W2 screen 1 is its last");
+        assert_eq!(scroll_nibble(2, 1, 14), 0x9, "W3 screen 1 has screen 2 to its right");
+        assert_eq!(scroll_nibble(2, 2, 14), 2, "W3 screen 2 is its last");
+        assert_eq!(scroll_nibble(4, 0, 14), 0, "W5 snaps");
+        assert_eq!(scroll_nibble(7, 2, 14), 2, "W8 snaps");
+        // A left-edge arrival still centres back onto the screen before.
+        assert_eq!(scroll_nibble(1, 1, 0), 0x8);
+        assert_eq!(scroll_nibble(0, 0, 0), 0, "nothing left of W1's screen");
+        // Mid-screen never moves.
+        for wi in [0, 1, 2, 3, 5, 6] {
+            assert_eq!(scroll_nibble(wi, 0, 6), 0);
+        }
     }
 }
