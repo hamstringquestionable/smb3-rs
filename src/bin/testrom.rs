@@ -100,6 +100,12 @@ struct Cli {
     #[arg(long, value_name = "PREDICATE")]
     require: Option<String>,
 
+    /// Give this world a generated map instead of vanilla's layout
+    /// (experimental). Repeatable; any world can be generated, only with
+    /// Hammer Bro shuffle on. Implies --randomize.
+    #[arg(long, value_name = "N", value_parser = clap::value_parser!(u8).range(1..=8))]
+    generate_world: Vec<u8>,
+
     /// How many seeds --require may try before giving up.
     #[arg(long, default_value_t = 500)]
     search: usize,
@@ -368,7 +374,7 @@ fn main() {
 
     // Randomizer options only matter with --randomize; reject the combination
     // that silently does nothing rather than pretending it worked.
-    let randomize = cli.randomize || cli.require.is_some();
+    let randomize = cli.randomize || cli.require.is_some() || !cli.generate_world.is_empty();
     if !randomize && (cli.seed.is_some() || cli.flags.is_some()) {
         die("--seed/--flags require --randomize (vanilla base ignores them)");
     }
@@ -377,11 +383,14 @@ fn main() {
     }
 
     let base = if randomize {
-        let options = match &cli.flags {
+        let mut options = match &cli.flags {
             Some(key) => Options::from_flag_key(key)
                 .unwrap_or_else(|e| die(format!("invalid --flags value: {e}"))),
             None => Options::default(),
         };
+        for &w in &cli.generate_world {
+            options.generated_worlds |= 1 << (w - 1);
+        }
 
         let seed = match &cli.require {
             Some(spec) => {

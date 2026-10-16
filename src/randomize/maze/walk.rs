@@ -168,7 +168,7 @@ fn canoe_lookups(worlds: &[MazeWorld], canoe_on: &[bool]) -> Vec<TeleportLookup>
         .enumerate()
         .map(|(wi, w)| {
             if canoe_on[wi] {
-                teleport_lookup(&rom_data::active_canoe_edges(wi, w.grid.eights_are_wild))
+                teleport_lookup(&rom_data::canoe_edges(wi, w.grid))
             } else {
                 TeleportLookup::new()
             }
@@ -307,7 +307,7 @@ pub(crate) fn walk_maze(
             if canoe_on[wi] || world.canoe_locked {
                 continue;
             }
-            let docks = rom_data::active_canoe_edges(wi, world.grid.eights_are_wild);
+            let docks = rom_data::canoe_edges(wi, world.grid);
             if docks.iter().any(|&((r, c), _)| per_world[wi][r * cols[wi] + c]) {
                 canoe_on[wi] = true;
                 changed = true;

@@ -47,15 +47,14 @@ fn apply_qol_for_overworld(rom: &Rom) -> Rom {
 fn apply_qol_variant(rom: &Rom, hammer_rocks: bool, eights_wild: bool) -> Rom {
     let mut out = rom.clone();
     crate::randomize::qol::fix_w3_drawbridges(&mut out);
-    crate::randomize::qol::remove_rocks(&mut out);
-    if hammer_rocks {
-        crate::randomize::qol::make_hammer_rocks(&mut out);
-    }
-    crate::randomize::qol::apply_w1_shortcut(&mut out, hammer_rocks);
-    crate::randomize::qol::apply_w8_bridges(&mut out);
     if eights_wild {
-        crate::randomize::qol::apply_w8_canoe_and_paths(&mut out);
+        crate::randomize::qol::place_w8_canoe(&mut out);
     }
+    crate::randomize::overworld::map_source::vanilla::stamp_fixes(
+        &mut out,
+        hammer_rocks,
+        eights_wild,
+    );
     crate::randomize::qol::fix_big_q_block_rooms(&mut out);
     out
 }
@@ -146,6 +145,22 @@ fn census_build(rom: &Rom, seed: u64) -> BuildResult {
     let rom = apply_qol_variant(rom, arm == CensusArm::HammerRocks, arm == CensusArm::EightsWild);
     let mut rng = ChaCha8Rng::seed_from_u64(seed);
     let mut catalog = NodeCatalog::build(&rom, false);
+    // CENSUS_GENERATE=1: World 1 is a generated map (the hidden
+    // `generated_worlds` option), drawn from its own RNG so every other draw
+    // of the seed is unchanged.
+    if std::env::var("CENSUS_GENERATE").is_ok() {
+        let mut maps = catalog.maps.clone();
+        let mut gen_rng = ChaCha8Rng::seed_from_u64(seed ^ 0x6E6E_5741);
+        if let Some(w1) = crate::randomize::overworld::map_source::generated::world_map(
+            &maps[0],
+            0,
+            true,
+            &mut gen_rng,
+        ) {
+            maps[0] = w1;
+            catalog = NodeCatalog::from_maps(&rom, maps, false);
+        }
+    }
     let mut swap_rng = ChaCha8Rng::seed_from_u64(seed);
     crate::randomize::overworld::start_airship_swap::pick_swaps(&mut catalog, &mut swap_rng);
     let pickup = overworld::pickup::pick_up(
@@ -460,8 +475,7 @@ fn report_distribution_by_exponent() {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
             let fort_counts = redistribute_fortresses(&mut rng);
             let caps =
-                prepare_capacities(&rom, &catalog, &pickup, &fort_counts, false, true, false)
-                    .capacities;
+                prepare_capacities(&catalog, &pickup, &fort_counts, false, true, false).capacities;
 
             // Detect clamp events (a world's fair share exceeds its capacity).
             let weights: [f64; 8] =

@@ -164,7 +164,6 @@ fn completable_positions(grid: &Grid, slots: &[SlotAssignment]) -> HashSet<(usiz
 /// limits how many entries are placed (spades cap at SPADE_BUDGET; toad houses
 /// place every entry).
 pub(super) fn promote_hb_slots<R: Rng>(
-    rom: &Rom,
     worlds: &mut [BuiltWorld],
     data: &OverworldData,
     rng: &mut R,
@@ -188,7 +187,7 @@ pub(super) fn promote_hb_slots<R: Rng>(
     let mut candidates_by_world: Vec<Vec<(usize, usize)>> = Vec::with_capacity(worlds.len());
     for (wi, w) in worlds.iter().enumerate() {
         let sprite_positions: HashSet<(usize, usize)> =
-            rom_data::read_hb_sprite_positions(rom, wi).into_iter().collect();
+            data.catalog.maps[wi].hb_sprites.iter().copied().collect();
 
         let completable = completable_positions(&w.grid, &w.slots);
 
@@ -264,7 +263,6 @@ pub(super) fn promote_hb_slots<R: Rng>(
 /// placement slots. Only the actual floating sprite positions are excluded
 /// because a numbered level tile under a floating sprite looks wrong.
 pub(crate) fn fixed_positions_for_world(
-    rom: &Rom,
     catalog: &NodeCatalog,
     world_idx: usize,
     shuffle_toad_houses: bool,
@@ -293,11 +291,9 @@ pub(crate) fn fixed_positions_for_world(
     // Floating sprite positions from the map object tables. When Hammer Bros
     // are redistributed, their vanilla tiles are freed for placement, so only
     // the non-HB sprites (army, canoe, piranhas) stay protected.
-    let sprite_positions = if shuffle_hammer_bros {
-        rom_data::read_non_hb_sprite_positions(rom, world_idx)
-    } else {
-        rom_data::read_map_sprite_positions(rom, world_idx)
-    };
+    let map = &catalog.maps[world_idx];
+    let sprite_positions =
+        if shuffle_hammer_bros { map.non_hb_sprites() } else { map.sprites.clone() };
     for pos in sprite_positions {
         fixed.insert(pos);
     }
@@ -316,7 +312,6 @@ pub(crate) fn fixed_positions_for_world(
 /// fortresses — the tighter constraint wins, since assigning more entries than
 /// pointer-table slots would leave blank screens.
 pub(crate) fn prepare_capacities(
-    rom: &Rom,
     catalog: &NodeCatalog,
     pickup: &PickupResult,
     fort_counts: &[usize; 8],
@@ -346,9 +341,7 @@ pub(crate) fn prepare_capacities(
     }
 
     let fixed_positions: Vec<HashSet<(usize, usize)>> = (0..8)
-        .map(|wi| {
-            fixed_positions_for_world(rom, catalog, wi, shuffle_toad_houses, shuffle_hammer_bros)
-        })
+        .map(|wi| fixed_positions_for_world(catalog, wi, shuffle_toad_houses, shuffle_hammer_bros))
         .collect();
 
     let mut capacities = [0usize; 8];

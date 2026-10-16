@@ -21,7 +21,7 @@ Present the full output to the user. The output includes:
 
 - **Special-entry name** (if any) — TOADHOUSE / SPADEBONUS / PIPE / ALTTOADHOUSE / CASTLEBOTTOM / SPIRAL / ALTSPIRAL / PATHANDNUB / DANCINGFLOWER / HANDTRAP / BOWSERCASTLELL — plus the dispatch op-code shared with other tiles routed to the same handler.
 - **Palette page** (the high 2 bits of the byte): palette is encoded in the byte itself (no per-tile lookup table). Page 0 = `0x00–0x3F`, page 1 = `0x40–0x7F`, page 2 = `0x80–0xBF`, page 3 = `0xC0–0xFF`.
-- **Visual (CHR pattern)** — 4 quadrant indices NW/NE/SW/SE from metatile bank 0x0C at file `0x18010 / 0x18110 / 0x18210 / 0x18310 + tile`. Plus any "visually identical sibling" tiles (same CHR; only palette page differs).
+- **Visual (CHR pattern)** — 4 quadrant indices from metatile bank 0x0C at file `0x18010 / 0x18110 / 0x18210 / 0x18310 + tile`, which are **upper-left / lower-left / upper-right / lower-right** (column by column; see `docs/smb3_rom_reference.md` § World-Map Metatile Pattern Bank). `rom_map.py` still labels them NW/NE/SW/SE, which is wrong for the middle two. Plus any "visually identical sibling" tiles (same CHR; only palette page differs).
 - **Behavior registries** — movement directions (LRDU), special-entry, removable, special-completion, background. To clone behavior to a free byte, replicate the same membership.
 - **Vanilla usage** — every (row, col) in every world's tile grid where this byte appears.
 - **Behavior table offsets** — for direct ROM editing.

@@ -2650,6 +2650,62 @@ world_start + (C // 16) * 144 + R * 16 + (C % 16)
 | 0xEB | Fortress tile | Alternate fortress |
 | 0xFF | Border / unused | Map edge |
 
+> **Stale rows above (noted 2026-10-11, not yet corrected):** `$B4` is the
+> dancing bush, not void; `$68`/`$69` draw as a pyramid; `$5F` is the W5 Spiral
+> Castle (`TILE_SPIRAL`); `$AE`/`$AF` and `$D9`/`$DC`–`$DE` are island and sky
+> blank nodes. Southbird's `TILE_*` constants (`smb3.asm` ~line 3545) are the
+> better source for a single byte.
+
+#### Scenery and decoration tiles
+
+Names from Southbird's `TILE_*` constants where it has one; the rest from the
+project owner (2026-10-11). Gathered for generated-map decorations
+(`docs/procedural_maps_design.md`).
+
+| Tile | Southbird | Looks like | Notes |
+|------|-----------|-----------|-------|
+| `$42` | — | plain ground | all four quadrants blank (`FE`) |
+| `$53` | `TILE_ROCK` | rock | permanent; pixel-identical to breakable `$52` |
+| `$55` | — | star | |
+| `$57`–`$5E` | — | miniature ground | W5's view down from the sky; `$57`–`$5D` appear only in W5, `$5E` nowhere |
+| `$82`–`$A9` | `$82` `TILE_WATER_INVT`, `$9D` `TILE_RIVERVERT` | water and shores | `$9D` is "vertical river segment (gets bridged)": vanilla rivers run north–south under a horizontal bridge `$B3`, the only bridge with a water-gap form |
+| `$B4` | `TILE_DANCINGBUSH` | bush ("cactus") | animated; vanilla's filler in W1's empty space |
+| `$BB` | `TILE_DANCINGPALM` | palm tree | animated; World 2 |
+| `$BD` | `TILE_DANCINGFLOWER` | fire flower | animated; also in `Map_EnterSpecialTiles` (DANCINGFLOWER) |
+| `$BE` | — | plant | |
+| `$BF` | `TILE_POOL` | pool / oasis | W2; completable on page 2 (see the rows 7/8 completion-bit note) |
+| `$E1` | — | mushroom | |
+| `$E9` | `TILE_WORLD5STAR` | star | W5 sky |
+| `$EA` | — | rock | W6 uses it 67 times |
+
+#### Water tiles: one water/land picture each
+
+*(Measured 2026-10-11, and used to draw generated lakes.)* Read through their
+CHR, the 40 tiles `$82`–`$A9` are a complete shoreline kit. In the map's
+background CHR, **colour 1 is water and colour 3 is land** (0 and 2 draw the
+shore outline). Sampled at nine points per tile (the corners, the edge
+middles and the centre, each the majority of a 3×3 pixel block), every one of
+the 40 is water in the centre and a **different** picture around it: `$8D` is
+open water, `$99` the top-left corner of a lake, `$9D` a one-tile vertical
+channel (Southbird's `TILE_RIVERVERT`), `$A2` a horizontal one.
+
+So water is drawn like paths: mark which cells are water, give each cell's
+edge middle water when that neighbour is water and each corner water when
+both edges and the diagonal are, and look the picture up. The table and the
+test that re-derives it from the CHR are `WATER_TILES` and
+`water_pictures_match_the_graphics` in `overworld/map_source/generated.rs`.
+
+In vanilla the kit is used consistently between water tiles: on the edges
+they share, 5555 sample points agree and 307 disagree, and the disagreements
+are almost all open water butting straight onto a node, pipe, bush or plain
+ground (vanilla sometimes skips the shore there).
+
+**Reading the tile byte alone does not work.** Treating `$82`–`$A9` as "water"
+and recording each cell's 8 water/land neighbours (off-map counted as water)
+gives 75 of 132 patterns
+with more than one tile; a cell with water all round is drawn as 11 different
+tiles. The picture lives in the quadrants, not in the neighbourhood.
+
 ### World Map Functionality (PRG010: 0x14010–0x1600F)
 
 Key tables in PRG010 (indexed by World_Num 0–7):
@@ -2994,6 +3050,40 @@ slot 6 (vanilla W8 uses slots 0–5: `01 00 0E 0D 0F 0E …`), floating beside a
 dock tile (`0x4B`) so the player can board it. See the randomizer's
 `write_map_sprite` and W8 `CANOE_EDGES` (mainland `(5,6)` → islands
 `(3,8)/(5,10)/(5,12)`).
+
+**How the canoe moves** (`Map_CheckDoMove`, `prg010.asm` ~line 3378; read
+2026-10-13 for generated W3). One function handles walking and sailing:
+
+1. **Boarding.** On a dock (`TILE_DOCK` `$4B`), a direction press looks for a
+   canoe exactly one tile that way (`Map_CanoeCheck*Off`): a cardinal
+   neighbour of the dock. The search covers map-object slots 7 down to 1,
+   never slot 0, and stops at the first canoe, so **one canoe per map**.
+2. **In the canoe**, the target tile is tested in order:
+   - in the direction's walkable list (`Map_Object_Valid_Left/Right/Down/Up`:
+     path, bridge and over-water path tiles only, by axis; no node tiles):
+     a normal 2-tile walk, *with `Map_InCanoe_Flag` still set*. A lattice map
+     never offers this, since both ends of every path cell are nodes;
+   - `$4B` dock: the flag clears and the player steps off. **The only exit.**
+   - `$82`–`$A9` (`TILE_WATER_INVT` up to, not including,
+     `TILE_VERTPATHWLU`): the canoe moves one tile (16 units). **Any water
+     tile**, including the water gap `$9D`;
+   - below `$82`: bump. `$AA` and up: nothing.
+3. So **paths and bridges over water cut the canoe's water** (all are
+   `$AA`+). A gap `$9D` is sailable while shut and blocks once its fortress
+   bridges it, so canoe reachability must never depend on a gap cell.
+
+The always-on canoe summon (`qol/canoe_summon.rs`, A on a dock calls the boat
+to the adjacent water; replaced by `maze::canoe_gate` when item gates are on)
+means a parked canoe never strands anyone. The death-respawn fix
+(`qol/canoe.rs`) is position-independent.
+
+**Paths over water.** Water on both sides of the path; the variant says which
+ends meet land:
+
+| | Water both ends | Land top / left | Land bottom / right | Land both ends |
+|---|---|---|---|---|
+| Vertical | `$B0` `TILE_VERTPATHW` | `$AA` `…WLU` | `$AB` `…WLL` | `$BA` `…WLB` |
+| Horizontal | `$AC` `TILE_HORZPATHW` | `$B7` `…WLL` | `$B8` `…WLR` | `$B9` `…WLB` |
 
 ### World-Map Object March Validation (PRG011)
 

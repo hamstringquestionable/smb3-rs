@@ -14,6 +14,17 @@ pub(crate) struct Grid {
     /// overworld builder stamps the real value onto the grids it walks, and it
     /// is preserved through clones.
     pub(crate) eights_are_wild: bool,
+    /// Whether this is one of vanilla's hand-drawn layouts, so the tile
+    /// fixes keyed to vanilla cells (`map_source::vanilla::BLANK_TILE_OVERRIDES`
+    /// and `ISLAND_POSITIONS`) apply. True for any grid read from the ROM; a
+    /// generated layout sets it false, since those cells mean nothing there.
+    /// Rides on the grid for the same reason as `eights_are_wild`.
+    pub(crate) vanilla_layout: bool,
+    /// This world's canoe edges when its map source drew its own docks (a
+    /// generated world); `None` reads vanilla's table. Read through
+    /// [`canoe_edges`]. Rides on the grid for the same reason as
+    /// `eights_are_wild`.
+    pub(crate) canoe_edges: Option<Vec<TeleportEdge>>,
 }
 
 impl Grid {
@@ -29,6 +40,17 @@ impl Grid {
     /// column count varies per world.
     pub(crate) fn rows(&self) -> usize {
         ROWS
+    }
+}
+
+/// The canoe edges for a world as its grid has them: the grid's own when its
+/// map source drew docks (a generated world), else vanilla's table through
+/// [`active_canoe_edges`]. Every consumer holding a grid reads canoe edges
+/// here.
+pub(crate) fn canoe_edges(world_idx: usize, grid: &Grid) -> Vec<TeleportEdge> {
+    match &grid.canoe_edges {
+        Some(edges) => edges.clone(),
+        None => active_canoe_edges(world_idx, grid.eights_are_wild),
     }
 }
 
@@ -52,7 +74,7 @@ pub(crate) fn read_tile_grid(rom: &Rom, world_idx: usize) -> Grid {
         tiles.push(row);
     }
 
-    Grid { tiles, cols, eights_are_wild: false }
+    Grid { tiles, cols, eights_are_wild: false, vanilla_layout: true, canoe_edges: None }
 }
 
 /// All eight worlds' tile grids, read off a finished ROM.

@@ -25,11 +25,10 @@ use rand::Rng;
 use crate::rom::Rom;
 
 use crate::randomize::overworld::node_catalog::{NodeCatalog, NodeKind};
-use crate::randomize::overworld::pipe_helpers::grid_pos_to_dest_nibbles;
 use crate::randomize::rom_data::{
     self, AIRSHIP_OBJ_SLOT, FS_SAS_GAMEOVER_FINALIZE, FS_SAS_SCRH_TABLE, FS_SAS_SCRL_TABLE,
     FS_SAS_SEED_HELPER, FS_SAS_X_TABLE, FS_SAS_XHI_TABLE, GAMEOVER_FINALIZE_SITE, Grid,
-    MAP_INIT_SCROLL_SITE, MAP_TILE_GRIDS, MAP_Y_STARTS_OFF, WORLDS,
+    MAP_INIT_SCROLL_SITE, MAP_TILE_GRIDS, MAP_Y_STARTS_OFF,
 };
 
 /// World index of W5 (Sky), the one world with special-case handling: its
@@ -45,9 +44,14 @@ const W5_IDX: usize = 4;
 /// that world's Start and Airship entry `grid_pos` values in the catalog, and
 /// record the swap on `catalog.start_airship_swapped[wi]`. Downstream phases
 /// pick up the new positions automatically.
+///
+/// A generated world is never swapped: it already places its own start, on
+/// or beside either of the two spots a swap would pick, and draws its map
+/// around it. Its coin is still flipped, so
+/// the other worlds' swaps do not change.
 pub(crate) fn pick_swaps<R: Rng>(catalog: &mut NodeCatalog, rng: &mut R) {
     for wi in 0..7 {
-        if !rng.random::<bool>() {
+        if !rng.random::<bool>() || !catalog.maps[wi].grid.vanilla_layout {
             continue;
         }
         let start_idx = catalog
@@ -136,41 +140,6 @@ fn above_start_override(world_idx: usize) -> Option<u8> {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 3a: per-world pointer-table entry updates (called from the writer
-// before pipe_helpers::resort_pointer_table)
-// ---------------------------------------------------------------------------
-
-/// For a swapped world, rewrite the Airship and Start entries' rowtype/scrcol
-/// bytes so their pointer-table positions match the new grid coordinates. The
-/// writer's main pass deliberately leaves these two entries alone (they're not
-/// in the pickup pool), so without this step the engine looks up the wrong
-/// entry when the player walks onto the swapped tiles.
-///
-/// Must run BEFORE `pipe_helpers::resort_pointer_table` for the same world so
-/// the resort places the rewritten entries in their correct screen/row order.
-pub(super) fn write_swapped_world_entries(rom: &mut Rom, world_idx: usize, catalog: &NodeCatalog) {
-    if !catalog.start_airship_swapped[world_idx] {
-        return;
-    }
-    let world = &WORLDS[world_idx];
-    let rt_off = world.rowtype_offset;
-    let sc_off = rt_off + world.entry_count;
-
-    for entry in
-        catalog.world(world_idx).filter(|e| matches!(e.kind, NodeKind::Airship | NodeKind::Start))
-    {
-        let (row, col) = entry.grid_pos;
-        let (screen, col_in_screen, row_nib) = grid_pos_to_dest_nibbles(row, col);
-
-        // Preserve the low nibble of the existing rowtype byte (tileset code).
-        let old_rt = rom.read_byte(rt_off + entry.entry_idx);
-        let new_rt = (row_nib << 4) | (old_rt & 0x0F);
-        rom.write_byte(rt_off + entry.entry_idx, new_rt);
-        rom.write_byte(sc_off + entry.entry_idx, (screen << 4) | col_in_screen);
-    }
-}
-
-// ---------------------------------------------------------------------------
 // Phase 3b: engine scaffolding (called from the writer)
 // ---------------------------------------------------------------------------
 
@@ -193,6 +162,21 @@ pub(crate) fn write_engine_scaffolding(rom: &mut Rom, catalog: &NodeCatalog) {
     write_seed_helper(rom);
     write_gameover_finalize(rom);
     move_airship_sprites(rom, catalog);
+}
+
+/// The first map column the camera shows when world `world_idx` starts with
+/// Mario at column `col`; the screen shows 16 from there. Half a screen back,
+/// rounded to a half-page stop, except W5's whole static screens (see
+/// [`build_position_tables`]). The generator reads it too, so a start never
+/// shows what is meant to be found by going over.
+pub(crate) fn start_camera_col(world_idx: usize, col: usize) -> usize {
+    let cols = MAP_TILE_GRIDS[world_idx].columns as i32;
+    let first = if world_idx == W5_IDX {
+        (col as i32 / 16) * 16 // W5: page-align to the start's static screen
+    } else {
+        (((col as i32 - 8) + 4).max(0) / 8) * 8 // round-to-8, floored at 0
+    };
+    first.clamp(0, (cols - 16).max(0)) as usize
 }
 
 /// Build and write the four per-world position tables (X/XHi/ScrL/ScrH) in
@@ -223,13 +207,7 @@ fn build_position_tables(rom: &mut Rom, catalog: &NodeCatalog) {
         // other edge-scroll-skipped world but is never swapped, so its col-2 start
         // collapses to 0 regardless.) Page-0 / unswapped starts collapse to column 0
         // in either branch (identical to vanilla).
-        let cols = MAP_TILE_GRIDS[wi].columns as i32;
-        let col = if wi == W5_IDX {
-            (sc as i32 / 16) * 16 // W5: page-align to the start's static screen
-        } else {
-            (((sc as i32 - 8) + 4).max(0) / 8) * 8 // round-to-8, floored at 0
-        };
-        let col = col.clamp(0, (cols - 16).max(0));
+        let col = start_camera_col(wi, sc) as i32;
         scrl_tbl[wi] = if col & 8 != 0 { 0x80 } else { 0x00 };
         scrh_tbl[wi] = (col >> 4) as u8;
     }

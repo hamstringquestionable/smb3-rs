@@ -1203,6 +1203,8 @@ fn all_off_options() -> Options {
         wild_injections: Vec::new(),
         starting_items: vec![],
         skip_rom_validation: false,
+        generated_overworld: false,
+        generated_worlds: 0,
         anchor_visuals: false,
     }
 }
@@ -1285,6 +1287,8 @@ fn all_on_options() -> Options {
         wild_injections: WildChaser::ALL.to_vec(),
         starting_items: vec![0x05, 0x09, 0x03],
         skip_rom_validation: false,
+        generated_overworld: false,
+        generated_worlds: 0,
         anchor_visuals: true,
     }
 }
@@ -1495,14 +1499,16 @@ fn maybe_resolves_both_ways_across_seeds() {
     let on = Options { more_hammer_rocks: Tri::On, ..test_options() };
     let maybe = Options { more_hammer_rocks: Tri::Maybe, ..test_options() };
 
-    // Capture the byte ranges make_hammer_rocks touches from a known-On run.
+    // Capture the hammer-rock cells' bytes from a known-On run.
     let on_touched: Vec<(usize, Vec<u8>)> = {
         let mut rom = make_test_rom().unwrap();
         randomize(&mut rom, 0, &on);
-        rom.write_log()
+        crate::randomize::overworld::map_source::vanilla::HAMMER_ROCKS
             .iter()
-            .filter(|r| r.tag == "qol/more_hammer_rocks")
-            .map(|r| (r.offset, rom.read_range(r.offset, r.len).to_vec()))
+            .map(|&(world, (row, col), _)| {
+                let off = crate::randomize::rom_data::map_tile_offset(world, row, col);
+                (off, rom.read_range(off, 1).to_vec())
+            })
             .collect()
     };
     assert!(!on_touched.is_empty(), "expected more_hammer_rocks to write bytes when On");

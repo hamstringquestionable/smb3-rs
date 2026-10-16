@@ -85,10 +85,8 @@ fn canoes_reachable(
     // `active_canoe_edges` applies both the world filter (the coordinates are
     // not world-unique — W3's (6,20) also exists in W2/W4–W8) and the `8s are
     // Wild` gate (W8's docks only exist when the flag is on).
-    let docks: Vec<(usize, usize)> = rom_data::active_canoe_edges(world_idx, grid.eights_are_wild)
-        .into_iter()
-        .map(|(a, _)| a)
-        .collect();
+    let docks: Vec<(usize, usize)> =
+        rom_data::canoe_edges(world_idx, grid).into_iter().map(|(a, _)| a).collect();
     if docks.is_empty() {
         return true;
     }
@@ -194,7 +192,7 @@ fn walk_map_inner(
     // structural fix for the SAS-W3 deadlock where the swap moves the start
     // into a region with no walking path to the dock.
     let canoe_lookup = if canoes && canoes_reachable(grid, pipe_pairs, start, world_idx, blocked) {
-        teleport_lookup(&rom_data::active_canoe_edges(world_idx, grid.eights_are_wild))
+        teleport_lookup(&rom_data::canoe_edges(world_idx, grid))
     } else {
         TeleportLookup::new()
     };
@@ -525,7 +523,7 @@ pub(crate) fn walk_reachable_blocked(
     // first phase instead of a separate pre-pass. The canoe lookup is now built
     // unconditionally, which costs a small map on W3/W8 and saves a whole BFS.
     let pipe_lookup = teleport_lookup(pipe_pairs);
-    let canoe_edges = rom_data::active_canoe_edges(world_idx, grid.eights_are_wild);
+    let canoe_edges = rom_data::canoe_edges(world_idx, grid);
     let canoe_lookup = teleport_lookup(&canoe_edges);
     reach_gated(grid, start, &pipe_lookup, &canoe_edges, &canoe_lookup, blocked)
 }
@@ -609,7 +607,7 @@ mod tests {
         blocked: &HashSet<(usize, usize)>,
     ) -> Reach {
         let pipe_lookup = teleport_lookup(pipe_pairs);
-        let edges = rom_data::active_canoe_edges(world_idx, grid.eights_are_wild);
+        let edges = rom_data::canoe_edges(world_idx, grid);
         let no_canoes =
             reach_gated(grid, start, &pipe_lookup, &[], &TeleportLookup::new(), blocked);
         if !edges.iter().any(|&(dock, _)| no_canoes.contains(dock)) {
@@ -794,8 +792,13 @@ mod tests {
             // The island dock `b` is left isolated, so it can only be reached
             // via a canoe hop — never by walking. `eights_are_wild` on so the
             // W8 edges resolve.
-            let mut grid =
-                Grid { tiles: vec![vec![0xB4u8; 48]; 9], cols: 48, eights_are_wild: true };
+            let mut grid = Grid {
+                tiles: vec![vec![0xB4u8; 48]; 9],
+                cols: 48,
+                eights_are_wild: true,
+                vanilla_layout: false,
+                canoe_edges: None,
+            };
             let start = (a.0, a.1 - 2);
             grid.set(a.0, a.1 - 1, 0x45); // VALID_HORZ path tile
             grid.set(a.0, a.1, 0x45); // mainland dock node (non-background)

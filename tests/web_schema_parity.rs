@@ -446,7 +446,7 @@ fn preset_modes_match_what_they_build() {
     assert!(bad.is_empty(), "preset sections disagree with their overrides: {bad:?}");
 }
 
-/// The mode keys (`mode`, `forcedInMaze`) hold the page's story about which
+/// The mode keys (`mode`, `forcedInMaze`, `forcedByGenerated`) hold the page's story about which
 /// options apply in which mode, and their failure modes are silent in a browser:
 /// a mode spelled wrong makes an option inert in *both* modes, since neither
 /// matches; an entry marked both mode-specific and forced has its value written
@@ -472,7 +472,7 @@ fn mode_markings_are_coherent() {
     let mut forced_count = 0;
     for (id, body) in entries.iter() {
         let mode = mode_of(body);
-        let forced = body.contains("forcedInMaze:");
+        let forced = body.contains("forcedInMaze:") || body.contains("forcedByGenerated:");
         if forced {
             forced_count += 1;
         }
@@ -572,4 +572,47 @@ fn item_options_match_rust_items() {
         "{OPTIONS_JS}: ITEM_OPTIONS offers item ids {extra:?} that Rust's ITEMS does not — \
          sanitize_item will zero them on the way into the flag key",
     );
+}
+
+/// A section with `subgroups` draws only the rows that name one of them, so a
+/// row with no `subgroup`, or a misspelled one, silently vanishes from the
+/// page: nothing throws. Every row of such a section (pills and hosted rows
+/// excepted, which draw inside another) must name one it lists.
+#[test]
+fn subgroup_markings_name_their_sections_runs() {
+    let src = options_js();
+    let quoted_after = |body: &str, key: &str| -> Option<String> {
+        let at = body.find(key)? + key.len();
+        let rest = &body[at..];
+        Some(rest[..rest.find('"').expect("value is not terminated")].to_string())
+    };
+    let mut checked = 0;
+    for group in entries(array_block(&src, "GROUPS")) {
+        let Some(at) = group.find("subgroups:") else { continue };
+        let runs: BTreeSet<String> = group[at..]
+            .split("{ id: \"")
+            .skip(1)
+            .map(|s| s[..s.find('"').expect("subgroup id is not terminated")].to_string())
+            .collect();
+        let gid = entry_id(group);
+        for entry in entries(array_block(&src, "SCHEMA")) {
+            if quoted_after(entry, "group: \"").as_deref() != Some(gid) {
+                continue;
+            }
+            let id = entry_id(entry);
+            match quoted_after(entry, "subgroup: \"") {
+                Some(run) => assert!(
+                    runs.contains(&run),
+                    "SCHEMA entry `{id}` names subgroup `{run}`, which `{gid}` does not list: {runs:?}",
+                ),
+                None => assert!(
+                    entry.contains("pillOf:") || entry.contains("host:"),
+                    "SCHEMA entry `{id}` is in `{gid}`, which has subgroups, but names none — \
+                     it would not be drawn",
+                ),
+            }
+            checked += 1;
+        }
+    }
+    assert!(checked > 0, "no subgrouped entries parsed from {OPTIONS_JS} — parser drift");
 }

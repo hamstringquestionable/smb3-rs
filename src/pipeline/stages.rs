@@ -31,7 +31,21 @@ pub(super) struct Resolved {
     eights_are_wild: bool,
     antechamber_shuffle: bool,
     piranha_active: bool,
+    /// The piranha mode the run uses: the option, except that a run with
+    /// generated worlds never has it off (user, 2026-10-13). Their maps move
+    /// the plant levels, and only a shuffle moves the plants' sprites with
+    /// them, the way Hammer Bro shuffle must be on to place the bros.
+    piranha: PiranhaMode,
     hints: crate::HintMode,
+    /// The worlds whose maps are generated, a bit each (bit 0 is World 1):
+    /// all eight with Generated Overworld, else `testrom`'s per-world mask.
+    generated_worlds: u8,
+    /// Hammer Bro shuffle as the run uses it: forced on with any generated
+    /// world, whose map the builder must place the bros on.
+    shuffle_hammer_bros: bool,
+    /// Spade shuffle as the run uses it: forced on with every world
+    /// generated, which deals the spades to random nodes either way.
+    shuffle_spade_games: bool,
 }
 
 /// The maze's model-side decisions, handed from [`maze_model`] to [`maze_rom`].
@@ -74,8 +88,15 @@ pub(super) fn resolve(seed: u64, options: &Options, rng: &mut ChaCha8Rng) -> Res
     let hammer_breaks_locks = options.hammer_breaks_locks.resolve(&mut maybe_rng);
     let hammer_breaks_bridges = options.hammer_breaks_bridges.resolve(&mut maybe_rng);
     let troll_pipes = options.troll_pipes.resolve(&mut maybe_rng);
-    let more_hammer_rocks = options.more_hammer_rocks.resolve(&mut maybe_rng);
-    let eights_are_wild = options.eights_are_wild.resolve(&mut maybe_rng);
+    let generated_worlds =
+        options.generated_worlds | if options.generated_overworld { 0xFF } else { 0 };
+    // Its rocks are cells of the vanilla W1 and W8 maps (and W1's shortcut), so
+    // with both generated there is nothing left for it to do.
+    let more_hammer_rocks =
+        options.more_hammer_rocks.resolve(&mut maybe_rng) && generated_worlds & 0x81 != 0x81;
+    // A generated W8 draws its own first screen, where the canoe docks were.
+    let eights_are_wild =
+        options.eights_are_wild.resolve(&mut maybe_rng) && generated_worlds & (1 << 7) == 0;
     let antechamber_shuffle = options.antechamber_shuffle.resolve(&mut maybe_rng);
 
     // **Hints describe a maze, so they are off without one.**
@@ -94,6 +115,10 @@ pub(super) fn resolve(seed: u64, options: &Options, rng: &mut ChaCha8Rng) -> Res
     // there. The key still encodes what the player chose; this
     // only decides what the run does with it.
     let hints = if options.world_maze { options.hints } else { crate::HintMode::Off };
+    let piranha = match options.piranha_shuffle {
+        PiranhaMode::Off if generated_worlds != 0 => PiranhaMode::On,
+        mode => mode,
+    };
 
     Resolved {
         whistles_removed,
@@ -105,43 +130,26 @@ pub(super) fn resolve(seed: u64, options: &Options, rng: &mut ChaCha8Rng) -> Res
         more_hammer_rocks,
         eights_are_wild,
         antechamber_shuffle,
-        piranha_active: options.piranha_shuffle != PiranhaMode::Off,
+        piranha_active: piranha != PiranhaMode::Off,
+        piranha,
         hints,
+        generated_worlds,
+        shuffle_hammer_bros: options.shuffle_hammer_bros || generated_worlds != 0,
+        shuffle_spade_games: options.shuffle_spade_games || generated_worlds == 0xFF,
     }
 }
 
 /// Stage 1: map fixes every later overworld pass must see.
 pub(super) fn map_fixes(rom: &mut Rom, run: &Resolved) {
-    // QoL map patches run first so all subsequent overworld operations
-    // (fortress redistribution, pipe shuffle, lock shuffle) see the final
-    // map connectivity and store correct replacement tiles.
+    // The map's tile edits (drawbridges, rocks, the W1 shortcut, the W8
+    // bridges and canoe docks) are not here: they belong to the vanilla map
+    // source, which applies them in memory (`map_source::vanilla`). What stays
+    // is engine code, and the W8 canoe sprite, which the map source reads back.
     rom.set_tag("qol/drawbridges");
     randomize::qol::fix_w3_drawbridges(rom);
-    // Path-blocking rocks (W2 secret path, W3 boat dock, W4 pipe shortcut) are
-    // always removed: the overworld builder relies on those tiles being open
-    // for connectivity, so this is no longer player-gated.
-    rom.set_tag("qol/rocks");
-    randomize::qol::remove_rocks(rom);
-    if run.more_hammer_rocks {
-        rom.set_tag("qol/more_hammer_rocks");
-        randomize::qol::make_hammer_rocks(rom);
-    }
-
-    // W1 shortcut rock. The tiles land either way — only the rock's
-    // breakability follows `more_hammer_rocks`, so the map never leaks how a
-    // `Maybe` roll came out. Before the builder, like every map edit.
-    rom.set_tag("qol/w1_shortcut");
-    randomize::qol::apply_w1_shortcut(rom, run.more_hammer_rocks);
-
-    // W8 Dark World map edits. The screen-3 water/bridge final page is always
-    // applied; the screen-0 canoe + screen-2 extra paths are gated behind
-    // `8s are Wild`. Both must run before the overworld builder so it sees the
-    // new connectivity.
-    rom.set_tag("qol/w8_bridges");
-    randomize::qol::apply_w8_bridges(rom);
     if run.eights_are_wild {
         rom.set_tag("qol/w8_canoe_and_paths");
-        randomize::qol::apply_w8_canoe_and_paths(rom);
+        randomize::qol::place_w8_canoe(rom);
     }
 
     // Fix Big ? Block bonus rooms so they follow the level, not the world slot.
@@ -312,15 +320,70 @@ pub(super) fn overworld_catalog(
     run: &Resolved,
     rng: &mut ChaCha8Rng,
 ) -> NodeCatalog {
-    rom.set_tag("overworld/builder");
-    let mut catalog =
-        randomize::overworld::node_catalog::NodeCatalog::build(rom, options.include_beta_stages);
     // Piranha shuffle: free the two W7 plant levels into the pool. The sprite
-    // clear must precede the builder — capacity/eligibility reads sprite
-    // state straight from the ROM.
+    // clear must precede the map load, which reads sprite positions from the
+    // ROM, and slot eligibility still reads the ROM directly.
     if run.piranha_active {
         rom.set_tag("piranha_shuffle");
         randomize::levels::piranha_rooms::clear_vanilla_plants(rom);
+    }
+    rom.set_tag("overworld/builder");
+    let mut maps = randomize::overworld::map_source::vanilla::load(
+        rom,
+        run.more_hammer_rocks,
+        run.eights_are_wild,
+    );
+    // Generated maps for the worlds `run.generated_worlds` names (all eight
+    // with Generated Overworld). Hammer Bro shuffle is on whenever one is
+    // (`resolve`), so the builder places the bros; a world the generator
+    // cannot draw keeps its vanilla map.
+    if run.shuffle_hammer_bros {
+        for (wi, map) in maps.iter_mut().enumerate() {
+            if run.generated_worlds & (1 << wi) != 0
+                && let Some(generated) = randomize::overworld::map_source::generated::world_map(
+                    map,
+                    wi,
+                    options.swap_start_airship,
+                    rng,
+                )
+            {
+                if let Some(canoe) = generated.canoe {
+                    rom.set_tag("overworld/generated_canoe");
+                    randomize::rom_data::move_canoe(rom, wi, canoe);
+                }
+                if let Some((castle, help)) = generated.castle {
+                    use randomize::rom_data::{AIRSHIP_OBJ_SLOT, HELP_OBJ_SLOT};
+                    rom.set_tag("overworld/generated_castle_sprites");
+                    randomize::rom_data::write_map_sprite_position(
+                        rom,
+                        wi,
+                        AIRSHIP_OBJ_SLOT,
+                        castle.0,
+                        castle.1,
+                    );
+                    randomize::rom_data::write_map_sprite_position(
+                        rom,
+                        wi,
+                        HELP_OBJ_SLOT,
+                        help.0,
+                        help.1,
+                    );
+                }
+                if let Some(limit) = generated.pan_limit {
+                    rom.set_tag("overworld/generated_pan_limit");
+                    rom.write_byte(randomize::rom_data::MAP_MAX_PAN_R + wi, limit);
+                }
+                *map = generated;
+            }
+        }
+    }
+    let mut catalog = randomize::overworld::node_catalog::NodeCatalog::from_maps(
+        rom,
+        maps,
+        options.include_beta_stages,
+    );
+    if run.piranha_active {
+        rom.set_tag("piranha_shuffle");
         catalog.release_map_objects();
     }
     if options.swap_start_airship {
@@ -416,9 +479,9 @@ pub(super) fn overworld_build(
         rom,
         catalog,
         randomize::overworld::pickup::PickupFlags {
-            shuffle_spade_games: options.shuffle_spade_games,
+            shuffle_spade_games: run.shuffle_spade_games,
             shuffle_toad_houses: options.shuffle_toad_houses,
-            shuffle_hammer_bros: options.shuffle_hammer_bros,
+            shuffle_hammer_bros: run.shuffle_hammer_bros,
         },
     );
     let data = randomize::overworld::build::OverworldData { pickup: &pickup, catalog };
@@ -429,7 +492,7 @@ pub(super) fn overworld_build(
         randomize::overworld::build::BuildFlags {
             shuffle_toad_houses: options.shuffle_toad_houses,
             eights_are_wild: run.eights_are_wild,
-            shuffle_hammer_bros: options.shuffle_hammer_bros,
+            shuffle_hammer_bros: run.shuffle_hammer_bros,
             world_maze: options.world_maze,
         },
     );
@@ -560,8 +623,8 @@ pub(super) fn write_overworld(
         &data,
         rng,
         randomize::overworld::writer::WriteFlags {
-            shuffle_hammer_bros: options.shuffle_hammer_bros,
-            piranha: options.piranha_shuffle,
+            shuffle_hammer_bros: run.shuffle_hammer_bros,
+            piranha: run.piranha,
             friendlier_levels: options.friendlier_levels,
             hints: run.hints,
             deja_vu: options.deja_vu,

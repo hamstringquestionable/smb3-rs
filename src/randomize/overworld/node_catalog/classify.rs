@@ -1,5 +1,6 @@
-//! Per-world classification: reads each pointer table entry from the ROM and
-//! assigns it a `NodeKind`. Pure reads — no RNG, no writes.
+//! Per-world classification: reads each pointer table entry from the ROM, takes
+//! its position from the source map, and assigns it a `NodeKind`. Pure reads —
+//! no RNG, no writes.
 
 use std::collections::{HashMap, HashSet};
 
@@ -7,6 +8,7 @@ use crate::rom::Rom;
 
 use super::pipes::build_pipe_map;
 use super::{NodeKind, RawClassifiedEntry};
+use crate::randomize::overworld::map_source::WorldMap;
 use crate::randomize::rom_data::{
     self, AIRSHIP_ENTRIES, BOWSER_ENTRY, FORTRESS_ENTRIES, HAMMER_BRO_OBJ_PTRS,
     MAP_OBJ_ENTRY_LINKS, TILE_START, TOAD_HOUSE_OBJ_PTRS, WORLDS,
@@ -27,8 +29,9 @@ const W5_SPIRAL_ENTRIES: &[(usize, usize)] = &[(4, 10), (4, 21)];
 pub(super) fn classify_world(
     rom: &Rom,
     world_idx: usize,
-    grid: &rom_data::Grid,
+    map: &WorldMap,
 ) -> Vec<RawClassifiedEntry> {
+    let grid = &map.grid;
     let world = &WORLDS[world_idx];
     let n = world.entry_count;
     let (_scrcol, objsets, layouts) = rom_data::table_offsets(world);
@@ -63,7 +66,7 @@ pub(super) fn classify_world(
     let mut result = Vec::with_capacity(n);
 
     for i in 0..n {
-        let (row, col) = rom_data::entry_grid_position(rom, world, i);
+        let (row, col) = map.entry_pos[i];
         let obj = rom_data::read_word(rom, objsets + i * 2);
         let lay = rom_data::read_word(rom, layouts + i * 2);
         let map_tile = if row < grid.rows() && col < grid.cols { grid.get(row, col) } else { 0xFF };

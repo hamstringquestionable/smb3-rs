@@ -58,7 +58,7 @@ pub(crate) const SHAPING_SLACK: u32 = 9;
 
 /// Breakable overworld rocks and the path tile they open into
 /// ($51→$45 horizontal, $52→$46 vertical). $53 is unbreakable (stays a wall).
-const BREAKABLE_ROCKS: [(u8, u8); 2] = [(0x51, 0x45), (0x52, 0x46)];
+pub(crate) const BREAKABLE_ROCKS: [(u8, u8); 2] = [(0x51, 0x45), (0x52, 0x46)];
 
 /// One distinct route to the goal.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -441,7 +441,7 @@ impl WalkGraph {
         let walk = walk_map(&grid, &built.pipe_pairs, Some(start), built.world_idx);
 
         // Canoe (boat) — same model as progression.rs: one boat, rides move it.
-        let canoe_edges = rom_data::active_canoe_edges(built.world_idx, built.grid.eights_are_wild);
+        let canoe_edges = rom_data::canoe_edges(built.world_idx, &built.grid);
         let canoe_pair_set: FastSet<(Pos, Pos)> =
             canoe_edges.iter().flat_map(|&(a, b)| [(a, b), (b, a)]).collect();
         let initial_boat = boat_code(canoe_edges.first().map(|&(a, _)| a));

@@ -1,6 +1,7 @@
 //! W8 army sprites and Hammer-Bro map-sprite writes.
 
 use super::*;
+use crate::randomize::overworld::map_source::WorldMap;
 
 /// W8 army sprite definitions: (map_object_slot, is_fortress).
 /// Tank goes on a level slot, the other 3 go on fortress slots.
@@ -59,13 +60,15 @@ fn is_special_level_slot(built: &BuiltWorld, wa: &WorldAssignments, pos: (usize,
 /// How many plant sprites this world can still host: empty-able map-object
 /// slots minus the Hammer Bros that will occupy some and the slots kept free
 /// for runtime bonus spawns (white toad house, coin ship).
-fn plant_budget(rom: &Rom, built: &BuiltWorld, wi: usize, shuffle_hammer_bros: bool) -> usize {
+fn plant_budget(
+    rom: &Rom,
+    built: &BuiltWorld,
+    map: &WorldMap,
+    wi: usize,
+    shuffle_hammer_bros: bool,
+) -> usize {
     let eligible = rom_data::eligible_hb_map_slots(rom, wi).len();
-    let hb_used = if shuffle_hammer_bros {
-        built.hb_sprites.len()
-    } else {
-        rom_data::read_hb_sprite_positions(rom, wi).len()
-    };
+    let hb_used = if shuffle_hammer_bros { built.hb_sprites.len() } else { map.hb_sprites.len() };
     eligible.saturating_sub(hb_used + crate::randomize::overworld::build::RESERVED_DYNAMIC_SLOTS)
 }
 
@@ -95,7 +98,15 @@ pub(super) fn pick_plant_positions<R: Rng>(
     }
 
     let mut budgets: Vec<usize> = (0..8)
-        .map(|wi| plant_budget(rom, &build.worlds[wi], wi, flags.shuffle_hammer_bros))
+        .map(|wi| {
+            plant_budget(
+                rom,
+                &build.worlds[wi],
+                &data.catalog.maps[wi],
+                wi,
+                flags.shuffle_hammer_bros,
+            )
+        })
         .collect();
 
     // A level slot can host a plant if it isn't a hand trap / live troll pipe

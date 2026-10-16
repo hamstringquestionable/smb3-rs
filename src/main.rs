@@ -462,6 +462,11 @@ struct Cli {
     #[arg(long)]
     water_stomp: bool,
 
+    /// Generated Overworld: draw every world's map afresh instead of vanilla's
+    /// layout (forces Hammer Bro and Piranha shuffle on)
+    #[arg(long)]
+    generated_overworld: bool,
+
     /// Hammer/Boomerang/Fire Bros: off, shuffle, or wild (default: shuffle)
     #[arg(long, default_value = "shuffle", value_parser = parse_enemy_mode)]
     bros: EnemyMode,
@@ -697,6 +702,9 @@ fn build_options(cli: &Cli) -> Options {
             starting_lives: cli.starting_lives,
             starting_items,
             skip_rom_validation: cli.skip_rom_validation,
+            generated_overworld: cli.generated_overworld,
+            // Per world; `testrom --generate-world` turns it on.
+            generated_worlds: 0,
         }
     }
 }

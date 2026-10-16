@@ -41,7 +41,7 @@
 
 use super::*;
 
-use crate::randomize::qol::{W8_BRIDGE_COLS, W8_BRIDGE_ROW};
+use crate::randomize::overworld::map_source::vanilla::{W8_BRIDGE_COLS, W8_BRIDGE_ROW};
 use rand::seq::SliceRandom;
 
 pub(crate) struct Locks;
@@ -509,6 +509,7 @@ fn lock_candidates(state: &WorldState) -> Vec<(Pos, u8)> {
             let tile = state.grid.get(r, c);
             if !LOCKABLE_TILES.contains(&tile)
                 || locked.contains(&pos)
+                || state.no_locks.contains(&pos)
                 || is_bridge_span(state, pos)
             {
                 continue;

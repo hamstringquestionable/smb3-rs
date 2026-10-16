@@ -9,6 +9,23 @@ deploys.
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-10-16
+
+### Added
+
+- **Generated Overworld.** Every world's map is drawn from scratch each seed:
+  new paths, islands and scenery, in each world's own style. Turns on Hammer
+  Bro, Piranha and Spade shuffle, and turns off 8s are Wild and More Hammer
+  Rocks. Swap Start / Airship still decides whether a world may start on the
+  airship's side.
+
+### Changed
+
+- **The Map options are grouped** under World Layout, On the Map, Levels and
+  Map Conveniences, with Generated Overworld first. "Shuffle HammerBro
+  Locations" is now **Wandering Hammer Bros**, and Oops all Anchors moved to
+  Items & Pickups.
+
 ## [2.5.0] - 2026-10-13
 
 ### Added

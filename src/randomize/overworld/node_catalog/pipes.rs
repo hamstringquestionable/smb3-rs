@@ -47,7 +47,9 @@ pub(super) fn build_pipe_map(
         pairs.push((sorted[0], sorted[1]));
     }
 
-    // Match pairs to dest indices by comparing grid positions
+    // Match pairs to dest indices by comparing grid positions. These are the
+    // ROM's positions, not the source map's: which entries form a pipe pair
+    // is a fact about the levels, and a generated map moves the pipes.
     for &(ea, eb) in &pairs {
         let ea_pos = rom_data::entry_grid_position(rom, world, ea);
         let eb_pos = rom_data::entry_grid_position(rom, world, eb);

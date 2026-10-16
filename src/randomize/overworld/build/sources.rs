@@ -23,7 +23,6 @@ use super::*;
 /// `WorldState`'s budgets before scheduling. `from_pickup` alone stays vanilla-frozen; variance is
 /// the caller's choice, made here.
 pub(crate) fn allot_budgets(
-    rom: &Rom,
     catalog: &NodeCatalog,
     pickup: &PickupResult,
     flags: &BuildFlags,
@@ -31,7 +30,6 @@ pub(crate) fn allot_budgets(
 ) -> ([usize; 8], [usize; 8], [u32; 8]) {
     let fort_counts = redistribute_fortresses(&mut rng);
     let CapacityPrep { capacities, .. } = prepare_capacities(
-        rom,
         catalog,
         pickup,
         &fort_counts,
@@ -65,6 +63,7 @@ pub(crate) fn from_built(built: &BuiltWorld) -> WorldState {
         target: find_target(&built.grid, built.world_idx),
         fixed: built.fixed.clone(),
         hammer_gated: HashSet::new(),
+        no_locks: HashSet::new(),
         pipe_budget: VANILLA_PIPE_PAIRS[built.world_idx],
         level_budget: built.slots.iter().filter(|s| s.kind == SlotKind::Level).count(),
         fort_budget: built.slots.iter().filter(|s| s.kind == SlotKind::Fortress).count(),
@@ -91,7 +90,6 @@ pub(crate) fn from_built(built: &BuiltWorld) -> WorldState {
 /// pickup, as in the real pipeline), and `pickup` must have been built with
 /// PickupFlags matching `flags`.
 pub(crate) fn from_pickup(
-    rom: &Rom,
     catalog: &NodeCatalog,
     pickup: &PickupResult,
     world_idx: usize,
@@ -116,7 +114,6 @@ pub(crate) fn from_pickup(
     let start = rom_data::find_start(&grid);
     let target = find_target(&grid, world_idx);
     let fixed = fixed_positions_for_world(
-        rom,
         catalog,
         world_idx,
         flags.shuffle_toad_houses,
@@ -135,13 +132,9 @@ pub(crate) fn from_pickup(
     let hb_sprite_pins = if flags.shuffle_hammer_bros {
         Vec::new()
     } else {
-        rom_data::read_hb_sprite_positions(rom, world_idx)
+        catalog.maps[world_idx].hb_sprites.clone()
     };
-    let hammer_gated: HashSet<Pos> = HAMMER_GATED_POCKETS
-        .iter()
-        .filter(|(wi, _)| *wi == world_idx)
-        .map(|(_, pos)| *pos)
-        .collect();
+    let hammer_gated: HashSet<Pos> = catalog.maps[world_idx].hammer_gated.iter().copied().collect();
     WorldState {
         world_idx,
         grid,
@@ -152,6 +145,7 @@ pub(crate) fn from_pickup(
         target,
         fixed,
         hammer_gated,
+        no_locks: catalog.maps[world_idx].no_locks.iter().copied().collect(),
         pipe_budget: VANILLA_PIPE_PAIRS[world_idx],
         level_budget,
         fort_budget,
@@ -164,15 +158,6 @@ pub(crate) fn from_pickup(
         log: Vec::new(),
     }
 }
-
-/// Lone blanks sealed off by breakable hammer rocks: `(world_idx, position)`.
-/// W3 (8,6) is the vanilla spade between two rocks — once the spade is picked
-/// up, the cell is a one-blank island that connectivity would otherwise
-/// bridge with a pipe every seed. (W6's rock at (2,13) guards a vanilla PIPE
-/// at (2,14) — deliberately NOT listed, bridging it is vanilla-faithful.)
-const HAMMER_GATED_POCKETS: &[(usize, Pos)] = &[
-    (2, (8, 6)), // W3 spade pocket between two rocks near start
-];
 
 /// Read one vanilla world from the ROM: tiles from the map grid, slots and
 /// pipe pairs from the node catalog, locks from the fortress-FX tables.
@@ -206,6 +191,7 @@ pub(crate) fn from_vanilla(rom: &Rom, catalog: &NodeCatalog, world_idx: usize) -
         target,
         fixed: HashSet::new(),
         hammer_gated: HashSet::new(),
+        no_locks: HashSet::new(),
         pipe_budget: VANILLA_PIPE_PAIRS[world_idx],
         level_budget,
         fort_budget,

@@ -37,7 +37,7 @@
 //! Skipped when the ROM is absent, like the other ROM-dependent tests — the ROM
 //! is gitignored and CI has no copy.
 
-use smb3_rs::{DejaVuMode, HintMode, Options, PiranhaMode, generate_patched_rom};
+use smb3_rs::{DejaVuMode, HintMode, Options, PiranhaMode, Tri, generate_patched_rom};
 use std::path::Path;
 
 const ROM_PATH: &str = "roms/Super Mario Bros. 3 (USA) (Rev 1).nes";
@@ -95,6 +95,14 @@ fn arms() -> Vec<(&'static str, Options, u64)> {
         ("friendlier", Options { friendlier_levels: true, ..base() }, ARM_SEEDS),
         ("no hb shuffle", Options { shuffle_hammer_bros: false, ..base() }, ARM_SEEDS),
         ("beta stages", Options { include_beta_stages: true, ..base() }, ARM_SEEDS),
+        // Experimental generated World 1 (hidden option).
+        ("generated w1", Options { generated_worlds: 1, ..base() }, ARM_SEEDS),
+        // The map edits gated on these two are off by default.
+        (
+            "hammer rocks + 8s wild",
+            Options { more_hammer_rocks: Tri::On, eights_are_wild: Tri::On, ..base() },
+            ARM_SEEDS,
+        ),
         ("maze, hints some", Options { world_maze: true, ..base() }, ARM_SEEDS),
         (
             "maze, hints full",

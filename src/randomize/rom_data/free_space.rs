@@ -724,6 +724,8 @@ pub(crate) const GAMEOVER_FINALIZE_SITE: usize = 0x166BA; // 3 bytes — `STA $7
 // Map_Object slot 1 == the airship sprite per southbird's disassembly:
 // "NOTE: Assumes Index 1 is the Airship!"
 pub(crate) const AIRSHIP_OBJ_SLOT: usize = 1;
+// Map_Object slot 0 == the HELP bubble beside the castle, in W1-W7.
+pub(crate) const HELP_OBJ_SLOT: usize = 0;
 
 // PRG026 — two-pass Big ? Block lookup + spawn-slot seeding (qol/big_q.rs),
 // relocated off the old 0x35530 slot into tail free space. The $FF run this
