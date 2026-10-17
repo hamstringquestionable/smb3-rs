@@ -28,13 +28,8 @@ use crate::randomize::overworld::node_catalog::{NodeCatalog, NodeKind};
 use crate::randomize::rom_data::{
     self, AIRSHIP_OBJ_SLOT, FS_SAS_GAMEOVER_FINALIZE, FS_SAS_SCRH_TABLE, FS_SAS_SCRL_TABLE,
     FS_SAS_SEED_HELPER, FS_SAS_X_TABLE, FS_SAS_XHI_TABLE, GAMEOVER_FINALIZE_SITE, Grid,
-    MAP_INIT_SCROLL_SITE, MAP_TILE_GRIDS, MAP_Y_STARTS_OFF,
+    MAP_INIT_SCROLL_SITE, MAP_TILE_GRIDS, MAP_Y_STARTS_OFF, W5_IDX,
 };
-
-/// World index of W5 (Sky), the one world with special-case handling: its
-/// vanilla start is approached from above (no castle-top write) and its map
-/// presents two static screens (page-aligned camera framing).
-const W5_IDX: usize = 4;
 
 // ---------------------------------------------------------------------------
 // Phase 1: catalog mutation

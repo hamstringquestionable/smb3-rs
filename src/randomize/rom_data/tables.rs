@@ -33,6 +33,10 @@ pub(crate) const VALID_BLANK_TILES: &[u8] = &[
 /// Start tile ID.
 pub(crate) const TILE_START: u8 = 0xE5;
 
+/// World index of the Sky World (W5): its map is two static screens, ground
+/// and sky, that the camera snaps between rather than pans across.
+pub(crate) const W5_IDX: usize = 4;
+
 /// World index of the Dark World (W8). The W8 canoe edges below are gated
 /// behind the `8s are Wild` option.
 pub(crate) const W8_IDX: usize = 7;

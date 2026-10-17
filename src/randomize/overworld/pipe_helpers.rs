@@ -7,7 +7,8 @@
 use crate::rom::Rom;
 
 use crate::randomize::rom_data::{
-    self, MAP_TILE_GRIDS, PIPE_MAP_SCRL_XHI, PIPE_MAP_X, PIPE_MAP_XHI, PIPE_MAP_Y, WORLDS,
+    self, MAP_TILE_GRIDS, PIPE_MAP_SCRL_XHI, PIPE_MAP_X, PIPE_MAP_XHI, PIPE_MAP_Y, W5_IDX, W8_IDX,
+    WORLDS,
 };
 
 // ---------------------------------------------------------------------------
@@ -57,11 +58,13 @@ pub(crate) fn grid_pos_to_dest_nibbles(grid_row: usize, grid_col: usize) -> (u8,
 /// Nor on a world's last screen, where there is no map to its right: the
 /// flag would show half a screen past the edge. W1 is one screen, so it never
 /// scrolls; an arrival on the right of it used to (user, 2026-10-16). The
-/// engine does not pan there either, since that screen is the world's
-/// `World_Map_Max_PanR` limit.
+/// engine stops panning at the world's `World_Map_Max_PanR`, which is the
+/// last screen everywhere but vanilla W4 (`$30`, a screen past its two). That
+/// one cannot bite: vanilla W4's nodes stop at column 28, left of the x > 208
+/// that would pan, and a generated W4 writes its own limit.
 pub(crate) fn scroll_nibble(world_idx: usize, screen: u8, col_in_screen: u8) -> u8 {
-    if world_idx == 4 || world_idx == 7 {
-        return screen; // W5, W8
+    if world_idx == W5_IDX || world_idx == W8_IDX {
+        return screen;
     }
     let last = (MAP_TILE_GRIDS[world_idx].screens - 1) as u8;
     let px = col_in_screen as u16 * 16;
