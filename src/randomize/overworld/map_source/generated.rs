@@ -427,7 +427,10 @@ enum Step {
     /// With `boxes`, each island's land is the rectangle its nodes span
     /// (W7's island blocks), clipped where it would touch another's. With
     /// `within`, the sea is only in those columns, `[from, to)` (W8's navy on
-    /// its first screen), and never beside the frame: off it is land.
+    /// its first screen), and never beside the frame: off it is land. With
+    /// `left_shore`, the map's first column inside the frame is always land:
+    /// a canoe move crosses a water cell, so the canoe can never reach the
+    /// frame column, the very left edge of the picture (W3; user, 2026-10-16).
     Sea {
         margin: f64,
         land: f64,
@@ -438,6 +441,7 @@ enum Step {
         bridges: f64,
         boxes: bool,
         within: Option<(usize, usize)>,
+        left_shore: bool,
     },
     /// A river straight down a tile column between node columns, from the
     /// top of the map into the shore strip below, where it meets the sea as
@@ -521,6 +525,7 @@ const W3_RECIPE: Recipe = Recipe {
             bridges: 0.6,
             boxes: false,
             within: None,
+            left_shore: true,
         },
         Step::Clusters { other: BUSH, rock_share: 0.0 },
         Step::Scatter { tile: PALM, count: (1, 3) },
@@ -549,6 +554,7 @@ const W4_RECIPE: Recipe = Recipe {
             bridges: 1.0,
             boxes: false,
             within: None,
+            left_shore: false,
         },
         Step::Pools { pool: POOL, palm: PALM, count: (0, 2) },
         Step::Clusters { other: FLOWER, rock_share: 0.3 },
@@ -620,6 +626,7 @@ const W7_RECIPE: Recipe = Recipe {
             bridges: 0.5,
             boxes: true,
             within: None,
+            left_shore: false,
         },
         Step::Clusters { other: PLANT, rock_share: 0.0 },
         Step::Scatter { tile: FLOWER, count: (1, 3) },
@@ -648,6 +655,7 @@ const W8_RECIPE: Recipe = Recipe {
             bridges: 0.6,
             boxes: false,
             within: Some((1, SCREEN_COLS)),
+            left_shore: false,
         },
         Step::Patches { tile: CLEARING },
         Step::Clusters { other: FIRE, rock_share: 0.0 },
@@ -908,7 +916,7 @@ fn add_sea<R: Rng>(
     water: &mut Water,
     layout: &Layout,
     (margin, land, water_nodes, bridge_share): (f64, f64, f64, f64),
-    (islet, coast, fill, boxes): (u8, bool, bool, bool),
+    (islet, coast, fill, boxes, left_shore): (u8, bool, bool, bool, bool),
     within: Option<(usize, usize)>,
     rng: &mut R,
 ) -> bool {
@@ -961,6 +969,10 @@ fn add_sea<R: Rng>(
         }
         keep
     };
+    // With a left shore, no water node may need sea in the first column.
+    if left_shore {
+        wet_nodes.retain(|&n| needs(n).iter().all(|p| p.1 != 1));
+    }
     let mut keep = keep_for(&wet_nodes);
     // A river ([`carve_river`]) from the top coast to the bottom one, near
     // the middle of the start's island, crossing its paths: its course is sea,
@@ -1017,6 +1029,16 @@ fn add_sea<R: Rng>(
                 let nearest = layout.nodes.iter().copied().min_by_key(|&n| manhattan(n, (r, c)));
                 solid.insert((r, c), nearest.map_or(0, island_of));
             }
+        }
+    }
+    // The left shore: land all down the first column, so no canoe move can
+    // cross it to the frame.
+    if left_shore {
+        for r in 0..rows {
+            solid.entry((r, 1)).or_insert_with(|| {
+                let nearest = layout.nodes.iter().copied().min_by_key(|&n| manhattan(n, (r, 1)));
+                nearest.map_or(0, island_of)
+            });
         }
     }
 
@@ -1593,9 +1615,10 @@ fn run_steps<R: Rng>(
                 bridges,
                 boxes,
                 within,
+                left_shore,
             } => {
                 let shares = (margin, land, water_nodes, bridges);
-                let shape = (islet, coast, solid, boxes);
+                let shape = (islet, coast, solid, boxes, left_shore);
                 if !add_sea(grid, water, layout, shares, shape, within, rng) {
                     return false;
                 }
@@ -2851,7 +2874,8 @@ fn try_once<R: Rng>(
                 .flat_map(|(r, c)| {
                     [(r.wrapping_sub(1), c), (r + 1, c), (r, c.wrapping_sub(1)), (r, c + 1)]
                         .into_iter()
-                        .filter(|w| sea.contains(w))
+                        // Never the first column: that is W3's left shore.
+                        .filter(|w| sea.contains(w) && w.1 >= 2)
                         .map(move |w| ((r, c), w))
                 })
                 .collect()
