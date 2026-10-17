@@ -9,6 +9,12 @@ deploys.
 
 ## [Unreleased]
 
+### Changed
+
+- **Generated Overworld scenery.** World 6 is a field of mountains crossed by
+  winding rivers, with moats on its long roads and around dead ends. World 3's
+  land is palm trees. Worlds 2 and 6 get rocky outcrops, sometimes with ruins.
+
 ## [3.0.0] - 2026-10-16
 
 ### Added

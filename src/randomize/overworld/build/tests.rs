@@ -145,19 +145,28 @@ fn census_build(rom: &Rom, seed: u64) -> BuildResult {
     let rom = apply_qol_variant(rom, arm == CensusArm::HammerRocks, arm == CensusArm::EightsWild);
     let mut rng = ChaCha8Rng::seed_from_u64(seed);
     let mut catalog = NodeCatalog::build(&rom, false);
-    // CENSUS_GENERATE=1: World 1 is a generated map (the hidden
-    // `generated_worlds` option), drawn from its own RNG so every other draw
-    // of the seed is unchanged.
-    if std::env::var("CENSUS_GENERATE").is_ok() {
+    // CENSUS_GENERATE=<mask>: the worlds in the bit mask are generated maps
+    // (the `generated_worlds` option; 1 = World 1 alone, 255 = all eight),
+    // drawn from their own RNG, lowest world first, so every other draw of
+    // the seed is unchanged and `1` draws the maps it always has.
+    if let Some(mask) = std::env::var("CENSUS_GENERATE").ok().map(|v| {
+        v.parse::<u8>().unwrap_or_else(|_| panic!("CENSUS_GENERATE={v}: want a world mask, 1-255"))
+    }) {
         let mut maps = catalog.maps.clone();
         let mut gen_rng = ChaCha8Rng::seed_from_u64(seed ^ 0x6E6E_5741);
-        if let Some(w1) = crate::randomize::overworld::map_source::generated::world_map(
-            &maps[0],
-            0,
-            true,
-            &mut gen_rng,
-        ) {
-            maps[0] = w1;
+        let mut changed = false;
+        for wi in (0..8).filter(|wi| mask & (1 << wi) != 0) {
+            if let Some(map) = crate::randomize::overworld::map_source::generated::world_map(
+                &maps[wi],
+                wi,
+                true,
+                &mut gen_rng,
+            ) {
+                maps[wi] = map;
+                changed = true;
+            }
+        }
+        if changed {
             catalog = NodeCatalog::from_maps(&rom, maps, false);
         }
     }
