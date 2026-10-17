@@ -1082,14 +1082,18 @@ fn add_sea<R: Rng>(
     // a sea already split refuses every add, as the full search would.
     let start_joined = joined(&solid);
     let add = |solid: &mut HashMap<Pos, usize>, (r, c): Pos, island: usize| {
+        // First: a cell off the map can have wrapped (`wrapping_sub` from
+        // row 0), and `r + 1` below would overflow on it.
+        if !inside((r, c)) {
+            return false;
+        }
         let touches_another = (r.saturating_sub(1)..=r + 1).any(|y| {
             (c.saturating_sub(1)..=c + 1).any(|x| solid.get(&(y, x)).is_some_and(|&o| o != island))
         });
         // With a coast no land goes on the outer ring, so every island has
         // sea all round it.
         let on_ring = r == 0 || r + 1 == rows || c <= 1 || c + 2 >= cols;
-        if !inside((r, c))
-            || (coast && on_ring)
+        if (coast && on_ring)
             || keep.contains(&(r, c))
             || river.contains(&(r, c))
             || solid.contains_key(&(r, c))
