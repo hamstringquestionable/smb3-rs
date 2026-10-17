@@ -455,7 +455,7 @@ enum Step {
     /// A wavy coast along the top edge, lined with `mountain` ([`add_coast`]).
     Coast { mountain: u8 },
     /// `count` rocky outcrops in the biggest open regions ([`add_outcrops`]):
-    /// a rock core, a ring of mini trees, thinning out into dotted ground.
+    /// a rock core in dotted ground that thins out round it.
     /// Each has a `ruins` chance of a broken fort in its core.
     Outcrop { count: (usize, usize), ruins: f64 },
 }
@@ -1637,7 +1637,7 @@ fn run_steps<R: Rng>(
             Step::GroundRiver { mouth } => add_ground_river(grid, water, mouth, rng),
             Step::Moats { count, through } => add_moats(grid, water, layout, (count, through), rng),
             Step::Coast { mountain } => add_coast(grid, water, mountain, rng),
-            Step::Outcrop { count, ruins } => add_outcrops(grid, built, count, ruins, rng),
+            Step::Outcrop { count, ruins } => add_outcrops(grid, count, ruins, rng),
             Step::Sea {
                 margin,
                 land,
@@ -1766,10 +1766,6 @@ fn scatter<R: Rng>(
     placed
 }
 
-/// An outcrop's mini trees (four to a tile, CHR `$4A`): drawn in the
-/// ground's colours, so they read as rough ground, not as trees (user,
-/// 2026-10-17). Vanilla has two, in W5's sky.
-const MINI_TREES: u8 = 0x5D;
 /// Regions smaller than this get no outcrop.
 const OUTCROP_MIN_REGION: usize = 12;
 /// Most cells an outcrop's blob grows to, before its fringe.
@@ -1780,17 +1776,14 @@ const OUTCROP_FRINGE: [f64; 2] = [0.6, 0.25];
 /// Rocky outcrops (user, 2026-10-17): in each of the `count` biggest open
 /// regions, a blob drawn by depth. Cells with the blob all round are the
 /// core, rock and tall rock (with a `ruins` chance of one broken fort); the
-/// rest of the blob is mini trees, except beside a path, where it shrinks to
-/// dotted ground (user); the open cells round it are dotted ground, thinning
-/// out over two rings. The core touches only blob cells, so it is never
-/// beside a path.
-fn add_outcrops<R: Rng>(
-    grid: &mut Grid,
-    built: &HashSet<Pos>,
-    count: (usize, usize),
-    ruins: f64,
-    rng: &mut R,
-) {
+/// rest of the blob is dotted ground, and so are the open cells round it,
+/// thinning out over two rings. The core touches only blob cells, so it is
+/// never beside a path.
+///
+/// Not `$5D` (W5's mini trees) for the blob: the map animates by swapping
+/// CHR banks, and its pattern flips between trees and a cloud (user,
+/// 2026-10-17).
+fn add_outcrops<R: Rng>(grid: &mut Grid, count: (usize, usize), ruins: f64, rng: &mut R) {
     let mut regions: Vec<Vec<Pos>> =
         empty_regions(grid).into_iter().filter(|r| r.len() >= OUTCROP_MIN_REGION).collect();
     regions.sort_by_key(|r| std::cmp::Reverse(r.len()));
@@ -1805,8 +1798,7 @@ fn add_outcrops<R: Rng>(
         let core: Vec<Pos> =
             blob.iter().copied().filter(|&p| around(p).all(|n| in_blob.contains(&n))).collect();
         for &(r, c) in &blob {
-            let by_path = around((r, c)).any(|p| built.contains(&p));
-            grid.set(r, c, if by_path { DUNE } else { MINI_TREES });
+            grid.set(r, c, DUNE);
         }
         for &(r, c) in &core {
             // Tall rock completes on its page: never on rows 7 and 8.
