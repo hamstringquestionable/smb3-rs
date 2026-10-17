@@ -3495,6 +3495,21 @@ fn generated_is_completable() {
         let recipes = RECIPES[wi];
         let recipe = recipes[(seed / 3) as usize % recipes.len()];
         let Some(w1) = draw_with(&maps[wi], wi, recipe, swap, &mut rng) else { continue };
+        // A left shore holds: no tile in the first column the canoe can cross
+        // (the engine's canoe tiles are $82-$A9), so it never reaches the
+        // frame. Checked on the finished map, so water from any step (a
+        // river carved before the shore, say) is caught too.
+        let left_shore =
+            recipe.scenery.iter().any(|s| matches!(s, Step::Sea { left_shore: true, .. }));
+        if left_shore {
+            for r in 0..w1.grid.rows() {
+                let tile = w1.grid.get(r, 1);
+                assert!(
+                    !(0x82..=0xA9).contains(&tile),
+                    "seed {seed}: canoe tile {tile:02X} at ({r},1) on the left shore"
+                );
+            }
+        }
         // Nodes keep to their area's columns of each screen (W8's 2-12).
         if let Some(a) = areas(&recipe.area, &maps[wi].grid) {
             for p in w1.entry_pos.iter().filter(|p| a.ground.contains(p) || a.sky.contains(p)) {
