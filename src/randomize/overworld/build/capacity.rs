@@ -103,9 +103,10 @@ fn find_blank_slots(grid: &Grid, fixed_positions: &HashSet<(usize, usize)>) -> V
 /// **Step 3 is a window rather than a threshold because we made it one.** In
 /// vanilla it is `tile >= threshold`, and every undefined metatile index sits
 /// above one; `lock_keys::ML_RANGE` bounds the top so that tail can carry
-/// obstacles instead. The window's upper bounds are one past the last tile any
-/// vanilla map places, so this predicate's answer is unchanged for every tile
-/// that actually appears — which is what makes the change census-neutral.
+/// obstacles instead. Pages 0-2 end one past the last tile any vanilla map
+/// places; page 3's window is empty, which drops the W5 star `$E9` and the tall
+/// rock `$EA` — scenery that no node ever stands on, so no completion changes,
+/// but every cell of it had owned a bit in the maze's packed store.
 pub(crate) fn is_completion_unsafe(tile: u8) -> bool {
     /// `Map_Completable_Tiles`, CPU `$A447`.
     const SPECIAL: [u8; 5] = [0x50, 0xE8, 0xE6, 0xBD, 0xE0];

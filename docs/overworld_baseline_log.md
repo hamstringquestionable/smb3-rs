@@ -34,6 +34,29 @@ hashes they describe are gone; the reasoning is not.
 
 ## Entries
 
+### 2026-10-18 — page 3's M/L window closed (fix/page3-ml-window)
+
+**Intended: `$E9` (W5 star) and `$EA` (tall rock) stop counting as
+completable.** `lock_keys::ML_RANGE_UPPER[3]` went `$EC` → `$E9`, the page's
+own threshold, so page 3's M/L window is empty. Neither tile is ever a node
+(`the_ml_window_holds_no_scenery_that_could_complete`), so no completion
+changes; the reason is the maze's packed completion store, which owns a bit
+for every completable cell and overran its 48-byte plane reserve on generated
+W6's `$EA` ground (player report, seed 8200103366211660: W8's rebuilt bridge
+lost on a world swap).
+
+**What moved.** 4 of the 20 seeds: 4, 6, 8 and 11. `is_completion_unsafe`
+follows the window, so vanilla W5/W6 stars and tall rocks on rows 7/8 stop
+claiming the shared row-7/8 bit, and more Hammer Bro slots there pass
+`is_row78_conflict`. `promote_hb_slots` deals Toad Houses and spades across all
+eight worlds from those candidates, so a moved seed moves in every world
+(confirmed by grid diff, seed 4: W1 node tiles change).
+
+**How that was established.** `test_route_census` at 1000 seeds, which builds
+without the promotion pass: W1-W4 and W8 identical in every column, W5/W6/W7
+within noise (overall routes 2.591 → 2.588, linear 5.51 → 5.44%; generated
+2.635 → 2.626). `CENSUS_SEEDS=500 all_world_targets_reachable` passes.
+
 ### 2026-10-11 — blank nodes draw their path stub into a breakable rock (fix/rock-path-stubs)
 
 **Intended: a breakable rock counts as a connection when a blank node picks

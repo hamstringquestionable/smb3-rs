@@ -688,8 +688,9 @@ const VOID: u8 = 0xD8;
 
 /// The sky's ground: a sky blank with nothing on it.
 const SKY_GROUND: u8 = 0xD7;
-/// `TILE_WORLD5STAR`. Completable on its page, so (as one-tile scenery) it
-/// stays off rows 7 and 8.
+/// `TILE_WORLD5STAR`. Above its page's threshold, but outside the M/L window
+/// (`lock_keys::ML_RANGE_UPPER`), so it is not completable. It still stays off
+/// rows 7 and 8, a rule from when it was.
 const STAR: u8 = 0xE9;
 /// Sky path tiles, `(horizontal, vertical)`.
 const SKY_PATH: (u8, u8) = (0xDA, 0xDB);
@@ -1739,7 +1740,9 @@ const POOL: u8 = 0xBF;
 const PYRAMID: u8 = 0x69;
 /// Quicksand: a round pit. Also a level tile in vanilla W2, like the pyramid.
 const QUICKSAND: u8 = 0x68;
-/// A taller rock (W6 has 67). On its page it is a level-gate tile.
+/// A taller rock (W6 has 67). Above its page's threshold, but outside the M/L
+/// window (`lock_keys::ML_RANGE_UPPER`), so it owns no completion bit — which
+/// is what lets W6 use it as ground.
 const TALL_ROCK: u8 = 0xEA;
 /// A small desert plant.
 const PLANT: u8 = 0xBE;

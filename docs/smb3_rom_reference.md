@@ -6100,7 +6100,12 @@ the *obstacle* role. `$A545`'s test is exactly five bytes, so
 `JSR helper / BCS` splices in at the same size, and a helper of the form
 `CMP UPPER,X / BCS no / CMP $A400,X / RTS` (11 bytes + a 4-byte bound table)
 generalises it to all four pages. It changes only the M/L test, so nothing that
-reads the RAM copy is affected. Not sufficient for a *node* tile (a warp pad,
+reads the RAM copy is affected. Shipped as `lock_keys::ML_RANGE` with bounds
+`16 6A C0 E9`: **page 3's window is empty** (2026-10-18). `$E9` and `$EA` are
+scenery, never a node, and `$EB` reaches the removable scan by name before this
+test — but the maze's packed completion store owns a bit for every cell the
+window admits, and a generated W6 with `$EA` ground overran its 48-byte plane
+reserve (W7/W8 progress lost on a world swap). Not sufficient for a *node* tile (a warp pad,
 say): a node is stood on, so it must also be non-enterable, which means either
 a below-threshold index — what `TILE_TELEPAD` `$DF` does — or splicing the RAM
 consumers, of which there are four.
