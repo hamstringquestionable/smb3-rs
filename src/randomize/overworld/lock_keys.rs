@@ -521,17 +521,24 @@ const PRG012_ML_TEST_VANILLA: [u8; 5] = [0xDD, 0x00, 0xA4, 0xB0, 0x26];
 
 /// **The first tile of each page that is no longer flipped to an M/L marker.**
 ///
-/// One past the last real tile in each page, so nothing vanilla places moves out
-/// of the window: `$15` closes page 0's panels (including the nine authored
-/// variants it never uses), `$6A` closes page 1 at the large fortress — which is
-/// how that tile reaches the removable scan instead — `$BF` is page 2's only
-/// entry, and page 3 ends at `$EB`, the alt fortress.
+/// Pages 0-2 end one past their last real tile: `$15` closes page 0's panels
+/// (including the nine authored variants it never uses), `$6A` closes page 1 at
+/// the large fortress — which is how that tile reaches the removable scan
+/// instead — and `$BF` is page 2's only entry. What falls outside is the
+/// undefined tail of each page, `$16-$3F` and `$6A-$7F`, which is the whole
+/// point: an obstacle tile has to fall through to the removable scan rather
+/// than becoming a panel.
 ///
-/// What falls outside is exactly the undefined tail of each page: `$16-$3F`,
-/// `$6A-$7F`, `$EC-$FF`. Nothing is placed there today, which is why this
-/// changes no build — and it is the whole point, because an obstacle tile has to
-/// fall through to the removable scan rather than becoming a panel.
-pub(crate) const ML_RANGE_UPPER: [u8; 4] = [0x16, 0x6A, 0xC0, 0xEC];
+/// **Page 3's window is empty** — the bound is its threshold, `$E9`. Above it
+/// sit `$E9` (`TILE_WORLD5STAR`) and `$EA` (the tall rock), which are scenery
+/// and never a node, and `$EB`, the alt fortress, which the reload sends to the
+/// removable scan by name before this test. Leaving the first two in the
+/// window cost nothing on a cartridge — no node, so no bit is ever set — but
+/// the maze's packed completion store owns a bit for every cell this window
+/// admits, and a generated W6 laid in `$EA` ground ran the planes past their
+/// reserve. `the_ml_window_holds_no_scenery_that_could_complete` pins the claim
+/// that no node stands on a tile outside the window.
+pub(crate) const ML_RANGE_UPPER: [u8; 4] = [0x16, 0x6A, 0xC0, 0xE9];
 
 /// Is this completed tile flipped to a Mario/Luigi marker?
 ///
@@ -1936,35 +1943,65 @@ mod asm_checks {
         assert_eq!(rom.read_range(rom_data::FS_ML_RANGE, ML_RANGE.len()), ML_RANGE);
     }
 
-    /// **The bounds are one past the last tile any vanilla map places.**
+    /// **No node stands on a tile the window dropped.**
     ///
-    /// That is the whole safety argument for narrowing the M/L test: no tile the
-    /// game actually uses falls outside its page's window, so no cell changes
-    /// behavior. Checked against the eight grids rather than asserted, because
-    /// the claim is about the ROM and not about our intent.
+    /// That is the whole safety argument for narrowing the M/L test. A cell's
+    /// completion bit is only ever set by clearing the node on it (or by a lock
+    /// effect, whose targets are removable), so narrowing the window changes
+    /// nothing unless a node sits on a tile vanilla's threshold admitted and the
+    /// window no longer does. Scenery may sit there — page 3's `$E9`/`$EA` do,
+    /// in vanilla W5/W6 and far more in generated maps — and that is the point
+    /// of dropping them: they no longer own bits in the maze's packed store.
+    ///
+    /// Checked on vanilla and on built seeds of both map sources, against the
+    /// engine's own threshold row rather than a copy of it.
     #[test]
-    fn the_ml_bounds_exclude_nothing_the_maps_use() {
-        let Some(rom) = vanilla() else {
+    fn the_ml_window_holds_no_scenery_that_could_complete() {
+        let Ok(bytes) = std::fs::read(ROM_PATH) else {
             eprintln!("SKIP: requires the ROM");
             return;
         };
-        for world in 0..8 {
-            let info = &rom_data::MAP_TILE_GRIDS[world];
-            for screen in 0..info.screens {
-                for row in 0..9 {
-                    for col in 0..16 {
-                        let tile =
-                            rom.read_byte(rom_data::map_tile_offset(world, row, screen * 16 + col));
-                        let page = (tile >> 6) as usize;
-                        assert!(
-                            tile < ML_RANGE_UPPER[page],
-                            "W{} places {tile:#04X}, at or above its page bound {:#04X} — \
-                             narrowing the M/L test would change how that cell completes",
-                            world + 1,
-                            ML_RANGE_UPPER[page]
-                        );
+        let check = |rom: &Rom, what: &str| {
+            let threshold: [u8; 4] =
+                std::array::from_fn(|p| rom.read_byte(PRG012_FILE_BASE + 0x400 + p));
+            let removable = |t: u8| REMOVABLE_PAIRS.iter().any(|&(o, _)| o == t) || is_pool_tile(t);
+            for (w, world) in rom_data::WORLDS.iter().enumerate() {
+                let grid = rom_data::read_tile_grid(rom, w);
+                for idx in 0..world.entry_count {
+                    let (r, c) = rom_data::entry_grid_position(rom, world, idx);
+                    if r >= grid.rows() || c >= grid.cols {
+                        continue;
                     }
+                    let t = grid.get(r, c);
+                    let page = (t >> 6) as usize;
+                    if t < threshold[page] || removable(t) {
+                        continue;
+                    }
+                    assert!(
+                        t < ML_RANGE_UPPER[page],
+                        "{what} W{} entry {idx} at {:?} stands on {t:#04X}, which vanilla \
+                         flips to an M/L and the window no longer does",
+                        w + 1,
+                        (r, c)
+                    );
                 }
+            }
+        };
+        check(&vanilla().expect("ROM read above"), "vanilla");
+        for generated_overworld in [false, true] {
+            for seed in 0..seeds() {
+                let options = crate::Options {
+                    generated_overworld,
+                    palettes: false,
+                    palette_themed: false,
+                    ..Default::default()
+                };
+                let Ok((rom, _)) =
+                    crate::randomize_rom_with_overworld_capture(&bytes, seed, &options, None)
+                else {
+                    continue;
+                };
+                check(&rom, &format!("seed {seed} generated={generated_overworld}"));
             }
         }
     }

@@ -1072,6 +1072,14 @@ const RELOAD_CALL_VANILLA: [u8; 3] = [0x20, 0x5D, 0xA4];
 /// restructure the surrounding init rather than pad it.
 pub(crate) fn apply(rom: &mut Rom, grids: &[Grid], retire_help_bubble: bool) {
     let bases = CompletionMap::from_grids(grids).base_table();
+    // Past the reserve, the last worlds' Mario planes run into the mirror
+    // region and their progress is lost on a world swap — silently, on a
+    // cartridge. A seed that would do that must not ship.
+    assert!(
+        bases[8] as usize <= PLANE_RESERVE,
+        "packed completion planes need {} bytes, reserve is {PLANE_RESERVE}",
+        bases[8]
+    );
 
     rom.push_tag("completion_bits");
     rom.write_range(FS_MASK_BUILD, &MASK_BUILD);
@@ -1141,7 +1149,7 @@ mod tests {
 
     /// The option arms `completion_bit_census` uses — the ones that move the
     /// *cell count* rather than the routing.
-    fn arms() -> [Arm; 3] {
+    fn arms() -> [Arm; 5] {
         [
             ("defaults", |_| {}),
             ("rocks+8s-wild", |o| {
@@ -1155,6 +1163,14 @@ mod tests {
                 o.shuffle_toad_houses = true;
                 o.shuffle_hammer_bros = true;
                 o.include_beta_stages = true;
+            }),
+            // Generated maps draw their own scenery, and a scenery byte that
+            // clears its page's M/L window owns a bit on every cell it covers:
+            // W6's tall-rock ground once ran the planes to 54 bytes.
+            ("generated", |o| o.generated_overworld = true),
+            ("generated+maze", |o| {
+                o.generated_overworld = true;
+                o.world_maze = true;
             }),
         ]
     }

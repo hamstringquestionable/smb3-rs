@@ -18,6 +18,11 @@ deploys.
   coast, and has a lake in the middle of the land that the roads cross on bridges.
   Its straight river is gone.
 
+### Fixed
+
+- **World Maze with Generated Overworld** could forget progress in Worlds 7
+  and 8 when you changed worlds, such as a bridge its fortress had rebuilt.
+
 ## [3.0.0] - 2026-10-16
 
 ### Added
