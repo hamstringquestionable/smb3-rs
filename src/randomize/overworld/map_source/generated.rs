@@ -548,13 +548,16 @@ const W3_RECIPE: Recipe = Recipe {
 
 /// W4: water first but land-heavy (vanilla is about half water): every node
 /// on land, the shore grown well out, then bays cut back into it and a lake
-/// the roads cross; fire flowers as the ground with clearings sprinkled
-/// singly through it, a few palms and pools, rock islets (user, 2026-10-17).
+/// the roads cross; plants as the ground with clearings sprinkled singly
+/// through it, a few palms and pools, rock islets (user, 2026-10-17). The
+/// ground was fire flowers until 2026-10-18: `$BD` is in
+/// `Map_Completable_Tiles`, so every cell of it cost a maze save bit and
+/// claimed the row-7/8 bit; `$BE` is inert (user).
 const W4_RECIPE: Recipe = Recipe {
     layout: W4_TARGETS,
     area: Area::Whole,
     pans_to_width: true,
-    ground: FLOWER,
+    ground: PLANT,
     ground_before: None,
     sky: None,
     scenery: &[
