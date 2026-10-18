@@ -14,7 +14,7 @@ deploys.
 - **Generated Overworld scenery.** World 6 is a field of mountains crossed by
   winding rivers, with moats on its long roads and around dead ends. World 3's
   land is palm trees. Worlds 2 and 6 get rocky outcrops, sometimes with ruins.
-- **Generated World 4** grows fire flowers as its ground, has bays along its
+- **Generated World 4** grows small plants as its ground, has bays along its
   coast, and has a lake in the middle of the land that the roads cross on bridges.
   Its straight river is gone.
 
