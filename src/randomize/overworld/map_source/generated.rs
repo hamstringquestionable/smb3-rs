@@ -231,8 +231,9 @@ const W3_TARGETS: Targets = Targets {
 
 /// W4 (user, 2026-10-13): a small island on the map's edge and a main island
 /// in the middle rows (one node on an outer row now and then), its extra
-/// split a second pipe island or a river through the main island. Vanilla W4
-/// is 34 nodes, 2 loops, 10 dead ends, walk pieces 30/4, 2 pipe pairs.
+/// split a second pipe island. Its water inside the main island is a lake
+/// the roads cross ([`Step::RoadLake`]), not a river (user, 2026-10-17).
+/// Vanilla W4 is 34 nodes, 2 loops, 10 dead ends, walk pieces 30/4, 2 pipe pairs.
 const W4_TARGETS: Targets = Targets {
     loops: (2, 4),
     dead_ends: (6, 13),
@@ -246,8 +247,8 @@ const W4_TARGETS: Targets = Targets {
     edge_islands: true,
     mainland_outer: Some((0, 1)),
     extra_split: 0.25,
-    river_share: 0.5,
-    river_chance: 0.5,
+    river_share: 0.0,
+    river_chance: 0.0,
     rock_pocket: false,
     even_islands: false,
     islands_touch: false,
@@ -458,6 +459,17 @@ enum Step {
     /// a rock core in dotted ground that thins out round it.
     /// Each has a `ruins` chance of a broken fort in its core.
     Outcrop { count: (usize, usize), ruins: f64 },
+    /// `count` bays cut into the land from the sea, through cells with no
+    /// path ([`add_bays`]): a ragged coast, as vanilla W4's bottom one.
+    Bays { count: (usize, usize) },
+    /// A lake round one node or two side by side, every road into it
+    /// crossing on a bridge or a path over water ([`add_road_lake`]):
+    /// vanilla W4's lake round its fortress, which breaks up its roads.
+    RoadLake,
+    /// `tile` on `share` of the open cells, paths beside them or not, but
+    /// rarely two side by side ([`sprinkle`]): W4's clearings in its fire
+    /// flowers.
+    Sprinkle { tile: u8, share: f64 },
 }
 
 const W1_RECIPE: Recipe = Recipe {
@@ -535,13 +547,14 @@ const W3_RECIPE: Recipe = Recipe {
 };
 
 /// W4: water first but land-heavy (vanilla is about half water): every node
-/// on land, the shore grown well out, fire flower and rock clusters, a few
-/// palms and pools, rock islets.
+/// on land, the shore grown well out, then bays cut back into it and a lake
+/// the roads cross; fire flowers as the ground with clearings sprinkled
+/// singly through it, a few palms and pools, rock islets (user, 2026-10-17).
 const W4_RECIPE: Recipe = Recipe {
     layout: W4_TARGETS,
     area: Area::Whole,
     pans_to_width: true,
-    ground: CLEARING,
+    ground: FLOWER,
     ground_before: None,
     sky: None,
     scenery: &[
@@ -557,9 +570,11 @@ const W4_RECIPE: Recipe = Recipe {
             within: None,
             left_shore: false,
         },
+        Step::Bays { count: (2, 4) },
+        Step::RoadLake,
         Step::Pools { pool: POOL, palm: PALM, count: (0, 2) },
-        Step::Clusters { other: FLOWER, rock_share: 0.3 },
         Step::Scatter { tile: PALM, count: (1, 3) },
+        Step::Sprinkle { tile: CLEARING, share: SPRINKLE_SHARE },
     ],
 };
 
@@ -1620,7 +1635,7 @@ fn run_steps<R: Rng>(
                 if rng.random_bool(MOAT_CHANCE)
                     && let Some(target) = layout.target
                 {
-                    add_moat(grid, target, water, &[(target.0.wrapping_sub(1), target.1)]);
+                    add_moat(grid, target, water, &[(target.0.wrapping_sub(1), target.1)], false);
                 }
             }
             Step::Oasis { island } => {
@@ -1638,6 +1653,9 @@ fn run_steps<R: Rng>(
             Step::Moats { count, through } => add_moats(grid, water, layout, (count, through), rng),
             Step::Coast { mountain } => add_coast(grid, water, mountain, rng),
             Step::Outcrop { count, ruins } => add_outcrops(grid, count, ruins, rng),
+            Step::Bays { count } => add_bays(grid, water, count, rng),
+            Step::RoadLake => add_road_lake(grid, water, layout, rng),
+            Step::Sprinkle { tile, share } => sprinkle(grid, tile, share, rng),
             Step::Sea {
                 margin,
                 land,
@@ -2391,11 +2409,18 @@ const MOAT_CHANCE: f64 = 0.5;
 /// A moat: water on every cell around an island, the node plus `extra`
 /// cells (the castle top above it, or ground: [`add_moats`]), with the
 /// node's path crossing it on a bridge. Only when that path comes in from
-/// the side, because a path from below would need a vertical bridge and none
-/// exists. Every cell of the ring must be empty (or already water); a moat
-/// that would leave any water cell without a tile is not added. `true` if
-/// it was.
-fn add_moat(grid: &mut Grid, (r, c): Pos, water: &mut Water, extra: &[Pos]) -> bool {
+/// the side, unless `cross_roads`: then every path in the ring crosses it,
+/// a side one on a bridge and one from above or below as a path over water
+/// (`$BA`), and `extra` may be other nodes ([`add_road_lake`]). Every other
+/// cell of the ring must be empty (or already water); a moat that would
+/// leave any water cell without a tile is not added. `true` if it was.
+fn add_moat(
+    grid: &mut Grid,
+    (r, c): Pos,
+    water: &mut Water,
+    extra: &[Pos],
+    cross_roads: bool,
+) -> bool {
     let island: Vec<Pos> = std::iter::once((r, c)).chain(extra.iter().copied()).collect();
     let (top, bottom) = (island.iter().map(|p| p.0).min(), island.iter().map(|p| p.0).max());
     let (left, right) = (island.iter().map(|p| p.1).min(), island.iter().map(|p| p.1).max());
@@ -2405,24 +2430,32 @@ fn add_moat(grid: &mut Grid, (r, c): Pos, water: &mut Water, extra: &[Pos]) -> b
     if top < 1 || bottom + 1 >= grid.rows() || left < 2 || right + 2 >= grid.cols {
         return false;
     }
-    // A path on both sides is a moat the road runs through, a bridge each way.
-    let entries: Vec<Pos> = [(r, c - 1), (r, c + 1)]
-        .into_iter()
-        .filter(|&(er, ec)| grid.get(er, ec) == PATH.0 && !island.contains(&(er, ec)))
+    let boxed: Vec<Pos> = (top - 1..=bottom + 1)
+        .flat_map(|rr| (left - 1..=right + 1).map(move |cc| (rr, cc)))
+        .filter(|p| !island.contains(p))
         .collect();
-    if entries.is_empty() {
+    let crossing = |tile: u8, p: &Pos| grid.get(p.0, p.1) == tile;
+    // A path on both sides is a moat the road runs through, a bridge each way.
+    let (entries, crossings): (Vec<Pos>, Vec<Pos>) = if cross_roads {
+        (
+            boxed.iter().copied().filter(|p| crossing(PATH.0, p)).collect(),
+            boxed.iter().copied().filter(|p| crossing(PATH.1, p)).collect(),
+        )
+    } else {
+        let side = [(r, c - 1), (r, c + 1)];
+        (side.into_iter().filter(|p| crossing(PATH.0, p) && !island.contains(p)).collect(), vec![])
+    };
+    if entries.is_empty() && crossings.is_empty() {
         return false;
     }
-    let ring: Vec<Pos> = (top - 1..=bottom + 1)
-        .flat_map(|rr| (left - 1..=right + 1).map(move |cc| (rr, cc)))
-        .filter(|p| !island.contains(p) && !entries.contains(p))
-        .collect();
+    let ring: Vec<Pos> =
+        boxed.into_iter().filter(|p| !entries.contains(p) && !crossings.contains(p)).collect();
     let free = |(rr, cc): Pos| grid.get(rr, cc) == FILL || water.cells.contains(&(rr, cc));
     if !ring.iter().all(|&p| free(p)) {
         return false;
     }
     let new: Vec<Pos> = ring.into_iter().filter(|p| !water.cells.contains(p)).collect();
-    water.try_add(grid, &new, &entries, &[])
+    water.try_add(grid, &new, &entries, &crossings)
 }
 
 /// Moats ([`add_moat`]) round `count` dead ends entered from the side, not
@@ -2465,8 +2498,8 @@ fn add_moats<R: Rng>(
             _ => vec![(r, away), (vert, c), (vert, away)],
         };
         let fits = extra.iter().all(|&(er, ec)| er < grid.rows() && grid.get(er, ec) == FILL);
-        let added =
-            (fits && add_moat(grid, (r, c), water, &extra)) || add_moat(grid, (r, c), water, &[]);
+        let added = (fits && add_moat(grid, (r, c), water, &extra, false))
+            || add_moat(grid, (r, c), water, &[], false);
         left -= usize::from(added);
     }
     // Through moats: nodes with a straight road both ways for at least
@@ -2504,8 +2537,8 @@ fn add_moats<R: Rng>(
         let tall = rng.random_bool(0.5)
             && vert < grid.rows()
             && grid.get(vert, c) == FILL
-            && add_moat(grid, (r, c), water, &[(vert, c)]);
-        if tall || add_moat(grid, (r, c), water, &[]) {
+            && add_moat(grid, (r, c), water, &[(vert, c)], false);
+        if tall || add_moat(grid, (r, c), water, &[], false) {
             placed.push((r, c));
             left -= 1;
         }
@@ -2516,6 +2549,88 @@ fn add_moats<R: Rng>(
 const THROUGH_RUN: usize = 4;
 /// Fewest columns between two through moats on neighbouring rows.
 const THROUGH_GAP: usize = 6;
+
+/// Fewest roads a road lake is crossed by (vanilla W4's is crossed by five).
+const LAKE_ROADS: usize = 3;
+
+/// The road lake ([`Step::RoadLake`]): a moat ([`add_moat`]) round one node,
+/// or two side by side, crossed by every road into it. Spots crossed by
+/// fewer than [`LAKE_ROADS`] are passed over; of the rest, the first at
+/// random that draws.
+fn add_road_lake<R: Rng>(grid: &mut Grid, water: &mut Water, layout: &Layout, rng: &mut R) {
+    let nodes: HashSet<Pos> = layout.nodes.iter().copied().collect();
+    let open = |n: Pos| n != layout.start && Some(n) != layout.target && nodes.contains(&n);
+    let mut spots: Vec<(Pos, Vec<Pos>)> = Vec::new();
+    for &(r, c) in layout.nodes.iter().filter(|&&n| open(n)) {
+        let pair = (r, c + 2);
+        for extra in [vec![], vec![pair]] {
+            if extra.iter().any(|&p| !open(p)) {
+                continue;
+            }
+            let right = extra.last().map_or(c, |p| p.1);
+            if r < 1 || r + 2 >= grid.rows() || c < 2 || right + 2 >= grid.cols {
+                continue;
+            }
+            let roads = (r - 1..=r + 1)
+                .flat_map(|rr| (c - 1..=right + 1).map(move |cc| (rr, cc)))
+                .filter(|&(rr, cc)| [PATH.0, PATH.1].contains(&grid.get(rr, cc)))
+                .count();
+            if roads >= LAKE_ROADS {
+                spots.push(((r, c), extra));
+            }
+        }
+    }
+    spots.shuffle(rng);
+    for (node, extra) in spots {
+        if add_moat(grid, node, water, &extra, true) {
+            return;
+        }
+    }
+}
+
+/// Cells a bay grows to, before trimming.
+const BAY_SIZE: (usize, usize) = (3, 6);
+
+/// Bays ([`Step::Bays`]): `count` times, a blob grown from a land cell
+/// beside the water, through land with no path or node on it, added as water
+/// with cells that have no tile for their picture trimmed ([`add_trimmed`]).
+fn add_bays<R: Rng>(grid: &mut Grid, water: &mut Water, count: (usize, usize), rng: &mut R) {
+    for _ in 0..rng.random_range(count.0..=count.1) {
+        let wet: HashSet<Pos> = water.cells.iter().copied().collect();
+        let land: Vec<Pos> = (0..grid.rows())
+            .flat_map(|r| (1..grid.cols - 1).map(move |c| (r, c)))
+            .filter(|&(r, c)| grid.get(r, c) == FILL)
+            .collect();
+        let shore: Vec<Pos> =
+            land.iter().copied().filter(|&p| around(p).any(|n| wet.contains(&n))).collect();
+        let Some(&seed) = shore.choose(rng) else { return };
+        let bay = grow_blob(&land, seed, rng.random_range(BAY_SIZE.0..=BAY_SIZE.1), rng);
+        add_trimmed(grid, water, bay, 2);
+    }
+}
+
+/// W4's clearings in its fire-flower ground (user, 2026-10-17: vanilla's
+/// even mix of the two read as too much clearing).
+const SPRINKLE_SHARE: f64 = 0.3;
+
+/// [`Step::Sprinkle`]: each open cell takes `tile` `share` of the time, a
+/// cell with one already left of it or above a third as often, so they seldom
+/// sit side by side. A completable tile stays off rows 7 and 8, as in
+/// [`decorate`].
+fn sprinkle<R: Rng>(grid: &mut Grid, tile: u8, share: f64, rng: &mut R) {
+    let rows = if is_completion_unsafe(tile) { grid.rows() - 2 } else { grid.rows() };
+    for r in 0..rows {
+        for c in 1..grid.cols - 1 {
+            if grid.get(r, c) != FILL {
+                continue;
+            }
+            let beside = grid.get(r, c - 1) == tile || (r > 0 && grid.get(r - 1, c) == tile);
+            if rng.random_bool(if beside { share / 3.0 } else { share }) {
+                grid.set(r, c, tile);
+            }
+        }
+    }
+}
 
 /// How the coast runs: each column it may step up or down a row, this often.
 const COAST_STEP: f64 = 0.35;
@@ -3893,7 +4008,7 @@ fn generated_worlds_are_deterministic() {
 /// A generated world (`LAYOUT_WORLD`, default 1) as drawn tiles, before the
 /// builder places anything: `.` bush, ` ` clearing or plain sand, `:` dotted
 /// sand, `^` rock (decorative), `T` palm, `O` pool, `M` pyramid, `Q`
-/// quicksand, `K` tall rock, `Y` plant, `u` ruins, `~` water,
+/// quicksand, `K` tall rock, `Y` plant, `f` fire flower, `u` ruins, `~` water,
 /// `=` bridge, `+` path over water, `-` `|` paths, `R` breakable rock, `o`
 /// node, `S` start, `A` airship, `a` castle top, `#` frame.
 ///
@@ -3934,6 +4049,7 @@ fn generated_tiles() {
                     QUICKSAND => 'Q',
                     TALL_ROCK => 'K',
                     PLANT => 'Y',
+                    FLOWER => 'f',
                     RUBBLE | ALT_RUBBLE => 'u',
                     0x45 | 0x49 => '-',
                     0x46 => '|',
