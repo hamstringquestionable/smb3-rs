@@ -41,7 +41,7 @@ enum Link {
 
 /// One world's layout: where the nodes are and how they connect.
 #[derive(Debug)]
-// Reason: `rows`, `cols`, `start` and `loop_sizes` are read only by the ASCII
+// Reason: `rows`, `cols`, `start`, `loop_sizes` and `fork` are read only by the ASCII
 // view and the tally, which are test-only; the layout carries them so a test
 // judges exactly what production generated.
 #[cfg_attr(not(test), allow(dead_code))]
@@ -75,6 +75,8 @@ struct Layout {
     river: bool,
     /// The rock pocket's nodes ([`Targets::rock_pocket`]); empty without one.
     rock_pocket: Vec<Pos>,
+    /// The second road of the fork ([`fork_road`]); empty without one.
+    fork: Vec<Pos>,
 }
 
 /// A secret area's node count (counted in the world's nodes) and the first
@@ -150,6 +152,12 @@ struct Targets {
     /// With `per_screen`, one more island of `.1` nodes on screen `.0`: W8's
     /// short pipe-only island at the top of its second screen's ring.
     small_island: Option<(usize, usize)>,
+    /// How often, where the waypoint walk runs, one stretch of it forks into
+    /// two roads that rejoin, never touching, with an empty node row or
+    /// column between them ([`fork_road`]): a real choice of road (W2, W6;
+    /// user, 2026-10-18). Half the time (user, 2026-10-20), so some maps
+    /// have it and some do not.
+    fork: f64,
 }
 
 /// The proposal agreed for W1 on 2026-10-11. Vanilla W1 is 21 nodes, 2
@@ -175,6 +183,7 @@ const W1_TARGETS: Targets = Targets {
     airship: true,
     per_screen: None,
     small_island: None,
+    fork: 0.0,
 };
 
 /// W2, first guesses around vanilla: 47 nodes, 3 loops, 7 dead ends, 15 hops,
@@ -201,6 +210,7 @@ const W2_TARGETS: Targets = Targets {
     airship: true,
     per_screen: None,
     small_island: None,
+    fork: 0.5,
 };
 
 /// W3, first guesses (user, 2026-10-13): one big mainland and small islands,
@@ -227,6 +237,7 @@ const W3_TARGETS: Targets = Targets {
     airship: true,
     per_screen: None,
     small_island: None,
+    fork: 0.0,
 };
 
 /// W4 (user, 2026-10-13): a small island on the map's edge and a main island
@@ -255,6 +266,7 @@ const W4_TARGETS: Targets = Targets {
     airship: true,
     per_screen: None,
     small_island: None,
+    fork: 0.0,
 };
 
 /// W5 (user, 2026-10-13): the ground and the sky are its two islands, each
@@ -283,6 +295,7 @@ const W5_TARGETS: Targets = Targets {
     airship: true,
     per_screen: None,
     small_island: None,
+    fork: 0.0,
 };
 
 /// W6 (user, 2026-10-13): long, three screens, one piece but for a rock
@@ -309,6 +322,7 @@ const W6_TARGETS: Targets = Targets {
     airship: true,
     per_screen: None,
     small_island: None,
+    fork: 0.5,
 };
 
 /// W7 (user, 2026-10-13): many islands close to one size, every one reached
@@ -335,6 +349,7 @@ const W7_TARGETS: Targets = Targets {
     airship: true,
     per_screen: None,
     small_island: None,
+    fork: 0.0,
 };
 
 /// W8 (user, 2026-10-14): its first three screens drawn afresh, one island
@@ -363,6 +378,7 @@ const W8_TARGETS: Targets = Targets {
     airship: false,
     per_screen: Some(&[8, 7, 17]),
     small_island: Some((1, 3)),
+    fork: 0.0,
 };
 
 /// How one world is generated: its layout, then its scenery, step by step in
@@ -844,6 +860,15 @@ const ATTEMPTS: usize = 1000;
 /// How often the tree grows from its newest node rather than from any node.
 /// A first guess, to be judged on the ASCII layouts.
 const EXTEND_NEWEST: f64 = 0.75;
+
+/// How often a waypoint-walk step veers off its line (user, 2026-10-20). A
+/// monotone walk across a map far wider than tall spends its few row moves
+/// early and runs the rest dead straight: the walk made 78% of W6's long-run
+/// links (2026-10-19), and with this W6's median longest run went 14 -> 9.
+const VEER: f64 = 0.25;
+/// No veering once the walk holds this many tenths of the main nodes, so
+/// growth keeps enough for branches and dead ends.
+const VEER_BUDGET_TENTHS: usize = 6;
 
 /// How many of the farthest-apart candidate pairs a loop link is picked from.
 const FARTHEST_FEW: usize = 3;
@@ -2834,6 +2859,90 @@ fn ordered(a: Pos, b: Pos) -> (Pos, Pos) {
     if a < b { (a, b) } else { (b, a) }
 }
 
+/// How many steps of the walk a fork spans, fewest and most.
+const FORK_SPAN: (usize, usize) = (6, 10);
+/// Most nodes the second road may have beyond the stretch it runs beside.
+/// Beside a straight stretch it climbs two node rows and comes back: 5 more.
+const FORK_SLACK: usize = 5;
+
+/// A fork ([`fork_road`]): `road` runs from `walk[from]` to `walk[to]`, its
+/// ends left out, and `band` is the open lattice between the two roads.
+struct Fork {
+    from: usize,
+    to: usize,
+    road: Vec<Pos>,
+    band: HashSet<Pos>,
+}
+
+/// A second road beside a stretch of the waypoint `walk` ([`Targets::fork`]),
+/// leaving it at one node and joining it again [`FORK_SPAN`] steps on. Its
+/// nodes are `open` lattice cells touching no node of the walk but those
+/// two, so an empty node row or column always lies between the roads. It is
+/// the shortest such road, ties broken at random, of at most `room` nodes and
+/// [`FORK_SLACK`] more than the stretch; stretches are tried in random order.
+fn fork_road<R: Rng>(
+    walk: &[Pos],
+    open: &HashSet<Pos>,
+    on_lattice: &HashSet<Pos>,
+    room: usize,
+    rng: &mut R,
+) -> Option<Fork> {
+    let mut stretches: Vec<(usize, usize)> = (0..walk.len())
+        .flat_map(|i| (i + FORK_SPAN.0..=i + FORK_SPAN.1).map(move |j| (i, j)))
+        .filter(|&(_, j)| j < walk.len())
+        .collect();
+    stretches.shuffle(rng);
+    for (from, to) in stretches {
+        let (a, b) = (walk[from], walk[to]);
+        let touches_walk = |p: Pos| {
+            neighbours(p, on_lattice).iter().any(|n| *n != a && *n != b && walk.contains(n))
+        };
+        // Breadth first from `a`, each node's neighbours shuffled.
+        let mut came: HashMap<Pos, Pos> = HashMap::new();
+        let mut queue = std::collections::VecDeque::from([a]);
+        while let Some(p) = queue.pop_front() {
+            if p == b {
+                break;
+            }
+            let mut next = neighbours(p, on_lattice);
+            next.shuffle(rng);
+            for n in next {
+                let usable = n == b || (open.contains(&n) && !touches_walk(n));
+                // `a` to `b` directly is the walk's own link, not a road.
+                if usable && n != a && !came.contains_key(&n) && !(p == a && n == b) {
+                    came.insert(n, p);
+                    queue.push_back(n);
+                }
+            }
+        }
+        if !came.contains_key(&b) {
+            continue;
+        }
+        let mut road = Vec::new();
+        let mut at = came[&b];
+        while at != a {
+            road.push(at);
+            at = came[&at];
+        }
+        road.reverse();
+        if road.is_empty() || road.len() > room || road.len() > to - from - 1 + FORK_SLACK {
+            continue;
+        }
+        let inner = &walk[from + 1..to];
+        let band = open
+            .iter()
+            .copied()
+            .filter(|p| !road.contains(p))
+            .filter(|&p| {
+                let near = neighbours(p, on_lattice);
+                near.iter().any(|n| inner.contains(n)) && near.iter().any(|n| road.contains(n))
+            })
+            .collect();
+        return Some(Fork { from, to, road, band });
+    }
+    None
+}
+
 fn try_once<R: Rng>(
     frame: &Frame,
     anchor: Pos,
@@ -2865,6 +2974,8 @@ fn try_once<R: Rng>(
 
     let main_nodes = node_count - pocket_size.unwrap_or(0);
     let mut river_wanted = false;
+    let mut loop_sizes: Vec<usize> = Vec::new();
+    let mut fork: Vec<Pos> = Vec::new();
     let splits = match targets.pipe_pairs {
         _ if targets.per_screen.is_some() => 0,
         0 => 0,
@@ -2923,6 +3034,7 @@ fn try_once<R: Rng>(
         }
         stops.push(waypoint);
         let mut at = start;
+        let mut walk = vec![start];
         for waypoint in stops {
             while at != waypoint {
                 let mut steps = Vec::new();
@@ -2938,7 +3050,28 @@ fn try_once<R: Rng>(
                 if at.0 > waypoint.0 {
                     steps.push((at.0 - 2, at.1));
                 }
-                let &next = steps.choose(rng)?;
+                // Now and then veer: a row move that does not close on the
+                // stop's row, so the next toward moves have to bring the walk
+                // back. Only while columns are left to cover, so the walk
+                // always progresses, and only onto unused cells.
+                let veers: Vec<Pos> = [(at.0.wrapping_sub(2), at.1), (at.0 + 2, at.1)]
+                    .into_iter()
+                    .filter(|&p| p.0.abs_diff(waypoint.0) >= at.0.abs_diff(waypoint.0))
+                    .filter(|p| {
+                        on_lattice.contains(p) && !walled.contains(p) && !in_tree.contains(p)
+                    })
+                    .collect();
+                let room = nodes.len() * 10 < main_nodes * VEER_BUDGET_TENTHS;
+                let fresh: Vec<Pos> =
+                    steps.iter().copied().filter(|p| !in_tree.contains(p)).collect();
+                let next =
+                    if at.1 != waypoint.1 && room && !veers.is_empty() && rng.random_bool(VEER) {
+                        *veers.choose(rng)?
+                    } else if !fresh.is_empty() {
+                        *fresh.choose(rng)?
+                    } else {
+                        *steps.choose(rng)?
+                    };
                 if in_tree.insert(next) {
                     nodes.push(next);
                 }
@@ -2946,13 +3079,37 @@ fn try_once<R: Rng>(
                     tree.push(ordered(at, next));
                 }
                 at = next;
+                walk.push(next);
+            }
+        }
+        //    The fork: a second road beside one stretch of the walk. Branches
+        //    never grow into the band between the two roads.
+        let mut band: HashSet<Pos> = HashSet::new();
+        if targets.fork > 0.0 && rng.random_bool(targets.fork) {
+            let open: HashSet<Pos> =
+                main.iter().copied().filter(|p| !in_tree.contains(p)).collect();
+            let room = (main_nodes - nodes.len()) / 2;
+            if let Some(f) = fork_road(&walk, &open, &on_lattice, room, rng) {
+                let (a, b) = (walk[f.from], walk[f.to]);
+                let mut prev = a;
+                for &n in f.road.iter().chain([&b]) {
+                    if n != b {
+                        in_tree.insert(n);
+                        nodes.push(n);
+                    }
+                    tree.push(ordered(prev, n));
+                    prev = n;
+                }
+                loop_sizes.push(f.to - f.from + f.road.len() + 1);
+                band = f.band;
+                fork = f.road;
             }
         }
         while nodes.len() < main_nodes {
             let free = |n: Pos| -> Vec<Pos> {
                 neighbours(n, &on_lattice)
                     .into_iter()
-                    .filter(|m| !in_tree.contains(m) && !walled.contains(m))
+                    .filter(|m| !in_tree.contains(m) && !walled.contains(m) && !band.contains(m))
                     .collect()
             };
             let growable: Vec<Pos> =
@@ -3025,9 +3182,10 @@ fn try_once<R: Rng>(
     //    hops apart only closes a square and offers no choice. Pick among the
     //    farthest few, so layouts still vary. A square is allowed, but at most
     //    `MAX_SQUARES` per layout.
-    let loops = rng.random_range(targets.loops.0..=targets.loops.1);
+    //    The fork is one of them.
+    let loops =
+        rng.random_range(targets.loops.0..=targets.loops.1).saturating_sub(loop_sizes.len());
     let mut extra: Vec<(Pos, Pos)> = Vec::new();
-    let mut loop_sizes: Vec<usize> = Vec::new();
     for _ in 0..loops {
         let current: Vec<(Pos, Pos, Link)> =
             tree.iter().chain(&extra).map(|&(a, b)| (a, b, Link::Path)).collect();
@@ -3234,6 +3392,7 @@ fn try_once<R: Rng>(
         docks,
         river,
         rock_pocket,
+        fork,
     })
 }
 
@@ -3562,6 +3721,9 @@ impl Layout {
         for &(r, c) in &self.pocket {
             cells[r][c] = 'p';
         }
+        for &(r, c) in &self.fork {
+            cells[r][c] = 'f';
+        }
         for (k, island) in self.islands.iter().enumerate() {
             for &(r, c) in island {
                 cells[r][c] = ['x', 'y', 'z'][k.min(2)];
@@ -3590,7 +3752,7 @@ impl Layout {
     fn summary(&self) -> String {
         let hops = self.target.and_then(|t| path_hops(self.start, &self.links).get(&t).copied());
         format!(
-            "nodes {}  loops {} {:?}  dead ends {}  junctions {}  rocks {}  pocket {}  islands {:?}  docks {}  start->airship {}",
+            "nodes {}  loops {} {:?}  dead ends {}  junctions {}  rocks {}  pocket {}  islands {:?}  docks {}  fork {}  start->airship {}",
             self.nodes.len(),
             self.links.len() + 1 + self.islands.len() - self.nodes.len(),
             self.loop_sizes,
@@ -3600,6 +3762,7 @@ impl Layout {
             self.pocket.len(),
             self.islands.iter().map(Vec::len).collect::<Vec<_>>(),
             self.docks.len(),
+            self.fork.len(),
             hops.map_or("-".to_string(), |h| h.to_string()),
         )
     }
@@ -3679,7 +3842,7 @@ fn layout_report(
     let seeds: u64 = std::env::var("LAYOUT_SEEDS").ok().and_then(|s| s.parse().ok()).unwrap_or(10);
     let quiet = seeds > 20;
     let (mut failed, mut built) = (0, 0);
-    let (mut loops, mut squares, mut loop_total, mut junctions) = (0, 0, 0, 0);
+    let (mut loops, mut squares, mut loop_total, mut junctions, mut forks) = (0, 0, 0, 0, 0);
     for seed in 1..=seeds {
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
         match generate(world - 1, frame, start, airship, targets, node_count, &mut rng) {
@@ -3689,6 +3852,7 @@ fn layout_report(
                 squares += layout.loop_sizes.iter().filter(|&&s| s == 4).count();
                 loop_total += layout.loop_sizes.iter().sum::<usize>();
                 junctions += layout.junctions();
+                forks += usize::from(!layout.fork.is_empty());
                 if !quiet {
                     println!("\n--- seed {seed}: {}", layout.summary());
                     print!("{}", layout.ascii());
@@ -3702,7 +3866,7 @@ fn layout_report(
             }
         }
     }
-    println!("\n{failed} of {seeds} seeds found no layout");
+    println!("\n{failed} of {seeds} seeds found no layout; {forks} forked");
     if built > 0 && loops > 0 {
         println!(
             "loops: {loops}, squares {:.0}%, mean loop size {:.1}; mean junctions {:.1}",
