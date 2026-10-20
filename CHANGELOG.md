@@ -17,6 +17,9 @@ deploys.
 - **Generated World 4** grows small plants as its ground, has bays along its
   coast, and has a lake in the middle of the land that the roads cross on bridges.
   Its straight river is gone.
+- **Generated Overworld roads** wander instead of running dead straight across
+  wide maps, and in Worlds 2 and 6 they sometimes split into two roads that
+  meet again further on.
 
 ### Fixed
 

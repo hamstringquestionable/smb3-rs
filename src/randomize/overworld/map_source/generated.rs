@@ -41,7 +41,7 @@ enum Link {
 
 /// One world's layout: where the nodes are and how they connect.
 #[derive(Debug)]
-// Reason: `rows`, `cols`, `start` and `loop_sizes` are read only by the ASCII
+// Reason: `rows`, `cols`, `start`, `loop_sizes` and `fork` are read only by the ASCII
 // view and the tally, which are test-only; the layout carries them so a test
 // judges exactly what production generated.
 #[cfg_attr(not(test), allow(dead_code))]
@@ -75,6 +75,30 @@ struct Layout {
     river: bool,
     /// The rock pocket's nodes ([`Targets::rock_pocket`]); empty without one.
     rock_pocket: Vec<Pos>,
+    /// The second road of the fork ([`fork_road`]); empty without one.
+    fork: Vec<Pos>,
+    /// Test-only: the stage that made each of `links`, index for index.
+    #[cfg(test)]
+    origin: Vec<Origin>,
+}
+
+/// Which stage of `try_once` made a link: the instrument behind
+/// `straight_run_origins`, which asks where the long straight lines come from.
+#[cfg(test)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+enum Origin {
+    /// The waypoint walk.
+    Walk,
+    /// The fork's second road.
+    Fork,
+    /// The tree grown out from the walk.
+    Growth,
+    /// Islands grown instead of a walk.
+    Island,
+    /// The secret area.
+    Pocket,
+    /// An extra link that closed a loop.
+    Loop,
 }
 
 /// A secret area's node count (counted in the world's nodes) and the first
@@ -150,6 +174,12 @@ struct Targets {
     /// With `per_screen`, one more island of `.1` nodes on screen `.0`: W8's
     /// short pipe-only island at the top of its second screen's ring.
     small_island: Option<(usize, usize)>,
+    /// How often, where the waypoint walk runs, one stretch of it forks into
+    /// two roads that rejoin, never touching, with an empty node row or
+    /// column between them ([`fork_road`]): a real choice of road (W2, W6;
+    /// user, 2026-10-18). Half the time (user, 2026-10-20), so some maps
+    /// have it and some do not.
+    fork: f64,
 }
 
 /// The proposal agreed for W1 on 2026-10-11. Vanilla W1 is 21 nodes, 2
@@ -175,6 +205,7 @@ const W1_TARGETS: Targets = Targets {
     airship: true,
     per_screen: None,
     small_island: None,
+    fork: 0.0,
 };
 
 /// W2, first guesses around vanilla: 47 nodes, 3 loops, 7 dead ends, 15 hops,
@@ -201,6 +232,7 @@ const W2_TARGETS: Targets = Targets {
     airship: true,
     per_screen: None,
     small_island: None,
+    fork: 0.5,
 };
 
 /// W3, first guesses (user, 2026-10-13): one big mainland and small islands,
@@ -227,6 +259,7 @@ const W3_TARGETS: Targets = Targets {
     airship: true,
     per_screen: None,
     small_island: None,
+    fork: 0.0,
 };
 
 /// W4 (user, 2026-10-13): a small island on the map's edge and a main island
@@ -255,6 +288,7 @@ const W4_TARGETS: Targets = Targets {
     airship: true,
     per_screen: None,
     small_island: None,
+    fork: 0.0,
 };
 
 /// W5 (user, 2026-10-13): the ground and the sky are its two islands, each
@@ -283,6 +317,7 @@ const W5_TARGETS: Targets = Targets {
     airship: true,
     per_screen: None,
     small_island: None,
+    fork: 0.0,
 };
 
 /// W6 (user, 2026-10-13): long, three screens, one piece but for a rock
@@ -309,6 +344,7 @@ const W6_TARGETS: Targets = Targets {
     airship: true,
     per_screen: None,
     small_island: None,
+    fork: 0.5,
 };
 
 /// W7 (user, 2026-10-13): many islands close to one size, every one reached
@@ -335,6 +371,7 @@ const W7_TARGETS: Targets = Targets {
     airship: true,
     per_screen: None,
     small_island: None,
+    fork: 0.0,
 };
 
 /// W8 (user, 2026-10-14): its first three screens drawn afresh, one island
@@ -363,6 +400,7 @@ const W8_TARGETS: Targets = Targets {
     airship: false,
     per_screen: Some(&[8, 7, 17]),
     small_island: Some((1, 3)),
+    fork: 0.0,
 };
 
 /// How one world is generated: its layout, then its scenery, step by step in
@@ -844,6 +882,15 @@ const ATTEMPTS: usize = 1000;
 /// How often the tree grows from its newest node rather than from any node.
 /// A first guess, to be judged on the ASCII layouts.
 const EXTEND_NEWEST: f64 = 0.75;
+
+/// How often a waypoint-walk step veers off its line (user, 2026-10-20). A
+/// monotone walk across a map far wider than tall spends its few row moves
+/// early and runs the rest dead straight: the walk made 78% of W6's long-run
+/// links (2026-10-19), and with this W6's median longest run went 14 -> 9.
+const VEER: f64 = 0.25;
+/// No veering once the walk holds this many tenths of the main nodes, so
+/// growth keeps enough for branches and dead ends.
+const VEER_BUDGET_TENTHS: usize = 6;
 
 /// How many of the farthest-apart candidate pairs a loop link is picked from.
 const FARTHEST_FEW: usize = 3;
@@ -2834,6 +2881,90 @@ fn ordered(a: Pos, b: Pos) -> (Pos, Pos) {
     if a < b { (a, b) } else { (b, a) }
 }
 
+/// How many steps of the walk a fork spans, fewest and most.
+const FORK_SPAN: (usize, usize) = (6, 10);
+/// Most nodes the second road may have beyond the stretch it runs beside.
+/// Beside a straight stretch it climbs two node rows and comes back: 5 more.
+const FORK_SLACK: usize = 5;
+
+/// A fork ([`fork_road`]): `road` runs from `walk[from]` to `walk[to]`, its
+/// ends left out, and `band` is the open lattice between the two roads.
+struct Fork {
+    from: usize,
+    to: usize,
+    road: Vec<Pos>,
+    band: HashSet<Pos>,
+}
+
+/// A second road beside a stretch of the waypoint `walk` ([`Targets::fork`]),
+/// leaving it at one node and joining it again [`FORK_SPAN`] steps on. Its
+/// nodes are `open` lattice cells touching no node of the walk but those
+/// two, so an empty node row or column always lies between the roads. It is
+/// the shortest such road, ties broken at random, of at most `room` nodes and
+/// [`FORK_SLACK`] more than the stretch; stretches are tried in random order.
+fn fork_road<R: Rng>(
+    walk: &[Pos],
+    open: &HashSet<Pos>,
+    on_lattice: &HashSet<Pos>,
+    room: usize,
+    rng: &mut R,
+) -> Option<Fork> {
+    let mut stretches: Vec<(usize, usize)> = (0..walk.len())
+        .flat_map(|i| (i + FORK_SPAN.0..=i + FORK_SPAN.1).map(move |j| (i, j)))
+        .filter(|&(_, j)| j < walk.len())
+        .collect();
+    stretches.shuffle(rng);
+    for (from, to) in stretches {
+        let (a, b) = (walk[from], walk[to]);
+        let touches_walk = |p: Pos| {
+            neighbours(p, on_lattice).iter().any(|n| *n != a && *n != b && walk.contains(n))
+        };
+        // Breadth first from `a`, each node's neighbours shuffled.
+        let mut came: HashMap<Pos, Pos> = HashMap::new();
+        let mut queue = std::collections::VecDeque::from([a]);
+        while let Some(p) = queue.pop_front() {
+            if p == b {
+                break;
+            }
+            let mut next = neighbours(p, on_lattice);
+            next.shuffle(rng);
+            for n in next {
+                let usable = n == b || (open.contains(&n) && !touches_walk(n));
+                // `a` to `b` directly is the walk's own link, not a road.
+                if usable && n != a && !came.contains_key(&n) && !(p == a && n == b) {
+                    came.insert(n, p);
+                    queue.push_back(n);
+                }
+            }
+        }
+        if !came.contains_key(&b) {
+            continue;
+        }
+        let mut road = Vec::new();
+        let mut at = came[&b];
+        while at != a {
+            road.push(at);
+            at = came[&at];
+        }
+        road.reverse();
+        if road.is_empty() || road.len() > room || road.len() > to - from - 1 + FORK_SLACK {
+            continue;
+        }
+        let inner = &walk[from + 1..to];
+        let band = open
+            .iter()
+            .copied()
+            .filter(|p| !road.contains(p))
+            .filter(|&p| {
+                let near = neighbours(p, on_lattice);
+                near.iter().any(|n| inner.contains(n)) && near.iter().any(|n| road.contains(n))
+            })
+            .collect();
+        return Some(Fork { from, to, road, band });
+    }
+    None
+}
+
 fn try_once<R: Rng>(
     frame: &Frame,
     anchor: Pos,
@@ -2853,6 +2984,10 @@ fn try_once<R: Rng>(
     let mut nodes = vec![start];
     let mut in_tree: HashSet<Pos> = HashSet::from([start]);
     let mut tree: Vec<(Pos, Pos)> = Vec::new();
+    // Test-only: where each `tree` link came from, by the stage boundaries
+    // (`tree` is append-only and its stages run in order).
+    #[cfg(test)]
+    let mut marks: Vec<(usize, Origin)> = Vec::new();
     // The secret area's strip: the main tree never enters it, no loop touches
     // it, and the waypoint and airship ignore it, so it hangs off the main map
     // by one link. Empty without a pocket.
@@ -2865,6 +3000,8 @@ fn try_once<R: Rng>(
 
     let main_nodes = node_count - pocket_size.unwrap_or(0);
     let mut river_wanted = false;
+    let mut loop_sizes: Vec<usize> = Vec::new();
+    let mut fork: Vec<Pos> = Vec::new();
     let splits = match targets.pipe_pairs {
         _ if targets.per_screen.is_some() => 0,
         0 => 0,
@@ -2923,6 +3060,7 @@ fn try_once<R: Rng>(
         }
         stops.push(waypoint);
         let mut at = start;
+        let mut walk = vec![start];
         for waypoint in stops {
             while at != waypoint {
                 let mut steps = Vec::new();
@@ -2938,7 +3076,28 @@ fn try_once<R: Rng>(
                 if at.0 > waypoint.0 {
                     steps.push((at.0 - 2, at.1));
                 }
-                let &next = steps.choose(rng)?;
+                // Now and then veer: a row move that does not close on the
+                // stop's row, so the next toward moves have to bring the walk
+                // back. Only while columns are left to cover, so the walk
+                // always progresses, and only onto unused cells.
+                let veers: Vec<Pos> = [(at.0.wrapping_sub(2), at.1), (at.0 + 2, at.1)]
+                    .into_iter()
+                    .filter(|&p| p.0.abs_diff(waypoint.0) >= at.0.abs_diff(waypoint.0))
+                    .filter(|p| {
+                        on_lattice.contains(p) && !walled.contains(p) && !in_tree.contains(p)
+                    })
+                    .collect();
+                let room = nodes.len() * 10 < main_nodes * VEER_BUDGET_TENTHS;
+                let fresh: Vec<Pos> =
+                    steps.iter().copied().filter(|p| !in_tree.contains(p)).collect();
+                let next =
+                    if at.1 != waypoint.1 && room && !veers.is_empty() && rng.random_bool(VEER) {
+                        *veers.choose(rng)?
+                    } else if !fresh.is_empty() {
+                        *fresh.choose(rng)?
+                    } else {
+                        *steps.choose(rng)?
+                    };
                 if in_tree.insert(next) {
                     nodes.push(next);
                 }
@@ -2946,13 +3105,41 @@ fn try_once<R: Rng>(
                     tree.push(ordered(at, next));
                 }
                 at = next;
+                walk.push(next);
             }
         }
+        #[cfg(test)]
+        marks.push((tree.len(), Origin::Walk));
+        //    The fork: a second road beside one stretch of the walk. Branches
+        //    never grow into the band between the two roads.
+        let mut band: HashSet<Pos> = HashSet::new();
+        if targets.fork > 0.0 && rng.random_bool(targets.fork) {
+            let open: HashSet<Pos> =
+                main.iter().copied().filter(|p| !in_tree.contains(p)).collect();
+            let room = (main_nodes - nodes.len()) / 2;
+            if let Some(f) = fork_road(&walk, &open, &on_lattice, room, rng) {
+                let (a, b) = (walk[f.from], walk[f.to]);
+                let mut prev = a;
+                for &n in f.road.iter().chain([&b]) {
+                    if n != b {
+                        in_tree.insert(n);
+                        nodes.push(n);
+                    }
+                    tree.push(ordered(prev, n));
+                    prev = n;
+                }
+                loop_sizes.push(f.to - f.from + f.road.len() + 1);
+                band = f.band;
+                fork = f.road;
+            }
+        }
+        #[cfg(test)]
+        marks.push((tree.len(), Origin::Fork));
         while nodes.len() < main_nodes {
             let free = |n: Pos| -> Vec<Pos> {
                 neighbours(n, &on_lattice)
                     .into_iter()
-                    .filter(|m| !in_tree.contains(m) && !walled.contains(m))
+                    .filter(|m| !in_tree.contains(m) && !walled.contains(m) && !band.contains(m))
                     .collect()
             };
             let growable: Vec<Pos> =
@@ -2967,6 +3154,8 @@ fn try_once<R: Rng>(
             nodes.push(to);
             tree.push(ordered(from, to));
         }
+        #[cfg(test)]
+        marks.push((tree.len(), Origin::Growth));
     } else {
         //    Islands instead: grown together from seeds spread apart, never
         //    side by side, so an empty band at least one node wide lies
@@ -2988,6 +3177,8 @@ fn try_once<R: Rng>(
             in_tree.extend(island);
         }
         tree.extend(grown.links);
+        #[cfg(test)]
+        marks.push((tree.len(), Origin::Island));
         mainland = grown.nodes[0].clone();
         islands = grown.nodes[1..].to_vec();
     }
@@ -3001,6 +3192,8 @@ fn try_once<R: Rng>(
         }
         None => Vec::new(),
     };
+    #[cfg(test)]
+    marks.push((tree.len(), Origin::Pocket));
     nodes.extend(&pocket);
     in_tree.extend(&pocket);
 
@@ -3025,9 +3218,10 @@ fn try_once<R: Rng>(
     //    hops apart only closes a square and offers no choice. Pick among the
     //    farthest few, so layouts still vary. A square is allowed, but at most
     //    `MAX_SQUARES` per layout.
-    let loops = rng.random_range(targets.loops.0..=targets.loops.1);
+    //    The fork is one of them.
+    let loops =
+        rng.random_range(targets.loops.0..=targets.loops.1).saturating_sub(loop_sizes.len());
     let mut extra: Vec<(Pos, Pos)> = Vec::new();
-    let mut loop_sizes: Vec<usize> = Vec::new();
     for _ in 0..loops {
         let current: Vec<(Pos, Pos, Link)> =
             tree.iter().chain(&extra).map(|&(a, b)| (a, b, Link::Path)).collect();
@@ -3220,6 +3414,11 @@ fn try_once<R: Rng>(
 
     let river = river_wanted;
 
+    #[cfg(test)]
+    let origin: Vec<Origin> = (0..links.len())
+        .map(|i| marks.iter().find(|&&(end, _)| i < end).map_or(Origin::Loop, |&(_, o)| o))
+        .collect();
+
     Some(Layout {
         rows,
         cols,
@@ -3234,6 +3433,9 @@ fn try_once<R: Rng>(
         docks,
         river,
         rock_pocket,
+        fork,
+        #[cfg(test)]
+        origin,
     })
 }
 
@@ -3562,6 +3764,9 @@ impl Layout {
         for &(r, c) in &self.pocket {
             cells[r][c] = 'p';
         }
+        for &(r, c) in &self.fork {
+            cells[r][c] = 'f';
+        }
         for (k, island) in self.islands.iter().enumerate() {
             for &(r, c) in island {
                 cells[r][c] = ['x', 'y', 'z'][k.min(2)];
@@ -3590,7 +3795,7 @@ impl Layout {
     fn summary(&self) -> String {
         let hops = self.target.and_then(|t| path_hops(self.start, &self.links).get(&t).copied());
         format!(
-            "nodes {}  loops {} {:?}  dead ends {}  junctions {}  rocks {}  pocket {}  islands {:?}  docks {}  start->airship {}",
+            "nodes {}  loops {} {:?}  dead ends {}  junctions {}  rocks {}  pocket {}  islands {:?}  docks {}  fork {}  start->airship {}",
             self.nodes.len(),
             self.links.len() + 1 + self.islands.len() - self.nodes.len(),
             self.loop_sizes,
@@ -3600,6 +3805,7 @@ impl Layout {
             self.pocket.len(),
             self.islands.iter().map(Vec::len).collect::<Vec<_>>(),
             self.docks.len(),
+            self.fork.len(),
             hops.map_or("-".to_string(), |h| h.to_string()),
         )
     }
@@ -3679,7 +3885,7 @@ fn layout_report(
     let seeds: u64 = std::env::var("LAYOUT_SEEDS").ok().and_then(|s| s.parse().ok()).unwrap_or(10);
     let quiet = seeds > 20;
     let (mut failed, mut built) = (0, 0);
-    let (mut loops, mut squares, mut loop_total, mut junctions) = (0, 0, 0, 0);
+    let (mut loops, mut squares, mut loop_total, mut junctions, mut forks) = (0, 0, 0, 0, 0);
     for seed in 1..=seeds {
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
         match generate(world - 1, frame, start, airship, targets, node_count, &mut rng) {
@@ -3689,6 +3895,7 @@ fn layout_report(
                 squares += layout.loop_sizes.iter().filter(|&&s| s == 4).count();
                 loop_total += layout.loop_sizes.iter().sum::<usize>();
                 junctions += layout.junctions();
+                forks += usize::from(!layout.fork.is_empty());
                 if !quiet {
                     println!("\n--- seed {seed}: {}", layout.summary());
                     print!("{}", layout.ascii());
@@ -3702,7 +3909,7 @@ fn layout_report(
             }
         }
     }
-    println!("\n{failed} of {seeds} seeds found no layout");
+    println!("\n{failed} of {seeds} seeds found no layout; {forks} forked");
     if built > 0 && loops > 0 {
         println!(
             "loops: {loops}, squares {:.0}%, mean loop size {:.1}; mean junctions {:.1}",
@@ -3710,6 +3917,152 @@ fn layout_report(
             loop_total as f64 / loops as f64,
             junctions as f64 / built as f64,
         );
+    }
+}
+
+/// Where the long straight lines come from: every straight run of at least
+/// `RUN_MIN` nodes (default 10) in `LAYOUT_WORLD`'s layouts (default 6),
+/// broken down by the [`Origin`] of its links, against every link's origin as
+/// the baseline. Then the `RUN_WORST` maps (default 10) with the longest runs,
+/// drawn with each link's glyph telling its stage.
+///
+/// ```sh
+/// LAYOUT_WORLD=6 LAYOUT_SEEDS=300 cargo test --release --lib straight_run_origins -- --ignored --nocapture
+/// ```
+#[test]
+#[ignore]
+fn straight_run_origins() {
+    use rand::SeedableRng;
+    use rand_chacha::ChaCha8Rng;
+    use std::collections::BTreeMap;
+
+    let Some(rom) = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes")
+        .ok()
+        .and_then(|d| crate::rom::Rom::from_bytes(&d).ok())
+    else {
+        eprintln!("SKIP: requires the ROM, which is not included in the repo");
+        return;
+    };
+    let env = |k: &str, d: usize| std::env::var(k).ok().and_then(|s| s.parse().ok()).unwrap_or(d);
+    let (world, seeds) = (env("LAYOUT_WORLD", 6), env("LAYOUT_SEEDS", 300) as u64);
+    let (run_min, worst) = (env("RUN_MIN", 10), env("RUN_WORST", 10));
+
+    let maps = super::vanilla::load(&rom, false, false);
+    let grid = &maps[world - 1].grid;
+    let start = crate::randomize::rom_data::find_start(grid).expect("the world has a start");
+    let entries = &maps[world - 1].entry_pos;
+    let airship =
+        (0..entries.len()).find(|&i| AIRSHIP_ENTRIES.contains(&(world - 1, i))).map(|i| entries[i]);
+    let recipe = RECIPES[world - 1][0];
+    let areas = areas(&recipe.area, grid);
+    let frame = frame_for(areas.as_ref(), grid);
+    let node_count = dealt_entries(&maps[world - 1], areas.as_ref());
+
+    // Each straight run as its links, horizontal and vertical.
+    let runs = |l: &Layout| -> Vec<Vec<usize>> {
+        let at: HashMap<(Pos, Pos), usize> =
+            l.links.iter().enumerate().map(|(i, &(a, b, _))| ((a, b), i)).collect();
+        let link = |a: Pos, b: Pos| at.get(&ordered(a, b)).copied();
+        let mut out = Vec::new();
+        for &n in &l.nodes {
+            for (dr, dc) in [(0usize, 2usize), (2, 0)] {
+                let back = (n.0.checked_sub(dr), n.1.checked_sub(dc));
+                if let (Some(r), Some(c)) = back
+                    && link((r, c), n).is_some()
+                {
+                    continue;
+                }
+                let (mut p, mut run) = (n, Vec::new());
+                while let Some(i) = link(p, (p.0 + dr, p.1 + dc)) {
+                    run.push(i);
+                    p = (p.0 + dr, p.1 + dc);
+                }
+                if !run.is_empty() {
+                    out.push(run);
+                }
+            }
+        }
+        out
+    };
+
+    let mut all: BTreeMap<Origin, usize> = BTreeMap::new();
+    let mut in_long: BTreeMap<Origin, usize> = BTreeMap::new();
+    let mut led_by: BTreeMap<Origin, usize> = BTreeMap::new();
+    let (mut long_runs, mut maps_with) = (0usize, 0usize);
+    let mut ranked: Vec<(usize, u64, Layout)> = Vec::new();
+    for seed in 1..=seeds {
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
+        let Some(l) =
+            generate(world - 1, &frame, start, airship, recipe.layout, node_count, &mut rng)
+        else {
+            continue;
+        };
+        assert_eq!(l.origin.len(), l.links.len(), "one origin per link");
+        for &o in &l.origin {
+            *all.entry(o).or_default() += 1;
+        }
+        let mut longest = 0;
+        let mut any = false;
+        for run in runs(&l) {
+            longest = longest.max(run.len() + 1);
+            if run.len() + 1 < run_min {
+                continue;
+            }
+            any = true;
+            long_runs += 1;
+            let mut here: BTreeMap<Origin, usize> = BTreeMap::new();
+            for &i in &run {
+                *here.entry(l.origin[i]).or_default() += 1;
+                *in_long.entry(l.origin[i]).or_default() += 1;
+            }
+            let lead = here.iter().max_by_key(|&(_, &n)| n).map(|(&o, _)| o).expect("non-empty");
+            *led_by.entry(lead).or_default() += 1;
+        }
+        maps_with += usize::from(any);
+        ranked.push((longest, seed, l));
+    }
+
+    let share = |m: &BTreeMap<Origin, usize>| -> String {
+        let total: usize = m.values().sum();
+        m.iter()
+            .map(|(o, n)| format!("{o:?} {:.0}%", 100.0 * *n as f64 / total.max(1) as f64))
+            .collect::<Vec<_>>()
+            .join("  ")
+    };
+    println!(
+        "\nW{world}, {} layouts: {maps_with} have a run of {run_min}+ nodes ({long_runs} runs)",
+        ranked.len()
+    );
+    println!("  every link:        {}", share(&all));
+    println!("  links in long runs: {}", share(&in_long));
+    println!("  long runs led by:   {}", share(&led_by));
+
+    ranked.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+    println!(
+        "\nWorst {worst}: walk = H, fork + !, growth - |, island/pocket - |, loop ~ :, rock R"
+    );
+    for (longest, seed, l) in ranked.iter().take(worst) {
+        let mut cells: Vec<Vec<char>> = l.ascii().lines().map(|s| s.chars().collect()).collect();
+        for (i, &(a, b, kind)) in l.links.iter().enumerate() {
+            let mid = ((a.0 + b.0) / 2, (a.1 + b.1) / 2);
+            if kind == Link::Rock {
+                continue;
+            }
+            cells[mid.0][mid.1] = match (l.origin[i], a.0 == b.0) {
+                (Origin::Walk, true) => '=',
+                (Origin::Walk, false) => 'H',
+                (Origin::Fork, true) => '+',
+                (Origin::Fork, false) => '!',
+                (Origin::Loop, true) => '~',
+                (Origin::Loop, false) => ':',
+                (_, true) => '-',
+                (_, false) => '|',
+            };
+        }
+        println!("\n--- seed {seed}: longest run {longest}");
+        for row in cells {
+            println!("{}", row.into_iter().collect::<String>());
+        }
     }
 }
 

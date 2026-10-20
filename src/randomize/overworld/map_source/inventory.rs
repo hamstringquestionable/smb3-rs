@@ -83,6 +83,158 @@ struct Shape {
     start_to_target: Option<usize>,
     /// Breakable rocks, opened for this measurement.
     rocks: usize,
+    /// How the paths read: see [`Route`].
+    route: Route,
+}
+
+/// What the paths look like to a player, rather than what they connect: the
+/// figures the waypoint walk is judged by (`generated_layouts` only sees the
+/// generator's own layout; these see the drawn map, vanilla or generated).
+#[derive(Debug, Default, Clone, Copy)]
+struct Route {
+    /// Most nodes in one straight line of walk links.
+    longest_run: usize,
+    /// Share of nodes standing on a straight run of [`LONG_RUN`] or more.
+    long_run_share: f64,
+    /// Screen quarters (top/bottom half x left/right half) holding a node,
+    /// over all quarters: does the map reach every part of itself?
+    quarters: (usize, usize),
+    /// Node columns holding a node, over all node columns.
+    col_cover: f64,
+    /// The largest connected patch of cells no node or path uses — room
+    /// for a lake, a moat, an outcrop.
+    largest_empty: usize,
+    /// Empty patches of at least [`ROOMY`] cells.
+    roomy_areas: usize,
+    /// Walk hops on the shortest start-to-castle route over the fewest the
+    /// straight-line distance allows; 1.0 is a beeline. `None` when the
+    /// castle is not walkable from the start (islands, pipes).
+    detour: Option<f64>,
+    /// Steps on that route that move away from the castle.
+    away_steps: usize,
+}
+
+/// A straight run this long or longer is what reads as a ruler line.
+const LONG_RUN: usize = 5;
+/// An empty patch this big can hold real scenery.
+const ROOMY: usize = 9;
+
+/// Measure [`Route`] on a walk graph whose nodes sit two cells apart.
+fn route(grid: &Grid, adj: &HashMap<Pos, Vec<Pos>>, target: Option<Pos>) -> Route {
+    let linked = |a: Pos, b: Pos| adj.get(&a).is_some_and(|n| n.contains(&b));
+
+    // Straight runs, horizontal and vertical: start where the line has no
+    // node behind it and count forward.
+    let mut longest_run = 1;
+    let mut on_long: HashSet<Pos> = HashSet::new();
+    for &n in adj.keys() {
+        for (dr, dc) in [(0isize, 2isize), (2, 0)] {
+            let step = |p: Pos, s: isize| {
+                let r = p.0 as isize + dr * s;
+                let c = p.1 as isize + dc * s;
+                (r >= 0 && c >= 0).then_some((r as usize, c as usize))
+            };
+            if step(n, -1).is_some_and(|b| linked(b, n)) {
+                continue;
+            }
+            let mut run = vec![n];
+            while let Some(next) = step(*run.last().expect("non-empty"), 1) {
+                if !linked(*run.last().expect("non-empty"), next) {
+                    break;
+                }
+                run.push(next);
+            }
+            longest_run = longest_run.max(run.len());
+            if run.len() >= LONG_RUN {
+                on_long.extend(run);
+            }
+        }
+    }
+
+    let screens = grid.cols.div_ceil(16);
+    let mut quarters_hit: HashSet<(usize, usize, usize)> = HashSet::new();
+    let mut cols_hit: HashSet<usize> = HashSet::new();
+    for &(r, c) in adj.keys() {
+        quarters_hit.insert((c / 16, usize::from(r > 4), usize::from(c % 16 >= 8)));
+        cols_hit.insert(c / 2);
+    }
+
+    // Cells the walk uses: the nodes, and the path cell between each linked
+    // pair. Everything else is room.
+    let mut used: HashSet<Pos> = adj.keys().copied().collect();
+    for (&a, ns) in adj {
+        for &b in ns {
+            used.insert(((a.0 + b.0) / 2, (a.1 + b.1) / 2));
+        }
+    }
+    let (mut largest_empty, mut roomy_areas) = (0, 0);
+    let mut seen: HashSet<Pos> = HashSet::new();
+    for r in 0..grid.rows() {
+        for c in 0..grid.cols {
+            if used.contains(&(r, c)) || !seen.insert((r, c)) {
+                continue;
+            }
+            let (mut size, mut stack) = (0, vec![(r, c)]);
+            while let Some((pr, pc)) = stack.pop() {
+                size += 1;
+                let around = [
+                    (pr.wrapping_sub(1), pc),
+                    (pr + 1, pc),
+                    (pr, pc.wrapping_sub(1)),
+                    (pr, pc + 1),
+                ];
+                for q in around {
+                    if q.0 < grid.rows() && q.1 < grid.cols && !used.contains(&q) && seen.insert(q)
+                    {
+                        stack.push(q);
+                    }
+                }
+            }
+            largest_empty = largest_empty.max(size);
+            roomy_areas += usize::from(size >= ROOMY);
+        }
+    }
+
+    // The shortest walk route, by BFS over walk links only.
+    let (mut detour, mut away_steps) = (None, 0);
+    if let (Some(start), Some(goal)) = (rom_data::find_start(grid), target) {
+        let mut prev: HashMap<Pos, Pos> = HashMap::new();
+        let mut queue = std::collections::VecDeque::from([start]);
+        let mut seen = HashSet::from([start]);
+        while let Some(n) = queue.pop_front() {
+            if n == goal {
+                break;
+            }
+            for &m in adj.get(&n).map(Vec::as_slice).unwrap_or(&[]) {
+                if seen.insert(m) {
+                    prev.insert(m, n);
+                    queue.push_back(m);
+                }
+            }
+        }
+        if seen.contains(&goal) {
+            let mut path = vec![goal];
+            while let Some(&p) = prev.get(path.last().expect("non-empty")) {
+                path.push(p);
+            }
+            path.reverse();
+            let dist = |p: Pos| p.0.abs_diff(goal.0) + p.1.abs_diff(goal.1);
+            away_steps = path.windows(2).filter(|w| dist(w[1]) > dist(w[0])).count();
+            let beeline = (dist(start) / 2).max(1);
+            detour = Some((path.len() - 1) as f64 / beeline as f64);
+        }
+    }
+
+    Route {
+        longest_run,
+        long_run_share: on_long.len() as f64 / adj.len().max(1) as f64,
+        quarters: (quarters_hit.len(), screens * 4),
+        col_cover: cols_hit.len() as f64 / (grid.cols / 2).max(1) as f64,
+        largest_empty,
+        roomy_areas,
+        detour,
+        away_steps,
+    }
 }
 
 /// Measure a world's shape. Gaps and rocks are opened first: a gap is a lock
@@ -162,6 +314,7 @@ fn shape(map: &WorldMap, world_idx: usize, pipe_pairs: &[TeleportEdge]) -> Shape
 
     let start_to_target =
         find_target(&grid, world_idx).and_then(|t| walk.distances.get(&t).copied());
+    let route = route(&grid, &adj, find_target(&grid, world_idx));
 
     Shape {
         nodes: adj.len(),
@@ -171,6 +324,7 @@ fn shape(map: &WorldMap, world_idx: usize, pipe_pairs: &[TeleportEdge]) -> Shape
         pieces,
         start_to_target,
         rocks,
+        route,
     }
 }
 
@@ -210,6 +364,105 @@ fn map_inventory() {
             s.rocks,
             s.start_to_target.map_or("-".to_string(), |d| d.to_string()),
             s.pieces,
+        );
+    }
+
+    // How the paths read, vanilla against the generator's mean over
+    // `INVENTORY_SEEDS` maps per world (pipes left out of both: a generated
+    // map has none until the builder runs).
+    let seeds: u64 =
+        std::env::var("INVENTORY_SEEDS").ok().and_then(|s| s.parse().ok()).unwrap_or(100);
+    println!("\n== Route (gaps and rocks open; generated = mean over {seeds} seeds) ==");
+    println!(
+        "{:<7} {:>5} {:>7} {:>5} {:>7} {:>6} {:>6} {:>6} {:>5}",
+        "W", "run", "run5+%", "maxrn", "quart%", "cols%", "empty", "roomy", "detour"
+    );
+    for (wi, map) in maps.iter().enumerate() {
+        let r = shape(map, wi, &[]).route;
+        let quart = 100.0 * r.quarters.0 as f64 / r.quarters.1 as f64;
+        println!(
+            "W{:<6} {:>5} {:>7.0} {:>5} {:>7.0} {:>6.0} {:>6} {:>6} {:>5}  away {}",
+            wi + 1,
+            r.longest_run,
+            100.0 * r.long_run_share,
+            r.longest_run,
+            quart,
+            100.0 * r.col_cover,
+            r.largest_empty,
+            r.roomy_areas,
+            r.detour.map_or("-".to_string(), |d| format!("{d:.2}")),
+            r.away_steps,
+        );
+        let mut got: Vec<Route> = Vec::new();
+        for seed in 0..seeds {
+            let mut rng = <rand_chacha::ChaCha8Rng as rand::SeedableRng>::seed_from_u64(seed);
+            if let Some(g) = super::generated::world_map(map, wi, false, &mut rng) {
+                got.push(shape(&g, wi, &[]).route);
+            }
+        }
+        if got.is_empty() {
+            continue;
+        }
+        let n = got.len() as f64;
+        let mean = |f: &dyn Fn(&Route) -> f64| got.iter().map(f).sum::<f64>() / n;
+        // The spread, not just the mean: variety is the point, so what
+        // matters is how often a map is a long-run map, not that none is.
+        let mut runs: Vec<usize> = got.iter().map(|r| r.longest_run).collect();
+        runs.sort_unstable();
+        let pct = |p: usize| runs[(runs.len() - 1) * p / 100];
+        let share = |pred: &dyn Fn(&Route) -> bool| {
+            100.0 * got.iter().filter(|r| pred(r)).count() as f64 / n
+        };
+        let vanilla_like = share(&|g| {
+            g.longest_run <= r.longest_run + 1
+                && r.detour.is_none_or(|d| g.detour.is_some_and(|gd| gd >= d - 0.25))
+        });
+        let mut quart: Vec<f64> =
+            got.iter().map(|g| g.quarters.0 as f64 / g.quarters.1 as f64).collect();
+        quart.sort_by(f64::total_cmp);
+        println!(
+            "  cover   quarters p10 {:.0}%  maps under 75% {:.0}%",
+            100.0 * quart[(quart.len() - 1) / 10],
+            100.0 * quart.iter().filter(|&&q| q < 0.75).count() as f64 / n,
+        );
+        println!(
+            "  spread  run p10/p50/p90 {}/{}/{}  run>=10 {:.0}%  run>=15 {:.0}%  \
+             vanilla-like (run <= {}, detour >= vanilla-0.25) {:.0}%",
+            pct(10),
+            pct(50),
+            pct(90),
+            share(&|g| g.longest_run >= 10),
+            share(&|g| g.longest_run >= 15),
+            r.longest_run + 1,
+            vanilla_like,
+        );
+        let detours: Vec<f64> = got.iter().filter_map(|r| r.detour).collect();
+        let aways: Vec<f64> =
+            got.iter().filter(|r| r.detour.is_some()).map(|r| r.away_steps as f64).collect();
+        println!(
+            "  gen   {:>5.1} {:>7.0} {:>5} {:>7.0} {:>6.0} {:>6.1} {:>6.1} {:>5}  away {}",
+            mean(&|r| r.longest_run as f64),
+            100.0 * mean(&|r| r.long_run_share),
+            got.iter().map(|r| r.longest_run).max().unwrap_or(0),
+            100.0 * mean(&|r| r.quarters.0 as f64 / r.quarters.1 as f64),
+            100.0 * mean(&|r| r.col_cover),
+            mean(&|r| r.largest_empty as f64),
+            mean(&|r| r.roomy_areas as f64),
+            if detours.is_empty() {
+                "-".to_string()
+            } else {
+                format!("{:.2}", detours.iter().sum::<f64>() / detours.len() as f64)
+            },
+            if aways.is_empty() {
+                "-".to_string()
+            } else {
+                format!(
+                    "{:.1} ({} of {} walkable)",
+                    aways.iter().sum::<f64>() / aways.len() as f64,
+                    aways.len(),
+                    got.len()
+                )
+            },
         );
     }
 
