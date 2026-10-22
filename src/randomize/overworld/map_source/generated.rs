@@ -1042,6 +1042,22 @@ fn add_sea<R: Rng>(
     if left_shore {
         wet_nodes.retain(|&n| needs(n).iter().all(|p| p.1 != 1));
     }
+    // A dock touches the canoe's water on one side only. The summon
+    // (`qol::canoe_summon`) calls the boat to the first water beside a dock,
+    // so any other water there could take it into a pond. Its other sides are
+    // land, and so are its paths' sides, so no path onto it is a bridge (a
+    // lock would make one a `$9D` water gap). No water node may need them.
+    let mut dock_land: Vec<(Pos, Pos)> = Vec::new();
+    for &(dock, wet) in &layout.docks {
+        let paths = layout.links.iter().filter(|&&(a, b, _)| a == dock || b == dock);
+        let sides = around(dock).into_iter().filter(|&p| p != wet);
+        for p in sides.chain(paths.flat_map(|&(a, b, _)| beside(a, b))) {
+            if inside(p) {
+                dock_land.push((p, dock));
+            }
+        }
+    }
+    wet_nodes.retain(|&n| needs(n).iter().all(|p| !dock_land.iter().any(|d| d.0 == *p)));
     let mut keep = keep_for(&wet_nodes);
     // A river ([`carve_river`]) from the top coast to the bottom one, near
     // the middle of the start's island, crossing its paths: its course is sea,
@@ -1109,6 +1125,14 @@ fn add_sea<R: Rng>(
                 nearest.map_or(0, island_of)
             });
         }
+    }
+    // The land beside each dock (see `dock_land`); another dock's water or
+    // the river there fails the draw.
+    for &(p, dock) in &dock_land {
+        if keep.contains(&p) || river.contains(&p) {
+            return false;
+        }
+        solid.entry(p).or_insert_with(|| island_of(dock));
     }
 
     // Whether every dock's water is still one sea, with `solid` as land.
@@ -4195,6 +4219,23 @@ fn generated_is_completable() {
         for &(a, b) in docks.iter().flatten() {
             for (r, c) in [a, b] {
                 assert_eq!(w1.grid.get(r, c), DOCK, "seed {seed}: dock ({r},{c}) was built over");
+                // One canoe-water side ($82-$A9), where the summon puts the
+                // boat, and no bridge beside it that a lock could make a gap.
+                let sides =
+                    [(r.wrapping_sub(1), c), (r + 1, c), (r, c.wrapping_sub(1)), (r, c + 1)]
+                        .into_iter()
+                        .filter(|&(y, x)| y < w1.grid.rows() && x < w1.grid.cols)
+                        .map(|(y, x)| w1.grid.get(y, x));
+                let tiles: Vec<u8> = sides.collect();
+                assert_eq!(
+                    tiles.iter().filter(|t| (0x82..0xAA).contains(*t)).count(),
+                    1,
+                    "seed {seed}: dock ({r},{c}) has sides {tiles:02X?}, not one water"
+                );
+                assert!(
+                    !tiles.contains(&BRIDGE_TILE),
+                    "seed {seed}: a bridge beside dock ({r},{c})"
+                );
             }
         }
         let bridges: Vec<Pos> = (0..w1.grid.rows())
