@@ -25,6 +25,9 @@ deploys.
 
 - **World Maze with Generated Overworld** could forget progress in Worlds 7
   and 8 when you changed worlds, such as a bridge its fortress had rebuilt.
+- **Generated World 3** docks now have water on one side only, so pressing A
+  on a dock always calls the canoe to the open sea, never into a pond or a
+  broken bridge it cannot sail out of.
 
 ## [3.0.0] - 2026-10-16
 
