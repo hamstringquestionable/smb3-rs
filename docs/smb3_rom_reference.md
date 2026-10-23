@@ -3062,7 +3062,8 @@ dock tile (`0x4B`) so the player can board it. See the randomizer's
    - in the direction's walkable list (`Map_Object_Valid_Left/Right/Down/Up`:
      path, bridge and over-water path tiles only, by axis; no node tiles):
      a normal 2-tile walk, *with `Map_InCanoe_Flag` still set*. A lattice map
-     never offers this, since both ends of every path cell are nodes;
+     never offers this, since both ends of every path cell are nodes (except
+     the bridge hop below);
    - `$4B` dock: the flag clears and the player steps off. **The only exit.**
    - `$82`–`$A9` (`TILE_WATER_INVT` up to, not including,
      `TILE_VERTPATHWLU`): the canoe moves one tile (16 units). **Any water
@@ -3071,6 +3072,22 @@ dock tile (`0x4B`) so the player can board it. See the randomizer's
 3. So **paths and bridges over water cut the canoe's water** (all are
    `$AA`+). A gap `$9D` is sailable while shut and blocks once its fortress
    bridges it, so canoe reachability must never depend on a gap cell.
+
+**The canoe under a bridge (Generated Overworld only, 2026-10-23).**
+`Map_Object_Valid_Down` (file `0x1526A`, CPU `$D25A`) and `Map_Object_Valid_Up`
+(`0x15273`, `$D263`) are `46 46 46 B1 AA AB B0 DB BA`: three `TILE_VERTPATH`
+pad them to the left/right lists' nine. `qol::canoe_under_bridges` turns the
+first of each into `TILE_BRIDGE` `$B3`, so a canoe pressing up or down into a
+bridge takes the walk branch above: a 32-unit move, which in the canoe runs at
+one unit and one pixel a frame (`PRG010_CEE4`: `-2`, then `+1` back, with the
+`MapMove_Delta*C` steps), so it hops two tiles, over the bridge onto the far
+side, and never rests on it. Hammer Bro marching (`prg011.asm` ~3365) reads
+the same lists. It is safe only where no bridge sits on the top or bottom row
+(the hop leaves the map: vanilla W3 has one at `(0,17)`, reachable once the
+canoe can hop `(2,17)`), none has a path or node above or below, and every
+bridge has the canoe's water on both sides or neither. Generated maps
+guarantee all three; vanilla W3 does not, so the patch goes in only when all
+eight maps were generated.
 
 The always-on canoe summon (`qol/canoe_summon.rs`, A on a dock calls the boat
 to the adjacent water; replaced by `maze::canoe_gate` when item gates are on)
