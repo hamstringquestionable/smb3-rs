@@ -134,6 +134,11 @@ struct Targets {
     /// (`$4B`, `TILE_DOCK`), and the start's island gets `mainland_docks` more.
     dock_islands: (usize, usize),
     mainland_docks: (usize, usize),
+    /// How many of the dock islands are islands on top of the pipe splits:
+    /// `None` for all of them (W3); `Some(k)` for at most `k`, the rest being
+    /// pipe splits reached by canoe instead, whose pipe pairs the builder
+    /// keeps for routing (W7's lagoon: one island more than plain W7).
+    extra_dock_islands: Option<usize>,
     /// Pipe islands are seeded on the outermost node row or column (W4's
     /// small island on the map's edge).
     edge_islands: bool,
@@ -194,6 +199,7 @@ const W1_TARGETS: Targets = Targets {
     island_share: (25, 50),
     dock_islands: (0, 0),
     mainland_docks: (0, 0),
+    extra_dock_islands: None,
     edge_islands: false,
     mainland_outer: None,
     extra_split: 0.25,
@@ -221,6 +227,7 @@ const W2_TARGETS: Targets = Targets {
     island_share: (25, 50),
     dock_islands: (0, 0),
     mainland_docks: (0, 0),
+    extra_dock_islands: None,
     edge_islands: false,
     mainland_outer: None,
     extra_split: 0.25,
@@ -248,6 +255,7 @@ const W3_TARGETS: Targets = Targets {
     island_share: (4, 10),
     dock_islands: (3, 5),
     mainland_docks: (1, 2),
+    extra_dock_islands: None,
     edge_islands: false,
     mainland_outer: None,
     extra_split: 0.25,
@@ -277,6 +285,7 @@ const W4_TARGETS: Targets = Targets {
     island_share: (10, 20),
     dock_islands: (0, 0),
     mainland_docks: (0, 0),
+    extra_dock_islands: None,
     edge_islands: true,
     mainland_outer: Some((0, 1)),
     extra_split: 0.25,
@@ -306,6 +315,7 @@ const W5_TARGETS: Targets = Targets {
     island_share: (48, 52),
     dock_islands: (0, 0),
     mainland_docks: (0, 0),
+    extra_dock_islands: None,
     edge_islands: false,
     mainland_outer: None,
     extra_split: 0.0,
@@ -333,6 +343,7 @@ const W6_TARGETS: Targets = Targets {
     island_share: (25, 50),
     dock_islands: (0, 0),
     mainland_docks: (0, 0),
+    extra_dock_islands: None,
     edge_islands: false,
     mainland_outer: None,
     extra_split: 0.0,
@@ -360,6 +371,7 @@ const W7_TARGETS: Targets = Targets {
     island_share: (25, 50),
     dock_islands: (0, 0),
     mainland_docks: (0, 0),
+    extra_dock_islands: None,
     edge_islands: false,
     mainland_outer: None,
     extra_split: 0.25,
@@ -372,6 +384,16 @@ const W7_TARGETS: Targets = Targets {
     per_screen: None,
     small_island: None,
     fork: 0.0,
+};
+
+/// W7's lagoon (user, 2026-10-23): one island more than plain W7, and one or
+/// two of them reached by canoe from a dock on the start's island instead of
+/// by pipe; with two, a pipe pair is left to the builder for routing.
+const W7_LAGOON_TARGETS: Targets = Targets {
+    dock_islands: (1, 2),
+    mainland_docks: (1, 1),
+    extra_dock_islands: Some(1),
+    ..W7_TARGETS
 };
 
 /// W8 (user, 2026-10-14): its first three screens drawn afresh, one island
@@ -389,6 +411,7 @@ const W8_TARGETS: Targets = Targets {
     island_share: (0, 0),
     dock_islands: (0, 0),
     mainland_docks: (0, 0),
+    extra_dock_islands: None,
     edge_islands: false,
     mainland_outer: None,
     extra_split: 0.0,
@@ -692,6 +715,33 @@ const W7_RECIPE: Recipe = Recipe {
     ],
 };
 
+/// W7 with a canoe ([`W7_LAGOON_TARGETS`]): W7's look, with W3's left shore
+/// so the boat cannot sail into the frame.
+const W7_LAGOON_RECIPE: Recipe = Recipe {
+    layout: W7_LAGOON_TARGETS,
+    area: Area::Whole,
+    pans_to_width: true,
+    ground: CLEARING,
+    ground_before: None,
+    sky: None,
+    scenery: &[
+        Step::Sea {
+            margin: 1.0,
+            land: 0.05,
+            water_nodes: 0.0,
+            islet: PLANT,
+            coast: true,
+            solid: true,
+            bridges: 0.5,
+            boxes: true,
+            within: None,
+            left_shore: true,
+        },
+        Step::Clusters { other: PLANT, rock_share: 0.0 },
+        Step::Scatter { tile: FLOWER, count: (1, 3) },
+    ],
+};
+
 /// W8, dark land: fire on its first screen and bones after, as vanilla,
 /// with patches of open ground and clusters of fire. The first screen is
 /// water first, as vanilla's navy: some nodes stand in the sea (user,
@@ -747,7 +797,7 @@ const RECIPES: [&[&Recipe]; 8] = [
     &[&W4_RECIPE],
     &[&W5_RECIPE],
     &[&W6_RECIPE],
-    &[&W7_RECIPE],
+    &[&W7_RECIPE, &W7_LAGOON_RECIPE],
     &[&W8_RECIPE],
 ];
 
@@ -865,13 +915,15 @@ fn frame_for(areas: Option<&Areas>, vanilla: &Grid) -> Frame {
 }
 
 /// The entries a recipe deals, one to a node: every entry on the map and
-/// inside its areas. (The others stay where vanilla put them.)
+/// inside its areas, but vanilla's docks, which go on docks the layout adds
+/// over and above. (The others stay where vanilla put them.)
 fn dealt_entries(vanilla: &WorldMap, areas: Option<&Areas>) -> usize {
     let grid = &vanilla.grid;
     vanilla
         .entry_pos
         .iter()
         .filter(|p| p.0 < grid.rows() && p.1 < grid.cols)
+        .filter(|p| grid.get(p.0, p.1) != DOCK)
         .filter(|p| areas.is_none_or(|a| a.ground.contains(p) || a.sky.contains(p)))
         .count()
 }
@@ -1001,6 +1053,18 @@ fn add_sea<R: Rng>(
     };
     let (from, to) = within.unwrap_or((1, cols - 1));
     let cells: Vec<Pos> = (0..rows).flat_map(|r| (from..to).map(move |c| (r, c))).collect();
+    // The nodes and the cells under their paths: never canoe water, whatever
+    // is drawn there (a bridge, a crossing, a water node), so the boat
+    // cannot pass them.
+    let built: HashSet<Pos> = layout
+        .nodes
+        .iter()
+        .copied()
+        .chain(layout.links.iter().map(|&(a, b, _)| mid(a, b)))
+        .collect();
+    let canoe_open = |q: Pos, solid: &HashMap<Pos, usize>| {
+        inside(q) && !solid.contains_key(&q) && !built.contains(&q)
+    };
     let docks: Vec<Pos> = layout.docks.iter().map(|d| d.1).collect();
     if within.is_none() {
         water.sea_bounds = Some((rows, cols));
@@ -1135,14 +1199,15 @@ fn add_sea<R: Rng>(
         solid.entry(p).or_insert_with(|| island_of(dock));
     }
 
-    // Whether every dock's water is still one sea, with `solid` as land.
+    // Whether every dock's water is still one sea the canoe can sail, with
+    // `solid` as land.
     let joined = |solid: &HashMap<Pos, usize>| {
         let Some(&first) = docks.first() else { return true };
         let mut seen = HashSet::from([first]);
         let mut queue = vec![first];
         while let Some(p) = queue.pop() {
             for n in around(p) {
-                if inside(n) && !solid.contains_key(&n) && seen.insert(n) {
+                if canoe_open(n, solid) && seen.insert(n) {
                     queue.push(n);
                 }
             }
@@ -1156,7 +1221,7 @@ fn add_sea<R: Rng>(
     let locally_joined = |solid: &HashMap<Pos, usize>, (r, c): Pos| {
         let (u, d, l, rr) = (r.wrapping_sub(1), r + 1, c.wrapping_sub(1), c + 1);
         let ring = [(u, l), (u, c), (u, rr), (r, rr), (d, rr), (d, c), (d, l), (r, l)];
-        let open: Vec<bool> = ring.iter().map(|&q| inside(q) && !solid.contains_key(&q)).collect();
+        let open: Vec<bool> = ring.iter().map(|&q| canoe_open(q, solid)).collect();
         let Some(gap) = open.iter().position(|o| !o) else { return true };
         let mut runs_with_a_side = 0;
         let mut in_run_with_side = false;
@@ -1483,8 +1548,8 @@ fn draw_once<R: Rng>(
     }
 
     // Entries onto nodes: the start and the airship go where the layout put
-    // them, and docks take vanilla's dock entries, then spare Hammer Bro levels
-    // (drawn as docks below). The rest are dealt at random onto the remaining
+    // them, and docks take vanilla's dock entries while they last (docks need
+    // none; drawn below). The rest are dealt at random onto the remaining
     // nodes. Entries off the grid (unused rows in the pointer table) stay where
     // they are.
     let dock_nodes: Vec<Pos> = layout.docks.iter().map(|d| d.0).collect();
@@ -1510,36 +1575,38 @@ fn draw_once<R: Rng>(
         |p: Pos| areas.as_ref().is_some_and(|a| !a.ground.contains(&p) && !a.sky.contains(&p));
     let dealt_elsewhere =
         |i: usize| i == start_idx || Some(i) == airship_idx || outside(vanilla.entry_pos[i]);
-    let pinned_entries: Vec<usize> = (0..entry_pos.len())
-        .filter(|&i| vanilla_tile(i) == Some(DOCK))
-        .chain(
-            (0..entry_pos.len())
-                .filter(|&i| !dealt_elsewhere(i))
-                .filter(|&i| vanilla_tile(i).is_some_and(|t| VALID_BLANK_TILES.contains(&t))),
-        )
-        .collect();
-    if pinned_entries.iter().filter(|&&i| vanilla_tile(i) == Some(DOCK)).count() > dock_nodes.len()
-    {
+    let dock_entries: Vec<usize> =
+        (0..entry_pos.len()).filter(|&i| vanilla_tile(i) == Some(DOCK)).collect();
+    if dock_entries.len() > dock_nodes.len() {
         return None; // A vanilla dock entry with no dock would draw a stray dock.
     }
+    let spares: Vec<usize> = (0..entry_pos.len())
+        .filter(|&i| !dealt_elsewhere(i))
+        .filter(|&i| vanilla_tile(i).is_some_and(|t| VALID_BLANK_TILES.contains(&t)))
+        .collect();
     // Every island but the start's also takes a spare Hammer Bro level, on
     // its first free node: the pickup always lifts those, so the builder has
     // somewhere to land the island's pipe. An island of only fixed nodes (the
-    // airship and a Toad House the flags keep) could never be joined.
+    // airship and a Toad House the flags keep) could never be joined. An
+    // island with a dock needs none: the canoe joins it.
     let anchors: Vec<Pos> = layout
         .islands
         .iter()
+        .filter(|island| !island.iter().any(|n| dock_nodes.contains(n)))
         .chain((!layout.rock_pocket.is_empty()).then_some(&layout.rock_pocket))
         .filter_map(|island| island.iter().copied().find(|n| free.contains(n)))
         .collect();
     free.retain(|n| !anchors.contains(n));
-    let placed: Vec<usize> =
-        pinned_entries.into_iter().take(dock_nodes.len() + anchors.len()).collect();
-    if placed.len() < dock_nodes.len() + anchors.len() {
+    if spares.len() < anchors.len() {
         return None;
     }
-    for (&i, &p) in placed.iter().zip(dock_nodes.iter().chain(&anchors)) {
+    // Vanilla's dock entries (W3's) go on the first docks; the other docks
+    // have no entry.
+    let pairs = dock_entries.iter().zip(&dock_nodes).chain(spares.iter().zip(&anchors));
+    let mut placed: Vec<usize> = Vec::new();
+    for (&i, &p) in pairs {
         entry_pos[i] = p;
+        placed.push(i);
     }
     for (i, pos) in entry_pos.iter_mut().enumerate() {
         if !dealt_elsewhere(i) && !placed.contains(&i) && on_grid(vanilla.entry_pos[i]) {
@@ -3044,10 +3111,11 @@ fn try_once<R: Rng>(
         (_, 0) => 0,
         (lo, hi) => rng.random_range(lo..=hi),
     };
+    let extra_docks = targets.extra_dock_islands.map_or(dock_islands, |k| dock_islands.min(k));
     let mut islands: Vec<Vec<Pos>> = Vec::new();
     let mut mainland: Vec<Pos> = Vec::new();
 
-    if splits + dock_islands == 0 && targets.per_screen.is_none() {
+    if splits + extra_docks == 0 && targets.per_screen.is_none() {
         //    First a waypoint, reached by a winding path from the start, so every
         //    layout crosses the map. It lands in a staircase on the side away
         //    from the start's column: on the row farthest from the start's row
@@ -3194,7 +3262,7 @@ fn try_once<R: Rng>(
         let grown = if let Some(sizes) = targets.per_screen {
             screen_islands(&main, &on_lattice, start, sizes, targets.small_island, rng)?
         } else {
-            grow_islands(&main, &on_lattice, start, splits + dock_islands, main_nodes, rules, rng)?
+            grow_islands(&main, &on_lattice, start, splits + extra_docks, main_nodes, rules, rng)?
         };
         for island in &grown.nodes {
             nodes.extend(island.iter().filter(|&&n| n != start));
@@ -3312,11 +3380,12 @@ fn try_once<R: Rng>(
     }
 
     // 3b. Docks: one on each of `dock_islands` islands picked at random, and
-    //     one or two on the start's island, each a node with a free tile
-    //     beside it for the canoe's water. That tile is always in the open
-    //     sea, the largest open area (paths and nodes cut it), so every dock
-    //     is on the one sea; a tile in a pocket enclosed by paths would
-    //     strand its dock. The canoe parks beside the first.
+    //     one or two on the start's island, each a new node branched off
+    //     the island with a free tile beside it for the canoe's water. That
+    //     tile, the dock and its path are all in the open sea, the largest
+    //     open area (paths and nodes cut it), so every dock is on the one
+    //     sea; a tile in a pocket enclosed by paths would strand its dock.
+    //     The canoe parks beside the first.
     let mut docks: Vec<(Pos, Pos)> = Vec::new();
     if dock_islands > 0 {
         let taken: HashSet<Pos> = nodes
@@ -3348,42 +3417,69 @@ fn try_once<R: Rng>(
         }
         let mut order: Vec<usize> = (0..islands.len()).collect();
         order.shuffle(rng);
-        let homes: Vec<&[Pos]> =
-            vec![
-                mainland.as_slice();
-                rng.random_range(targets.mainland_docks.0..=targets.mainland_docks.1)
-            ];
-        let spots = |home: &[Pos], docks: &[(Pos, Pos)]| -> Vec<(Pos, Pos)> {
+        let homes = rng.random_range(targets.mainland_docks.0..=targets.mainland_docks.1);
+        //    A dock is a node of its own, with no entry (nobody enters a dock;
+        //    user, 2026-10-23): a one-node branch off an island node `n` out
+        //    into the sea, onto an empty lattice cell `d` with no other node
+        //    beside it, and a sea cell `w` beside `d` for the canoe's water.
+        //    Spots are `(n, d, w)`.
+        let spots = |home: &[Pos], taken: &HashSet<Pos>| -> Vec<(Pos, Pos, Pos)> {
+            let open_sea = |p: &Pos| sea.contains(p) && !taken.contains(p);
             home.iter()
                 .copied()
-                .filter(|&n| n != start && !docks.iter().any(|d| d.0 == n))
-                .flat_map(|(r, c)| {
-                    [(r.wrapping_sub(1), c), (r + 1, c), (r, c.wrapping_sub(1)), (r, c + 1)]
-                        .into_iter()
+                .flat_map(|n| neighbours(n, &on_lattice).into_iter().map(move |d| (n, d)))
+                .filter(|&(n, d)| {
+                    open_sea(&d)
+                        && open_sea(&((n.0 + d.0) / 2, (n.1 + d.1) / 2))
+                        && !walled.contains(&d)
+                        // Never beside the last column, the frame: W7's is
+                        // water, and a dock may touch only its own.
+                        && d.1 + 2 < cols
+                        && neighbours(d, &on_lattice).iter().all(|m| *m == n || !taken.contains(m))
+                })
+                .flat_map(|(n, d)| {
+                    let link = ((n.0 + d.0) / 2, (n.1 + d.1) / 2);
+                    around(d)
                         // Never the first column: that is W3's left shore.
-                        .filter(|w| sea.contains(w) && w.1 >= 2)
-                        .map(move |w| ((r, c), w))
+                        .filter(move |w| *w != link && w.1 >= 2)
+                        .filter(|w| open_sea(w))
+                        .map(move |w| (n, d, w))
                 })
                 .collect()
         };
-        for home in homes {
-            let here = spots(home, &docks);
-            docks.push(*here.choose(rng)?);
+        let mut taken = taken;
+        let mut add_dock = |(n, d, w): (Pos, Pos, Pos),
+                            taken: &mut HashSet<Pos>,
+                            nodes: &mut Vec<Pos>,
+                            links: &mut Vec<(Pos, Pos, Link)>| {
+            let (a, b) = ordered(n, d);
+            links.push((a, b, Link::Path));
+            nodes.push(d);
+            taken.extend([d, ((n.0 + d.0) / 2, (n.1 + d.1) / 2), w]);
+            docks.push((d, w));
+        };
+        for _ in 0..homes {
+            let here = spots(&mainland, &taken);
+            let spot = *here.choose(rng)?;
+            add_dock(spot, &mut taken, &mut nodes, &mut links);
+            mainland.push(spot.1);
         }
-        //    Dock islands in a random order; one with no node on the open sea
-        //    is passed over and stays a pipe island, while the pipes go round.
+        //    Dock islands in a random order; one with no room for a dock is
+        //    passed over and stays a pipe island, while the pipes go round.
         let mut docked = 0;
         for &i in &order {
             if docked == dock_islands {
                 break;
             }
-            let here = spots(&islands[i], &docks);
+            let here = spots(&islands[i], &taken);
             if let Some(&spot) = here.choose(rng) {
-                docks.push(spot);
+                add_dock(spot, &mut taken, &mut nodes, &mut links);
+                islands[i].push(spot.1);
                 docked += 1;
             }
         }
-        if islands.len() - docked > targets.pipe_pairs {
+        // A dock with no other to sail to is no canoe at all.
+        if docked == 0 || islands.len() - docked > targets.pipe_pairs {
             return None;
         }
     }
@@ -4107,6 +4203,7 @@ fn generated_is_completable() {
     use crate::randomize::overworld::map_walker::walk_map;
     use crate::randomize::overworld::node_catalog::NodeCatalog;
     use crate::randomize::overworld::pickup::{PickupFlags, pick_up};
+    use crate::randomize::rom_data::{VALID_HORZ, VALID_VERT};
     use rand::SeedableRng;
     use rand_chacha::ChaCha8Rng;
 
@@ -4128,6 +4225,8 @@ fn generated_is_completable() {
     let mut stranded_by_swap: Vec<u64> = Vec::new();
     let mut stranded_nodes: Vec<(u64, Vec<Pos>)> = Vec::new();
     let mut helps_above = 0;
+    let mut left_frame: Vec<u64> = Vec::new();
+    let mut right_frame = 0;
     for seed in 0..seeds {
         let (shuffle, swap) = match seed % 3 {
             0 => (true, false),
@@ -4140,18 +4239,69 @@ fn generated_is_completable() {
         let recipes = RECIPES[wi];
         let recipe = recipes[(seed / 3) as usize % recipes.len()];
         let Some(w1) = draw_with(&maps[wi], wi, recipe, swap, &mut rng) else { continue };
-        // A left shore holds: no tile in the first column the canoe can cross
-        // (the engine's canoe tiles are $82-$A9), so it never reaches the
-        // frame. Checked on the finished map, so water from any step (a
-        // river carved before the shore, say) is caught too.
-        let left_shore =
-            recipe.scenery.iter().any(|s| matches!(s, Step::Sea { left_shore: true, .. }));
-        if left_shore {
-            for r in 0..w1.grid.rows() {
-                let tile = w1.grid.get(r, 1);
+        // The canoe's sea, flooded from the water beside the home dock over
+        // the engine's canoe tiles ($82-$A9): it reaches every other dock
+        // (a bridge or a crossing is no canoe tile, and W7's packed islands
+        // can wall the sea apart with them), and stays off the first column
+        // (W3's and W7's left shore). Checked on the finished map before
+        // the builder, whose locks only ever turn a bridge into water; a
+        // canoe tile the boat cannot reach (vanilla W7's start stub) is no
+        // failure.
+        let home: Vec<Pos> = w1.grid.canoe_edges.iter().flatten().map(|e| e.0).take(1).collect();
+        let docks_at: Vec<Pos> =
+            w1.grid.canoe_edges.iter().flatten().flat_map(|&(a, b)| [a, b]).collect();
+        let canoe = |(r, c): Pos| {
+            r < w1.grid.rows() && c < w1.grid.cols && (0x82..=0xA9).contains(&w1.grid.get(r, c))
+        };
+        let mut sea: Vec<Pos> =
+            home.iter().flat_map(|&d| around(d)).filter(|&p| canoe(p)).collect();
+        let mut seen: HashSet<Pos> = sea.iter().copied().collect();
+        while let Some(p) = sea.pop() {
+            for n in around(p) {
+                if canoe(n) && seen.insert(n) {
+                    sea.push(n);
+                }
+            }
+        }
+        for &d in &docks_at {
+            assert!(
+                around(d).any(|w| seen.contains(&w)),
+                "seed {seed}: the canoe cannot sail from dock {:?} to dock {d:?}",
+                home[0]
+            );
+        }
+        if seen.iter().any(|p| p.1 == 0) {
+            left_frame.push(seed);
+        }
+        right_frame += usize::from(seen.iter().any(|p| p.1 + 1 == w1.grid.cols));
+        // Every bridge is safe for `qol::canoe_under_bridges`, which lets the
+        // canoe hop straight over one up or down: off the top and bottom
+        // rows (the hop would leave the map), with no path or node above or
+        // below (walking Mario and marching Hammer Bros read the same lists),
+        // and, where there is a canoe, its water on both sides or neither (or
+        // the hop lands on land). The builder's locks only turn a bridge into
+        // a water gap, so the map before it is the one to check.
+        let walk = |p: Pos| {
+            let t = w1.grid.get(p.0, p.1);
+            VALID_HORZ.contains(&t) || VALID_VERT.contains(&t) || w1.entry_pos.contains(&p)
+        };
+        for r in 0..w1.grid.rows() {
+            for c in 0..w1.grid.cols {
+                if w1.grid.get(r, c) != BRIDGE_TILE {
+                    continue;
+                }
                 assert!(
-                    !(0x82..=0xA9).contains(&tile),
-                    "seed {seed}: canoe tile {tile:02X} at ({r},1) on the left shore"
+                    r > 0 && r + 1 < w1.grid.rows(),
+                    "seed {seed}: bridge ({r},{c}) on an edge row"
+                );
+                let (up, down) = ((r - 1, c), (r + 1, c));
+                assert!(
+                    !walk(up) && !walk(down),
+                    "seed {seed}: a path or node beside bridge ({r},{c})"
+                );
+                assert!(
+                    docks_at.is_empty() || canoe(up) == canoe(down),
+                    "seed {seed}: bridge ({r},{c}) has the canoe's water on one side only"
                 );
             }
         }
@@ -4278,6 +4428,9 @@ fn generated_is_completable() {
         }
     }
     println!("builder: {generated} of {seeds} seeds generated a W{}, all completable", wi + 1);
+    assert!(left_frame.is_empty(), "the canoe can sail onto the left frame: {left_frame:?}");
+    // Allowed: W7's lagoon runs its sea to the right edge (user, 2026-10-23).
+    println!("  the canoe reaches the right frame on {right_frame} maps (allowed)");
     assert!(
         row78_conflicts.is_empty(),
         "a completable or removable tile above a bottom-row node (seed, column): {row78_conflicts:?}",

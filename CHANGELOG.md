@@ -9,6 +9,13 @@ deploys.
 
 ## [Unreleased]
 
+### Added
+
+- **Generated World 7** is sometimes a lagoon: one more island than usual,
+  and one or two of them reached by canoe from a dock on the island you start
+  on.
+- **Generated Overworld canoes sail under bridges.**
+
 ### Changed
 
 - **Generated Overworld scenery.** World 6 is a field of mountains crossed by

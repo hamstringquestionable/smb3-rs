@@ -337,6 +337,7 @@ pub(super) fn overworld_catalog(
     // with Generated Overworld). Hammer Bro shuffle is on whenever one is
     // (`resolve`), so the builder places the bros; a world the generator
     // cannot draw keeps its vanilla map.
+    let mut drawn = 0u8;
     if run.shuffle_hammer_bros {
         for (wi, map) in maps.iter_mut().enumerate() {
             if run.generated_worlds & (1 << wi) != 0
@@ -349,7 +350,8 @@ pub(super) fn overworld_catalog(
             {
                 if let Some(canoe) = generated.canoe {
                     rom.set_tag("overworld/generated_canoe");
-                    randomize::rom_data::move_canoe(rom, wi, canoe);
+                    let placed = randomize::rom_data::place_canoe(rom, wi, canoe);
+                    assert!(placed, "W{} has no map-object slot for its canoe", wi + 1);
                 }
                 if let Some((castle, help)) = generated.castle {
                     use randomize::rom_data::{AIRSHIP_OBJ_SLOT, HELP_OBJ_SLOT};
@@ -374,8 +376,17 @@ pub(super) fn overworld_catalog(
                     rom.write_byte(randomize::rom_data::MAP_MAX_PAN_R + wi, limit);
                 }
                 *map = generated;
+                drawn |= 1 << wi;
             }
         }
+    }
+    // The canoe sails under bridges only when every map is generated: each
+    // generated bridge has the sea on both sides or neither and none is on
+    // an edge row, while vanilla W3 has one on its top row (a world the
+    // generator could not draw keeps its vanilla map).
+    if drawn == 0xFF {
+        rom.set_tag("qol/canoe_under_bridges");
+        randomize::qol::canoe_under_bridges(rom);
     }
     let mut catalog = randomize::overworld::node_catalog::NodeCatalog::from_maps(
         rom,

@@ -330,16 +330,20 @@ pub(crate) fn write_map_sprite(
     rom.write_byte(id_off, id);
 }
 
-/// Move `world_idx`'s canoe (map object `$10`, `MAPOBJ_CANOE`) to a grid
+/// Put `world_idx`'s canoe (map object `$10`, `MAPOBJ_CANOE`) on a grid
 /// cell. The engine finds one canoe per map, so the first slot holding one is
-/// the canoe. `false` if the world has none.
-pub(crate) fn move_canoe(rom: &mut Rom, world_idx: usize, (row, col): (usize, usize)) -> bool {
-    let Some(slot) = (0..MAP_OBJ_SLOTS).find(|&slot| {
+/// the canoe; a world with none (a generated W7 lagoon) takes the highest
+/// empty slot, as the piranha plants do, so the Hammer Bro and plant budgets
+/// that read slot eligibility see it. `false` if no slot is free.
+pub(crate) fn place_canoe(rom: &mut Rom, world_idx: usize, (row, col): (usize, usize)) -> bool {
+    let canoe = (0..MAP_OBJ_SLOTS).find(|&slot| {
         rom.read_byte(map_obj_slot_offset(rom, MAP_OBJ_IDS_MASTER, world_idx, slot)) == 0x10
-    }) else {
+    });
+    let Some(slot) = canoe.or_else(|| last_empty_map_obj_slot(rom, world_idx)) else {
         return false;
     };
-    write_map_sprite_position(rom, world_idx, slot, row, col);
+    write_map_sprite(rom, world_idx, slot, row, col, 0x10);
+    rom.write_byte(map_obj_reward_offset(world_idx, slot), 0);
     true
 }
 

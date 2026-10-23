@@ -14,7 +14,9 @@ pub(crate) type TeleportEdge = (Pos, Pos);
 pub(crate) const VALID_HORZ: &[u8] =
     &[0x45, 0x49, 0xB2, 0xB3, 0xAC, 0xB7, 0xB8, 0xDA, 0xB9, 0xE6, 0xE8];
 
-/// Valid vertical path tiles (Map_Object_Valid_Down/Up in PRG010).
+/// Valid vertical path tiles (Map_Object_Valid_Down/Up in PRG010). Without the
+/// bridge `qol::canoe_under_bridges` adds there: on a map it is written for,
+/// nothing on foot can meet a bridge moving up or down, so only the canoe uses it.
 pub(crate) const VALID_VERT: &[u8] = &[0x46, 0xB1, 0xAA, 0xAB, 0xB0, 0xDB, 0xBA, 0xE8];
 
 /// Background / non-walkable tiles.
