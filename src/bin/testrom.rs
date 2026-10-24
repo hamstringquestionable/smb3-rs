@@ -212,6 +212,12 @@ struct Cli {
     #[arg(long, value_name = "NAME:OFFSET:HEX")]
     set_layout: Vec<String>,
 
+    /// Overwrite one world-map colour in every world, as "PAGE:INDEX:COLOR"
+    /// with COLOR in hex, e.g. "0:1:16" paints palette page 0's index 1 red.
+    /// Repeatable. A probe for which tiles and screens a colour slot reaches.
+    #[arg(long, value_name = "PAGE:INDEX:COLOR")]
+    map_color: Vec<String>,
+
     /// Open "Unused Level 5" -- the unreferenced test level holding eight Big
     /// [?] Block rooms -- from every Big [?] pipe in the game, landing 5-2's
     /// pipe in the room on this screen (0-7). Screen 3 reproduces 5-2's
@@ -322,6 +328,21 @@ fn parse_set_enemy(spec: &str) -> Result<EnemyOverride, String> {
         id: byte(parts[2])?,
         pos,
     })
+}
+
+/// Parse a `--map-color` item: `"0:1:16"` — palette page, colour index, and
+/// the NES colour in hex.
+fn parse_map_color(spec: &str) -> Result<(u8, u8, u8), String> {
+    let bad = || format!("bad --map-color {spec:?} (expected PAGE:INDEX:COLOR, e.g. 0:1:16)");
+    let parts: Vec<&str> = spec.split(':').map(str::trim).collect();
+    let [page, index, color] = parts[..] else { return Err(bad()) };
+    let page: u8 = page.parse().map_err(|_| bad())?;
+    let index: u8 = index.parse().map_err(|_| bad())?;
+    let color = u8::from_str_radix(color.trim_start_matches("0x"), 16).map_err(|_| bad())?;
+    if page > 3 || index > 3 || color > 0x3F {
+        return Err(bad());
+    }
+    Ok((page, index, color))
 }
 
 /// Parse a `--set-layout` item: `"2HB1:36:360814360A07"` — level name, decimal
@@ -475,6 +496,9 @@ fn main() {
     let set_layouts: Vec<LayoutOverride> =
         cli.set_layout.iter().map(|s| parse_set_layout(s).unwrap_or_else(|e| die(e))).collect();
 
+    let map_colors: Vec<(u8, u8, u8)> =
+        cli.map_color.iter().map(|s| parse_map_color(s).unwrap_or_else(|e| die(e))).collect();
+
     let starting_items: Vec<u8> = cli
         .starting_items
         .iter()
@@ -536,6 +560,7 @@ fn main() {
         big_q_aim,
         set_enemies,
         set_layouts,
+        map_colors,
     };
 
     let built = testrom::build(&vanilla, &spec).unwrap_or_else(|e| die(e));
