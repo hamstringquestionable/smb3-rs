@@ -291,7 +291,6 @@ pub(crate) fn build<R: Rng>(
     // table pool the writer fills, and the promotion stock below.
     for state in &mut states {
         run_schedule(state, &[&HammerBroFill], rng);
-        renumber_fort_sections(state);
     }
 
     let mut worlds: Vec<BuiltWorld> = states.iter().map(|s| s.to_built()).collect();
@@ -326,10 +325,11 @@ pub(crate) fn build<R: Rng>(
     BuildResult { worlds, fort_counts }
 }
 
-/// The writer pairs each lock to its fortress by INDEX: fort `section`
-/// values must be a dense `0..section_count`. Placement assigns them
-/// densely, but the Locks phase may remove an unlockable fort (rare),
-/// leaving a hole — renumber in placement order and remap the locks.
+/// Fort `section` values must be a dense `0..section_count`: the writer pairs
+/// each lock to its fortress by index, and the route scorer lays out its
+/// cleared-mask bits the same way. Placement assigns them densely, but the
+/// Locks phase may remove an unlockable fort (rare), leaving a hole, so it
+/// calls this straight after: renumber in placement order and remap the locks.
 fn renumber_fort_sections(state: &mut WorldState) {
     let remap: HashMap<usize, usize> = state
         .slots
