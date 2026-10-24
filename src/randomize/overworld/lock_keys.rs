@@ -1193,8 +1193,9 @@ fn assert_one_key_per_lock(entries: &[LockEntry]) {
 ///
 /// # Panics
 ///
-/// If [`assert_one_key_per_lock`] is violated, or if more than [`MAX_ENTRIES`]
-/// are handed over. Truncating would leave a lock no fortress opens, which is an
+/// If [`assert_one_key_per_lock`] is violated, if more than [`MAX_ENTRIES`]
+/// are handed over, or if an away lock's cell owns no packed-store bit.
+/// Truncating or skipping would leave a lock no fortress opens, which is an
 /// unwinnable seed; a build-time failure is the better end of that trade.
 pub(crate) fn apply(rom: &mut Rom, entries: &[LockEntry], grids: &[Grid], tiles: &LockTiles) {
     assert_one_key_per_lock(entries);
@@ -1244,10 +1245,8 @@ pub(crate) fn apply(rom: &mut Rom, entries: &[LockEntry], grids: &[Grid], tiles:
         );
 
         for e in away {
-            let Some(target) = away_target(&map, e.target_world, e.target_pos) else {
-                debug_assert!(false, "lock cell {:?} owns no completion bit", e.target_pos);
-                continue;
-            };
+            let target = away_target(&map, e.target_world, e.target_pos)
+                .unwrap_or_else(|| panic!("lock cell {:?} owns no completion bit", e.target_pos));
             table.extend_from_slice(&e.key());
             table.extend_from_slice(&target);
             away_count += 1;
