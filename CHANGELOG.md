@@ -35,6 +35,9 @@ deploys.
 - **Generated World 3** docks now have water on one side only, so pressing A
   on a dock always calls the canoe to the open sea, never into a pond or a
   broken bridge it cannot sail out of.
+- **Hammer Bros next to a World 7 piranha plant** could walk onto it after
+  you beat it and pull you back into the level. With Piranha Shuffle off,
+  vanilla's two World 7 plants were never protected.
 
 ## [3.0.0] - 2026-10-16
 

@@ -117,8 +117,18 @@ pub(crate) fn write_overworld<R: Rng>(
     // hand-trap landings (subsumes the former bros_no_hands patch).
     // Sub-tagged: it claims free space, so the write log has to name it for
     // the free-space audit and collision reports.
+    //
+    // The plants are read back from the ROM rather than taken from
+    // `plant_positions`: with piranha shuffle off that list is empty, yet
+    // vanilla's two W7 plants are still on the map, and a shuffled Hammer
+    // Bro beside one walked onto it and replayed it.
+    let plant_sprites: Vec<(usize, (usize, usize))> = (0..8)
+        .flat_map(|wi| {
+            rom_data::read_plant_sprite_positions(rom, wi).into_iter().map(move |pos| (wi, pos))
+        })
+        .collect();
     rom.push_tag("march_veto");
-    march_veto::write_march_veto(rom, &w8_sprite_positions, &plant_positions);
+    march_veto::write_march_veto(rom, &w8_sprite_positions, &plant_sprites);
     rom.pop_tag();
     if flags.shuffle_hammer_bros {
         write_hb_sprites(rom, build, rng);

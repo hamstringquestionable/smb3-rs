@@ -3142,6 +3142,20 @@ deltas). The landing tile (2 ahead) is then checked against:
    same RAM the player gate uses) — an "enterable" landing (tile ≥ its page
    threshold) also extends the march instead of resting.
 
+**A marcher stops dead on the Player.** `Map_Object_March_NonNormal`
+(`PRG011_AEDF`) runs every frame of the march and clears `Map_March_Count`
+the moment the object's `ActY`/`ActXH`/`ActX` equal either Player's map
+position, mid-march or not. Once `Map_Operation` returns to `$0D`, the
+object-entry check (`PRG011_B6A1`: exact position match) pulls the Player
+into the level on that node. So a bro that merely *passes over* the Player
+catches them. That matters on a beaten plant/army node, where the Player
+stands right when bros march.
+
+**The `$40` hop is never re-validated.** When the +2 landing is enterable
+(or a `Map_MarchXtraForbidTiles` tile), `PRG011_B42A` doubles the counter
+and the object travels to +4 with no check on that tile: not the
+blacklist, not the whitelist, not the march veto. That gap is still open.
+
 **Give-up path:** after 4 failed direction attempts (`Temp_Var2`), the routine
 does `PLA/PLA/RTS` — returning to its caller's *caller*, so the object stays
 put for this turn. Any injected reject must preserve this stack contract.
