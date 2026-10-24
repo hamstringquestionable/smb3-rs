@@ -219,6 +219,24 @@ fn build_position_tables(rom: &mut Rom, catalog: &NodeCatalog) {
 /// `Map_Init` scroll-store with a `JSR` to it.
 fn write_seed_helper(rom: &mut Rom) {
     rom.set_tag("start_airship_swap/helper");
+    rom.write_range(FS_SAS_SEED_HELPER, &seed_helper());
+
+    rom.set_tag("start_airship_swap/map_init");
+    // Replace the vanilla `STA $0724,X` (the last store before DEX) with
+    // `JSR seed_helper`. The vanilla `LDA #$20 / STA $797A / STA $7982` X-low store
+    // earlier in the same iteration is left intact — the helper re-stamps those
+    // bytes here, so the table values win before any draw.
+    rom.write_range(MAP_INIT_SCROLL_SITE, &seed_hook());
+}
+
+/// The `JSR seed_helper` written over `Map_Init`'s `STA $0724,X`.
+fn seed_hook() -> [u8; 3] {
+    let cpu = file_to_prg031_cpu(FS_SAS_SEED_HELPER);
+    [0x20, (cpu & 0xFF) as u8, (cpu >> 8) as u8]
+}
+
+/// The Map_Init seed subroutine. 39 bytes.
+fn seed_helper() -> [u8; 39] {
     let x_tbl_cpu = file_to_prg031_cpu(FS_SAS_X_TABLE);
     let xhi_tbl_cpu = file_to_prg031_cpu(FS_SAS_XHI_TABLE);
     let scrl_tbl_cpu = file_to_prg031_cpu(FS_SAS_SCRL_TABLE);
@@ -234,6 +252,14 @@ fn write_seed_helper(rom: &mut Rom) {
     // afar" restores the camera from; leaving them at the vanilla page-0 value
     // strands Mario off-page after dying in a swapped world. The finalize helper
     // below mirrors this exact store order for the game-over path.
+    //
+    // The closing `LDA #$00` hands A back as vanilla left it. The hooked store
+    // sat in a run that `LDA #$00` had set up, and after the loop `Map_Init`
+    // stores that same A into `Map_WhiteHouse` and `Map_CoinShip` to clear them.
+    // Returning with the SCRH page in A instead marked both as already earned in
+    // any world whose start camera is past page 0, so neither ever appeared
+    // there. (`player_worlds`' loop tail zeroes A on its own exit, which is why
+    // maze seeds never showed it.)
     #[rustfmt::skip]
     let seed_helper = [
         0xB9, (x_tbl_cpu & 0xFF) as u8, (x_tbl_cpu >> 8) as u8,       // LDA X_TABLE,Y
@@ -248,20 +274,10 @@ fn write_seed_helper(rom: &mut Rom) {
         0xB9, (scrh_tbl_cpu & 0xFF) as u8, (scrh_tbl_cpu >> 8) as u8, // LDA SCRH_TABLE,Y
         0x9D, 0x24, 0x07,                                            // STA Map_Prev_XHi,X  ($0724)
         0x9D, 0x88, 0x79,                                            // STA Map_Prev_XHi2,X ($7988)
+        0xA9, 0x00,                                                  // LDA #$00  ; A as vanilla left it
         0x60,                                                        // RTS
     ];
-    rom.write_range(FS_SAS_SEED_HELPER, &seed_helper);
-
-    rom.set_tag("start_airship_swap/map_init");
-    let seed_helper_cpu = file_to_prg031_cpu(FS_SAS_SEED_HELPER);
-    // Replace the vanilla `STA $0724,X` (the last store before DEX) with
-    // `JSR seed_helper`. The vanilla `LDA #$20 / STA $797A / STA $7982` X-low store
-    // earlier in the same iteration is left intact — the helper re-stamps those
-    // bytes here, so the table values win before any draw.
-    rom.write_range(
-        MAP_INIT_SCROLL_SITE,
-        &[0x20, (seed_helper_cpu & 0xFF) as u8, (seed_helper_cpu >> 8) as u8],
-    );
+    seed_helper
 }
 
 /// Write the PRG011 game-over twirl finalize subroutine and hook it into
@@ -357,4 +373,52 @@ fn file_to_prg031_cpu(file_off: usize) -> u16 {
 /// to a helper in the same bank is bank-local.
 fn file_to_prg011_cpu(file_off: usize) -> u16 {
     (0xA000 + (file_off - 0x16010)) as u16
+}
+
+#[cfg(test)]
+mod asm_checks {
+    use super::*;
+    use crate::randomize::rom_data::{FREE_SPACE_ALLOCATIONS, FS_SAS_BLOCK, asm};
+
+    fn vanilla() -> Option<Vec<u8>> {
+        std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes").ok()
+    }
+
+    /// The helper sits 32 bytes into `FS_SAS_BLOCK`, after the four tables, so
+    /// `.allocation` (which measures from the row's start) cannot bound it;
+    /// the fit is asserted against the row directly instead.
+    #[test]
+    fn seed_helper_is_well_formed() {
+        let code = seed_helper();
+        asm::check(&code).origin(file_to_prg031_cpu(FS_SAS_SEED_HELPER)).assert_ok();
+        let row = FREE_SPACE_ALLOCATIONS
+            .iter()
+            .find(|a| a.offset == FS_SAS_BLOCK)
+            .expect("FS_SAS_BLOCK has a registry row");
+        assert!(
+            FS_SAS_SEED_HELPER - FS_SAS_BLOCK + code.len() <= row.size,
+            "tables + helper overrun the {}-byte row",
+            row.size
+        );
+    }
+
+    /// `Map_Init` clears `Map_WhiteHouse` / `Map_CoinShip` with the A the loop
+    /// leaves behind, so the helper must return with A = 0.
+    #[test]
+    fn seed_helper_returns_a_zero() {
+        assert_eq!(seed_helper()[36..], [0xA9, 0x00, 0x60]);
+    }
+
+    #[test]
+    fn seed_hook_displaces_whole_instructions() {
+        let Some(v) = vanilla() else {
+            eprintln!("SKIP: requires the ROM, which is not included in the repo");
+            return;
+        };
+        let hook = seed_hook();
+        asm::check(&seed_helper())
+            .origin(file_to_prg031_cpu(FS_SAS_SEED_HELPER))
+            .hook(&v, MAP_INIT_SCROLL_SITE, &hook)
+            .assert_ok();
+    }
 }
