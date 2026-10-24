@@ -12,6 +12,7 @@
 //! testing, and lock testing are all combinations rather than named modes.
 
 use crate::ips;
+use crate::randomize::cosmetic::map_background::PALSET_MAPS;
 use crate::randomize::levels::big_q_rooms;
 use crate::randomize::overworld::node_catalog::{EntryView, NodeCatalog};
 use crate::randomize::overworld::world_order::WORLD_INIT_OPERAND;
@@ -465,6 +466,12 @@ pub struct TestRomSpec {
     pub set_enemies: Vec<EnemyOverride>,
     /// Layout bytes overwritten by hand, applied with the enemy overrides.
     pub set_layouts: Vec<LayoutOverride>,
+    /// World-map colours to overwrite, as `(page, index, colour)`: palette
+    /// page 0-3 (the tile byte's top two bits), colour index 0-3 within it,
+    /// and the NES colour to put there. Written into all eight BG rows of
+    /// `PalSet_Maps`, so every world shows it. A probe for what a map colour
+    /// slot paints.
+    pub map_colors: Vec<(u8, u8, u8)>,
 }
 
 /// Result of a build: the ROM bytes plus a human-readable account of what was
@@ -1393,6 +1400,18 @@ pub fn build(vanilla: &[u8], spec: &TestRomSpec) -> Result<TestRom, String> {
         }
     }
 
+    // 10. Hand-set map colours.
+    for &(page, index, color) in &spec.map_colors {
+        if page > 3 || index > 3 || color > 0x3F {
+            return Err(format!("bad map colour {page}:{index}:{color:#04X}"));
+        }
+        for set in 0..8 {
+            let off = PALSET_MAPS + set * 16 + page as usize * 4 + index as usize;
+            rom.write_range(off, &[color]);
+        }
+        report.push(format!("map palette {page} index {index} -> {color:#04X} in all 8 BG rows"));
+    }
+
     Ok(TestRom { bytes: rom.output_bytes().to_vec(), report })
 }
 
@@ -1450,6 +1469,7 @@ mod tests {
             big_q_notes: None,
             set_enemies: Vec::new(),
             set_layouts: Vec::new(),
+            map_colors: Vec::new(),
         }
     }
 
