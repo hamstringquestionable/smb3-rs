@@ -46,7 +46,13 @@ impl Phase for Forts {
         // Asked once: placing content never changes who is a cut vertex.
         let mut candidates = state.legal_blanks();
         let forced: HashSet<Pos> = state.forced_positions(&candidates).into_iter().collect();
+        // Forced blanks are held back, not thrown away: when the unforced ones
+        // run out before the budget does, the rest go on the path rather than
+        // the world shipping a fort short (which every web redeal would repeat,
+        // since a redeal keeps the forts).
+        let mut on_path: Vec<Pos> = Vec::new();
         if candidates.iter().any(|p| !forced.contains(p)) {
+            on_path = candidates.iter().copied().filter(|p| forced.contains(p)).collect();
             candidates.retain(|p| !forced.contains(p));
         } else if !forced.is_empty() {
             actions.push(format!(
@@ -57,6 +63,12 @@ impl Phase for Forts {
         let mut placed = 0usize;
 
         while placed < state.fort_budget {
+            if candidates.is_empty() && !on_path.is_empty() {
+                actions.push(format!(
+                    "only {placed} unforced blanks fit — placing the rest on the path",
+                ));
+                candidates = std::mem::take(&mut on_path);
+            }
             let Some(&pos) = candidates.choose(rng) else {
                 actions.push(format!(
                     "stuck: {placed}/{} forts placed, no legal blanks left",
@@ -75,6 +87,7 @@ impl Phase for Forts {
             });
             placed += 1;
             candidates.retain(|&c| c != pos && Some(c) != row78_partner(pos));
+            on_path.retain(|&c| Some(c) != row78_partner(pos));
         }
 
         actions.push(format!(
