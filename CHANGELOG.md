@@ -30,6 +30,9 @@ deploys.
 
 ### Fixed
 
+- **White Toad House and Coin Ship** never appeared in a world that starts
+  away from the left edge of its map, with Start/Airship Swap or Generated
+  Overworld on and the World Maze off.
 - **World Maze with Generated Overworld** could forget progress in Worlds 7
   and 8 when you changed worlds, such as a bridge its fortress had rebuilt.
 - **Generated World 3** docks now have water on one side only, so pressing A

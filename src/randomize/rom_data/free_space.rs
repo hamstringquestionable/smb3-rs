@@ -66,8 +66,8 @@ const fn fs(
 ///
 /// The obvious objection to a static registry is that a flag-gated patch
 /// reserves its bytes whether or not the feature is on — and that is a real
-/// waste in the bank where it hurts most: under default options, 102 of
-/// PRG031's 206 reserved bytes go unwritten (`start_airship_swap` 69,
+/// waste in the bank where it hurts most: under default options, 104 of
+/// PRG031's 208 reserved bytes go unwritten (`start_airship_swap` 71,
 /// `starting_items` 33), in a bank whose largest free gap is 30.
 ///
 /// It is still the right trade, for two reasons the audit can now quantify:
@@ -141,7 +141,7 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
     ),
     fs(
         0x3E281,
-        69,
+        71,
         &["start_airship_swap"],
         "4 tables (X/XHi/ScrL/ScrH × 8) + Map_Init seed helper",
     ),
@@ -665,13 +665,13 @@ pub(crate) const FS_MAZE_OBJ_RESTORE: usize = 0x17CC3; // 48 reserved, 44 used
 
 pub(crate) const FS_STARTING_ITEMS: usize = 0x3E260; // 33 bytes
 
-// PRG031 — start_airship_swap engine scaffolding. One ~69-byte block: 4 × 8-byte
+// PRG031 — start_airship_swap engine scaffolding. One ~71-byte block: 4 × 8-byte
 // per-world tables followed by a single assembled seed subroutine. PRG031 is
 // always-mapped at $E000-$FFFF so Map_Init / GameOver_TwirlToStart (PRG011) can
 // read the tables regardless of which bank is at $A000. NOTE: the PRG031 free run
 // at 0x3E281 ends at 0x3E2D0 (real code follows) — only 79 bytes; do not grow this
 // block past that ceiling.
-pub(crate) const FS_SAS_BLOCK: usize = 0x3E281; // 69 bytes used (79 max)
+pub(crate) const FS_SAS_BLOCK: usize = 0x3E281; // 71 bytes used (79 max)
 
 pub(crate) const FS_SAS_X_TABLE: usize = FS_SAS_BLOCK; // 8 bytes — Mario X-low pixel per world
 
@@ -684,7 +684,7 @@ pub(crate) const FS_SAS_SCRH_TABLE: usize = FS_SAS_BLOCK + 24; // 8 bytes — ca
 // Single Map_Init seed subroutine: writes Mario's start position plus the primary
 // AND secondary scroll backups from the four tables (replaces the former x/xhi
 // helper pair). Reached via `JSR` from the Map_Init scroll-store site.
-pub(crate) const FS_SAS_SEED_HELPER: usize = FS_SAS_BLOCK + 32; // 37 bytes
+pub(crate) const FS_SAS_SEED_HELPER: usize = FS_SAS_BLOCK + 32; // 39 bytes
 
 // The game-over twirl finalize helper lives in PRG011 free space (not FS_SAS_BLOCK
 // — that PRG031 run has no room for it). PRG011 is the hook's own bank, so the JSR

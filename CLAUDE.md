@@ -137,7 +137,7 @@ is the one to read:
 
 | Bank | Mapped at | Free left | Largest single gap |
 |------|-----------|-----------|--------------------|
-| PRG031 | `$E000–$FFFF`, always | 29 | **16** |
+| PRG031 | `$E000–$FFFF`, always | 27 | **16** |
 | PRG030 | `$8000–$9FFF`, always | 18 | 18 |
 | PRG001 | swapped, in-level (object AI) | 54 | 38 |
 | PRG003 | swapped, in-level (object AI) | 5 | 5 |
