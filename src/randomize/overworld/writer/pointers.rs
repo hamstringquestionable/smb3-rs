@@ -85,7 +85,9 @@ pub(super) fn write_pointer_entries(
     // Airship and bowser are not picked up — their pointer table entries
     // stay vanilla so the autoscroll patch's hardcoded offsets remain valid.
 
-    debug_assert!(
+    // A hard assert, not a debug one: an entry dropped here leaves a stamped
+    // tile with no pointer behind it, which crashes the game (see below).
+    assert!(
         all.len() + wa.hammer_bro.len() <= available_slots.len(),
         "W{}: slot overflow: need {} but only {} available",
         world_idx + 1,
@@ -97,9 +99,6 @@ pub(super) fn write_pointer_entries(
 
     // Write level-like entries (fortress, level, pipe).
     for &(pool_idx, pos) in &all {
-        if slot_i >= available_slots.len() {
-            break;
-        }
         let entry_idx = available_slots[slot_i];
         slot_i += 1;
 
@@ -114,9 +113,6 @@ pub(super) fn write_pointer_entries(
 
     // Write hammer bro entries (carry their own LevelEntry).
     for hb in &wa.hammer_bro {
-        if slot_i >= available_slots.len() {
-            break;
-        }
         let entry_idx = available_slots[slot_i];
         slot_i += 1;
 
