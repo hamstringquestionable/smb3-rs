@@ -625,6 +625,7 @@ pub(crate) fn skip_wand_cutscene(rom: &mut Rom) {
 /// 1 byte changed in place (`$B5` to `$15`), no free space.
 const BOOMBOOM_EARLY_KILL_SITE: usize = 0x06A56;
 /// The vanilla guard: `LDA <Objects_Var5,X` / `BEQ PRG003_AA5D`.
+#[cfg(test)]
 const BOOMBOOM_EARLY_KILL_VANILLA: [u8; 4] = [0xB5, 0x9A, 0xF0, 0x13];
 /// `ORA <Objects_Var5,X` / `BEQ PRG003_AA5D`.
 const BOOMBOOM_EARLY_KILL_CODE: [u8; 4] = [0x15, 0x9A, 0xF0, 0x13];
