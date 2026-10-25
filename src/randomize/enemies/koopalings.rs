@@ -609,15 +609,25 @@ pub(crate) fn skip_wand_cutscene(rom: &mut Rom) {
 /// enemy shuffle can put a shell in his room on purpose (see
 /// `class_modes::should_precommit`), and a shell thrown before he wakes does.
 ///
-/// The fix points the `BEQ` that skips the ball at the next instruction, so
-/// a kill in any phase becomes the ball, the same path a shell kill mid-fight already takes.
-/// 2 bytes in place, no free space.
-const BOOMBOOM_EARLY_KILL_SITE: usize = 0x06A58;
-/// The vanilla `BEQ PRG003_AA5D` at the site.
-const BOOMBOOM_EARLY_KILL_VANILLA: [u8; 2] = [0xF0, 0x13];
-/// `BEQ +0`: taken or not, it falls through to the ball. Only the distance
-/// byte changes, $13 to $00.
-const BOOMBOOM_EARLY_KILL_CODE: [u8; 2] = [0xF0, 0x00];
+/// But the guard also does a real job: `Object_DeleteOffScreen` runs just
+/// before it, and a waiting Boom-Boom the player scrolls away from is emptied
+/// (state 0, `OBJSTATE_DEADEMPTY`). That is not a kill and must not make the
+/// ball. So the fix skips the ball only when both the state and the phase are
+/// 0: `Object_CheckIfNormalState` leaves the state in A (`CMP` keeps it), and
+/// the guard's `LDA <Objects_Var5,X` becomes `ORA <Objects_Var5,X`.
+///
+/// | Case                         | state | Var5 | A   | ball |
+/// |------------------------------|-------|------|-----|------|
+/// | scrolled away while waiting  | 0     | 0    | 0   | no   |
+/// | shell kill while waiting     | 6     | 0    | 6   | yes  |
+/// | anything mid-fight (pit too) | any   | 2-5  | ≠ 0 | yes  |
+///
+/// 1 byte changed in place (`$B5` to `$15`), no free space.
+const BOOMBOOM_EARLY_KILL_SITE: usize = 0x06A56;
+/// The vanilla guard: `LDA <Objects_Var5,X` / `BEQ PRG003_AA5D`.
+const BOOMBOOM_EARLY_KILL_VANILLA: [u8; 4] = [0xB5, 0x9A, 0xF0, 0x13];
+/// `ORA <Objects_Var5,X` / `BEQ PRG003_AA5D`.
+const BOOMBOOM_EARLY_KILL_CODE: [u8; 4] = [0x15, 0x9A, 0xF0, 0x13];
 
 pub(crate) fn boomboom_early_kill_orb(rom: &mut Rom) {
     rom.write_range(BOOMBOOM_EARLY_KILL_SITE, &BOOMBOOM_EARLY_KILL_CODE);
@@ -865,9 +875,10 @@ mod asm_checks {
         let vanilla = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes").ok();
         if let Some(v) = &vanilla {
             let site = BOOMBOOM_EARLY_KILL_SITE;
-            assert_eq!(&v[site - 2..site], &[0xB5, 0x9A], "LDA <Objects_Var5,X");
-            assert_eq!(&v[site..site + 2], &BOOMBOOM_EARLY_KILL_VANILLA, "BEQ PRG003_AA5D");
-            assert_eq!(&v[site + 2..site + 4], &[0xA9, 0x02], "LDA #OBJSTATE_NORMAL");
+            // JSR Object_CheckIfNormalState / BEQ: A holds the state here.
+            assert_eq!(&v[site - 5..site], &[0x20, 0xDB, 0xA3, 0xF0, 0x17], "state check");
+            assert_eq!(&v[site..site + 4], &BOOMBOOM_EARLY_KILL_VANILLA, "the guard");
+            assert_eq!(&v[site + 4..site + 6], &[0xA9, 0x02], "LDA #OBJSTATE_NORMAL");
             check = check.hook(v, site, &BOOMBOOM_EARLY_KILL_CODE);
         } else {
             eprintln!("SKIP hook check: requires the ROM, which is not included in the repo");
