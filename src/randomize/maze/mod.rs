@@ -141,7 +141,8 @@ struct MazeLock {
     /// path. It is not "a lock nothing opens": a permanently sealed gate is a
     /// thing the generator must never produce, and making the empty case the
     /// harmless one means a half-finished fill degrades to a more open maze
-    /// rather than an unwinnable one.
+    /// rather than an unwinnable one. It does leave that lock's fortress
+    /// opening nothing, which [`stamp_into`] refuses.
     fort: Option<FortRef>,
 }
 
@@ -1219,6 +1220,11 @@ pub(crate) fn generate<R: Rng>(
 ///   needs.
 ///
 /// Consumes no RNG.
+///
+/// # Panics
+///
+/// If a fortress opens no lock: the 1:1 pairing is broken, and its hint
+/// tile would say nothing true.
 pub(crate) fn stamp_into(build: &mut BuildResult, state: &GlobalState) {
     // The wand gate's masonry. `wand_gate::apply` installs the opener and its
     // hooks; the cell it stands on is a map tile like any other, and `W8`'s
@@ -1283,14 +1289,18 @@ pub(crate) fn stamp_into(build: &mut BuildResult, state: &GlobalState) {
         // then World 8, then elsewhere — so a World 8 fortress opening a World
         // 8 lock reads OwnWorld, not World8. Whether the player is told, and
         // which tile says it, is the writer's call.
+        //
+        // **Every fortress opens a lock, or the seed panics.** A lockless one
+        // would draw a random fortress tile, and with hints on that can be a
+        // false hint. Only the fill's fallbacks that uninstall a lock
+        // (`fill.rs`) could make one, and none did in 1000 seeds (2026-10).
         for slot in built.slots.iter_mut().filter(|s| s.kind == SlotKind::Fortress) {
-            let Some(lock) = state
+            let fort = FortRef { world, section: slot.section };
+            let lock = state
                 .locks
                 .iter()
-                .find(|l| l.fort == Some(FortRef { world, section: slot.section }))
-            else {
-                continue;
-            };
+                .find(|l| l.fort == Some(fort))
+                .unwrap_or_else(|| panic!("fortress {fort:?} at {:?} opens no lock", slot.pos));
             slot.lock_hint = if lock.world == world {
                 LockHint::OwnWorld
             } else if lock.world == rom_data::W8_IDX {
