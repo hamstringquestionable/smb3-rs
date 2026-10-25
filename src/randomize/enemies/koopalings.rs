@@ -599,6 +599,30 @@ pub(crate) fn skip_wand_cutscene(rom: &mut Rom) {
     rom.write_range(SKIP_WAND_CUTSCENE_OFFSET, &[0x16, 0xB5]);
 }
 
+/// A Boom-Boom killed before his fight starts still drops the orb.
+///
+/// `ObjNorm_BoomBoom` treats any state but normal as "something killed Boom
+/// Boom" and turns him into the (?) ball (`PRG003_AA48`, CPU `$AA48`), except
+/// while he is still waiting for the player (`Objects_Var5` = 0): then it
+/// skips the ball, the generic death fall carries him off-screen, and the
+/// fortress has no way to end. Vanilla never kills him that early, but the
+/// enemy shuffle can put a shell in his room on purpose (see
+/// `class_modes::should_precommit`), and a shell thrown before he wakes does.
+///
+/// The fix points the `BEQ` that skips the ball at the next instruction, so
+/// a kill in any phase becomes the ball, the same path a shell kill mid-fight already takes.
+/// 2 bytes in place, no free space.
+const BOOMBOOM_EARLY_KILL_SITE: usize = 0x06A58;
+/// The vanilla `BEQ PRG003_AA5D` at the site.
+const BOOMBOOM_EARLY_KILL_VANILLA: [u8; 2] = [0xF0, 0x13];
+/// `BEQ +0`: taken or not, it falls through to the ball. Only the distance
+/// byte changes, $13 to $00.
+const BOOMBOOM_EARLY_KILL_CODE: [u8; 2] = [0xF0, 0x00];
+
+pub(crate) fn boomboom_early_kill_orb(rom: &mut Rom) {
+    rom.write_range(BOOMBOOM_EARLY_KILL_SITE, &BOOMBOOM_EARLY_KILL_CODE);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -827,6 +851,24 @@ mod asm_checks {
             let fs = crate::randomize::rom_data::FS_KOOPA_JUMP_BASE;
             assert!(v[fs..fs + 6].iter().all(|&b| b == 0xFF), "jump-base gap is not filler");
             check = check.hook(v, KOOPA_JUMP_BASE_READ, &read);
+        } else {
+            eprintln!("SKIP hook check: requires the ROM, which is not included in the repo");
+        }
+        check.assert_ok();
+    }
+
+    /// The patch replaces exactly the one `BEQ` this module describes, and the
+    /// ball path right after it is the one the doc names.
+    #[test]
+    fn boomboom_early_kill_is_well_formed() {
+        let mut check = asm::check(&BOOMBOOM_EARLY_KILL_CODE).fragment();
+        let vanilla = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes").ok();
+        if let Some(v) = &vanilla {
+            let site = BOOMBOOM_EARLY_KILL_SITE;
+            assert_eq!(&v[site - 2..site], &[0xB5, 0x9A], "LDA <Objects_Var5,X");
+            assert_eq!(&v[site..site + 2], &BOOMBOOM_EARLY_KILL_VANILLA, "BEQ PRG003_AA5D");
+            assert_eq!(&v[site + 2..site + 4], &[0xA9, 0x02], "LDA #OBJSTATE_NORMAL");
+            check = check.hook(v, site, &BOOMBOOM_EARLY_KILL_CODE);
         } else {
             eprintln!("SKIP hook check: requires the ROM, which is not included in the repo");
         }
