@@ -599,6 +599,40 @@ pub(crate) fn skip_wand_cutscene(rom: &mut Rom) {
     rom.write_range(SKIP_WAND_CUTSCENE_OFFSET, &[0x16, 0xB5]);
 }
 
+/// A Boom-Boom killed before his fight starts still drops the orb.
+///
+/// `ObjNorm_BoomBoom` treats any state but normal as "something killed Boom
+/// Boom" and turns him into the (?) ball (`PRG003_AA48`, CPU `$AA48`), except
+/// while he is still waiting for the player (`Objects_Var5` = 0): then it
+/// skips the ball, the generic death fall carries him off-screen, and the
+/// fortress has no way to end. Vanilla never kills him that early, but the
+/// enemy shuffle can put a shell in his room on purpose (see
+/// `class_modes::should_precommit`), and a shell thrown before he wakes does.
+///
+/// But the guard also does a real job: `Object_DeleteOffScreen` runs just
+/// before it, and a waiting Boom-Boom the player scrolls away from is emptied
+/// (state 0, `OBJSTATE_DEADEMPTY`). That is not a kill and must not make the
+/// ball. So the fix skips the ball only when both the state and the phase are
+/// 0: `Object_CheckIfNormalState` leaves the state in A (`CMP` keeps it), and
+/// the guard's `LDA <Objects_Var5,X` becomes `ORA <Objects_Var5,X`.
+///
+/// | Case                         | state | Var5 | A   | ball |
+/// |------------------------------|-------|------|-----|------|
+/// | scrolled away while waiting  | 0     | 0    | 0   | no   |
+/// | shell kill while waiting     | 6     | 0    | 6   | yes  |
+/// | anything mid-fight (pit too) | any   | 2-5  | ≠ 0 | yes  |
+///
+/// 1 byte changed in place (`$B5` to `$15`), no free space.
+const BOOMBOOM_EARLY_KILL_SITE: usize = 0x06A56;
+/// The vanilla guard: `LDA <Objects_Var5,X` / `BEQ PRG003_AA5D`.
+const BOOMBOOM_EARLY_KILL_VANILLA: [u8; 4] = [0xB5, 0x9A, 0xF0, 0x13];
+/// `ORA <Objects_Var5,X` / `BEQ PRG003_AA5D`.
+const BOOMBOOM_EARLY_KILL_CODE: [u8; 4] = [0x15, 0x9A, 0xF0, 0x13];
+
+pub(crate) fn boomboom_early_kill_orb(rom: &mut Rom) {
+    rom.write_range(BOOMBOOM_EARLY_KILL_SITE, &BOOMBOOM_EARLY_KILL_CODE);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -827,6 +861,25 @@ mod asm_checks {
             let fs = crate::randomize::rom_data::FS_KOOPA_JUMP_BASE;
             assert!(v[fs..fs + 6].iter().all(|&b| b == 0xFF), "jump-base gap is not filler");
             check = check.hook(v, KOOPA_JUMP_BASE_READ, &read);
+        } else {
+            eprintln!("SKIP hook check: requires the ROM, which is not included in the repo");
+        }
+        check.assert_ok();
+    }
+
+    /// The patch replaces exactly the one `BEQ` this module describes, and the
+    /// ball path right after it is the one the doc names.
+    #[test]
+    fn boomboom_early_kill_is_well_formed() {
+        let mut check = asm::check(&BOOMBOOM_EARLY_KILL_CODE).fragment();
+        let vanilla = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes").ok();
+        if let Some(v) = &vanilla {
+            let site = BOOMBOOM_EARLY_KILL_SITE;
+            // JSR Object_CheckIfNormalState / BEQ: A holds the state here.
+            assert_eq!(&v[site - 5..site], &[0x20, 0xDB, 0xA3, 0xF0, 0x17], "state check");
+            assert_eq!(&v[site..site + 4], &BOOMBOOM_EARLY_KILL_VANILLA, "the guard");
+            assert_eq!(&v[site + 4..site + 6], &[0xA9, 0x02], "LDA #OBJSTATE_NORMAL");
+            check = check.hook(v, site, &BOOMBOOM_EARLY_KILL_CODE);
         } else {
             eprintln!("SKIP hook check: requires the ROM, which is not included in the repo");
         }

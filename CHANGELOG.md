@@ -30,6 +30,8 @@ deploys.
 
 ### Fixed
 
+- **Boom-Boom killed by a shell before his fight starts** now drops the orb.
+  Before, he fell off the screen and the fortress could not be finished.
 - **White Toad House and Coin Ship** never appeared in a world that starts
   away from the left edge of its map, with Start/Airship Swap or Generated
   Overworld on and the World Maze off.

@@ -911,6 +911,12 @@ pub(super) fn engine_patches(
     rom.set_tag("qol/fix_canoe_softlock");
     randomize::qol::fix_canoe_softlock(rom);
 
+    // A Boom-Boom killed before his fight starts (a shuffled-in shell can do
+    // it) still drops the orb. Always applied: vanilla never kills him that
+    // early, so the patch changes nothing there.
+    rom.set_tag("boomboom/early_kill_orb");
+    randomize::enemies::koopalings::boomboom_early_kill_orb(rom);
+
     // Two-player "warp to partner" escape hatch (Start+Select on the map).
     // Always applied: in 2P the players share one map and its movable objects
     // (canoe, Hammer Bros), so one player can strand the other; this gives a
