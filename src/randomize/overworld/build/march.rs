@@ -228,6 +228,7 @@ mod tests {
             ("hammer rocks", Options { more_hammer_rocks: Tri::On, ..base() }),
             ("no hb shuffle", Options { shuffle_hammer_bros: false, ..base() }),
             ("generated w1", Options { generated_worlds: 1, ..base() }),
+            ("generated all", Options { generated_worlds: 0xFF, ..base() }),
             ("maze", Options { world_maze: true, ..base() }),
         ];
         let mut stranded = Vec::new();
@@ -236,7 +237,7 @@ mod tests {
                 let out = crate::generate_patched_rom(&bytes, seed, opts, None).expect("generate");
                 let rom = Rom::from_bytes_lax(&out, true).expect("readable ROM");
                 for wi in 0..8 {
-                    let world = &rom_data::WORLDS[wi];
+                    let world = &rom_data::world_tables(&rom, wi);
                     let rows: HashSet<Pos> = (0..world.entry_count)
                         .map(|i| rom_data::entry_grid_position(&rom, world, i))
                         .collect();

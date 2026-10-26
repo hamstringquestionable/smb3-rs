@@ -27,6 +27,9 @@ deploys.
 - **Generated Overworld roads** wander instead of running dead straight across
   wide maps, and in Worlds 2 and 6 they sometimes split into two roads that
   meet again further on.
+- **Generated Overworld worlds vary in size** from seed to seed: a world can
+  have a few more or fewer Hammer Bro nodes, traded with the other generated
+  worlds.
 
 ### Fixed
 

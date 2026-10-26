@@ -9,6 +9,8 @@
 //! 3. Collect level-like catalog entries into the shuffle pool.
 //! 4. Blank their grid positions with theme-appropriate node tiles.
 
+use std::collections::HashSet;
+
 use crate::rom::Rom;
 
 use crate::randomize::overworld::map_source::vanilla::{BLANK_TILE_OVERRIDES, ISLAND_POSITIONS};
@@ -48,6 +50,10 @@ pub(crate) struct ClearedWorld {
     pickup_positions: Vec<(usize, usize)>,
     /// Indices into `PickupResult.pool` for this world's picked-up entries.
     pub(crate) pool_indices: Vec<usize>,
+    /// The pointer-table rows the builder may fill, as [`share_rows`] dealt
+    /// them from what the map asks for. On a vanilla map it equals
+    /// `pool_indices.len()`.
+    pub(crate) free_rows: usize,
 }
 
 /// Complete Phase 2 output: cleared grids + global shuffle pool.
@@ -128,6 +134,7 @@ fn pick_up_filtered(
     for wi in 0..8 {
         worlds.push(pick_up_world(catalog, wi, &mut pool, flags, pred));
     }
+    share_rows(&mut worlds);
 
     // Synthetic beta entries (world_idx == usize::MAX) have no vanilla grid
     // cell to blank. Push them directly into the pool so they're available
@@ -195,7 +202,45 @@ fn pick_up_world(
         }
     }
 
-    ClearedWorld { world_idx, grid, pickup_positions, pool_indices }
+    // What the map asks for: a row per blank node, bar the blanks a kept
+    // entry already holds (W7's piranhas). [`share_rows`] deals the rows.
+    let held: HashSet<Pos> = catalog
+        .entries
+        .iter()
+        .filter(|e| e.world_idx == world_idx && !pred(e, flags))
+        .map(|e| e.grid_pos)
+        .collect();
+    let free_rows = (0..grid.rows())
+        .flat_map(|r| (0..grid.cols).map(move |c| (r, c)))
+        .filter(|&pos| VALID_BLANK_TILES.contains(&grid.get(pos.0, pos.1)) && !held.contains(&pos))
+        .count();
+
+    ClearedWorld { world_idx, grid, pickup_positions, pool_indices, free_rows }
+}
+
+/// Deal the ROM's pointer-table rows out to the worlds' maps.
+///
+/// A map asks for a row per blank node, but only a blank a Hammer Bro sprite
+/// can march onto needs one: pressing A on a blank tile enters nothing (every
+/// blank is below its range's `Tile_AttrTable` cutoff in PRG010's check), so a
+/// blank no sprite reaches is fine without. That makes the ask a wish, not a
+/// demand, and lets this deal rather than fail. Each world first gets the smaller of its ask and the rows
+/// it had (`pool_indices`, the ones pickup freed); the rows a world gave up
+/// then go to the worlds that asked for more, in world order. The total never
+/// exceeds the ROM's, and a world the ROM's rows already cover keeps them.
+fn share_rows(worlds: &mut [ClearedWorld]) {
+    let asked: Vec<usize> = worlds.iter().map(|cw| cw.free_rows).collect();
+    let mut spare = 0;
+    for cw in worlds.iter_mut() {
+        let had = cw.pool_indices.len();
+        spare += had.saturating_sub(cw.free_rows);
+        cw.free_rows = cw.free_rows.min(had);
+    }
+    for (cw, asked) in worlds.iter_mut().zip(asked) {
+        let more = (asked - cw.free_rows).min(spare);
+        cw.free_rows += more;
+        spare -= more;
+    }
 }
 
 // ---------------------------------------------------------------------------

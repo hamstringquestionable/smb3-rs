@@ -105,7 +105,7 @@ fn census_build_arm(
         let mut maps = catalog.maps.clone();
         for (wi, map) in maps.iter_mut().enumerate() {
             let mut gen_rng = ChaCha8Rng::seed_from_u64(seed ^ 0x6E6E_5741 ^ wi as u64);
-            if let Some(generated) = world_map(map, wi, true, &mut gen_rng) {
+            if let Some(generated) = world_map(map, wi, true, 0, &mut gen_rng) {
                 *map = generated;
             }
         }

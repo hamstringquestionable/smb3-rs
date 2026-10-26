@@ -10,6 +10,31 @@ pub(crate) fn read_word(rom: &Rom, offset: usize) -> u16 {
     (hi << 8) | lo
 }
 
+/// A world's pointer table layout, read from the ROM's own master tables.
+///
+/// The engine stores no entry count: `Map_PrepareLevel` scans from the
+/// world's InitIndex until an entry matches. The count is implied by the
+/// layout instead, since the screen-column table starts where the row-type
+/// table ends.
+///
+/// The engine follows each of the five masters on its own, so this panics
+/// if they disagree with that layout. W1-W8 only: the Warp Zone shares one
+/// table between its object and layout masters.
+pub(crate) fn world_tables(rom: &Rom, world_idx: usize) -> WorldTables {
+    assert!(world_idx < 8, "the Warp Zone's tables are not laid out like a world's");
+    let master = |table: usize| read_word(rom, table + world_idx * 2) as usize;
+    let rowtype = master(ROWTYPE_MASTER);
+    let n = master(SCRCOL_MASTER) - rowtype;
+    assert!(
+        master(INIT_INDEX_MASTER) + 4 == rowtype
+            && master(OBJSETS_MASTER) == rowtype + n * 2
+            && master(LAYOUTS_MASTER) == rowtype + n * 4,
+        "W{}: the pointer table masters disagree",
+        world_idx + 1
+    );
+    WorldTables { rowtype_offset: prg_bank_cpu_to_file(12, rowtype as u16), entry_count: n }
+}
+
 /// Compute sub-table file offsets for a world's pointer tables.
 /// Returns (scrcol_offset, objsets_offset, layouts_offset).
 pub(crate) fn table_offsets(world: &WorldTables) -> (usize, usize, usize) {

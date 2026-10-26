@@ -56,7 +56,7 @@ pub(crate) struct WorldState {
     /// that used to read the constant reads this instead; the constant is
     /// the band's center and the default for the loader sources.
     pub(crate) c1_floor: u32,
-    /// Pointer-table entries available to this world (the pickup pool size).
+    /// Pointer-table entries available to this world (`ClearedWorld::free_rows`).
     /// Every slot — level, fort, hammer bro, pipe endpoint — consumes one;
     /// the hammer-bro fill phase caps itself against this.
     pub(crate) ptr_slots: usize,

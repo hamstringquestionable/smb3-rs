@@ -594,7 +594,7 @@ mod tests {
         let van = Rom::from_bytes(&rom_bytes).expect("vanilla ROM parses");
 
         for &(w, e) in rom_data::AIRSHIP_ENTRIES {
-            let entry = rom_data::read_entry(&van, &rom_data::WORLDS[w], e);
+            let entry = rom_data::read_entry(&van, &rom_data::VANILLA_WORLDS[w], e);
             let obj = u16::from_le_bytes([entry.obj_lo, entry.obj_hi]);
             assert!(
                 rom_data::has_enemy_id(&van, obj, OBJ_TOADANDKING),
@@ -614,7 +614,7 @@ mod tests {
         // The half that was missing: our OUTPUT does not run that chain.
         if let Some(maze) = maze.as_ref() {
             for &(w, e) in rom_data::AIRSHIP_ENTRIES {
-                let entry = rom_data::read_entry(maze, &rom_data::WORLDS[w], e);
+                let entry = rom_data::read_entry(maze, &rom_data::VANILLA_WORLDS[w], e);
                 let obj = u16::from_le_bytes([entry.obj_lo, entry.obj_hi]);
                 assert!(
                     !rom_data::has_enemy_id(maze, obj, OBJ_TOADANDKING),

@@ -339,14 +339,23 @@ pub(super) fn overworld_catalog(
     // cannot draw keeps its vanilla map.
     let mut drawn = 0u8;
     if run.shuffle_hammer_bros {
+        use randomize::overworld::map_source::generated;
+        // Each generated world is dealt a few nodes more or fewer, trading
+        // pointer-table rows with the others; pickup reads the rows each
+        // drawn map asks for, and one that falls back to vanilla asks for
+        // vanilla's.
+        let offsets = generated::deal_node_offsets(&maps, run.generated_worlds, rng);
         for (wi, map) in maps.iter_mut().enumerate() {
+            // A world that cannot draw its dealt nodes draws vanilla's count
+            // before it gives up on a generated map.
+            let swap = options.swap_start_airship;
             if run.generated_worlds & (1 << wi) != 0
-                && let Some(generated) = randomize::overworld::map_source::generated::world_map(
-                    map,
-                    wi,
-                    options.swap_start_airship,
-                    rng,
-                )
+                && let Some(generated) = generated::world_map(map, wi, swap, offsets[wi], rng)
+                    .or_else(|| {
+                        (offsets[wi] != 0)
+                            .then(|| generated::world_map(map, wi, swap, 0, rng))
+                            .flatten()
+                    })
             {
                 if let Some(canoe) = generated.canoe {
                     rom.set_tag("overworld/generated_canoe");

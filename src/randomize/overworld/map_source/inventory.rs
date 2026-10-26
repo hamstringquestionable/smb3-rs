@@ -396,7 +396,7 @@ fn map_inventory() {
         let mut got: Vec<Route> = Vec::new();
         for seed in 0..seeds {
             let mut rng = <rand_chacha::ChaCha8Rng as rand::SeedableRng>::seed_from_u64(seed);
-            if let Some(g) = super::generated::world_map(map, wi, false, &mut rng) {
+            if let Some(g) = super::generated::world_map(map, wi, false, 0, &mut rng) {
                 got.push(shape(&g, wi, &[]).route);
             }
         }
