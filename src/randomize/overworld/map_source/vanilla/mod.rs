@@ -95,9 +95,17 @@ fn read_tiles(rom: &Rom) -> Vec<WorldMap> {
             let entry_pos = (0..world.entry_count)
                 .map(|i| rom_data::entry_grid_position(rom, world, i))
                 .collect();
+            let (_, objsets, _) = rom_data::table_offsets(world);
+            let hammer_bros = (0..world.entry_count)
+                .filter(|i| {
+                    let obj = rom_data::read_word(rom, objsets + i * 2);
+                    rom_data::HAMMER_BRO_OBJ_PTRS.contains(&obj)
+                })
+                .collect();
             WorldMap {
                 grid,
                 entry_pos,
+                hammer_bros,
                 sprites: rom_data::read_parked_sprite_positions(rom, wi),
                 hb_sprites: rom_data::read_hb_sprite_positions(rom, wi),
                 gaps: Vec::new(),

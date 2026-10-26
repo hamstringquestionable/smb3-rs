@@ -25,6 +25,10 @@ pub(crate) struct WorldMap {
     /// must show each entry's own tile at its position: the catalog reads the
     /// tile there to recognise the start.
     pub(crate) entry_pos: Vec<Pos>,
+    /// The entries whose level is a Hammer Bro battle (`HAMMER_BRO_OBJ_PTRS`),
+    /// by `entry_idx`: the only ones a generated map may park off the map,
+    /// since the catalog reads any off-map entry as a Hammer Bro.
+    pub(crate) hammer_bros: Vec<usize>,
     /// Every map-object sprite that stays where the map puts it. Not W8's
     /// army: the writer deals it to level and fortress nodes.
     pub(crate) sprites: Vec<Pos>,

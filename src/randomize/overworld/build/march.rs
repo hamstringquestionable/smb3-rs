@@ -228,6 +228,7 @@ mod tests {
             ("hammer rocks", Options { more_hammer_rocks: Tri::On, ..base() }),
             ("no hb shuffle", Options { shuffle_hammer_bros: false, ..base() }),
             ("generated w1", Options { generated_worlds: 1, ..base() }),
+            ("generated all", Options { generated_worlds: 0xFF, ..base() }),
             ("maze", Options { world_maze: true, ..base() }),
         ];
         let mut stranded = Vec::new();
