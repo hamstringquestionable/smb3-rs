@@ -25,10 +25,6 @@ pub(crate) struct WorldMap {
     /// must show each entry's own tile at its position: the catalog reads the
     /// tile there to recognise the start.
     pub(crate) entry_pos: Vec<Pos>,
-    /// How many pointer-table rows the world takes: vanilla's entry count,
-    /// unless a generated map was dealt more or fewer nodes. The difference is
-    /// Hammer Bro nodes, which the writer fills in from the shared pool.
-    pub(crate) entry_rows: usize,
     /// Every map-object sprite that stays where the map puts it. Not W8's
     /// army: the writer deals it to level and fortress nodes.
     pub(crate) sprites: Vec<Pos>,

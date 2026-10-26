@@ -18,8 +18,7 @@ fn write_entry_pos(
     rom.write_byte(sc + entry_idx, (screen << 4) | col_in_screen);
 }
 
-/// One world's pointer-table rows, once [`lay_out_rows`] has given it its
-/// `WorldMap::entry_rows`.
+/// One world's pointer-table rows, once [`lay_out_rows`] has laid them out.
 pub(super) struct Rows {
     /// The row of each entry pickup left in place, by its vanilla `entry_idx`.
     kept: HashMap<usize, usize>,
@@ -27,12 +26,10 @@ pub(super) struct Rows {
     free: Vec<usize>,
 }
 
-/// Give every world the row count its map asks for, and say where its rows
-/// now sit. While every count is the ROM's, nothing moves: the kept entries
-/// stay on their rows and the free rows are the ones pickup vacated, in pool
-/// order. Otherwise the tables are laid out again
-/// ([`pipe_helpers::relayout_pointer_tables`]), each world's kept entries
-/// first and its free rows after them.
+/// Lay the pointer tables out with each world's kept entries first and then
+/// the rows its map asks for (`ClearedWorld::free_rows`), and say where they
+/// sit. Where a row starts does not matter: `resort_pointer_table` puts every
+/// world back in screen/row order afterwards.
 pub(super) fn lay_out_rows(rom: &mut Rom, data: &OverworldData) -> Vec<Rows> {
     let picked: HashSet<usize> = data.pickup.pool.iter().map(|pe| pe.catalog_idx).collect();
     let kept: Vec<Vec<usize>> = (0..8)
@@ -44,20 +41,8 @@ pub(super) fn lay_out_rows(rom: &mut Rom, data: &OverworldData) -> Vec<Rows> {
                 .collect()
         })
         .collect();
-    let counts: [usize; 8] = std::array::from_fn(|wi| data.catalog.maps[wi].entry_rows);
-
-    if (0..8).all(|wi| counts[wi] == rom_data::world_tables(rom, wi).entry_count) {
-        return (0..8)
-            .map(|wi| Rows {
-                kept: kept[wi].iter().map(|&i| (i, i)).collect(),
-                free: data.pickup.worlds[wi]
-                    .pool_indices
-                    .iter()
-                    .map(|&pi| data.pickup.pool[pi].entry_idx)
-                    .collect(),
-            })
-            .collect();
-    }
+    let counts: [usize; 8] =
+        std::array::from_fn(|wi| kept[wi].len() + data.pickup.worlds[wi].free_rows);
 
     pipe_helpers::relayout_pointer_tables(rom, &kept, &counts);
     (0..8)
@@ -136,8 +121,8 @@ pub(super) fn write_pointer_entries(
     for a in &wa.toad {
         all.push((a.pool_idx, a.pos));
     }
-    // Airship and bowser are not picked up — their pointer table entries
-    // stay vanilla so the autoscroll patch's hardcoded offsets remain valid.
+    // Airship and Bowser are never picked up: they are kept entries, which
+    // `write_kept_entry_positions` moves.
 
     // A hard assert, not a debug one: an entry dropped here leaves a stamped
     // tile with no pointer behind it, which crashes the game (see below).

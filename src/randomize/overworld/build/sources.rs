@@ -150,7 +150,7 @@ pub(crate) fn from_pickup(
         level_budget,
         fort_budget,
         c1_floor: C1_FLOOR,
-        ptr_slots: pickup.worlds[world_idx].pool_indices.len(),
+        ptr_slots: pickup.worlds[world_idx].free_rows,
         bridges_out: 0,
         bridge_spans: Vec::new(),
         wand_gate_reserved: flags.world_maze && world_idx == rom_data::W8_IDX,

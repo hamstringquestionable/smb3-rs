@@ -1721,7 +1721,6 @@ fn draw_once<R: Rng>(
     Some(WorldMap {
         grid,
         entry_pos,
-        entry_rows: vanilla.entry_rows,
         sprites: Vec::new(),
         hb_sprites: Vec::new(),
         gaps: Vec::new(),

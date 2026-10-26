@@ -350,7 +350,7 @@ pub(crate) fn prepare_capacities(
         let pipe_endpoints = VANILLA_PIPE_PAIRS[wi] * 2;
         let blanks = find_blank_slots(&patched_grids[wi], &fixed_positions[wi]).len();
         let grid_capacity = blanks.saturating_sub(pipe_endpoints + fort_counts[wi]);
-        let ptr_slots = pickup.worlds[wi].pool_indices.len();
+        let ptr_slots = pickup.worlds[wi].free_rows;
         let ptr_capacity = ptr_slots.saturating_sub(pipe_endpoints + fort_counts[wi]);
         capacities[wi] = grid_capacity.min(ptr_capacity);
     }
