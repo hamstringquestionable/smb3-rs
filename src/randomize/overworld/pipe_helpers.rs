@@ -176,6 +176,68 @@ pub(super) fn resort_pointer_table(rom: &mut Rom, world_idx: usize) {
     }
 }
 
+/// Lay the W1-W8 pointer tables out again with `counts[wi]` rows each.
+///
+/// Vanilla packs every world's tables back to back (InitIndex, then the
+/// row-type, screen-column, object and layout tables), W1 to W8, with the
+/// Warp Zone's after them. This rewrites that run in the same bytes and
+/// repoints the five master tables. World `wi` keeps the old rows `keep[wi]`
+/// as its first rows, in that order; the rows after them are zeroed for the
+/// caller to fill. InitIndex is left for [`resort_pointer_table`] to rebuild.
+///
+/// Panics if the rows do not fit before the Warp Zone's tables.
+pub(crate) fn relayout_pointer_tables(rom: &mut Rom, keep: &[Vec<usize>], counts: &[usize; 8]) {
+    let start = rom_data::world_tables(rom, 0).rowtype_offset - 4;
+    let end = rom_data::prg_bank_cpu_to_file(12, rom_data::read_word(rom, INIT_INDEX_MASTER + 16));
+    let total: usize = counts.iter().map(|n| 4 + n * 6).sum();
+    assert!(start + total <= end, "{total} bytes of pointer tables overrun the Warp Zone's");
+
+    // Every kept row's six bytes, read before any are overwritten.
+    let rows: Vec<Vec<[u8; 6]>> = (0..8)
+        .map(|wi| {
+            let world = rom_data::world_tables(rom, wi);
+            let (sc, obj, lay) = rom_data::table_offsets(&world);
+            let at = |i: usize| {
+                [
+                    rom.read_byte(world.rowtype_offset + i),
+                    rom.read_byte(sc + i),
+                    rom.read_byte(obj + i * 2),
+                    rom.read_byte(obj + i * 2 + 1),
+                    rom.read_byte(lay + i * 2),
+                    rom.read_byte(lay + i * 2 + 1),
+                ]
+            };
+            assert!(keep[wi].len() <= counts[wi], "W{} keeps more rows than it has", wi + 1);
+            keep[wi].iter().map(|&i| at(i)).collect()
+        })
+        .collect();
+
+    rom.write_range(start, &vec![0; total]);
+    let mut at = start;
+    for wi in 0..8 {
+        let n = counts[wi];
+        let world = rom_data::WorldTables { rowtype_offset: at + 4, entry_count: n };
+        let (sc, obj, lay) = rom_data::table_offsets(&world);
+        for (master, file) in [
+            (INIT_INDEX_MASTER, at),
+            (rom_data::ROWTYPE_MASTER, world.rowtype_offset),
+            (rom_data::SCRCOL_MASTER, sc),
+            (rom_data::OBJSETS_MASTER, obj),
+            (rom_data::LAYOUTS_MASTER, lay),
+        ] {
+            let cpu = rom_data::prg_bank_file_to_cpu(12, file);
+            rom.write_range(master + wi * 2, &cpu.to_le_bytes());
+        }
+        for (i, r) in rows[wi].iter().enumerate() {
+            rom.write_byte(world.rowtype_offset + i, r[0]);
+            rom.write_byte(sc + i, r[1]);
+            rom.write_range(obj + i * 2, &r[2..4]);
+            rom.write_range(lay + i * 2, &r[4..6]);
+        }
+        at += 4 + n * 6;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -199,6 +261,89 @@ mod tests {
         // Mid-screen never moves.
         for wi in [0, 1, 2, 3, 5, 6] {
             assert_eq!(scroll_nibble(wi, 0, 6), 0);
+        }
+    }
+
+    /// The row `Map_PrepareLevel` loads at `pos`: from the screen's InitIndex,
+    /// on to the first row on the player's map row, then on to the first with
+    /// the player's screen-column. `None` if the scan leaves the world's rows.
+    fn engine_lookup(rom: &Rom, wi: usize, pos: Pos) -> Option<usize> {
+        let world = rom_data::world_tables(rom, wi);
+        let (sc, _, _) = rom_data::table_offsets(&world);
+        let init_cpu = rom_data::read_word(rom, INIT_INDEX_MASTER + wi * 2);
+        let init = rom_data::prg_bank_cpu_to_file(12, init_cpu);
+        let (screen, col, row_nib) = grid_pos_to_dest_nibbles(pos.0, pos.1);
+        let n = world.entry_count;
+        let mut y = rom.read_byte(init + screen as usize) as usize;
+        while y < n && rom.read_byte(world.rowtype_offset + y) >> 4 != row_nib {
+            y += 1;
+        }
+        while y < n && rom.read_byte(sc + y) != (screen << 4) | col {
+            y += 1;
+        }
+        (y < n).then_some(y)
+    }
+
+    /// Worlds grown and shrunk by a relayout still load the same level on
+    /// every kept tile, the free rows come out empty, and the Warp Zone's
+    /// tables after the run are not touched.
+    #[test]
+    fn relaid_tables_load_the_same_levels() {
+        let Ok(bytes) = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes") else {
+            eprintln!("SKIP: requires the ROM, which is not included in the repo");
+            return;
+        };
+        let vanilla = Rom::from_bytes(&bytes).unwrap();
+        let old: Vec<usize> =
+            (0..8).map(|wi| rom_data::world_tables(&vanilla, wi).entry_count).collect();
+        let counts =
+            [old[0] + 3, old[1] - 3, old[2], old[3], old[4], old[5] - 2, old[6], old[7] + 2];
+        let keep: Vec<Vec<usize>> =
+            (0..8).map(|wi| (0..old[wi].min(counts[wi])).collect()).collect();
+
+        // The Warp Zone (master slot 8): its object and layout masters share
+        // one table, so its tables end at its layouts.
+        let w9 = |table: usize| {
+            rom_data::prg_bank_cpu_to_file(12, rom_data::read_word(&vanilla, table + 16))
+        };
+        let w9_init = w9(INIT_INDEX_MASTER);
+        let w9_end = w9(rom_data::LAYOUTS_MASTER)
+            + (w9(rom_data::SCRCOL_MASTER) - w9(rom_data::ROWTYPE_MASTER)) * 2;
+        let w9_masters: Vec<u16> = (0..5)
+            .map(|m| rom_data::read_word(&vanilla, INIT_INDEX_MASTER + m * 18 + 16))
+            .collect();
+
+        let mut rom = vanilla.clone();
+        relayout_pointer_tables(&mut rom, &keep, &counts);
+        for wi in 0..8 {
+            resort_pointer_table(&mut rom, wi);
+        }
+
+        assert_eq!(
+            rom.read_range(w9_init, w9_end - w9_init),
+            vanilla.read_range(w9_init, w9_end - w9_init)
+        );
+        let masters: Vec<u16> =
+            (0..5).map(|m| rom_data::read_word(&rom, INIT_INDEX_MASTER + m * 18 + 16)).collect();
+        assert_eq!(masters, w9_masters, "the Warp Zone was repointed");
+        for wi in 0..8 {
+            let world = rom_data::world_tables(&rom, wi);
+            assert_eq!(world.entry_count, counts[wi], "W{}", wi + 1);
+            let van = rom_data::world_tables(&vanilla, wi);
+            for &i in &keep[wi] {
+                let pos = rom_data::entry_grid_position(&vanilla, &van, i);
+                if pos.0 >= rom_data::ROWS {
+                    continue; // parked off the map: never loaded
+                }
+                let want = engine_lookup(&vanilla, wi, pos)
+                    .map(|r| rom_data::read_entry(&vanilla, &van, r));
+                let got =
+                    engine_lookup(&rom, wi, pos).map(|r| rom_data::read_entry(&rom, &world, r));
+                assert_eq!(got, want, "W{} {pos:?}", wi + 1);
+            }
+            let empty =
+                (0..counts[wi]).filter(|&r| rom.read_byte(world.rowtype_offset + r) == 0).count();
+            assert!(empty >= counts[wi] - keep[wi].len(), "W{}: free rows not empty", wi + 1);
         }
     }
 }

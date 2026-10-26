@@ -636,6 +636,10 @@ pub(crate) const INIT_INDEX_MASTER: usize = 0x193DA;
 pub(crate) const ROWTYPE_MASTER: usize = 0x193EC;
 /// `Map_ByScrCol` master table (see [`INIT_INDEX_MASTER`]).
 pub(crate) const SCRCOL_MASTER: usize = 0x193FE;
+/// `Map_ObjSets` master table (see [`INIT_INDEX_MASTER`]).
+pub(crate) const OBJSETS_MASTER: usize = 0x19410;
+/// `Map_LevelLayouts` master table (see [`INIT_INDEX_MASTER`]).
+pub(crate) const LAYOUTS_MASTER: usize = 0x19422;
 
 /// The pointer table layout of the vanilla ROM. A seed may lay the tables out
 /// differently, so code reading a ROM's tables asks

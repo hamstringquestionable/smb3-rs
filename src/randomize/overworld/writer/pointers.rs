@@ -18,6 +18,56 @@ fn write_entry_pos(
     rom.write_byte(sc + entry_idx, (screen << 4) | col_in_screen);
 }
 
+/// One world's pointer-table rows, once [`lay_out_rows`] has given it its
+/// `WorldMap::entry_rows`.
+pub(super) struct Rows {
+    /// The row of each entry pickup left in place, by its vanilla `entry_idx`.
+    kept: HashMap<usize, usize>,
+    /// The rows for [`write_pointer_entries`] to fill, in fill order.
+    free: Vec<usize>,
+}
+
+/// Give every world the row count its map asks for, and say where its rows
+/// now sit. While every count is the ROM's, nothing moves: the kept entries
+/// stay on their rows and the free rows are the ones pickup vacated, in pool
+/// order. Otherwise the tables are laid out again
+/// ([`pipe_helpers::relayout_pointer_tables`]), each world's kept entries
+/// first and its free rows after them.
+pub(super) fn lay_out_rows(rom: &mut Rom, data: &OverworldData) -> Vec<Rows> {
+    let picked: HashSet<usize> = data.pickup.pool.iter().map(|pe| pe.catalog_idx).collect();
+    let kept: Vec<Vec<usize>> = (0..8)
+        .map(|wi| {
+            let entries = data.catalog.entries.iter().enumerate();
+            entries
+                .filter(|(ci, e)| e.world_idx == wi && !picked.contains(ci))
+                .map(|(_, e)| e.entry_idx)
+                .collect()
+        })
+        .collect();
+    let counts: [usize; 8] = std::array::from_fn(|wi| data.catalog.maps[wi].entry_rows);
+
+    if (0..8).all(|wi| counts[wi] == rom_data::world_tables(rom, wi).entry_count) {
+        return (0..8)
+            .map(|wi| Rows {
+                kept: kept[wi].iter().map(|&i| (i, i)).collect(),
+                free: data.pickup.worlds[wi]
+                    .pool_indices
+                    .iter()
+                    .map(|&pi| data.pickup.pool[pi].entry_idx)
+                    .collect(),
+            })
+            .collect();
+    }
+
+    pipe_helpers::relayout_pointer_tables(rom, &kept, &counts);
+    (0..8)
+        .map(|wi| Rows {
+            kept: kept[wi].iter().enumerate().map(|(row, &i)| (i, row)).collect(),
+            free: (kept[wi].len()..counts[wi]).collect(),
+        })
+        .collect()
+}
+
 /// Write the position of every entry pickup left in place whose position on
 /// the map differs from the ROM's: the start and airship of a world Start ↔
 /// Airship swap flipped, and anything a generated map moved. Entries pickup
@@ -25,21 +75,26 @@ fn write_entry_pos(
 ///
 /// Must run BEFORE `pipe_helpers::resort_pointer_table` for the same world, so
 /// the resort puts the rewritten entries in their screen/row order.
-pub(super) fn write_kept_entry_positions(rom: &mut Rom, world_idx: usize, data: &OverworldData) {
+pub(super) fn write_kept_entry_positions(
+    rom: &mut Rom,
+    world_idx: usize,
+    data: &OverworldData,
+    rows: &Rows,
+) {
     let world = &rom_data::world_tables(rom, world_idx);
     let rt = world.rowtype_offset;
     let sc = rt + world.entry_count;
-    let picked: HashSet<usize> = data.pickup.pool.iter().map(|pe| pe.catalog_idx).collect();
-    for (ci, entry) in data.catalog.entries.iter().enumerate() {
-        if entry.world_idx != world_idx || picked.contains(&ci) {
+    for entry in &data.catalog.entries {
+        let Some(&row) = rows.kept.get(&entry.entry_idx).filter(|_| entry.world_idx == world_idx)
+        else {
             continue;
-        }
-        if rom_data::entry_grid_position(rom, world, entry.entry_idx) == entry.grid_pos {
+        };
+        if rom_data::entry_grid_position(rom, world, row) == entry.grid_pos {
             continue;
         }
         // Keep the low nibble of the rowtype byte: it is the tileset.
-        let tileset = rom.read_byte(rt + entry.entry_idx);
-        write_entry_pos(rom, rt, sc, entry.entry_idx, entry.grid_pos, tileset);
+        let tileset = rom.read_byte(rt + row);
+        write_entry_pos(rom, rt, sc, row, entry.grid_pos, tileset);
     }
 }
 
@@ -50,6 +105,7 @@ pub(super) fn write_pointer_entries(
     wa: &WorldAssignments,
     data: &OverworldData,
     hb_level_iter: &mut impl Iterator<Item = rom_data::LevelEntry>,
+    rows: &Rows,
 ) {
     let pickup = data.pickup;
     let catalog = data.catalog;
@@ -58,10 +114,8 @@ pub(super) fn write_pointer_entries(
     let rt = world.rowtype_offset;
     let sc = rt + n;
 
-    // Reusable entry_idx values: pointer table slots vacated during Phase 2 pickup.
-    let cw = &pickup.worlds[world_idx];
-    let available_slots: Vec<usize> =
-        cw.pool_indices.iter().map(|&pi| pickup.pool[pi].entry_idx).collect();
+    // The rows to fill: the ones pickup vacated, or the free rows of a new layout.
+    let available_slots = &rows.free;
 
     // Collect all assignments as (pool_idx, pos) for level-like entries.
     let mut all: Vec<(usize, (usize, usize))> = Vec::new();

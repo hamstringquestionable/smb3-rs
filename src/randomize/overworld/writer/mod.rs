@@ -28,7 +28,7 @@ mod types;
 
 use assign::{assign_pool, interleave_hb_by_obj_ptr};
 use grid::write_tile_grid;
-use pointers::{write_kept_entry_positions, write_pipe_dests, write_pointer_entries};
+use pointers::{lay_out_rows, write_kept_entry_positions, write_pipe_dests, write_pointer_entries};
 use sprites::{
     pick_plant_positions, pick_w8_sprite_positions, write_hb_sprites, write_plant_sprites,
     write_w8_sprites,
@@ -79,6 +79,9 @@ pub(crate) fn write_overworld<R: Rng>(
     // One allocation for every world: the art and the removable table exist once
     // in the ROM, and the maze swaps each world in against them.
     let mut lock_tiles = LockTiles::default();
+    // Before any entry is written: a world dealt more or fewer rows than the
+    // ROM has moves every row after it.
+    let rows = lay_out_rows(rom, data);
     for (wi, wa) in assignments.iter().enumerate() {
         let built = &build.worlds[wi];
         let sprite_mask = &sprite_masks[wi];
@@ -93,12 +96,12 @@ pub(crate) fn write_overworld<R: Rng>(
             &mut lock_tiles,
             rng,
         ));
-        write_pointer_entries(rom, wi, built, wa, data, &mut hb_fallback_iter);
+        write_pointer_entries(rom, wi, built, wa, data, &mut hb_fallback_iter, &rows[wi]);
         write_pipe_dests(rom, wi, wa);
         // Entries pickup left in place but the map moved (the swapped start
         // and airship, anything a generated map placed), before the resort so
         // the engine's runtime lookup finds the right entry per tile.
-        write_kept_entry_positions(rom, wi, data);
+        write_kept_entry_positions(rom, wi, data, &rows[wi]);
         pipe_helpers::resort_pointer_table(rom, wi);
         // Do not sync map object sprite positions: the overworld builder never
         // moves MapObject entries (W7 piranhas), so vanilla sprite positions are

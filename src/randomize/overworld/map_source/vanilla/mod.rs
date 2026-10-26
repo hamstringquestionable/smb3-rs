@@ -98,6 +98,7 @@ fn read_tiles(rom: &Rom) -> Vec<WorldMap> {
             WorldMap {
                 grid,
                 entry_pos,
+                entry_rows: world.entry_count,
                 sprites: rom_data::read_parked_sprite_positions(rom, wi),
                 hb_sprites: rom_data::read_hb_sprite_positions(rom, wi),
                 gaps: Vec::new(),
