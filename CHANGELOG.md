@@ -40,6 +40,8 @@ deploys.
 - **Generated World 3** docks now have water on one side only, so pressing A
   on a dock always calls the canoe to the open sea, never into a pond or a
   broken bridge it cannot sail out of.
+- **8s are Wild:** World 8's Hammer Bro can no longer land on a node with
+  nothing behind it.
 
 ## [3.0.0] - 2026-10-16
 

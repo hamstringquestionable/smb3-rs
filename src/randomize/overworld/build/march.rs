@@ -203,3 +203,94 @@ pub(super) fn pick_spread_positions<R: Rng>(
     }
     chosen
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Options, Tri};
+
+    /// Every blank node a Hammer Bro sprite can march onto has a pointer-table
+    /// row. The player cannot enter a blank, so a blank no sprite reaches may
+    /// go without one — but a bro that lands on one hands the engine a lookup
+    /// that matches nothing.
+    ///
+    /// Read off finished ROMs, with every lock, rock and water gap open: they
+    /// open in play, and a sprite then marches through.
+    #[test]
+    fn every_blank_a_sprite_reaches_has_a_row() {
+        let Ok(bytes) = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes") else {
+            return;
+        };
+        let base = || Options { palettes: false, palette_themed: false, ..Options::default() };
+        let arms = [
+            ("default", base()),
+            ("8s wild", Options { eights_are_wild: Tri::On, ..base() }),
+            ("hammer rocks", Options { more_hammer_rocks: Tri::On, ..base() }),
+            ("no hb shuffle", Options { shuffle_hammer_bros: false, ..base() }),
+            ("generated w1", Options { generated_worlds: 1, ..base() }),
+            ("maze", Options { world_maze: true, ..base() }),
+        ];
+        let mut stranded = Vec::new();
+        for (name, opts) in &arms {
+            for seed in 0..4 {
+                let out = crate::generate_patched_rom(&bytes, seed, opts, None).expect("generate");
+                let rom = Rom::from_bytes_lax(&out, true).expect("readable ROM");
+                for wi in 0..8 {
+                    let world = &rom_data::WORLDS[wi];
+                    let rows: HashSet<Pos> = (0..world.entry_count)
+                        .map(|i| rom_data::entry_grid_position(&rom, world, i))
+                        .collect();
+                    let grid = opened(rom_data::read_tile_grid(&rom, wi));
+                    // A bro that lands on a sprite at rest marches again
+                    // (`PRG011_AF85`), so it never stops on the army's cells.
+                    let bros = rom_data::read_hb_sprite_positions(&rom, wi);
+                    let parked: HashSet<Pos> = rom_data::read_map_sprite_positions(&rom, wi)
+                        .into_iter()
+                        .filter(|p| !bros.contains(p))
+                        .collect();
+                    for &bro in &bros {
+                        for pos in march_distances(&grid, &HashSet::new(), bro).into_keys() {
+                            let tile = grid.get(pos.0, pos.1);
+                            if rom_data::VALID_BLANK_TILES.contains(&tile)
+                                && !rows.contains(&pos)
+                                && !parked.contains(&pos)
+                            {
+                                stranded.push(format!("{name} seed {seed} W{} {pos:?}", wi + 1));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        stranded.sort();
+        stranded.dedup();
+        assert!(stranded.is_empty(), "blank nodes a bro reaches with no row: {stranded:#?}");
+    }
+
+    /// `grid` with every lock, breakable rock and water gap replaced by the
+    /// path it opens to. Each tile says which way it runs (`$54` and `$52`
+    /// vertical; `$56`, `$51` and the bridge `$9D` is cut from horizontal)
+    /// except the sky lock `$E4`, which runs across when a neighbour on
+    /// either side is a path or a blank.
+    fn opened(mut grid: Grid) -> Grid {
+        let across = |grid: &Grid, r: usize, c: usize| {
+            let joins = |t: u8| {
+                MARCH_VALID_HORIZONTAL.contains(&t) || rom_data::VALID_BLANK_TILES.contains(&t)
+            };
+            (c > 0 && joins(grid.get(r, c - 1))) || (c + 1 < grid.cols && joins(grid.get(r, c + 1)))
+        };
+        for r in 0..grid.rows() {
+            for c in 0..grid.cols {
+                let open = match grid.get(r, c) {
+                    0x54 | rom_data::ROCK_BREAK_V => 0x46,
+                    0x56 | rom_data::ROCK_BREAK_H | rom_data::WATER_GAP_TILE => 0x45,
+                    0xE4 if across(&grid, r, c) => 0x45,
+                    0xE4 => 0x46,
+                    _ => continue,
+                };
+                grid.set(r, c, open);
+            }
+        }
+        grid
+    }
+}
