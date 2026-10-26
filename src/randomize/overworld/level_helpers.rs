@@ -8,24 +8,27 @@ use rand::seq::SliceRandom;
 
 use crate::rom::Rom;
 
-use crate::randomize::rom_data::{self, LevelEntry, WORLDS};
+use crate::randomize::rom_data::{self, LevelEntry, VANILLA_WORLDS};
 
 /// Shuffle level entries among the given (world_idx, entry_idx) slots.
 ///
 /// Reads all entries, shuffles them, and writes back. The ByRowType byte
 /// (which contains the tileset in its lower nibble) travels with the level
 /// data so the game's lookup key stays consistent.
+///
+/// The indices are vanilla rows (`AIRSHIP_ENTRIES`), so this must run before
+/// the writer re-sorts the tables.
 pub(super) fn shuffle_entries<R: Rng>(rom: &mut Rom, rng: &mut R, indices: &[(usize, usize)]) {
     if indices.len() <= 1 {
         return;
     }
 
     let mut entries: Vec<LevelEntry> =
-        indices.iter().map(|&(w, i)| rom_data::read_entry(rom, &WORLDS[w], i)).collect();
+        indices.iter().map(|&(w, i)| rom_data::read_entry(rom, &VANILLA_WORLDS[w], i)).collect();
 
     entries.as_mut_slice().shuffle(rng);
 
     for (slot, &(w, idx)) in indices.iter().enumerate() {
-        rom_data::write_entry(rom, &WORLDS[w], idx, &entries[slot]);
+        rom_data::write_entry(rom, &VANILLA_WORLDS[w], idx, &entries[slot]);
     }
 }

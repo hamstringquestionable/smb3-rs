@@ -1964,7 +1964,8 @@ mod asm_checks {
             let threshold: [u8; 4] =
                 std::array::from_fn(|p| rom.read_byte(PRG012_FILE_BASE + 0x400 + p));
             let removable = |t: u8| REMOVABLE_PAIRS.iter().any(|&(o, _)| o == t) || is_pool_tile(t);
-            for (w, world) in rom_data::WORLDS.iter().enumerate() {
+            for w in 0..8 {
+                let world = &rom_data::world_tables(rom, w);
                 let grid = rom_data::read_tile_grid(rom, w);
                 for idx in 0..world.entry_count {
                     let (r, c) = rom_data::entry_grid_position(rom, world, idx);

@@ -902,7 +902,7 @@ fn row78_completion_bit_is_never_double_claimed() {
 
         for wi in 0..8 {
             let grid = rom_data::read_tile_grid(&test_rom, wi);
-            let tables = &rom_data::WORLDS[wi];
+            let tables = &rom_data::world_tables(&test_rom, wi);
             let entries: std::collections::HashSet<(usize, usize)> = (0..tables.entry_count)
                 .map(|i| rom_data::entry_grid_position(&test_rom, tables, i))
                 .collect();
@@ -959,7 +959,8 @@ fn test_pointer_table_sorted() {
     );
 
     // Verify each world's pointer table is sorted by (screen, row, col).
-    for (wi, world) in WORLDS.iter().enumerate() {
+    for wi in 0..8 {
+        let world = rom_data::world_tables(&test_rom, wi);
         let n = world.entry_count;
         let rt = world.rowtype_offset;
         let sc = rt + n;
@@ -1022,7 +1023,8 @@ fn test_no_uncovered_blank_nodes() {
 
         let pipes_by_world = rom_data::read_pipe_pairs(&test_rom);
 
-        for (wi, world) in WORLDS.iter().enumerate() {
+        for wi in 0..8 {
+            let world = &rom_data::world_tables(&test_rom, wi);
             let grid = rom_data::read_tile_grid(&test_rom, wi);
             let pipe_pairs = pipes_by_world.get(&wi).cloned().unwrap_or_default();
             let walk = map_walker::walk_map(&grid, &pipe_pairs, None, wi);
@@ -1193,7 +1195,7 @@ fn test_piranha_shuffle_plants_written() {
                         wi + 1,
                     );
                     // A pointer entry (the level the plant fronts) exists there.
-                    let world = &rom_data::WORLDS[wi];
+                    let world = &rom_data::world_tables(&out, wi);
                     let found = (0..world.entry_count)
                         .any(|i| rom_data::entry_grid_position(&out, world, i) == (row, col));
                     assert!(

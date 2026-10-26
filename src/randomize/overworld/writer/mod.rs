@@ -16,9 +16,7 @@ use crate::randomize::overworld::build::{
 use crate::randomize::overworld::lock_keys::{LockEntry, LockTiles};
 use crate::randomize::overworld::node_catalog::NodeKind;
 use crate::randomize::overworld::pipe_helpers;
-use crate::randomize::rom_data::{
-    self, FORTRESS_1F_OBJ_PTR, Grid, TILE_BONUS_GAME, TILE_PIPE, WORLDS,
-};
+use crate::randomize::rom_data::{self, FORTRESS_1F_OBJ_PTR, Grid, TILE_BONUS_GAME, TILE_PIPE};
 
 mod assign;
 mod grid;

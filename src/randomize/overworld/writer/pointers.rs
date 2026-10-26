@@ -26,7 +26,7 @@ fn write_entry_pos(
 /// Must run BEFORE `pipe_helpers::resort_pointer_table` for the same world, so
 /// the resort puts the rewritten entries in their screen/row order.
 pub(super) fn write_kept_entry_positions(rom: &mut Rom, world_idx: usize, data: &OverworldData) {
-    let world = &WORLDS[world_idx];
+    let world = &rom_data::world_tables(rom, world_idx);
     let rt = world.rowtype_offset;
     let sc = rt + world.entry_count;
     let picked: HashSet<usize> = data.pickup.pool.iter().map(|pe| pe.catalog_idx).collect();
@@ -53,7 +53,7 @@ pub(super) fn write_pointer_entries(
 ) {
     let pickup = data.pickup;
     let catalog = data.catalog;
-    let world = &WORLDS[world_idx];
+    let world = &rom_data::world_tables(rom, world_idx);
     let n = world.entry_count;
     let rt = world.rowtype_offset;
     let sc = rt + n;

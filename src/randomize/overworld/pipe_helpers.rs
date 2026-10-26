@@ -7,8 +7,8 @@
 use crate::rom::Rom;
 
 use crate::randomize::rom_data::{
-    self, MAP_TILE_GRIDS, PIPE_MAP_SCRL_XHI, PIPE_MAP_X, PIPE_MAP_XHI, PIPE_MAP_Y, W5_IDX, W8_IDX,
-    WORLDS,
+    self, INIT_INDEX_MASTER, MAP_TILE_GRIDS, PIPE_MAP_SCRL_XHI, PIPE_MAP_X, PIPE_MAP_XHI,
+    PIPE_MAP_Y, W5_IDX, W8_IDX,
 };
 
 // ---------------------------------------------------------------------------
@@ -16,13 +16,6 @@ use crate::randomize::rom_data::{
 // ---------------------------------------------------------------------------
 
 type Pos = (usize, usize);
-
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
-/// InitIndex master table offset (9 word pointers, one per world + warp zone).
-const INIT_INDEX_MASTER: usize = 0x193DA;
 
 // ---------------------------------------------------------------------------
 // Position encoding
@@ -114,7 +107,7 @@ pub(super) fn write_pipe_dest(
 /// The game scans entries per-screen from `InitIndex[screen]`, matching row first
 /// then column. Entries must be sorted for the lookup to work correctly.
 pub(super) fn resort_pointer_table(rom: &mut Rom, world_idx: usize) {
-    let world = &WORLDS[world_idx];
+    let world = rom_data::world_tables(rom, world_idx);
     let n = world.entry_count;
     let rt = world.rowtype_offset;
     let sc = rt + n;

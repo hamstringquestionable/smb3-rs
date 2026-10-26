@@ -10,6 +10,21 @@ pub(crate) fn read_word(rom: &Rom, offset: usize) -> u16 {
     (hi << 8) | lo
 }
 
+/// A world's pointer table layout, read from the ROM's own master tables.
+///
+/// The engine stores no entry count: `Map_PrepareLevel` scans from the
+/// world's InitIndex until an entry matches. The count is implied by the
+/// layout instead, since the screen-column table starts where the row-type
+/// table ends.
+pub(crate) fn world_tables(rom: &Rom, world_idx: usize) -> WorldTables {
+    let rowtype = read_word(rom, ROWTYPE_MASTER + world_idx * 2);
+    let scrcol = read_word(rom, SCRCOL_MASTER + world_idx * 2);
+    WorldTables {
+        rowtype_offset: prg_bank_cpu_to_file(12, rowtype),
+        entry_count: (scrcol - rowtype) as usize,
+    }
+}
+
 /// Compute sub-table file offsets for a world's pointer tables.
 /// Returns (scrcol_offset, objsets_offset, layouts_offset).
 pub(crate) fn table_offsets(world: &WorldTables) -> (usize, usize, usize) {

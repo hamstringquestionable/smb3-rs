@@ -146,7 +146,8 @@ pub(crate) struct Assignment {
 /// screen rule does not apply to it.
 fn world_of(rom: &Rom, obj_ptr: u16) -> Option<usize> {
     let (lo, hi) = (obj_ptr as u8, (obj_ptr >> 8) as u8);
-    for (wi, world) in rom_data::WORLDS.iter().enumerate() {
+    for wi in 0..8 {
+        let world = &rom_data::world_tables(rom, wi);
         for idx in 0..world.entry_count {
             let e = rom_data::read_entry(rom, world, idx);
             if e.obj_lo == lo && e.obj_hi == hi {
