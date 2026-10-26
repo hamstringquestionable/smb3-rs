@@ -98,7 +98,7 @@ fn read_tiles(rom: &Rom) -> Vec<WorldMap> {
             WorldMap {
                 grid,
                 entry_pos,
-                sprites: rom_data::read_map_sprite_positions(rom, wi),
+                sprites: rom_data::read_parked_sprite_positions(rom, wi),
                 hb_sprites: rom_data::read_hb_sprite_positions(rom, wi),
                 gaps: Vec::new(),
                 hammer_gated: HAMMER_GATED_POCKETS

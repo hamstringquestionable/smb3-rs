@@ -394,8 +394,17 @@ fn read_sprite_positions(
 /// Each world has up to 9 map object slots. A slot with ID $FF is unused.
 /// These are the positions where floating sprites sit (hammer bros, piranhas,
 /// W8 hand traps, etc.) and should not have level/fort tiles placed under them.
+#[cfg(test)]
 pub(crate) fn read_map_sprite_positions(rom: &Rom, world_idx: usize) -> Vec<(usize, usize)> {
     read_sprite_positions(rom, world_idx, |id| id != 0xFF)
+}
+
+/// Read the positions of the sprites that stay where the ROM puts them: every
+/// active sprite but W8's army (`$0D` battleship, `$0E` tank, `$0F` airship).
+/// The writer deals each of those a level or fortress node
+/// (`writer::sprites`), so their vanilla cells keep nothing.
+pub(crate) fn read_parked_sprite_positions(rom: &Rom, world_idx: usize) -> Vec<(usize, usize)> {
+    read_sprite_positions(rom, world_idx, |id| id != 0xFF && !(0x0D..=0x0F).contains(&id))
 }
 
 /// Read grid positions of hammer bro sprites only (IDs 0x03–0x06).
@@ -503,12 +512,15 @@ pub(crate) fn write_hb_sprite(
     rom.write_byte(map_obj_reward_offset(world_idx, slot), reward);
 }
 
-/// Read the non-Hammer-Bro floating sprite positions for a world (army, canoe,
-/// piranhas, …). When Hammer Bros are redistributed, only these stay fixed and
-/// must be protected from level/fort placement; the vanilla HB tiles are freed.
+/// Read the parked sprites that are not Hammer Bros (canoe, piranhas, …; see
+/// [`read_parked_sprite_positions`]). When Hammer Bros are redistributed, only
+/// these stay fixed; the vanilla HB tiles are freed.
 #[cfg(test)]
 pub(crate) fn read_non_hb_sprite_positions(rom: &Rom, world_idx: usize) -> Vec<(usize, usize)> {
     let hb: std::collections::HashSet<(usize, usize)> =
         read_hb_sprite_positions(rom, world_idx).into_iter().collect();
-    read_map_sprite_positions(rom, world_idx).into_iter().filter(|pos| !hb.contains(pos)).collect()
+    read_parked_sprite_positions(rom, world_idx)
+        .into_iter()
+        .filter(|pos| !hb.contains(pos))
+        .collect()
 }

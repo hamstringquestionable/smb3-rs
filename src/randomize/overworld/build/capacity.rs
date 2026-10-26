@@ -291,7 +291,7 @@ pub(crate) fn fixed_positions_for_world(
 
     // Floating sprite positions from the map object tables. When Hammer Bros
     // are redistributed, their vanilla tiles are freed for placement, so only
-    // the non-HB sprites (army, canoe, piranhas) stay protected.
+    // the non-HB sprites (canoe, piranhas) stay protected.
     let map = &catalog.maps[world_idx];
     let sprite_positions =
         if shuffle_hammer_bros { map.non_hb_sprites() } else { map.sprites.clone() };

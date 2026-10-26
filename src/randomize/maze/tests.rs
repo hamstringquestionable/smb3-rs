@@ -684,7 +684,7 @@ fn no_pad_stands_on_a_map_sprite() {
                 } else if shuffle_bros {
                     rom_data::read_non_hb_sprite_positions(&rom, wi).into_iter().collect()
                 } else {
-                    rom_data::read_map_sprite_positions(&rom, wi).into_iter().collect()
+                    rom_data::read_parked_sprite_positions(&rom, wi).into_iter().collect()
                 };
                 parked.extend(result.worlds[wi].hb_sprites.iter().map(|s| s.grid_pos));
                 for edge in &state.edges {
