@@ -1483,6 +1483,66 @@ fn test_march_veto_pipeline_writes_registry() {
     }
 }
 
+/// Piranha shuffle off: vanilla's W7 plants stay put, and they must be vetoed
+/// too. They used to be missed — the registry was fed only the plants
+/// `pick_plant_positions` placed, which is none in this mode — so a shuffled
+/// Hammer Bro beside a beaten plant walked onto it and replayed the level.
+#[test]
+fn test_march_veto_covers_vanilla_plants() {
+    let rom = match load_rom() {
+        Some(r) => r,
+        None => return,
+    };
+    let vanilla_plants = rom_data::read_plant_sprite_positions(&rom, 6);
+    assert_eq!(vanilla_plants.len(), 2, "vanilla W7 has two plant sprites");
+
+    let catalog = node_catalog::NodeCatalog::build(&rom, false);
+    let pickup = overworld::pickup::pick_up(
+        &rom,
+        &catalog,
+        overworld::pickup::PickupFlags {
+            shuffle_spade_games: true,
+            shuffle_toad_houses: true,
+            shuffle_hammer_bros: true,
+        },
+    );
+    let data = OverworldData { pickup: &pickup, catalog: &catalog };
+    let mut rng = ChaCha8Rng::seed_from_u64(7);
+    let build = overworld::build::build(
+        &rom,
+        &data,
+        &mut rng,
+        overworld::build::BuildFlags {
+            shuffle_toad_houses: true,
+            shuffle_hammer_bros: true,
+            ..Default::default()
+        },
+    );
+    let mut out = rom.clone();
+    write_overworld(
+        &mut out,
+        &build,
+        &data,
+        &mut rng,
+        WriteFlags {
+            hints: crate::HintMode::Off,
+            piranha: PiranhaMode::Off,
+            shuffle_hammer_bros: true,
+            friendlier_levels: false,
+            deja_vu: DejaVuMode::Off,
+            deja_vu_forts: false,
+        },
+    );
+
+    let registry = read_veto_registry(&out);
+    for (row, col) in vanilla_plants {
+        assert!(
+            registry[6].contains(&march_veto::veto_addr(row, col)),
+            "vanilla W7 plant at ({row}, {col}) is not vetoed"
+        );
+    }
+}
+
 /// The veto must compose with MaCobra's opt-in limit_bro_movement rewrite in
 /// either application order — the two touch disjoint byte ranges.
 #[test]

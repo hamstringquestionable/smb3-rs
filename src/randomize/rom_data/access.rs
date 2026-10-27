@@ -440,6 +440,16 @@ pub(crate) fn read_hb_sprite_positions(rom: &Rom, world_idx: usize) -> Vec<(usiz
     read_sprite_positions(rom, world_idx, is_hb_sprite_id)
 }
 
+/// Read grid positions of piranha plant sprites only (`MAPOBJ_W7PLANT`, $07).
+///
+/// Whatever the ROM holds: vanilla's two W7 plants when piranha shuffle is
+/// off, the shuffled ones once `write_plant_sprites` has run.
+pub(crate) fn read_plant_sprite_positions(rom: &Rom, world_idx: usize) -> Vec<(usize, usize)> {
+    read_sprite_positions(rom, world_idx, |id| {
+        id == crate::randomize::levels::piranha_rooms::PLANT_SPRITE_ID
+    })
+}
+
 /// Map-object reward item table (Global Item IDs). A flat 9-bytes-per-world
 /// block laid out parallel to the map-object slot tables: `reward[world*9 +
 /// slot]` is the item awarded for clearing the encounter at that slot. The
