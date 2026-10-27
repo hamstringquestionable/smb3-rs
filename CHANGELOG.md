@@ -9,47 +9,7 @@ deploys.
 
 ## [Unreleased]
 
-### Added
-
-- **Generated World 7** is sometimes a lagoon: one more island than usual,
-  and one or two of them reached by canoe from a dock on the island you start
-  on.
-- **Generated Overworld canoes sail under bridges.**
-
-### Changed
-
-- **Generated Overworld scenery.** World 6 is a field of mountains crossed by
-  winding rivers, with moats on its long roads and around dead ends. World 3's
-  land is palm trees. Worlds 2 and 6 get rocky outcrops, sometimes with ruins.
-- **Generated World 4** grows small plants as its ground, has bays along its
-  coast, and has a lake in the middle of the land that the roads cross on bridges.
-  Its straight river is gone.
-- **Generated Overworld roads** wander instead of running dead straight across
-  wide maps, and in Worlds 2 and 6 they sometimes split into two roads that
-  meet again further on.
-- **Generated Overworld worlds vary in size** from seed to seed: a world can
-  have a few more or fewer Hammer Bro nodes, traded with the other generated
-  worlds.
-
-### Fixed
-
-- **Boom-Boom killed by a shell before his fight starts** now drops the orb.
-  Before, he fell off the screen and the fortress could not be finished.
-- **White Toad House and Coin Ship** never appeared in a world that starts
-  away from the left edge of its map, with Start/Airship Swap or Generated
-  Overworld on and the World Maze off.
-- **World Maze with Generated Overworld** could forget progress in Worlds 7
-  and 8 when you changed worlds, such as a bridge its fortress had rebuilt.
-- **Generated World 3** docks now have water on one side only, so pressing A
-  on a dock always calls the canoe to the open sea, never into a pond or a
-  broken bridge it cannot sail out of.
-- **Hammer Bros next to a World 7 piranha plant** could walk onto it after
-  you beat it and pull you back into the level. With Piranha Shuffle off,
-  vanilla's two World 7 plants were never protected.
-- **8s are Wild:** World 8's Hammer Bro can no longer land on a node with
-  nothing behind it.
-
-## [3.0.0] - 2026-10-16
+## [3.0.0] - 2026-10-27
 
 ### Added
 
@@ -68,6 +28,16 @@ deploys.
 
 ### Fixed
 
+- **Boom-Boom killed by a shell before his fight starts** now drops the orb.
+  Before, he fell off the screen and the fortress could not be finished.
+- **White Toad House and Coin Ship** never appeared in a world that starts
+  away from the left edge of its map, with Start/Airship Swap on and the World
+  Maze off.
+- **Hammer Bros next to a World 7 piranha plant** could walk onto it after
+  you beat it and pull you back into the level. With Piranha Shuffle off,
+  vanilla's two World 7 plants were never protected.
+- **8s are Wild:** World 8's Hammer Bro can no longer land on a node with
+  nothing behind it.
 - **A telepad or pipe on the right edge of a world's last screen no longer
   shifts the view off the map.** World 1 never scrolls now, wherever you
   arrive.
