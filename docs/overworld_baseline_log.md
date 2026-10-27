@@ -34,6 +34,53 @@ hashes they describe are gone; the reasoning is not.
 
 ## Entries
 
+### 2026-10-26 — W8's army homes freed; rowless blanks kept from the bros (feature/w8-rowless-page)
+
+**Intended: two changes.** W8's army sprites (`$0D`-`$0F`) no longer reserve
+their vanilla cells: the writer deals each one a level or fortress node, so the
+vanilla map source leaves them out of `WorldMap::sprites`
+(`read_parked_sprite_positions`) and their four blanks join the build. And when
+a world has more blanks than pointer-table rows, `HammerBroFill` leaves one
+march area without Hammer Bro slots (`rowless_area`), so no bro can spawn
+where it could march onto a blank with no row. Before, 8s are Wild drew about
+8 such blanks in W8, scattered across its pages, and the one bro the shuffle
+puts there reached them on every seed (122 hits over 50 seeds). The army
+home at (3,20) was one of them whenever W8 had no spare rows.
+
+**What moved.** All 20 seeds: W8's build sees four more blanks on every seed,
+which shifts the RNG stream from there on.
+
+**How that was established.** `test_route_census` at 1000 seeds, old tree
+against new: every world within noise (W8 2.36 → 2.36 routes, C1 26.3 → 26.4;
+overall 2.588 → 2.598 routes, linear 5.44 → 5.61%, below-floor 0.30 →
+0.22%). `CENSUS_SEEDS=500 all_world_targets_reachable` passes. The new
+`every_blank_a_sprite_reaches_has_a_row` passes at 50 seeds on six arms,
+8s are Wild included, and W8 still gets its bro on 100 of 100 seeds with
+8s are Wild off and on.
+
+### 2026-10-18 — page 3's M/L window closed (fix/page3-ml-window)
+
+**Intended: `$E9` (W5 star) and `$EA` (tall rock) stop counting as
+completable.** `lock_keys::ML_RANGE_UPPER[3]` went `$EC` → `$E9`, the page's
+own threshold, so page 3's M/L window is empty. Neither tile is ever a node
+(`the_ml_window_holds_no_scenery_that_could_complete`), so no completion
+changes; the reason is the maze's packed completion store, which owns a bit
+for every completable cell and overran its 48-byte plane reserve on generated
+W6's `$EA` ground (player report, seed 8200103366211660: W8's rebuilt bridge
+lost on a world swap).
+
+**What moved.** 4 of the 20 seeds: 4, 6, 8 and 11. `is_completion_unsafe`
+follows the window, so vanilla W5/W6 stars and tall rocks on rows 7/8 stop
+claiming the shared row-7/8 bit, and more Hammer Bro slots there pass
+`is_row78_conflict`. `promote_hb_slots` deals Toad Houses and spades across all
+eight worlds from those candidates, so a moved seed moves in every world
+(confirmed by grid diff, seed 4: W1 node tiles change).
+
+**How that was established.** `test_route_census` at 1000 seeds, which builds
+without the promotion pass: W1-W4 and W8 identical in every column, W5/W6/W7
+within noise (overall routes 2.591 → 2.588, linear 5.51 → 5.44%; generated
+2.635 → 2.626). `CENSUS_SEEDS=500 all_world_targets_reachable` passes.
+
 ### 2026-10-11 — blank nodes draw their path stub into a breakable rock (fix/rock-path-stubs)
 
 **Intended: a breakable rock counts as a connection when a blank node picks

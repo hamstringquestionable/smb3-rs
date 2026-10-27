@@ -31,9 +31,7 @@ fn load_rom() -> Option<Rom> {
 fn load_prepped_rom() -> Option<Rom> {
     let mut out = load_rom()?;
     qol::fix_w3_drawbridges(&mut out);
-    qol::remove_rocks(&mut out);
-    qol::apply_w1_shortcut(&mut out, false);
-    qol::apply_w8_bridges(&mut out);
+    crate::randomize::overworld::map_source::vanilla::stamp_fixes(&mut out, false, false);
     qol::fix_big_q_block_rooms(&mut out);
     Some(out)
 }
@@ -77,7 +75,6 @@ fn test_pool_assignment_exhaustive() {
 
     let mut rng2 = ChaCha8Rng::seed_from_u64(99);
     let assignments = assign_pool(
-        &rom,
         &build,
         &OverworldData { pickup: &pickup, catalog: &catalog },
         &mut rng2,
@@ -167,7 +164,6 @@ fn test_troll_pipes_never_assigned_hand_levels() {
             .collect();
 
         let assignments = assign_pool(
-            &rom,
             &build,
             &OverworldData { pickup: &pickup, catalog: &catalog },
             &mut rng,
@@ -222,7 +218,6 @@ fn test_friendlier_levels_blocks_and_refills() {
                 standard_build_flags(),
             );
             let assignments = assign_pool(
-                &rom,
                 &build,
                 &OverworldData { pickup: &pickup, catalog: &catalog },
                 &mut rng,
@@ -315,7 +310,6 @@ fn test_deja_vu_repeats_levels() {
                     standard_build_flags(),
                 );
                 let assignments = assign_pool(
-                    &rom,
                     &build,
                     &OverworldData { pickup: &pickup, catalog: &catalog },
                     &mut rng,
@@ -453,7 +447,6 @@ fn test_deja_vu_repeats_fortresses() {
                     .sum();
 
                 let assignments = assign_pool(
-                    &rom,
                     &build,
                     &OverworldData { pickup: &pickup, catalog: &catalog },
                     &mut rng,
@@ -594,7 +587,6 @@ fn test_friendlier_levels_blocks_forts() {
             .sum();
 
         let assignments = assign_pool(
-            &rom,
             &build,
             &OverworldData { pickup: &pickup, catalog: &catalog },
             &mut rng,
@@ -910,7 +902,7 @@ fn row78_completion_bit_is_never_double_claimed() {
 
         for wi in 0..8 {
             let grid = rom_data::read_tile_grid(&test_rom, wi);
-            let tables = &rom_data::WORLDS[wi];
+            let tables = &rom_data::world_tables(&test_rom, wi);
             let entries: std::collections::HashSet<(usize, usize)> = (0..tables.entry_count)
                 .map(|i| rom_data::entry_grid_position(&test_rom, tables, i))
                 .collect();
@@ -967,7 +959,8 @@ fn test_pointer_table_sorted() {
     );
 
     // Verify each world's pointer table is sorted by (screen, row, col).
-    for (wi, world) in WORLDS.iter().enumerate() {
+    for wi in 0..8 {
+        let world = rom_data::world_tables(&test_rom, wi);
         let n = world.entry_count;
         let rt = world.rowtype_offset;
         let sc = rt + n;
@@ -1019,7 +1012,6 @@ fn test_no_uncovered_blank_nodes() {
 
         let mut test_rom = rom.clone();
         qol::fix_w3_drawbridges(&mut test_rom);
-        qol::remove_rocks(&mut test_rom);
         qol::fix_big_q_block_rooms(&mut test_rom);
         write_overworld(
             &mut test_rom,
@@ -1031,7 +1023,8 @@ fn test_no_uncovered_blank_nodes() {
 
         let pipes_by_world = rom_data::read_pipe_pairs(&test_rom);
 
-        for (wi, world) in WORLDS.iter().enumerate() {
+        for wi in 0..8 {
+            let world = &rom_data::world_tables(&test_rom, wi);
             let grid = rom_data::read_tile_grid(&test_rom, wi);
             let pipe_pairs = pipes_by_world.get(&wi).cloned().unwrap_or_default();
             let walk = map_walker::walk_map(&grid, &pipe_pairs, None, wi);
@@ -1092,7 +1085,6 @@ fn test_generate_rom() {
 
         // Apply QoL patches that the builder expects.
         qol::fix_w3_drawbridges(&mut out);
-        qol::remove_rocks(&mut out);
         qol::fix_big_q_block_rooms(&mut out);
 
         write_overworld(
@@ -1203,7 +1195,7 @@ fn test_piranha_shuffle_plants_written() {
                         wi + 1,
                     );
                     // A pointer entry (the level the plant fronts) exists there.
-                    let world = &rom_data::WORLDS[wi];
+                    let world = &rom_data::world_tables(&out, wi);
                     let found = (0..world.entry_count)
                         .any(|i| rom_data::entry_grid_position(&out, world, i) == (row, col));
                     assert!(
@@ -1299,7 +1291,6 @@ fn test_troll_pipes_never_assigned_piranha_levels() {
 
         let flags = WriteFlags { piranha: PiranhaMode::Wild, ..Default::default() };
         let assignments = assign_pool(
-            &prepped,
             &build,
             &OverworldData { pickup: &pickup, catalog: &catalog },
             &mut rng,
@@ -1488,6 +1479,66 @@ fn test_march_veto_pipeline_writes_registry() {
         assert!(
             (0x6110..=0x66AF).contains(addr),
             "veto address {addr:#06X} outside the map tile SRAM window"
+        );
+    }
+}
+
+/// Piranha shuffle off: vanilla's W7 plants stay put, and they must be vetoed
+/// too. They used to be missed — the registry was fed only the plants
+/// `pick_plant_positions` placed, which is none in this mode — so a shuffled
+/// Hammer Bro beside a beaten plant walked onto it and replayed the level.
+#[test]
+fn test_march_veto_covers_vanilla_plants() {
+    let rom = match load_rom() {
+        Some(r) => r,
+        None => return,
+    };
+    let vanilla_plants = rom_data::read_plant_sprite_positions(&rom, 6);
+    assert_eq!(vanilla_plants.len(), 2, "vanilla W7 has two plant sprites");
+
+    let catalog = node_catalog::NodeCatalog::build(&rom, false);
+    let pickup = overworld::pickup::pick_up(
+        &rom,
+        &catalog,
+        overworld::pickup::PickupFlags {
+            shuffle_spade_games: true,
+            shuffle_toad_houses: true,
+            shuffle_hammer_bros: true,
+        },
+    );
+    let data = OverworldData { pickup: &pickup, catalog: &catalog };
+    let mut rng = ChaCha8Rng::seed_from_u64(7);
+    let build = overworld::build::build(
+        &rom,
+        &data,
+        &mut rng,
+        overworld::build::BuildFlags {
+            shuffle_toad_houses: true,
+            shuffle_hammer_bros: true,
+            ..Default::default()
+        },
+    );
+    let mut out = rom.clone();
+    write_overworld(
+        &mut out,
+        &build,
+        &data,
+        &mut rng,
+        WriteFlags {
+            hints: crate::HintMode::Off,
+            piranha: PiranhaMode::Off,
+            shuffle_hammer_bros: true,
+            friendlier_levels: false,
+            deja_vu: DejaVuMode::Off,
+            deja_vu_forts: false,
+        },
+    );
+
+    let registry = read_veto_registry(&out);
+    for (row, col) in vanilla_plants {
+        assert!(
+            registry[6].contains(&march_veto::veto_addr(row, col)),
+            "vanilla W7 plant at ({row}, {col}) is not vetoed"
         );
     }
 }
@@ -1844,7 +1895,7 @@ fn a_pinned_level_lands_on_its_slot() {
 
     let mut rng2 = ChaCha8Rng::seed_from_u64(99);
     let data = OverworldData { pickup: &pickup, catalog: &catalog };
-    let assignments = assign_pool(&rom, &build, &data, &mut rng2, WriteFlags::default());
+    let assignments = assign_pool(&build, &data, &mut rng2, WriteFlags::default());
 
     let dealt = assignments[world]
         .level
@@ -1883,7 +1934,6 @@ fn deja_vu_never_duplicates_a_pinned_level() {
     let deal = |build: &overworld::build::BuildResult, seed: u64| {
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
         assign_pool(
-            &rom,
             build,
             &OverworldData { pickup: &pickup, catalog: &catalog },
             &mut rng,
@@ -1954,7 +2004,7 @@ fn an_unsatisfiable_pin_is_reported() {
 
     let mut rng2 = ChaCha8Rng::seed_from_u64(99);
     let data = OverworldData { pickup: &pickup, catalog: &catalog };
-    let assignments = assign_pool(&rom, &build, &data, &mut rng2, WriteFlags::default());
+    let assignments = assign_pool(&build, &data, &mut rng2, WriteFlags::default());
 
     assert_eq!(
         assignments[world].unmet_pins,

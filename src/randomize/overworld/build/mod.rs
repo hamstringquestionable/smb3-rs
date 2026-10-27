@@ -174,6 +174,8 @@ use progression::{
     hammer_skip, island_count, level_adjacency_pairs, start_goal_express_pipe,
 };
 #[cfg(test)]
+pub(crate) use route_choice::BREAKABLE_ROCKS;
+#[cfg(test)]
 use route_choice::dump_route_choice;
 pub(crate) use sources::from_built;
 #[cfg(test)]
@@ -258,7 +260,7 @@ pub(crate) fn build<R: Rng>(
     // W1-W7 roll 1-3 with the 13-fort total conserved), levels distributed
     // by compressed capacity shares.
     let (level_counts, fort_counts, c1_floors) =
-        allot_budgets(rom, data.catalog, data.pickup, &flags, rng);
+        allot_budgets(data.catalog, data.pickup, &flags, rng);
 
     // How many of W8's four locks land on the bridge approach to Bowser's
     // castle. Rolled here with the other per-seed budgets, because that is
@@ -267,7 +269,7 @@ pub(crate) fn build<R: Rng>(
 
     let mut states: Vec<WorldState> = (0..8)
         .map(|wi| {
-            let mut state = from_pickup(rom, data.catalog, data.pickup, wi, &flags);
+            let mut state = from_pickup(data.catalog, data.pickup, wi, &flags);
             state.level_budget = level_counts[wi];
             state.fort_budget = fort_counts[wi];
             state.c1_floor = c1_floors[wi];
@@ -289,7 +291,6 @@ pub(crate) fn build<R: Rng>(
     // table pool the writer fills, and the promotion stock below.
     for state in &mut states {
         run_schedule(state, &[&HammerBroFill], rng);
-        renumber_fort_sections(state);
     }
 
     let mut worlds: Vec<BuiltWorld> = states.iter().map(|s| s.to_built()).collect();
@@ -297,7 +298,6 @@ pub(crate) fn build<R: Rng>(
     // Toad houses promote first so the smaller, less flexible 22-entry budget
     // lands before spades scramble for the remaining HammerBro slots.
     promote_hb_slots(
-        rom,
         &mut worlds,
         data,
         rng,
@@ -306,7 +306,6 @@ pub(crate) fn build<R: Rng>(
         None,
     );
     promote_hb_slots(
-        rom,
         &mut worlds,
         data,
         rng,
@@ -326,10 +325,11 @@ pub(crate) fn build<R: Rng>(
     BuildResult { worlds, fort_counts }
 }
 
-/// The writer pairs each lock to its fortress by INDEX: fort `section`
-/// values must be a dense `0..section_count`. Placement assigns them
-/// densely, but the Locks phase may remove an unlockable fort (rare),
-/// leaving a hole — renumber in placement order and remap the locks.
+/// Fort `section` values must be a dense `0..section_count`: the writer pairs
+/// each lock to its fortress by index, and the route scorer lays out its
+/// cleared-mask bits the same way. Placement assigns them densely, but the
+/// Locks phase may remove an unlockable fort (rare), leaving a hole, so it
+/// calls this straight after: renumber in placement order and remap the locks.
 fn renumber_fort_sections(state: &mut WorldState) {
     let remap: HashMap<usize, usize> = state
         .slots

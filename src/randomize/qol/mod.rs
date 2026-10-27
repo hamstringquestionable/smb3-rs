@@ -41,10 +41,8 @@ pub(crate) use macobra::{
     apply_no_game_over_penalty, apply_remove_flashing,
 };
 pub(crate) use map_warp::apply_map_warp;
-pub(crate) use overworld_map::{W8_BRIDGE_COLS, W8_BRIDGE_ROW};
 pub(crate) use overworld_map::{
-    apply_w1_shortcut, apply_w8_bridges, apply_w8_canoe_and_paths, fix_w3_drawbridges,
-    make_hammer_rocks, remove_n_cards, remove_rocks,
+    canoe_under_bridges, fix_w3_drawbridges, place_w8_canoe, remove_n_cards,
 };
 pub(crate) use starting_state::{set_starting_lives, write_starting_items};
 

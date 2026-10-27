@@ -9,10 +9,15 @@
 //! 3. Collect level-like catalog entries into the shuffle pool.
 //! 4. Blank their grid positions with theme-appropriate node tiles.
 
+use std::collections::HashSet;
+
 use crate::rom::Rom;
 
+use crate::randomize::overworld::map_source::vanilla::{BLANK_TILE_OVERRIDES, ISLAND_POSITIONS};
 use crate::randomize::overworld::node_catalog::{CatalogEntry, NodeCatalog, NodeKind};
-use crate::randomize::rom_data::{self, FxSlot, Grid, VALID_BLANK_TILES, VALID_HORZ, VALID_VERT};
+use crate::randomize::rom_data::{
+    self, Grid, Pos, ROCK_BREAK_H, ROCK_BREAK_V, VALID_BLANK_TILES, VALID_HORZ, VALID_VERT,
+};
 
 // ---------------------------------------------------------------------------
 // Output types
@@ -45,6 +50,10 @@ pub(crate) struct ClearedWorld {
     pickup_positions: Vec<(usize, usize)>,
     /// Indices into `PickupResult.pool` for this world's picked-up entries.
     pub(crate) pool_indices: Vec<usize>,
+    /// The pointer-table rows the builder may fill, as [`share_rows`] dealt
+    /// them from what the map asks for. On a vanilla map it equals
+    /// `pool_indices.len()`.
+    pub(crate) free_rows: usize,
 }
 
 /// Complete Phase 2 output: cleared grids + global shuffle pool.
@@ -122,12 +131,10 @@ fn pick_up_filtered(
     let mut pool: Vec<PoolEntry> = Vec::new();
     let mut worlds = Vec::with_capacity(8);
 
-    let fx_slots = rom_data::read_fx_slots(rom);
-    let fx_assignments = rom_data::read_world_fx_assignments(rom);
-
-    for (wi, world_fx) in fx_assignments.iter().enumerate() {
-        worlds.push(pick_up_world(rom, catalog, wi, &mut pool, flags, pred, &fx_slots, world_fx));
+    for wi in 0..8 {
+        worlds.push(pick_up_world(catalog, wi, &mut pool, flags, pred));
     }
+    share_rows(&mut worlds);
 
     // Synthetic beta entries (world_idx == usize::MAX) have no vanilla grid
     // cell to blank. Push them directly into the pool so they're available
@@ -157,24 +164,18 @@ fn pick_up_filtered(
 // Per-world pick-up
 // ---------------------------------------------------------------------------
 
-// Reason: only `(fx_slots, world_fx)` bundle naturally, and at 2 fields a
-// struct adds more noise than it removes. The remaining args are
-// individually meaningful inputs to per-world pickup.
-#[allow(clippy::too_many_arguments)]
 fn pick_up_world(
-    rom: &Rom,
     catalog: &NodeCatalog,
     world_idx: usize,
     pool: &mut Vec<PoolEntry>,
     flags: PickupFlags,
     pred: fn(&CatalogEntry, PickupFlags) -> bool,
-    fx_slots: &[FxSlot],
-    world_fx: &[u8],
 ) -> ClearedWorld {
-    let mut grid = rom_data::read_tile_grid(rom, world_idx);
+    let map = &catalog.maps[world_idx];
+    let mut grid = map.grid.clone();
 
-    // Pre-open all vanilla FX gap tiles so the grid is fully connected.
-    open_fx_gaps(&mut grid, fx_slots, world_fx);
+    // Pre-open every gap so the grid is fully connected.
+    open_gaps(&mut grid, &map.gaps);
 
     let mut pickup_positions = Vec::new();
     let mut pool_indices = Vec::new();
@@ -201,42 +202,50 @@ fn pick_up_world(
         }
     }
 
-    ClearedWorld { world_idx, grid, pickup_positions, pool_indices }
+    // What the map asks for: a row per blank node, bar the blanks a kept
+    // entry already holds (W7's piranhas). [`share_rows`] deals the rows.
+    let held: HashSet<Pos> = catalog
+        .entries
+        .iter()
+        .filter(|e| e.world_idx == world_idx && !pred(e, flags))
+        .map(|e| e.grid_pos)
+        .collect();
+    let free_rows = (0..grid.rows())
+        .flat_map(|r| (0..grid.cols).map(move |c| (r, c)))
+        .filter(|&pos| VALID_BLANK_TILES.contains(&grid.get(pos.0, pos.1)) && !held.contains(&pos))
+        .count();
+
+    ClearedWorld { world_idx, grid, pickup_positions, pool_indices, free_rows }
+}
+
+/// Deal the ROM's pointer-table rows out to the worlds' maps.
+///
+/// A map asks for a row per blank node, but only a blank a Hammer Bro sprite
+/// can march onto needs one: pressing A on a blank tile enters nothing (every
+/// blank is below its range's `Tile_AttrTable` cutoff in PRG010's check), so a
+/// blank no sprite reaches is fine without. That makes the ask a wish, not a
+/// demand, and lets this deal rather than fail. Each world first gets the smaller of its ask and the rows
+/// it had (`pool_indices`, the ones pickup freed); the rows a world gave up
+/// then go to the worlds that asked for more, in world order. The total never
+/// exceeds the ROM's, and a world the ROM's rows already cover keeps them.
+fn share_rows(worlds: &mut [ClearedWorld]) {
+    let asked: Vec<usize> = worlds.iter().map(|cw| cw.free_rows).collect();
+    let mut spare = 0;
+    for cw in worlds.iter_mut() {
+        let had = cw.pool_indices.len();
+        spare += had.saturating_sub(cw.free_rows);
+        cw.free_rows = cw.free_rows.min(had);
+    }
+    for (cw, asked) in worlds.iter_mut().zip(asked) {
+        let more = (asked - cw.free_rows).min(spare);
+        cw.free_rows += more;
+        spare -= more;
+    }
 }
 
 // ---------------------------------------------------------------------------
 // Blank tile selection
 // ---------------------------------------------------------------------------
-
-/// Position-specific overrides where the neighbor-based heuristic picks the
-/// wrong tile. `(world_idx, row, col, tile)`
-const BLANK_TILE_OVERRIDES: &[(usize, usize, usize, u8)] = &[
-    (2, 8, 6, 0x47), // W3 spade near start — heuristic picks 0x44 (no neighbors), needs 0x47 for BFS
-    (7, 5, 8, 0x8D), // W8 battleship entry — its cell is navy water (canoe area), not a land blank.
-                     // The entry is still picked up into the pool (placed elsewhere); only this
-                     // leftover tile changes, so the heuristic's 0x44 land tile is overridden to water.
-];
-
-/// Positions that should use island-themed blank tiles (0xAE/0xAF/0xB5/0xB6)
-/// even though [`theme_for`] would read them as standard land. Only W3 (2,4)
-/// genuinely needs the override — its connecting path is the standard 0x46
-/// above it while the strip it sits on runs south — but the rest are kept as
-/// a safety net, since they stay right even when a lock is stamped over the
-/// island path the sniff would otherwise key on.
-const ISLAND_POSITIONS: &[(usize, usize, usize)] = &[
-    // W3 — narrow island strips
-    (2, 2, 4),  // 3-2
-    (2, 4, 4),  // hammer
-    (2, 6, 4),  // 3-1
-    (2, 4, 12), // hammer
-    (2, 6, 12), // 3-5
-    (3, 6, 20), // W4 4-4
-    (6, 5, 10), // W7 7-4
-];
-
-/// Breakable rocks: `$51` opens to a horizontal path, `$52` to a vertical one.
-const ROCK_HORZ: u8 = 0x51;
-const ROCK_VERT: u8 = 0x52;
 
 /// Blank-tile theme tuple: `(horiz, vert, both, none)` covering the four
 /// combinations of valid-path neighbors.
@@ -279,8 +288,10 @@ pub(super) fn blank_tile_for(grid: &Grid, world_idx: usize, row: usize, col: usi
         return current;
     }
 
-    if let Some(&(_, _, _, tile)) =
-        BLANK_TILE_OVERRIDES.iter().find(|&&(w, r, c, _)| w == world_idx && r == row && c == col)
+    if grid.vanilla_layout
+        && let Some(&(_, _, _, tile)) = BLANK_TILE_OVERRIDES
+            .iter()
+            .find(|&&(w, r, c, _)| w == world_idx && r == row && c == col)
     {
         return tile;
     }
@@ -303,8 +314,8 @@ pub(super) fn blank_tile_from_neighbors(
     // A breakable rock leads somewhere once broken, so the node draws its path
     // stub into it, the way the W1 shortcut's hand-placed `$4A` does. Only
     // the breakable rocks: the decorative `$53` looks the same but is a wall.
-    let has_h = h_tile.is_some_and(|t| VALID_HORZ.contains(&t) || t == ROCK_HORZ);
-    let has_v = v_tile.is_some_and(|t| VALID_VERT.contains(&t) || t == ROCK_VERT);
+    let has_h = h_tile.is_some_and(|t| VALID_HORZ.contains(&t) || t == ROCK_BREAK_H);
+    let has_v = v_tile.is_some_and(|t| VALID_VERT.contains(&t) || t == ROCK_BREAK_V);
 
     // The connecting path, with the strip paths whose edge facing this cell
     // is water: its right edge for the left neighbor, its bottom for the one
@@ -317,11 +328,12 @@ pub(super) fn blank_tile_from_neighbors(
         None
     };
 
-    let (h, v, hv, none) = if ISLAND_POSITIONS.contains(&(world_idx, row, col)) {
-        THEME_ISLAND
-    } else {
-        theme_for(grid, row, col, neighbor)
-    };
+    let (h, v, hv, none) =
+        if grid.vanilla_layout && ISLAND_POSITIONS.contains(&(world_idx, row, col)) {
+            THEME_ISLAND
+        } else {
+            theme_for(grid, row, col, neighbor)
+        };
 
     match (has_h, has_v) {
         (true, true) => hv,
@@ -372,35 +384,14 @@ fn theme_for(
 }
 
 // ---------------------------------------------------------------------------
-// FX gap opener
+// Gap opener
 // ---------------------------------------------------------------------------
 
-/// Replace vanilla FX gap tiles with their underlying path tiles, making the
-/// grid fully connected before placement.
-///
-/// **The path comes from the tile standing there, not from the FX slot.** The
-/// slot's own `replace_tile` says the same thing for sixteen of vanilla's
-/// seventeen. The odd one out is slot `$08`, W6 `(4, 13)`: it stores the sky
-/// path `$DA` for a lock sitting on plain ground, which is what the *preceding*
-/// slot legitimately stores for the game's one real sky lock — the value looks
-/// carried down a row when the table was authored
-/// (`fortress_fx::derivation` pins it).
-///
-/// It also settles a handshake that used to run the other way. `apply_w8_bridges`
-/// stamps a bridge over W8 `(5, 53)`, which is where slot 16 sits, and had to
-/// poke `BRIDGE_TILE` into `FortressFX_MapTileReplace` so this loop would not
-/// paint a plain path over it. Asking the grid instead answers correctly with
-/// no channel at all: a cell already showing an open tile is not a gap, so
-/// nothing is written.
-fn open_fx_gaps(grid: &mut Grid, fx_slots: &[FxSlot], world_fx: &[u8]) {
-    for &slot_idx in world_fx {
-        let slot = &fx_slots[slot_idx as usize];
-        if slot.grid_row >= grid.rows() || slot.grid_col >= grid.cols {
-            continue;
-        }
-        if let Some(path) = rom_data::path_for_gap_tile(grid.get(slot.grid_row, slot.grid_col)) {
-            grid.set(slot.grid_row, slot.grid_col, path);
-        }
+/// Open every gap the source map reports, making the grid fully connected
+/// before placement.
+fn open_gaps(grid: &mut Grid, gaps: &[(Pos, u8)]) {
+    for &((row, col), path) in gaps {
+        grid.set(row, col, path);
     }
 }
 
@@ -681,12 +672,11 @@ mod tests {
             None => return,
         };
 
-        let fx_slots = rom_data::read_fx_slots(&rom);
-        let fx_assignments = rom_data::read_world_fx_assignments(&rom);
+        let maps = crate::randomize::overworld::map_source::vanilla::read(&rom);
         let mut mismatches = 0;
         for &(wi, row, col, override_tile) in BLANK_TILE_OVERRIDES {
-            let mut grid = rom_data::read_tile_grid(&rom, wi);
-            open_fx_gaps(&mut grid, &fx_slots, &fx_assignments[wi]);
+            let mut grid = maps[wi].grid.clone();
+            open_gaps(&mut grid, &maps[wi].gaps);
 
             let heuristic_tile = blank_tile_from_neighbors(&grid, wi, row, col);
             let vanilla_tile = grid.get(row, col);
@@ -719,6 +709,24 @@ mod tests {
             BLANK_TILE_OVERRIDES.len(),
             mismatches
         );
+    }
+
+    /// The vanilla tile fixes apply to vanilla layouts only. W8 (5,8), the
+    /// battleship cell, is forced to navy water `$8D` on vanilla; a generated
+    /// layout gets the neighbour rule's answer instead. (W3 (8,6) no longer
+    /// shows the difference: since breakable rocks count as connections, the
+    /// rule gives its `$47` on its own.)
+    #[test]
+    fn blank_overrides_apply_to_vanilla_layouts_only() {
+        let Some(rom) = load_rom() else { return };
+        let mut grid = rom_data::read_tile_grid(&rom, 7);
+        assert!(grid.vanilla_layout, "a grid read from the ROM is a vanilla layout");
+        // A level tile there, as pickup sees it before blanking the cell (an
+        // existing blank is kept unchanged and never reaches the overrides).
+        grid.set(5, 8, 0x03);
+        assert_eq!(blank_tile_for(&grid, 7, 5, 8), 0x8D);
+        grid.vanilla_layout = false;
+        assert_ne!(blank_tile_for(&grid, 7, 5, 8), 0x8D);
     }
 
     #[test]

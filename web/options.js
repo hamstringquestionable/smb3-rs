@@ -118,7 +118,16 @@ export const GROUPS = [
 		// so the beta page links to the beta tracker and the root page to the
 		// root one, with no build-time knowledge of which it is.
 		link: { href: "maze-tracker.html", label: "Open the World Maze tracker →" } },
-	{ id: "map", label: "Map" },
+	// Map is the biggest section, so it reads in four runs under small
+	// headings; each row names its run with `subgroup`, and rows draw in
+	// schema order within it.
+	{ id: "map", label: "Map",
+		subgroups: [
+			{ id: "layout", label: "World Layout" },
+			{ id: "placement", label: "On the Map" },
+			{ id: "levels", label: "Levels" },
+			{ id: "conveniences", label: "Map Conveniences" },
+		] },
 	{ id: "enemies", label: "Enemies",
 		// A small key instead of a `note`: three modes read better as rows.
 		noteRows: [
@@ -365,97 +374,16 @@ export const SCHEMA = [
 		group: "rom-extras", host: "rom-extras", inFlagKey: false },
 
 	// --- Map ---
-	{ id: "shuffle_spade_games", type: "bool", default: true,
-		label: "Shuffle Spade Games",
-		tip: "Move spade (card-matching) games to random spots on the map",
-		icon: SPADE,
-		group: "map", inFlagKey: true },
-	{ id: "shuffle_toad_houses", type: "bool", default: true,
-		label: "Shuffle Toad Houses",
-		tip: "Move Toad Houses to random spots across all worlds. Items inside are still randomized.",
-		icon: TOAD_HOUSES,
-		group: "map", inFlagKey: true },
-	{ id: "infinite_mushroom_houses", type: "bool", default: false,
-		label: "Infinite Mushroom Houses",
-		tip: "Toad / Mushroom Houses don't disappear after entering — visit them any number of times.",
-		icon: TOAD_HOUSES,
-		credit: { name: "MaCobra52", url: "https://github.com/macobra52" },
-		group: "map", inFlagKey: true },
-	{ id: "fast_mushroom_house", type: "bool", default: false,
-		label: "Fast Mushroom House",
-		tip: "Skip the entry animation and shorten the exit when using a Toad / Mushroom House.",
-		icon: TOAD_HOUSES,
-		credit: { name: "MaCobra52", url: "https://github.com/macobra52" },
-		group: "map", inFlagKey: true },
-	{ id: "shuffle_airships", type: "bool", default: true,
-		label: "Shuffle Airships",
-		tip: "Shuffle airship levels across worlds 1-7",
-		icon: MAP_AIRSHIP,
-		group: "map", inFlagKey: true },
-	{ id: "shuffle_hammer_bros", type: "bool", default: true,
-		label: "Shuffle HammerBro Locations",
-		tip: "Spread the wandering Hammer Bros across all worlds (random spots, 1-3 per world) instead of their fixed vanilla locations.",
-		icon: MAP_HAMMER_BRO,
-		group: "map", inFlagKey: true },
-	{ id: "hands_levels", type: "bool", default: true,
-		label: "Hand-Trap Levels", flavor: "It's a trap!",
-		tip: "Add visible hand-trap tiles. Walking onto one always grabs you and pulls you into a level.",
-		icon: HAND_TRAP,
-		group: "map", inFlagKey: true },
-	{ id: "swap_start_airship", type: "bool", default: false,
-		label: "Swap Start / Airship", flavor: "Beat the map backwards.",
-		tip: "Each of Worlds 1-7 has a 50% chance to be played in reverse — Mario spawns where the airship usually lands.",
-		icon: START_TILE,
-		group: "map", inFlagKey: true },
-	{ id: "anchor_visuals", type: "bool", default: false,
-		label: "Oops all Anchors", flavor: "Anchors aweigh.",
-		tip: "Every item in your inventory looks like an Anchor. It still works the same — a mushroom still grows you.",
-		group: "map", inFlagKey: true },
-	{ id: "include_beta_stages", type: "bool", default: false,
-		label: "Include Beta Stages",
-		tip: "Adds 9 stages previously not included in the vanilla game.",
-		group: "map", inFlagKey: true },
-	{ id: "remove_n_cards", type: "bool", default: true,
-		label: "Remove N-Cards",
-		tip: "Remove the N-card (N-Spade) bonus games from the overworld map",
-		icon: N_CARD,
-		credit: { name: "MaCobra52", url: "https://github.com/macobra52" },
-		group: "map", inFlagKey: true },
-	{ id: "troll_pipes", type: "tri", options: ON_OFF_MAYBE, default: "on",
-		label: "Troll Pipes", flavor: "Looks like a pipe…",
-		tip: "Disguise up to one level per world (W2-W8) as a pipe. You can walk past freely, but pressing A loads the hidden level. Maybe: the seed secretly decides on or off, so you won't know until you play.",
-		icon: PIPE_TILE,
-		group: "map", inFlagKey: true },
-	{ id: "more_hammer_rocks", type: "tri", options: ON_OFF_MAYBE, default: "off",
-		label: "More hammer rocks",
-		tip: "Add hammer-breakable rocks as shortcuts: one by the W1 toad house and one in W8. Maybe: the seed secretly decides on or off, so you won't know until you play.",
-		icon: ROCK_TILE,
-		group: "map", inFlagKey: true },
-	{ id: "eights_are_wild", type: "tri", options: ON_OFF_MAYBE, default: "off",
-		label: "8s are Wild",
-		tip: "Open up World 8 with a canoe and extra paths. Maybe: the seed secretly decides on or off, so you won't know until you play.",
-		icon: W8_MILITARY,
-		group: "map", inFlagKey: true },
-	{ id: "antechamber_shuffle", type: "tri", options: ON_OFF_MAYBE, default: "off",
-		label: "Lobby Shuffle", flavor: "Wrong door…",
-		tip: "Ten levels start with a pipe that leads into the level itself. Shuffle which of those levels each entrance drops you into — you finish through whichever level you land in. Maybe: the seed secretly decides on or off, so you won't know until you play.",
-		group: "map", inFlagKey: true },
-	{ id: "piranha_shuffle", type: "tri", options: OFF_ON_WILD, default: "off",
-		label: "Piranha Shuffle",
-		tip: "Free the two W7 piranha plant levels into the level shuffle. On: their plants travel with them, guarding wherever they land. Wild: the plants scatter instead — one lands on a random level in each world, and stepping on a plant starts the level under it.",
-		icon: MAP_PIRANHA,
-		group: "map", inFlagKey: true },
-	{ id: "limit_bro_movement", type: "bool", default: false,
-		label: "Limit Bro Movement",
-		tip: "Gate Hammer Bro overworld Movements to increase race equality.",
-		icon: MAP_HAMMER_BRO,
-		credit: { name: "MaCobra52", url: "https://github.com/macobra52" },
-		group: "map", inFlagKey: true },
+	{ id: "generated_overworld", type: "bool", default: false,
+		label: "Generated Overworld", flavor: "Shapes.",
+		tip: "Draw every world's map from scratch: new paths, islands and scenery each seed, in each world's own style. Turns on Wandering Hammer Bros, Piranha Shuffle and Shuffle Spade Games, and turns off 8s are Wild and More Hammer Rocks. With Toad House shuffle off, each world keeps its own Toad Houses.",
+		icon: WORLD_TILES,
+		group: "map", subgroup: "layout", inFlagKey: true },
 	{ id: "world_order", type: "bool", default: false,
 		label: "World Order",
 		tip: "Shuffle the order you progress through Worlds 1-8",
 		icon: WORLD_TILES,
-		group: "map", inFlagKey: true,
+		group: "map", subgroup: "layout", inFlagKey: true,
 		// The maze reads this table as its airship spine, so it cannot run
 		// without it — see `pipeline::randomize_inner`.
 		forcedInMaze: true },
@@ -467,9 +395,118 @@ export const SCHEMA = [
 		label: "World Count",
 		tip: "Number of worlds before Dark Land (fewer = shorter game). 0 starts you in Dark Land — it becomes the whole game, and there is no airship before Bowser's castle.",
 		icon: WORLD_TILES,
-		group: "map", inFlagKey: true,
+		group: "map", subgroup: "layout", inFlagKey: true,
 		mode: "standard",
 		enabledWhen: { world_order: true } },
+	{ id: "swap_start_airship", type: "bool", default: false,
+		label: "Swap Start / Airship", flavor: "Beat the map backwards.",
+		tip: "Each of Worlds 1-7 has a 50% chance to be played in reverse — Mario spawns where the airship usually lands. On a Generated Overworld, Mario may start by the airship's usual spot, and the castle goes wherever the new map puts it.",
+		icon: START_TILE,
+		group: "map", subgroup: "layout", inFlagKey: true },
+	{ id: "eights_are_wild", type: "tri", options: ON_OFF_MAYBE, default: "off",
+		label: "8s are Wild",
+		tip: "Open up World 8 with a canoe and extra paths. Maybe: the seed secretly decides on or off, so you won't know until you play.",
+		icon: W8_MILITARY,
+		group: "map", subgroup: "layout", inFlagKey: true,
+		// It edits W8's first screen, which a generated W8 draws afresh.
+		forcedByGenerated: "off" },
+	{ id: "more_hammer_rocks", type: "tri", options: ON_OFF_MAYBE, default: "off",
+		label: "More Hammer Rocks",
+		tip: "Add hammer-breakable rocks as shortcuts: one by the W1 toad house and one in W8. Maybe: the seed secretly decides on or off, so you won't know until you play.",
+		icon: ROCK_TILE,
+		group: "map", subgroup: "layout", inFlagKey: true,
+		// Its rocks are cells of the vanilla W1 and W8 maps, which are not drawn.
+		forcedByGenerated: "off" },
+	{ id: "shuffle_hammer_bros", type: "bool", default: true,
+		label: "Wandering Hammer Bros",
+		tip: "Spread the wandering Hammer Bros across all worlds (random spots, 1-3 per world) instead of their fixed vanilla locations.",
+		icon: MAP_HAMMER_BRO,
+		group: "map", subgroup: "placement", inFlagKey: true,
+		// A generated map has no bro spots of its own: the builder places them.
+		forcedByGenerated: true },
+	{ id: "piranha_shuffle", type: "tri", options: OFF_ON_WILD, default: "off",
+		label: "Piranha Shuffle",
+		tip: "Free the two W7 piranha plant levels into the level shuffle. On: their plants travel with them, guarding wherever they land. Wild: the plants scatter instead — one lands on a random level in each world, and stepping on a plant starts the level under it.",
+		icon: MAP_PIRANHA,
+		group: "map", subgroup: "placement", inFlagKey: true,
+		// A generated map moves the plant levels, and only a shuffle moves
+		// their plants with them.
+		forcedByGenerated: "on" },
+	{ id: "shuffle_spade_games", type: "bool", default: true,
+		label: "Shuffle Spade Games",
+		tip: "Move spade (card-matching) games to random spots on the map",
+		icon: SPADE,
+		group: "map", subgroup: "placement", inFlagKey: true,
+		// A generated map deals the spades to random spots either way.
+		forcedByGenerated: true },
+	{ id: "shuffle_toad_houses", type: "bool", default: true,
+		label: "Shuffle Toad Houses",
+		tip: "Move Toad Houses to random spots across all worlds. Items inside are still randomized.",
+		icon: TOAD_HOUSES,
+		group: "map", subgroup: "placement", inFlagKey: true },
+	{ id: "shuffle_airships", type: "bool", default: true,
+		label: "Shuffle Airships",
+		tip: "Shuffle airship levels across worlds 1-7",
+		icon: MAP_AIRSHIP,
+		group: "map", subgroup: "placement", inFlagKey: true },
+	{ id: "troll_pipes", type: "tri", options: ON_OFF_MAYBE, default: "on",
+		label: "Troll Pipes", flavor: "Looks like a pipe…",
+		tip: "Disguise up to one level per world (W2-W8) as a pipe. You can walk past freely, but pressing A loads the hidden level. Maybe: the seed secretly decides on or off, so you won't know until you play.",
+		icon: PIPE_TILE,
+		group: "map", subgroup: "placement", inFlagKey: true },
+	{ id: "hands_levels", type: "bool", default: true,
+		label: "Hand-Trap Levels", flavor: "It's a trap!",
+		tip: "Add visible hand-trap tiles. Walking onto one always grabs you and pulls you into a level.",
+		icon: HAND_TRAP,
+		group: "map", subgroup: "placement", inFlagKey: true },
+	{ id: "include_beta_stages", type: "bool", default: false,
+		label: "Include Beta Stages",
+		tip: "Adds 9 stages previously not included in the vanilla game.",
+		group: "map", subgroup: "levels", inFlagKey: true },
+	{ id: "friendlier_levels", type: "bool", default: false,
+		label: "Friendlier Levels",
+		tip: "Keeps the roughest levels out of the shuffle — 2-3, 5-3, 6-6, 7-5, 7-8 and 8-1. Their slots go to beta stages if you have those on, otherwise to a second visit to a level already in the seed. Two fortresses go the same way, 7F2 and 8F1: they are not on the map at all, and their tiles go to a second visit to another fortress in the seed, which you may or may not have beaten yet.",
+		group: "map", subgroup: "levels", inFlagKey: true },
+	{ id: "deja_vu", type: "tri", options: OFF_DOUBLE_WILD, default: "off",
+		label: "Deja Vu", flavor: "Haven't we been here?",
+		tip: "Let the same level show up on more than one tile. Double: every level gets a second copy in the deck, so some show up twice and others sit the seed out. Wild: no limit — a level can turn up over and over, or never. Levels that hand you an item still appear exactly once.",
+		icon: BOOMERANGS,
+		credit: { name: "MaCobra52", url: "https://github.com/macobra52" },
+		group: "map", subgroup: "levels", inFlagKey: true },
+	{ id: "deja_vu_forts", type: "bool", default: false, pillOf: "deja_vu",
+		label: "Forts",
+		summaryLabel: "Deja Vu (forts)",
+		tip: "Deja Vu counts fortresses too, in whichever mode you picked — a fortress can turn up on two tiles, or not at all. 1F always turns up exactly once: it is holding the warp whistle.",
+		group: "map", subgroup: "levels", inFlagKey: true,
+		enabledWhen: { deja_vu: ["double", "wild"] } },
+	{ id: "antechamber_shuffle", type: "tri", options: ON_OFF_MAYBE, default: "off",
+		label: "Lobby Shuffle", flavor: "Wrong door…",
+		tip: "Ten levels start with a pipe that leads into the level itself. Shuffle which of those levels each entrance drops you into — you finish through whichever level you land in. Maybe: the seed secretly decides on or off, so you won't know until you play.",
+		group: "map", subgroup: "levels", inFlagKey: true },
+	{ id: "remove_n_cards", type: "bool", default: true,
+		label: "Remove N-Cards",
+		tip: "Remove the N-card (N-Spade) bonus games from the overworld map",
+		icon: N_CARD,
+		credit: { name: "MaCobra52", url: "https://github.com/macobra52" },
+		group: "map", subgroup: "conveniences", inFlagKey: true },
+	{ id: "infinite_mushroom_houses", type: "bool", default: false,
+		label: "Infinite Mushroom Houses",
+		tip: "Toad / Mushroom Houses don't disappear after entering — visit them any number of times.",
+		icon: TOAD_HOUSES,
+		credit: { name: "MaCobra52", url: "https://github.com/macobra52" },
+		group: "map", subgroup: "conveniences", inFlagKey: true },
+	{ id: "fast_mushroom_house", type: "bool", default: false,
+		label: "Fast Mushroom House",
+		tip: "Skip the entry animation and shorten the exit when using a Toad / Mushroom House.",
+		icon: TOAD_HOUSES,
+		credit: { name: "MaCobra52", url: "https://github.com/macobra52" },
+		group: "map", subgroup: "conveniences", inFlagKey: true },
+	{ id: "limit_bro_movement", type: "bool", default: false,
+		label: "Limit Bro Movement",
+		tip: "Gate Hammer Bro overworld Movements to increase race equality.",
+		icon: MAP_HAMMER_BRO,
+		credit: { name: "MaCobra52", url: "https://github.com/macobra52" },
+		group: "map", subgroup: "conveniences", inFlagKey: true },
 
 	// --- World Maze ---
 	// The mode switch first; everything under it is inert without it, which is
@@ -563,22 +600,6 @@ export const SCHEMA = [
 		tip: "Every enemy in the map's Hammer Bro battles. Most battle rooms keep you in until they're clear, so Wild only uses enemies you can always beat.",
 		icon: MAP_HAMMER_BRO,
 		group: "enemies_protected", inFlagKey: true },
-	{ id: "friendlier_levels", type: "bool", default: false,
-		label: "Friendlier Levels",
-		tip: "Keeps the roughest levels out of the shuffle — 2-3, 5-3, 6-6, 7-5, 7-8 and 8-1. Their slots go to beta stages if you have those on, otherwise to a second visit to a level already in the seed. Two fortresses go the same way, 7F2 and 8F1: they are not on the map at all, and their tiles go to a second visit to another fortress in the seed, which you may or may not have beaten yet.",
-		group: "map", inFlagKey: true },
-	{ id: "deja_vu", type: "tri", options: OFF_DOUBLE_WILD, default: "off",
-		label: "Deja Vu", flavor: "Haven't we been here?",
-		tip: "Let the same level show up on more than one tile. Double: every level gets a second copy in the deck, so some show up twice and others sit the seed out. Wild: no limit — a level can turn up over and over, or never. Levels that hand you an item still appear exactly once.",
-		icon: BOOMERANGS,
-		credit: { name: "MaCobra52", url: "https://github.com/macobra52" },
-		group: "map", inFlagKey: true },
-	{ id: "deja_vu_forts", type: "bool", default: false, pillOf: "deja_vu",
-		label: "Forts",
-		summaryLabel: "Deja Vu (forts)",
-		tip: "Deja Vu counts fortresses too, in whichever mode you picked — a fortress can turn up on two tiles, or not at all. 1F always turns up exactly once: it is holding the warp whistle.",
-		group: "map", inFlagKey: true,
-		enabledWhen: { deja_vu: ["double", "wild"] } },
 	{ id: "limit_hazards", type: "tri", options: OFF_SOME_ALL, default: "off",
 		label: "Limit Hazards",
 		tip: "Stops swaps from dropping nippers, Ptooies, thwomps, Hot Foots or Bros into levels that weren't built for them. Some allows the occasional one, All allows none. Hazards that were always there stay put.",
@@ -687,6 +708,10 @@ export const SCHEMA = [
 		tip: "Hammer item builds bridges across water gaps on the overworld map. Maybe: the seed secretly decides on or off, so you won't know until you play.",
 		icon: HAMMER,
 		group: "items", inFlagKey: true },
+	{ id: "anchor_visuals", type: "bool", default: false,
+		label: "Oops all Anchors", flavor: "Anchors aweigh.",
+		tip: "Every item in your inventory looks like an Anchor. It still works the same — a mushroom still grows you.",
+		group: "items", inFlagKey: true },
 
 	// --- Player ---
 	{ id: "starting_lives", type: "tri", numeric: true,
@@ -778,6 +803,7 @@ export const SCHEMA = [
 const CONSTANT_FIELDS = {
 	disable_autoscroll: true,
 	card_speed_clear: true,
+	generated_worlds: 0,
 };
 
 // --- Presets ---
@@ -1202,6 +1228,8 @@ export function assertPresetParity() {
 //                              value the ROM will use, greyed and badged, and
 //                              the player's own setting comes back when they
 //                              leave the mode.
+//   forcedByGenerated: <value> The same, for Generated Overworld: one of the
+//                              `FORCING_SWITCHES` below, which the maze is too.
 //
 // Every mode-specific option stays in the section it belongs to and keeps its
 // own row. Hiding one, or swapping two onto a shared row, was tried and dropped:
@@ -1229,15 +1257,40 @@ function isInert(entry, mode) {
 	return !!entry.mode && entry.mode !== mode;
 }
 
+// Options that, while on, pin others to a value: each names the schema key an
+// entry uses to say what it is pinned to. The first one on wins.
+const FORCING_SWITCHES = [
+	{ id: MODE_SWITCH, key: "forcedInMaze", label: "World Maze" },
+	{ id: "generated_overworld", key: "forcedByGenerated", label: "Generated Overworld" },
+];
+
+// Whether any switch can pin this entry.
+function isForceable(entry) {
+	return FORCING_SWITCHES.some(sw => entry[sw.key] !== undefined);
+}
+
+// The switch pinning this entry right now, and the value: `null` if none is.
+function activeForce(entry) {
+	for (const sw of FORCING_SWITCHES) {
+		if (entry[sw.key] === undefined) continue;
+		const host = SCHEMA.find(s => s.id === sw.id);
+		if (host && readValue(host)) return { value: entry[sw.key], label: sw.label };
+	}
+	return null;
+}
+
 function modeBadgeText(entry) {
-	if (entry.forcedInMaze !== undefined) {
-		return `Forced ${entry.forcedInMaze ? "on" : "off"} by World Maze`;
+	const force = activeForce(entry);
+	if (force) {
+		const v = force.value;
+		const shown = v === true ? "on" : v === false ? "off" : String(v);
+		return `Forced ${shown} by ${force.label}`;
 	}
 	return entry.mode === "maze" ? "Maze only" : "Standard only";
 }
 
-// What the player had before the maze pinned a forced option, so turning the
-// mode off gives it back. Kept out of the settings blob: `saveSettings` stores
+// What the player had before a switch pinned a forced option, so turning the
+// switch off gives it back. Kept out of the settings blob: `saveSettings` stores
 // what the inputs currently show, which while the maze is on is the forced
 // value — restoring a page in maze mode would otherwise eat the memo.
 const FORCED_MEMO_KEY = "smb3r-forced-memo";
@@ -1270,17 +1323,17 @@ function clearForcedMemo() {
 // Values first, before anything reads them: the maze pins World Order on, and
 // World Count's `enabledWhen` rides on that.
 function applyForcedValues() {
-	const forced = currentMode() === "maze";
 	const memo = loadForcedMemo();
 	let dirty = false;
 	for (const entry of SCHEMA) {
-		if (entry.forcedInMaze === undefined) continue;
-		if (forced) {
+		if (!isForceable(entry)) continue;
+		const force = activeForce(entry);
+		if (force) {
 			if (!(entry.id in memo)) {
 				memo[entry.id] = readValue(entry);
 				dirty = true;
 			}
-			writeValue(entry, entry.forcedInMaze);
+			writeValue(entry, force.value);
 		} else if (entry.id in memo) {
 			writeValue(entry, memo[entry.id]);
 			delete memo[entry.id];
@@ -1302,8 +1355,8 @@ function setBadge(entry, text) {
 export function applyModeStates() {
 	const mode = currentMode();
 	for (const entry of SCHEMA) {
-		if (entry.forcedInMaze !== undefined) {
-			const forced = mode === "maze";
+		if (isForceable(entry)) {
+			const forced = activeForce(entry) !== null;
 			applyEntryEnabled(entry, !forced);
 			setBadge(entry, forced ? modeBadgeText(entry) : null);
 			continue;
@@ -1703,7 +1756,7 @@ const RENDERERS = {
 // rather than only in a note at the top of a section. It renders empty and
 // hidden; `applyModeStates` fills it in for whichever mode the form is in.
 function modeBadge(entry) {
-	if (entry.forcedInMaze === undefined && !entry.mode) return null;
+	if (!isForceable(entry) && !entry.mode) return null;
 	return el("span", { class: "opt-badge", id: `badge-${entry.id}`, hidden: true });
 }
 
@@ -1745,8 +1798,14 @@ export function renderOptions(rootEl, hosts = {}) {
 				el("a", { href: group.link.href }, group.link.label)));
 		}
 		const entries = SCHEMA.filter(s => s.group === group.id && !s.host && !s.pillOf);
-		for (const entry of entries) {
-			fieldset.appendChild(renderEntry(entry));
+		const runs = group.subgroups
+			? group.subgroups.map(sub => [sub.label, entries.filter(e => e.subgroup === sub.id)])
+			: [[null, entries]];
+		for (const [label, run] of runs) {
+			if (label) fieldset.appendChild(el("h3", { class: "subgroup-label" }, label));
+			for (const entry of run) {
+				fieldset.appendChild(renderEntry(entry));
+			}
 		}
 		rootEl.appendChild(fieldset);
 	}

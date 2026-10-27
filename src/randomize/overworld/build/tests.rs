@@ -47,15 +47,14 @@ fn apply_qol_for_overworld(rom: &Rom) -> Rom {
 fn apply_qol_variant(rom: &Rom, hammer_rocks: bool, eights_wild: bool) -> Rom {
     let mut out = rom.clone();
     crate::randomize::qol::fix_w3_drawbridges(&mut out);
-    crate::randomize::qol::remove_rocks(&mut out);
-    if hammer_rocks {
-        crate::randomize::qol::make_hammer_rocks(&mut out);
-    }
-    crate::randomize::qol::apply_w1_shortcut(&mut out, hammer_rocks);
-    crate::randomize::qol::apply_w8_bridges(&mut out);
     if eights_wild {
-        crate::randomize::qol::apply_w8_canoe_and_paths(&mut out);
+        crate::randomize::qol::place_w8_canoe(&mut out);
     }
+    crate::randomize::overworld::map_source::vanilla::stamp_fixes(
+        &mut out,
+        hammer_rocks,
+        eights_wild,
+    );
     crate::randomize::qol::fix_big_q_block_rooms(&mut out);
     out
 }
@@ -146,6 +145,34 @@ fn census_build(rom: &Rom, seed: u64) -> BuildResult {
     let rom = apply_qol_variant(rom, arm == CensusArm::HammerRocks, arm == CensusArm::EightsWild);
     let mut rng = ChaCha8Rng::seed_from_u64(seed);
     let mut catalog = NodeCatalog::build(&rom, false);
+    // CENSUS_GENERATE=<mask>: the worlds in the bit mask are generated maps
+    // (the `generated_worlds` option; 1 = World 1 alone, 255 = all eight),
+    // drawn from their own RNG, lowest world first, so every other draw of
+    // the seed is unchanged and `1` draws the maps it always has.
+    if let Some(mask) = std::env::var("CENSUS_GENERATE").ok().map(|v| {
+        v.parse::<u8>().unwrap_or_else(|_| panic!("CENSUS_GENERATE={v}: want a world mask, 1-255"))
+    }) {
+        use crate::randomize::overworld::map_source::generated;
+        let mut maps = catalog.maps.clone();
+        let mut gen_rng = ChaCha8Rng::seed_from_u64(seed ^ 0x6E6E_5741);
+        let mut changed = false;
+        // Dealt node offsets, and the redraw at vanilla's count, as the stage.
+        let offsets = generated::deal_node_offsets(&maps, mask, &mut gen_rng);
+        for wi in (0..8).filter(|wi| mask & (1 << wi) != 0) {
+            let draw = |offset: i32, rng: &mut ChaCha8Rng| {
+                generated::world_map(&maps[wi], wi, true, offset, rng)
+            };
+            let drawn = draw(offsets[wi], &mut gen_rng)
+                .or_else(|| (offsets[wi] != 0).then(|| draw(0, &mut gen_rng)).flatten());
+            if let Some(map) = drawn {
+                maps[wi] = map;
+                changed = true;
+            }
+        }
+        if changed {
+            catalog = NodeCatalog::from_maps(&rom, maps, false);
+        }
+    }
     let mut swap_rng = ChaCha8Rng::seed_from_u64(seed);
     crate::randomize::overworld::start_airship_swap::pick_swaps(&mut catalog, &mut swap_rng);
     let pickup = overworld::pickup::pick_up(
@@ -460,8 +487,7 @@ fn report_distribution_by_exponent() {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
             let fort_counts = redistribute_fortresses(&mut rng);
             let caps =
-                prepare_capacities(&rom, &catalog, &pickup, &fort_counts, false, true, false)
-                    .capacities;
+                prepare_capacities(&catalog, &pickup, &fort_counts, false, true, false).capacities;
 
             // Detect clamp events (a world's fair share exceeds its capacity).
             let weights: [f64; 8] =

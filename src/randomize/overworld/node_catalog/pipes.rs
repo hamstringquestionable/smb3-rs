@@ -5,7 +5,7 @@ use std::collections::HashMap;
 
 use crate::rom::Rom;
 
-use crate::randomize::rom_data::{self, WORLDS};
+use crate::randomize::rom_data;
 
 // ---------------------------------------------------------------------------
 // Pipe pair matching
@@ -24,7 +24,7 @@ pub(super) fn build_pipe_map(
     spiral_entries: &[usize],
     dest_indices: &[usize],
 ) -> HashMap<usize, (usize, bool)> {
-    let world = &WORLDS[world_idx];
+    let world = &rom_data::world_tables(rom, world_idx);
     let mut result: HashMap<usize, (usize, bool)> = HashMap::new();
 
     // Collect all pipe pairs: (entry_a, entry_b)
@@ -47,7 +47,9 @@ pub(super) fn build_pipe_map(
         pairs.push((sorted[0], sorted[1]));
     }
 
-    // Match pairs to dest indices by comparing grid positions
+    // Match pairs to dest indices by comparing grid positions. These are the
+    // ROM's positions, not the source map's: which entries form a pipe pair
+    // is a fact about the levels, and a generated map moves the pipes.
     for &(ea, eb) in &pairs {
         let ea_pos = rom_data::entry_grid_position(rom, world, ea);
         let eb_pos = rom_data::entry_grid_position(rom, world, eb);

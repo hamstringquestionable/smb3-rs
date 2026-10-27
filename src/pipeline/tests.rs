@@ -1203,6 +1203,8 @@ fn all_off_options() -> Options {
         wild_injections: Vec::new(),
         starting_items: vec![],
         skip_rom_validation: false,
+        generated_overworld: false,
+        generated_worlds: 0,
         anchor_visuals: false,
     }
 }
@@ -1285,6 +1287,8 @@ fn all_on_options() -> Options {
         wild_injections: WildChaser::ALL.to_vec(),
         starting_items: vec![0x05, 0x09, 0x03],
         skip_rom_validation: false,
+        generated_overworld: false,
+        generated_worlds: 0,
         anchor_visuals: true,
     }
 }
@@ -1495,14 +1499,16 @@ fn maybe_resolves_both_ways_across_seeds() {
     let on = Options { more_hammer_rocks: Tri::On, ..test_options() };
     let maybe = Options { more_hammer_rocks: Tri::Maybe, ..test_options() };
 
-    // Capture the byte ranges make_hammer_rocks touches from a known-On run.
+    // Capture the hammer-rock cells' bytes from a known-On run.
     let on_touched: Vec<(usize, Vec<u8>)> = {
         let mut rom = make_test_rom().unwrap();
         randomize(&mut rom, 0, &on);
-        rom.write_log()
+        crate::randomize::overworld::map_source::vanilla::HAMMER_ROCKS
             .iter()
-            .filter(|r| r.tag == "qol/more_hammer_rocks")
-            .map(|r| (r.offset, rom.read_range(r.offset, r.len).to_vec()))
+            .map(|&(world, (row, col), _)| {
+                let off = crate::randomize::rom_data::map_tile_offset(world, row, col);
+                (off, rom.read_range(off, 1).to_vec())
+            })
             .collect()
     };
     assert!(!on_touched.is_empty(), "expected more_hammer_rocks to write bytes when On");
@@ -2088,7 +2094,7 @@ fn every_maze_lock_has_exactly_one_key() {
 #[test]
 fn one_f_lands_on_a_lock_that_can_stay_shut() {
     use crate::randomize::overworld::lock_keys;
-    use crate::randomize::rom_data::{self, FORTRESS_1F_OBJ_PTR, WORLDS};
+    use crate::randomize::rom_data::{self, FORTRESS_1F_OBJ_PTR};
 
     let Some(raw) = make_test_rom() else {
         eprintln!("SKIP: requires the ROM, which is not included in the repo");
@@ -2103,7 +2109,8 @@ fn one_f_lands_on_a_lock_that_can_stay_shut() {
 
         // Where did the 1-F fortress level end up?
         let mut at: Option<(usize, (usize, usize))> = None;
-        for (wi, w) in WORLDS.iter().enumerate() {
+        for wi in 0..8 {
+            let w = &rom_data::world_tables(&rom, wi);
             for idx in 0..w.entry_count {
                 let e = rom_data::read_entry(&rom, w, idx);
                 if u16::from_le_bytes([e.obj_lo, e.obj_hi]) == FORTRESS_1F_OBJ_PTR {
@@ -2185,7 +2192,7 @@ fn one_f_lands_on_a_lock_that_can_stay_shut() {
 #[test]
 fn one_f_lands_on_a_lock_that_can_stay_shut_in_the_maze() {
     use crate::randomize::overworld::build::{FortRef, LockAssignment, SlotKind};
-    use crate::randomize::rom_data::{self, FORTRESS_1F_OBJ_PTR, WORLDS};
+    use crate::randomize::rom_data::{self, FORTRESS_1F_OBJ_PTR};
 
     let Some(raw) = make_test_rom() else {
         eprintln!("SKIP: requires the ROM, which is not included in the repo");
@@ -2206,7 +2213,8 @@ fn one_f_lands_on_a_lock_that_can_stay_shut_in_the_maze() {
 
             // Where did the 1-F fortress level end up?
             let mut at: Option<(usize, (usize, usize))> = None;
-            for (wi, w) in WORLDS.iter().enumerate() {
+            for wi in 0..8 {
+                let w = &rom_data::world_tables(&rom, wi);
                 for idx in 0..w.entry_count {
                     let e = rom_data::read_entry(&rom, w, idx);
                     if u16::from_le_bytes([e.obj_lo, e.obj_hi]) == FORTRESS_1F_OBJ_PTR {

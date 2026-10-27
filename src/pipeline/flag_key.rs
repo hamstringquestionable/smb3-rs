@@ -285,6 +285,7 @@ pub(super) const NOT_ENCODED: &[&str] = &[
     "king_quotes",         // cosmetic flavor text; draws its RNG either way
     "fireball_hearts",     // cosmetic; static patch, no RNG
     "skip_rom_validation", // operational (CLI/WASM input handling), not randomization
+    "generated_worlds",    // testrom's per-world switch; keys carry `generated_overworld`
 ];
 
 /// The `Options` field names this build encodes into the flag key.
@@ -478,9 +479,11 @@ mod payload {
         pub(super) mariomon: bool,
         /// Water enemies stompable on dry land. Appended and false by default.
         pub(super) water_stomp: bool,
+        /// Generated Overworld. Appended and false by default.
+        pub(super) generated_overworld: bool,
 
         // --- Reserve ---
-        // 129 bits. Adding an option is: declare it immediately above this
+        // 128 bits. Adding an option is: declare it immediately above this
         // block, then take the same number of bits off `B19`. An older key
         // simply has those bits zero, which is "off" for a bool and the default
         // for every enum here, so it stays a correct key for the settings it
@@ -494,8 +497,6 @@ mod payload {
         // Two fields because the crate's widths stop at B128.
         #[skip]
         __: B128,
-        #[skip]
-        __: B1,
     }
 }
 
@@ -545,11 +546,12 @@ impl Options {
             bro_battle_timer, deja_vu, deja_vu_forts,
             fire_flower, piranha_shuffle, wild_injections,
             starting_lives, world_count, world_maze, maze_wands, hints, item_gates,
-            mariomon, water_stomp,
+            mariomon, water_stomp, generated_overworld,
             starting_items,
             // Not encoded — see NOT_ENCODED for the reason on each.
             palettes: _, palette_themed: _, player_color: _,
             remove_flashing: _, king_quotes: _, fireball_hearts: _, skip_rom_validation: _,
+            generated_worlds: _,
         } = self;
 
         let item = |i: usize| starting_items.get(i).copied().unwrap_or(0);
@@ -635,6 +637,7 @@ impl Options {
             .with_item_gates(*item_gates)
             .with_mariomon(*mariomon)
             .with_water_stomp(*water_stomp)
+            .with_generated_overworld(*generated_overworld)
             .with_starting_item_0(sanitize_item(item(0)))
             .with_starting_item_1(sanitize_item(item(1)))
             .with_starting_item_2(sanitize_item(item(2)))
@@ -699,6 +702,7 @@ impl Options {
             no_game_over_penalty: f.no_game_over_penalty(),
             mariomon: f.mariomon(),
             water_stomp: f.water_stomp(),
+            generated_overworld: f.generated_overworld(),
             poison_mushrooms: f.poison_mushrooms(),
             modern_powerups: f.modern_powerups(),
             anchor_visuals: f.anchor_visuals(),
@@ -754,6 +758,7 @@ impl Options {
             king_quotes: true,
             fireball_hearts: false,
             skip_rom_validation: false,
+            generated_worlds: 0,
         }
     }
 

@@ -9,6 +9,7 @@
 
 use crate::rom::Rom;
 
+use crate::randomize::overworld::map_source::{self, WorldMap};
 use crate::randomize::rom_data::{self, BETA_LEVELS, HB_EXCLUDE_OBJ_PTRS, LevelEntry, Pos};
 
 mod classify;
@@ -102,9 +103,9 @@ pub(crate) struct CatalogEntry {
     pub(crate) kind: NodeKind,
     /// Human-readable name (e.g., "1-1", "3F2", "7-P1", "8B").
     pub(crate) name: String,
-    /// Vanilla grid position (row, col).
+    /// Grid position (row, col) on the source map.
     pub(crate) grid_pos: (usize, usize),
-    /// Vanilla map tile at this position.
+    /// The source map's tile at this position.
     pub(crate) tile: u8,
     /// Level entry data (tileset, obj/lay ptrs). None for Start.
     pub(crate) level_entry: Option<LevelEntry>,
@@ -142,23 +143,31 @@ pub(crate) struct NodeCatalog {
     /// objective lives at the start coords). Index 7 (W8) is always false —
     /// Bowser's castle has no slot-1 airship sprite to move.
     pub(crate) start_airship_swapped: [bool; 8],
+    /// The eight maps this catalog was read from, indexed by world.
+    pub(crate) maps: Vec<WorldMap>,
 }
 
 impl NodeCatalog {
-    /// Build the catalog by reading and classifying every entry from the ROM.
+    /// Build the catalog of the vanilla maps exactly as the ROM has them,
+    /// without the randomizer's map edits.
+    pub(crate) fn build(rom: &Rom, include_beta_stages: bool) -> Self {
+        Self::from_maps(rom, map_source::vanilla::read(rom), include_beta_stages)
+    }
+
+    /// Build the catalog by classifying every entry: what it is from the ROM,
+    /// where it sits from `maps`.
     ///
     /// When `include_beta_stages` is true, synthetic entries for the 9
     /// unreferenced beta levels are appended after the 340 vanilla entries.
     /// They use `world_idx = usize::MAX` and `entry_idx = usize::MAX` as
     /// sentinels (no vanilla pointer table home).
-    pub(crate) fn build(rom: &Rom, include_beta_stages: bool) -> Self {
+    pub(crate) fn from_maps(rom: &Rom, maps: Vec<WorldMap>, include_beta_stages: bool) -> Self {
         let mut entries =
             Vec::with_capacity(340 + if include_beta_stages { BETA_LEVELS.len() } else { 0 });
 
         // First pass: classify all entries (names assigned in second pass)
-        for wi in 0..8 {
-            let grid = rom_data::read_tile_grid(rom, wi);
-            let world_entries = classify_world(rom, wi, &grid);
+        for (wi, map) in maps.iter().enumerate() {
+            let world_entries = classify_world(rom, wi, map);
 
             for (entry_idx, kind, grid_pos, tile, level_entry) in world_entries {
                 entries.push(CatalogEntry {
@@ -197,7 +206,7 @@ impl NodeCatalog {
         // Second pass: assign names (beta entries already have names set)
         assign_names(&mut entries);
 
-        NodeCatalog { entries, start_airship_swapped: [false; 8] }
+        NodeCatalog { entries, start_airship_swapped: [false; 8], maps }
     }
 
     /// Reclassify map-object-linked entries (the W7 piranha plant levels) as

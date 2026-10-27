@@ -18,6 +18,71 @@ fn write_entry_pos(
     rom.write_byte(sc + entry_idx, (screen << 4) | col_in_screen);
 }
 
+/// One world's pointer-table rows, once [`lay_out_rows`] has laid them out.
+pub(super) struct Rows {
+    /// The row of each entry pickup left in place, by its vanilla `entry_idx`.
+    kept: HashMap<usize, usize>,
+    /// The rows for [`write_pointer_entries`] to fill, in fill order.
+    free: Vec<usize>,
+}
+
+/// Lay the pointer tables out with each world's kept entries first and then
+/// the rows its map asks for (`ClearedWorld::free_rows`), and say where they
+/// sit. Where a row starts does not matter: `resort_pointer_table` puts every
+/// world back in screen/row order afterwards.
+pub(super) fn lay_out_rows(rom: &mut Rom, data: &OverworldData) -> Vec<Rows> {
+    let picked: HashSet<usize> = data.pickup.pool.iter().map(|pe| pe.catalog_idx).collect();
+    let kept: Vec<Vec<usize>> = (0..8)
+        .map(|wi| {
+            let entries = data.catalog.entries.iter().enumerate();
+            entries
+                .filter(|(ci, e)| e.world_idx == wi && !picked.contains(ci))
+                .map(|(_, e)| e.entry_idx)
+                .collect()
+        })
+        .collect();
+    let counts: [usize; 8] =
+        std::array::from_fn(|wi| kept[wi].len() + data.pickup.worlds[wi].free_rows);
+
+    pipe_helpers::relayout_pointer_tables(rom, &kept, &counts);
+    (0..8)
+        .map(|wi| Rows {
+            kept: kept[wi].iter().enumerate().map(|(row, &i)| (i, row)).collect(),
+            free: (kept[wi].len()..counts[wi]).collect(),
+        })
+        .collect()
+}
+
+/// Write the position of every entry pickup left in place whose position on
+/// the map differs from the ROM's: the start and airship of a world Start ↔
+/// Airship swap flipped, and anything a generated map moved. Entries pickup
+/// took are written by [`write_pointer_entries`] instead, so they are skipped.
+///
+/// Must run BEFORE `pipe_helpers::resort_pointer_table` for the same world, so
+/// the resort puts the rewritten entries in their screen/row order.
+pub(super) fn write_kept_entry_positions(
+    rom: &mut Rom,
+    world_idx: usize,
+    data: &OverworldData,
+    rows: &Rows,
+) {
+    let world = &rom_data::world_tables(rom, world_idx);
+    let rt = world.rowtype_offset;
+    let sc = rt + world.entry_count;
+    for entry in &data.catalog.entries {
+        let Some(&row) = rows.kept.get(&entry.entry_idx).filter(|_| entry.world_idx == world_idx)
+        else {
+            continue;
+        };
+        if rom_data::entry_grid_position(rom, world, row) == entry.grid_pos {
+            continue;
+        }
+        // Keep the low nibble of the rowtype byte: it is the tileset.
+        let tileset = rom.read_byte(rt + row);
+        write_entry_pos(rom, rt, sc, row, entry.grid_pos, tileset);
+    }
+}
+
 pub(super) fn write_pointer_entries(
     rom: &mut Rom,
     world_idx: usize,
@@ -25,18 +90,17 @@ pub(super) fn write_pointer_entries(
     wa: &WorldAssignments,
     data: &OverworldData,
     hb_level_iter: &mut impl Iterator<Item = rom_data::LevelEntry>,
+    rows: &Rows,
 ) {
     let pickup = data.pickup;
     let catalog = data.catalog;
-    let world = &WORLDS[world_idx];
+    let world = &rom_data::world_tables(rom, world_idx);
     let n = world.entry_count;
     let rt = world.rowtype_offset;
     let sc = rt + n;
 
-    // Reusable entry_idx values: pointer table slots vacated during Phase 2 pickup.
-    let cw = &pickup.worlds[world_idx];
-    let available_slots: Vec<usize> =
-        cw.pool_indices.iter().map(|&pi| pickup.pool[pi].entry_idx).collect();
+    // The rows to fill: the ones pickup vacated, or the free rows of a new layout.
+    let available_slots = &rows.free;
 
     // Collect all assignments as (pool_idx, pos) for level-like entries.
     let mut all: Vec<(usize, (usize, usize))> = Vec::new();
@@ -57,10 +121,12 @@ pub(super) fn write_pointer_entries(
     for a in &wa.toad {
         all.push((a.pool_idx, a.pos));
     }
-    // Airship and bowser are not picked up — their pointer table entries
-    // stay vanilla so the autoscroll patch's hardcoded offsets remain valid.
+    // Airship and Bowser are never picked up: they are kept entries, which
+    // `write_kept_entry_positions` moves.
 
-    debug_assert!(
+    // A hard assert, not a debug one: an entry dropped here leaves a stamped
+    // tile with no pointer behind it, which crashes the game (see below).
+    assert!(
         all.len() + wa.hammer_bro.len() <= available_slots.len(),
         "W{}: slot overflow: need {} but only {} available",
         world_idx + 1,
@@ -72,9 +138,6 @@ pub(super) fn write_pointer_entries(
 
     // Write level-like entries (fortress, level, pipe).
     for &(pool_idx, pos) in &all {
-        if slot_i >= available_slots.len() {
-            break;
-        }
         let entry_idx = available_slots[slot_i];
         slot_i += 1;
 
@@ -89,9 +152,6 @@ pub(super) fn write_pointer_entries(
 
     // Write hammer bro entries (carry their own LevelEntry).
     for hb in &wa.hammer_bro {
-        if slot_i >= available_slots.len() {
-            break;
-        }
         let entry_idx = available_slots[slot_i];
         slot_i += 1;
 

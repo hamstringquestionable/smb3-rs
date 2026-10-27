@@ -85,7 +85,6 @@ fn pool_entry_for_pin(pool: &[usize], data: &OverworldData, pin: (usize, usize))
 }
 
 pub(super) fn assign_pool<R: Rng>(
-    rom: &Rom,
     build: &BuildResult,
     data: &OverworldData,
     rng: &mut R,
@@ -635,7 +634,7 @@ pub(super) fn assign_pool<R: Rng>(
         // valid pointer entries) use the normal cycling pool.
         let level_like_count =
             fortress.len() + level.len() + pipes.len() * 2 + bonus.len() + toad.len();
-        let remaining_slots = pickup.worlds[wi].pool_indices.len().saturating_sub(level_like_count);
+        let remaining_slots = pickup.worlds[wi].free_rows.saturating_sub(level_like_count);
 
         // When Hammer Bros are redistributed, the sprite positions are the new
         // ones decided in the build phase; otherwise they're the vanilla ROM
@@ -643,7 +642,7 @@ pub(super) fn assign_pool<R: Rng>(
         let sprite_positions: HashSet<(usize, usize)> = if shuffle_hammer_bros {
             built.hb_sprites.iter().map(|s| s.grid_pos).collect()
         } else {
-            rom_data::read_hb_sprite_positions(rom, wi).into_iter().collect()
+            catalog.maps[wi].hb_sprites.iter().copied().collect()
         };
 
         let mut sprite_slots = Vec::new();

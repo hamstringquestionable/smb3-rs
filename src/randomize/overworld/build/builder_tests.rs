@@ -29,15 +29,14 @@ fn base_qol(rom: &Rom) -> Rom {
 fn qol_variant(rom: &Rom, hammer_rocks: bool, eights_wild: bool) -> Rom {
     let mut out = rom.clone();
     qol::fix_w3_drawbridges(&mut out);
-    qol::remove_rocks(&mut out);
-    if hammer_rocks {
-        qol::make_hammer_rocks(&mut out);
-    }
-    qol::apply_w1_shortcut(&mut out, hammer_rocks);
-    qol::apply_w8_bridges(&mut out);
     if eights_wild {
-        qol::apply_w8_canoe_and_paths(&mut out);
+        qol::place_w8_canoe(&mut out);
     }
+    crate::randomize::overworld::map_source::vanilla::stamp_fixes(
+        &mut out,
+        hammer_rocks,
+        eights_wild,
+    );
     qol::fix_big_q_block_rooms(&mut out);
     out
 }
@@ -93,14 +92,14 @@ fn census_ctx(raw: &Rom, seed: u64) -> CensusCtx {
         ..Default::default()
     };
     let (level_counts, fort_counts, c1_floors) =
-        allot_budgets(&rom, &catalog, &pickup, &flags, &mut roll_rng);
+        allot_budgets(&catalog, &pickup, &flags, &mut roll_rng);
     let bridges_out = roll_bridges_out(&mut roll_rng);
     CensusCtx { rom, catalog, pickup, flags, level_counts, fort_counts, c1_floors, bridges_out }
 }
 
 impl CensusCtx {
     fn world(&self, world_idx: usize) -> WorldState {
-        let mut state = from_pickup(&self.rom, &self.catalog, &self.pickup, world_idx, &self.flags);
+        let mut state = from_pickup(&self.catalog, &self.pickup, world_idx, &self.flags);
         state.level_budget = self.level_counts[world_idx];
         state.fort_budget = self.fort_counts[world_idx];
         state.c1_floor = self.c1_floors[world_idx];
@@ -129,7 +128,13 @@ impl Phase for Recorder {
 fn test_builder_schedule_runs_phases_in_order() {
     let mut state = WorldState {
         world_idx: 0,
-        grid: Grid { tiles: vec![vec![0x00; 4]; 9], cols: 4, eights_are_wild: false },
+        grid: Grid {
+            tiles: vec![vec![0x00; 4]; 9],
+            cols: 4,
+            eights_are_wild: false,
+            vanilla_layout: false,
+            canoe_edges: None,
+        },
         slots: Vec::new(),
         locks: Vec::new(),
         pipe_pairs: Vec::new(),
@@ -137,6 +142,7 @@ fn test_builder_schedule_runs_phases_in_order() {
         target: None,
         fixed: HashSet::new(),
         hammer_gated: HashSet::new(),
+        no_locks: HashSet::new(),
         pipe_budget: 0,
         level_budget: 0,
         fort_budget: 0,
@@ -524,6 +530,46 @@ fn test_builder_levels_census() {
             println!("    [{}] {action}", report.phase);
         }
     }
+}
+
+/// When a world has fewer unforced blanks than its fort budget, Forts puts
+/// the rest on the path instead of shipping the world a fort short. No real
+/// seed reaches this (a 200-seed census on 2026-10-24 found the smallest
+/// margin was 2 spare unforced blanks), so it is provoked here by raising
+/// the budget past the unforced count on real worlds.
+#[test]
+fn forts_fall_back_to_forced_blanks() {
+    let Some(raw) = load_rom() else {
+        eprintln!("SKIP: requires the ROM, which is not included in the repo");
+        return;
+    };
+    let ctx = census_ctx(&raw, 1);
+    let mut checked = 0;
+    for world_idx in 0..8 {
+        let mut state = ctx.world(world_idx);
+        let mut rng = ChaCha8Rng::seed_from_u64(1);
+        run_schedule(&mut state, &[&Connectivity, &Levels], &mut rng);
+        let legal = state.legal_blanks();
+        let forced: HashSet<Pos> = state.forced_positions(&legal).into_iter().collect();
+        let unforced = legal.len() - forced.len();
+        if unforced == 0 || forced.is_empty() {
+            continue;
+        }
+        state.fort_budget = unforced + 1;
+        run_schedule(&mut state, &[&Forts], &mut rng);
+        let on_path = state
+            .slots
+            .iter()
+            .filter(|s| s.kind == SlotKind::Fortress && forced.contains(&s.pos))
+            .count();
+        assert!(
+            on_path > 0,
+            "W{}: the budget past the unforced blanks went unplaced",
+            world_idx + 1
+        );
+        checked += 1;
+    }
+    assert!(checked > 0, "no world had both forced and unforced blanks to test with");
 }
 
 /// Forts discovery census: the full dumb pipeline so far (connectivity →
@@ -1487,7 +1533,7 @@ fn test_builder_diversity_census() {
     let allotments: Vec<([usize; 8], [usize; 8], [u32; 8])> = (0..seeds)
         .map(|seed| {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
-            allot_budgets(&rom, &catalog, &pickup, &BuildFlags::default(), &mut rng)
+            allot_budgets(&catalog, &pickup, &BuildFlags::default(), &mut rng)
         })
         .collect();
 
@@ -1495,7 +1541,7 @@ fn test_builder_diversity_census() {
     println!("world  arm       layout-div  route-div  NN(mean±sd)  salt-r");
     for (world_idx, shipping_shapes) in shipping.iter().enumerate() {
         let budgeted_world = |seed: u64| {
-            let mut state = from_pickup(&rom, &catalog, &pickup, world_idx, &BuildFlags::default());
+            let mut state = from_pickup(&catalog, &pickup, world_idx, &BuildFlags::default());
             let (level_counts, fort_counts, c1_floors) = &allotments[seed as usize];
             state.level_budget = level_counts[world_idx];
             state.fort_budget = fort_counts[world_idx];
@@ -1896,7 +1942,7 @@ fn test_builder_island_roles() {
         ..Default::default()
     };
     let sizes_roles = |world_idx: usize| {
-        let state = from_pickup(&rom, &catalog, &pickup, world_idx, &flags);
+        let state = from_pickup(&catalog, &pickup, world_idx, &flags);
         let (pocket, count) = super::islands::pocket_map(&state);
         let islands = super::islands::classify(&state, &pocket, count);
         let mut v: Vec<(usize, super::islands::IslandRole)> =
@@ -2366,7 +2412,7 @@ fn canoe_requirement_census() {
             let mut this_seed = false;
             for built in &build.worlds {
                 let wi = built.world_idx;
-                if rom_data::active_canoe_edges(wi, built.grid.eights_are_wild).is_empty() {
+                if rom_data::canoe_edges(wi, &built.grid).is_empty() {
                     continue;
                 }
                 worlds_with_canoe += 1;

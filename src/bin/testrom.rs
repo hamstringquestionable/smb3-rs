@@ -100,6 +100,12 @@ struct Cli {
     #[arg(long, value_name = "PREDICATE")]
     require: Option<String>,
 
+    /// Give this world a generated map instead of vanilla's layout
+    /// (experimental). Repeatable; any world can be generated, only with
+    /// Hammer Bro shuffle on. Implies --randomize.
+    #[arg(long, value_name = "N", value_parser = clap::value_parser!(u8).range(1..=8))]
+    generate_world: Vec<u8>,
+
     /// How many seeds --require may try before giving up.
     #[arg(long, default_value_t = 500)]
     search: usize,
@@ -205,6 +211,12 @@ struct Cli {
     /// generator commands in a room.
     #[arg(long, value_name = "NAME:OFFSET:HEX")]
     set_layout: Vec<String>,
+
+    /// Overwrite one world-map colour in every world, as "PAGE:INDEX:COLOR"
+    /// with COLOR in hex, e.g. "0:1:16" paints palette page 0's index 1 red.
+    /// Repeatable. A probe for which tiles and screens a colour slot reaches.
+    #[arg(long, value_name = "PAGE:INDEX:COLOR")]
+    map_color: Vec<String>,
 
     /// Open "Unused Level 5" -- the unreferenced test level holding eight Big
     /// [?] Block rooms -- from every Big [?] pipe in the game, landing 5-2's
@@ -318,6 +330,21 @@ fn parse_set_enemy(spec: &str) -> Result<EnemyOverride, String> {
     })
 }
 
+/// Parse a `--map-color` item: `"0:1:16"` — palette page, colour index, and
+/// the NES colour in hex.
+fn parse_map_color(spec: &str) -> Result<(u8, u8, u8), String> {
+    let bad = || format!("bad --map-color {spec:?} (expected PAGE:INDEX:COLOR, e.g. 0:1:16)");
+    let parts: Vec<&str> = spec.split(':').map(str::trim).collect();
+    let [page, index, color] = parts[..] else { return Err(bad()) };
+    let page: u8 = page.parse().map_err(|_| bad())?;
+    let index: u8 = index.parse().map_err(|_| bad())?;
+    let color = u8::from_str_radix(color.trim_start_matches("0x"), 16).map_err(|_| bad())?;
+    if page > 3 || index > 3 || color > 0x3F {
+        return Err(bad());
+    }
+    Ok((page, index, color))
+}
+
 /// Parse a `--set-layout` item: `"2HB1:36:360814360A07"` — level name, decimal
 /// byte offset into its layout, and the hex bytes to write there.
 fn parse_set_layout(spec: &str) -> Result<LayoutOverride, String> {
@@ -368,7 +395,7 @@ fn main() {
 
     // Randomizer options only matter with --randomize; reject the combination
     // that silently does nothing rather than pretending it worked.
-    let randomize = cli.randomize || cli.require.is_some();
+    let randomize = cli.randomize || cli.require.is_some() || !cli.generate_world.is_empty();
     if !randomize && (cli.seed.is_some() || cli.flags.is_some()) {
         die("--seed/--flags require --randomize (vanilla base ignores them)");
     }
@@ -377,11 +404,14 @@ fn main() {
     }
 
     let base = if randomize {
-        let options = match &cli.flags {
+        let mut options = match &cli.flags {
             Some(key) => Options::from_flag_key(key)
                 .unwrap_or_else(|e| die(format!("invalid --flags value: {e}"))),
             None => Options::default(),
         };
+        for &w in &cli.generate_world {
+            options.generated_worlds |= 1 << (w - 1);
+        }
 
         let seed = match &cli.require {
             Some(spec) => {
@@ -466,6 +496,9 @@ fn main() {
     let set_layouts: Vec<LayoutOverride> =
         cli.set_layout.iter().map(|s| parse_set_layout(s).unwrap_or_else(|e| die(e))).collect();
 
+    let map_colors: Vec<(u8, u8, u8)> =
+        cli.map_color.iter().map(|s| parse_map_color(s).unwrap_or_else(|e| die(e))).collect();
+
     let starting_items: Vec<u8> = cli
         .starting_items
         .iter()
@@ -527,6 +560,7 @@ fn main() {
         big_q_aim,
         set_enemies,
         set_layouts,
+        map_colors,
     };
 
     let built = testrom::build(&vanilla, &spec).unwrap_or_else(|e| die(e));

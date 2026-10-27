@@ -369,9 +369,8 @@ fn write_arrival_tables(rom: &mut Rom, rows: &[(u8, (usize, usize))]) {
     let mut tables = [0u8; PORTAL_TABLE_LEN];
     for (id, &(dest_world, dest_pos)) in rows.iter().enumerate() {
         let (screen, col, row_nib) = pipe_helpers::grid_pos_to_dest_nibbles(dest_pos.0, dest_pos.1);
-        // W5 and W8 snap per screen and must never carry the centre flag.
-        let discrete = dest_world == 4 || dest_world == 7;
-        let scrl = pipe_helpers::scroll_nibble(screen, col, discrete);
+        // W5 and W8 snap per screen, and no world's last screen centres.
+        let scrl = pipe_helpers::scroll_nibble(dest_world as usize, screen, col);
 
         // The engine's own encodings, matching what `ObjNorm_PipewayCtlr`
         // would have stored: row and column in the upper nibble, screen bare,
@@ -1026,7 +1025,8 @@ mod asm_checks {
                 "{name} changed — a telepad must spend no transit room"
             );
         }
-        for world in &crate::randomize::rom_data::WORLDS {
+        for wi in 0..8 {
+            let world = crate::randomize::rom_data::world_tables(&rom, wi);
             let n = world.entry_count * 5;
             assert_eq!(
                 patched.read_range(world.rowtype_offset, n),

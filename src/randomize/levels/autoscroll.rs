@@ -524,10 +524,11 @@ mod tests {
     /// Every `enemy_ptr` the ROM names: the per-world pointer tables plus the
     /// level headers (the latter reach sub-areas the tables don't).
     fn all_enemy_entry_points(rom: &Rom) -> Vec<u16> {
-        use crate::randomize::rom_data::{WORLDS, read_entry};
+        use crate::randomize::rom_data::{read_entry, world_tables};
 
         let mut pts: Vec<u16> = crate::randomize::enemies::enemy_entry_points(rom);
-        for world in &WORLDS {
+        for wi in 0..8 {
+            let world = &world_tables(rom, wi);
             for idx in 0..world.entry_count {
                 let e = read_entry(rom, world, idx);
                 pts.push(((e.obj_hi as u16) << 8) | e.obj_lo as u16);

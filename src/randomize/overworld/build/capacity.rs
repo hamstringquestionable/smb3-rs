@@ -103,9 +103,10 @@ fn find_blank_slots(grid: &Grid, fixed_positions: &HashSet<(usize, usize)>) -> V
 /// **Step 3 is a window rather than a threshold because we made it one.** In
 /// vanilla it is `tile >= threshold`, and every undefined metatile index sits
 /// above one; `lock_keys::ML_RANGE` bounds the top so that tail can carry
-/// obstacles instead. The window's upper bounds are one past the last tile any
-/// vanilla map places, so this predicate's answer is unchanged for every tile
-/// that actually appears — which is what makes the change census-neutral.
+/// obstacles instead. Pages 0-2 end one past the last tile any vanilla map
+/// places; page 3's window is empty, which drops the W5 star `$E9` and the tall
+/// rock `$EA` — scenery that no node ever stands on, so no completion changes,
+/// but every cell of it had owned a bit in the maze's packed store.
 pub(crate) fn is_completion_unsafe(tile: u8) -> bool {
     /// `Map_Completable_Tiles`, CPU `$A447`.
     const SPECIAL: [u8; 5] = [0x50, 0xE8, 0xE6, 0xBD, 0xE0];
@@ -164,7 +165,6 @@ fn completable_positions(grid: &Grid, slots: &[SlotAssignment]) -> HashSet<(usiz
 /// limits how many entries are placed (spades cap at SPADE_BUDGET; toad houses
 /// place every entry).
 pub(super) fn promote_hb_slots<R: Rng>(
-    rom: &Rom,
     worlds: &mut [BuiltWorld],
     data: &OverworldData,
     rng: &mut R,
@@ -188,7 +188,7 @@ pub(super) fn promote_hb_slots<R: Rng>(
     let mut candidates_by_world: Vec<Vec<(usize, usize)>> = Vec::with_capacity(worlds.len());
     for (wi, w) in worlds.iter().enumerate() {
         let sprite_positions: HashSet<(usize, usize)> =
-            rom_data::read_hb_sprite_positions(rom, wi).into_iter().collect();
+            data.catalog.maps[wi].hb_sprites.iter().copied().collect();
 
         let completable = completable_positions(&w.grid, &w.slots);
 
@@ -264,7 +264,6 @@ pub(super) fn promote_hb_slots<R: Rng>(
 /// placement slots. Only the actual floating sprite positions are excluded
 /// because a numbered level tile under a floating sprite looks wrong.
 pub(crate) fn fixed_positions_for_world(
-    rom: &Rom,
     catalog: &NodeCatalog,
     world_idx: usize,
     shuffle_toad_houses: bool,
@@ -292,12 +291,10 @@ pub(crate) fn fixed_positions_for_world(
 
     // Floating sprite positions from the map object tables. When Hammer Bros
     // are redistributed, their vanilla tiles are freed for placement, so only
-    // the non-HB sprites (army, canoe, piranhas) stay protected.
-    let sprite_positions = if shuffle_hammer_bros {
-        rom_data::read_non_hb_sprite_positions(rom, world_idx)
-    } else {
-        rom_data::read_map_sprite_positions(rom, world_idx)
-    };
+    // the non-HB sprites (canoe, piranhas) stay protected.
+    let map = &catalog.maps[world_idx];
+    let sprite_positions =
+        if shuffle_hammer_bros { map.non_hb_sprites() } else { map.sprites.clone() };
     for pos in sprite_positions {
         fixed.insert(pos);
     }
@@ -316,7 +313,6 @@ pub(crate) fn fixed_positions_for_world(
 /// fortresses — the tighter constraint wins, since assigning more entries than
 /// pointer-table slots would leave blank screens.
 pub(crate) fn prepare_capacities(
-    rom: &Rom,
     catalog: &NodeCatalog,
     pickup: &PickupResult,
     fort_counts: &[usize; 8],
@@ -346,9 +342,7 @@ pub(crate) fn prepare_capacities(
     }
 
     let fixed_positions: Vec<HashSet<(usize, usize)>> = (0..8)
-        .map(|wi| {
-            fixed_positions_for_world(rom, catalog, wi, shuffle_toad_houses, shuffle_hammer_bros)
-        })
+        .map(|wi| fixed_positions_for_world(catalog, wi, shuffle_toad_houses, shuffle_hammer_bros))
         .collect();
 
     let mut capacities = [0usize; 8];
@@ -356,7 +350,7 @@ pub(crate) fn prepare_capacities(
         let pipe_endpoints = VANILLA_PIPE_PAIRS[wi] * 2;
         let blanks = find_blank_slots(&patched_grids[wi], &fixed_positions[wi]).len();
         let grid_capacity = blanks.saturating_sub(pipe_endpoints + fort_counts[wi]);
-        let ptr_slots = pickup.worlds[wi].pool_indices.len();
+        let ptr_slots = pickup.worlds[wi].free_rows;
         let ptr_capacity = ptr_slots.saturating_sub(pipe_endpoints + fort_counts[wi]);
         capacities[wi] = grid_capacity.min(ptr_capacity);
     }

@@ -16,9 +16,7 @@ use crate::randomize::overworld::build::{
 use crate::randomize::overworld::lock_keys::{LockEntry, LockTiles};
 use crate::randomize::overworld::node_catalog::NodeKind;
 use crate::randomize::overworld::pipe_helpers;
-use crate::randomize::rom_data::{
-    self, FORTRESS_1F_OBJ_PTR, Grid, TILE_BONUS_GAME, TILE_PIPE, WORLDS,
-};
+use crate::randomize::rom_data::{self, FORTRESS_1F_OBJ_PTR, Grid, TILE_BONUS_GAME, TILE_PIPE};
 
 mod assign;
 mod grid;
@@ -30,7 +28,7 @@ mod types;
 
 use assign::{assign_pool, interleave_hb_by_obj_ptr};
 use grid::write_tile_grid;
-use pointers::{write_pipe_dests, write_pointer_entries};
+use pointers::{lay_out_rows, write_kept_entry_positions, write_pipe_dests, write_pointer_entries};
 use sprites::{
     pick_plant_positions, pick_w8_sprite_positions, write_hb_sprites, write_plant_sprites,
     write_w8_sprites,
@@ -52,7 +50,7 @@ pub(crate) fn write_overworld<R: Rng>(
     rng: &mut R,
     flags: WriteFlags,
 ) -> WrittenOverworld {
-    let assignments = assign_pool(rom, build, data, rng, flags);
+    let assignments = assign_pool(build, data, rng, flags);
 
     // Compute W8 army sprite target positions before writing tiles,
     // so write_tile_grid can stamp connectivity-aware blank tiles under the sprites.
@@ -81,6 +79,9 @@ pub(crate) fn write_overworld<R: Rng>(
     // One allocation for every world: the art and the removable table exist once
     // in the ROM, and the maze swaps each world in against them.
     let mut lock_tiles = LockTiles::default();
+    // Before any entry is written: a world dealt more or fewer rows than the
+    // ROM has moves every row after it.
+    let rows = lay_out_rows(rom, data);
     for (wi, wa) in assignments.iter().enumerate() {
         let built = &build.worlds[wi];
         let sprite_mask = &sprite_masks[wi];
@@ -95,16 +96,12 @@ pub(crate) fn write_overworld<R: Rng>(
             &mut lock_tiles,
             rng,
         ));
-        write_pointer_entries(rom, wi, built, wa, data, &mut hb_fallback_iter);
+        write_pointer_entries(rom, wi, built, wa, data, &mut hb_fallback_iter, &rows[wi]);
         write_pipe_dests(rom, wi, wa);
-        // For swapped worlds, rewrite the Airship + Start entry coordinates
-        // (the main writer pass leaves both untouched) before the resort so
+        // Entries pickup left in place but the map moved (the swapped start
+        // and airship, anything a generated map placed), before the resort so
         // the engine's runtime lookup finds the right entry per tile.
-        crate::randomize::overworld::start_airship_swap::write_swapped_world_entries(
-            rom,
-            wi,
-            data.catalog,
-        );
+        write_kept_entry_positions(rom, wi, data, &rows[wi]);
         pipe_helpers::resort_pointer_table(rom, wi);
         // Do not sync map object sprite positions: the overworld builder never
         // moves MapObject entries (W7 piranhas), so vanilla sprite positions are
@@ -121,19 +118,30 @@ pub(crate) fn write_overworld<R: Rng>(
     // hand-trap landings (subsumes the former bros_no_hands patch).
     // Sub-tagged: it claims free space, so the write log has to name it for
     // the free-space audit and collision reports.
+    //
+    // The plants are read back from the ROM rather than taken from
+    // `plant_positions`: with piranha shuffle off that list is empty, yet
+    // vanilla's two W7 plants are still on the map, and a shuffled Hammer
+    // Bro beside one walked onto it and replayed it.
+    let plant_sprites: Vec<(usize, (usize, usize))> = (0..8)
+        .flat_map(|wi| {
+            rom_data::read_plant_sprite_positions(rom, wi).into_iter().map(move |pos| (wi, pos))
+        })
+        .collect();
     rom.push_tag("march_veto");
-    march_veto::write_march_veto(rom, &w8_sprite_positions, &plant_positions);
+    march_veto::write_march_veto(rom, &w8_sprite_positions, &plant_sprites);
     rom.pop_tag();
     if flags.shuffle_hammer_bros {
         write_hb_sprites(rom, build, rng);
     }
-    // Apply engine-side scaffolding for the per-world start ↔ airship swap.
-    // No-op when the option was off (no worlds got flagged in pick_swaps).
-    if data.catalog.start_airship_swapped.iter().any(|&b| b) {
-        crate::randomize::overworld::start_airship_swap::write_engine_scaffolding(
-            rom,
-            data.catalog,
-        );
+    // Apply engine-side scaffolding for the per-world start tables: a world
+    // swapped by the start ↔ airship swap, or a generated one, which places
+    // its own start. Nothing to write when neither happened.
+    let catalog = data.catalog;
+    if catalog.start_airship_swapped.iter().any(|&b| b)
+        || catalog.maps.iter().any(|m| !m.grid.vanilla_layout)
+    {
+        crate::randomize::overworld::start_airship_swap::write_engine_scaffolding(rom, catalog);
     }
 
     WrittenOverworld { grids, one_f_world: world_holding_1f(&assignments, data), lock_tiles }

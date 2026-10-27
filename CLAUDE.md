@@ -137,7 +137,7 @@ is the one to read:
 
 | Bank | Mapped at | Free left | Largest single gap |
 |------|-----------|-----------|--------------------|
-| PRG031 | `$E000–$FFFF`, always | 29 | **16** |
+| PRG031 | `$E000–$FFFF`, always | 27 | **16** |
 | PRG030 | `$8000–$9FFF`, always | 18 | 18 |
 | PRG001 | swapped, in-level (object AI) | 54 | 38 |
 | PRG003 | swapped, in-level (object AI) | 5 | 5 |
@@ -433,6 +433,11 @@ src/
                        #   (bank<->file mapping), grid.rs, tiles.rs, engine.rs,
                        #   fingerprint.rs (the overworld baseline hash)
     overworld/         # The world maps
+      map_source/      #   Where each world's map comes from: WorldMap (grid,
+                       #     positions, sprites, gaps). vanilla/ reads the ROM and
+                       #     applies the map edits (rocks, W1 shortcut, W8 bridges,
+                       #     drawbridge tiles) in memory. See
+                       #     docs/procedural_maps_design.md
       node_catalog/    #   Builder phase 1: classify all 340 pointer table entries
       pickup.rs        #   Phase 2: clear map, build level/HB pools
       build/           #   Phase 3: choice-first builder. Per world:
@@ -458,9 +463,9 @@ src/
     cosmetic/          # palettes + palette_variants, title_screen (seed hash),
                        #   credits, king_quotes, anchor_visuals
     qol/               # Quality-of-life patches, grouped by subject rather than
-                       #   one file per patch: overworld_map.rs alone holds the
-                       #   rocks, W1 shortcut, W8 bridges, drawbridges and
-                       #   N-card patches; starting_state.rs holds lives AND
+                       #   one file per patch: overworld_map.rs holds the map
+                       #   patches that are not tiles (drawbridge toggle, W8
+                       #   canoe sprite, N-cards); starting_state.rs holds lives AND
                        #   starting items. Also canoe.rs, cards.rs, macobra.rs,
                        #   two_player_vs.rs, ...
 web/
@@ -498,7 +503,7 @@ docs/                  # See docs/README.md for the index and each doc's status
 
 ## Overworld Builder Pipeline
 
-The overworld builder is the core randomization system, implemented as a four-phase pipeline in `pipeline/stages.rs` (stages 5-9): **catalog → pickup → build → write**.
+The overworld builder is the core randomization system, implemented as a four-phase pipeline in `pipeline/stages.rs` (stages 5-9): **catalog → pickup → build → write**, on the maps `overworld/map_source/` supplies.
 
 1. **Catalog** (`overworld/node_catalog/`) — classifies all 340 pointer table entries across 8 worlds (Level, Fortress, Pipe, HammerBro, ToadHouse, Airship, Bowser, etc.)
 2. **Pickup** (`overworld/pickup.rs`) — clears the map to blank path tiles, builds a shuffleable pool of levels and hammer bro encounters, applies theme-aware blank tiles per screen

@@ -36,7 +36,7 @@ pub(crate) fn randomize_airships<R: Rng>(rom: &mut Rom, rng: &mut R) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::randomize::rom_data::{self, WORLDS, read_word};
+    use crate::randomize::rom_data::{self, VANILLA_WORLDS, read_word};
     use rand::SeedableRng;
     use rand_chacha::ChaCha8Rng;
 
@@ -50,7 +50,7 @@ mod tests {
 
         // Give each airship entry a unique lay pointer so we can detect a shuffle.
         for &(w_idx, entry_idx) in AIRSHIP_ENTRIES.iter() {
-            let w = &WORLDS[w_idx];
+            let w = &VANILLA_WORLDS[w_idx];
             let (_, _, layouts) = rom_data::table_offsets(w);
             let lay_off = layouts + entry_idx * 2;
             let lay_val: u16 = 0xA800 + (w_idx as u16) * 0x10;
@@ -69,7 +69,7 @@ mod tests {
         let original_lays: Vec<u16> = AIRSHIP_ENTRIES
             .iter()
             .map(|&(w, i)| {
-                let world = &WORLDS[w];
+                let world = &VANILLA_WORLDS[w];
                 let (_, _, layouts) = rom_data::table_offsets(world);
                 read_word(&rom, layouts + i * 2)
             })
@@ -80,7 +80,7 @@ mod tests {
         let shuffled_lays: Vec<u16> = AIRSHIP_ENTRIES
             .iter()
             .map(|&(w, i)| {
-                let world = &WORLDS[w];
+                let world = &VANILLA_WORLDS[w];
                 let (_, _, layouts) = rom_data::table_offsets(world);
                 read_word(&rom, layouts + i * 2)
             })

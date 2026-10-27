@@ -25,17 +25,11 @@ use rand::Rng;
 use crate::rom::Rom;
 
 use crate::randomize::overworld::node_catalog::{NodeCatalog, NodeKind};
-use crate::randomize::overworld::pipe_helpers::grid_pos_to_dest_nibbles;
 use crate::randomize::rom_data::{
     self, AIRSHIP_OBJ_SLOT, FS_SAS_GAMEOVER_FINALIZE, FS_SAS_SCRH_TABLE, FS_SAS_SCRL_TABLE,
     FS_SAS_SEED_HELPER, FS_SAS_X_TABLE, FS_SAS_XHI_TABLE, GAMEOVER_FINALIZE_SITE, Grid,
-    MAP_INIT_SCROLL_SITE, MAP_TILE_GRIDS, MAP_Y_STARTS_OFF, WORLDS,
+    MAP_INIT_SCROLL_SITE, MAP_TILE_GRIDS, MAP_Y_STARTS_OFF, W5_IDX,
 };
-
-/// World index of W5 (Sky), the one world with special-case handling: its
-/// vanilla start is approached from above (no castle-top write) and its map
-/// presents two static screens (page-aligned camera framing).
-const W5_IDX: usize = 4;
 
 // ---------------------------------------------------------------------------
 // Phase 1: catalog mutation
@@ -45,9 +39,14 @@ const W5_IDX: usize = 4;
 /// that world's Start and Airship entry `grid_pos` values in the catalog, and
 /// record the swap on `catalog.start_airship_swapped[wi]`. Downstream phases
 /// pick up the new positions automatically.
+///
+/// A generated world is never swapped: it already places its own start, on
+/// or beside either of the two spots a swap would pick, and draws its map
+/// around it. Its coin is still flipped, so
+/// the other worlds' swaps do not change.
 pub(crate) fn pick_swaps<R: Rng>(catalog: &mut NodeCatalog, rng: &mut R) {
     for wi in 0..7 {
-        if !rng.random::<bool>() {
+        if !rng.random::<bool>() || !catalog.maps[wi].grid.vanilla_layout {
             continue;
         }
         let start_idx = catalog
@@ -136,41 +135,6 @@ fn above_start_override(world_idx: usize) -> Option<u8> {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 3a: per-world pointer-table entry updates (called from the writer
-// before pipe_helpers::resort_pointer_table)
-// ---------------------------------------------------------------------------
-
-/// For a swapped world, rewrite the Airship and Start entries' rowtype/scrcol
-/// bytes so their pointer-table positions match the new grid coordinates. The
-/// writer's main pass deliberately leaves these two entries alone (they're not
-/// in the pickup pool), so without this step the engine looks up the wrong
-/// entry when the player walks onto the swapped tiles.
-///
-/// Must run BEFORE `pipe_helpers::resort_pointer_table` for the same world so
-/// the resort places the rewritten entries in their correct screen/row order.
-pub(super) fn write_swapped_world_entries(rom: &mut Rom, world_idx: usize, catalog: &NodeCatalog) {
-    if !catalog.start_airship_swapped[world_idx] {
-        return;
-    }
-    let world = &WORLDS[world_idx];
-    let rt_off = world.rowtype_offset;
-    let sc_off = rt_off + world.entry_count;
-
-    for entry in
-        catalog.world(world_idx).filter(|e| matches!(e.kind, NodeKind::Airship | NodeKind::Start))
-    {
-        let (row, col) = entry.grid_pos;
-        let (screen, col_in_screen, row_nib) = grid_pos_to_dest_nibbles(row, col);
-
-        // Preserve the low nibble of the existing rowtype byte (tileset code).
-        let old_rt = rom.read_byte(rt_off + entry.entry_idx);
-        let new_rt = (row_nib << 4) | (old_rt & 0x0F);
-        rom.write_byte(rt_off + entry.entry_idx, new_rt);
-        rom.write_byte(sc_off + entry.entry_idx, (screen << 4) | col_in_screen);
-    }
-}
-
-// ---------------------------------------------------------------------------
 // Phase 3b: engine scaffolding (called from the writer)
 // ---------------------------------------------------------------------------
 
@@ -193,6 +157,21 @@ pub(crate) fn write_engine_scaffolding(rom: &mut Rom, catalog: &NodeCatalog) {
     write_seed_helper(rom);
     write_gameover_finalize(rom);
     move_airship_sprites(rom, catalog);
+}
+
+/// The first map column the camera shows when world `world_idx` starts with
+/// Mario at column `col`; the screen shows 16 from there. Half a screen back,
+/// rounded to a half-page stop, except W5's whole static screens (see
+/// [`build_position_tables`]). The generator reads it too, so a start never
+/// shows what is meant to be found by going over.
+pub(crate) fn start_camera_col(world_idx: usize, col: usize) -> usize {
+    let cols = MAP_TILE_GRIDS[world_idx].columns as i32;
+    let first = if world_idx == W5_IDX {
+        (col as i32 / 16) * 16 // W5: page-align to the start's static screen
+    } else {
+        (((col as i32 - 8) + 4).max(0) / 8) * 8 // round-to-8, floored at 0
+    };
+    first.clamp(0, (cols - 16).max(0)) as usize
 }
 
 /// Build and write the four per-world position tables (X/XHi/ScrL/ScrH) in
@@ -223,13 +202,7 @@ fn build_position_tables(rom: &mut Rom, catalog: &NodeCatalog) {
         // other edge-scroll-skipped world but is never swapped, so its col-2 start
         // collapses to 0 regardless.) Page-0 / unswapped starts collapse to column 0
         // in either branch (identical to vanilla).
-        let cols = MAP_TILE_GRIDS[wi].columns as i32;
-        let col = if wi == W5_IDX {
-            (sc as i32 / 16) * 16 // W5: page-align to the start's static screen
-        } else {
-            (((sc as i32 - 8) + 4).max(0) / 8) * 8 // round-to-8, floored at 0
-        };
-        let col = col.clamp(0, (cols - 16).max(0));
+        let col = start_camera_col(wi, sc) as i32;
         scrl_tbl[wi] = if col & 8 != 0 { 0x80 } else { 0x00 };
         scrh_tbl[wi] = (col >> 4) as u8;
     }
@@ -246,6 +219,24 @@ fn build_position_tables(rom: &mut Rom, catalog: &NodeCatalog) {
 /// `Map_Init` scroll-store with a `JSR` to it.
 fn write_seed_helper(rom: &mut Rom) {
     rom.set_tag("start_airship_swap/helper");
+    rom.write_range(FS_SAS_SEED_HELPER, &seed_helper());
+
+    rom.set_tag("start_airship_swap/map_init");
+    // Replace the vanilla `STA $0724,X` (the last store before DEX) with
+    // `JSR seed_helper`. The vanilla `LDA #$20 / STA $797A / STA $7982` X-low store
+    // earlier in the same iteration is left intact — the helper re-stamps those
+    // bytes here, so the table values win before any draw.
+    rom.write_range(MAP_INIT_SCROLL_SITE, &seed_hook());
+}
+
+/// The `JSR seed_helper` written over `Map_Init`'s `STA $0724,X`.
+fn seed_hook() -> [u8; 3] {
+    let cpu = file_to_prg031_cpu(FS_SAS_SEED_HELPER);
+    [0x20, (cpu & 0xFF) as u8, (cpu >> 8) as u8]
+}
+
+/// The Map_Init seed subroutine. 39 bytes.
+fn seed_helper() -> [u8; 39] {
     let x_tbl_cpu = file_to_prg031_cpu(FS_SAS_X_TABLE);
     let xhi_tbl_cpu = file_to_prg031_cpu(FS_SAS_XHI_TABLE);
     let scrl_tbl_cpu = file_to_prg031_cpu(FS_SAS_SCRL_TABLE);
@@ -261,6 +252,14 @@ fn write_seed_helper(rom: &mut Rom) {
     // afar" restores the camera from; leaving them at the vanilla page-0 value
     // strands Mario off-page after dying in a swapped world. The finalize helper
     // below mirrors this exact store order for the game-over path.
+    //
+    // The closing `LDA #$00` hands A back as vanilla left it. The hooked store
+    // sat in a run that `LDA #$00` had set up, and after the loop `Map_Init`
+    // stores that same A into `Map_WhiteHouse` and `Map_CoinShip` to clear them.
+    // Returning with the SCRH page in A instead marked both as already earned in
+    // any world whose start camera is past page 0, so neither ever appeared
+    // there. (`player_worlds`' loop tail zeroes A on its own exit, which is why
+    // maze seeds never showed it.)
     #[rustfmt::skip]
     let seed_helper = [
         0xB9, (x_tbl_cpu & 0xFF) as u8, (x_tbl_cpu >> 8) as u8,       // LDA X_TABLE,Y
@@ -275,20 +274,10 @@ fn write_seed_helper(rom: &mut Rom) {
         0xB9, (scrh_tbl_cpu & 0xFF) as u8, (scrh_tbl_cpu >> 8) as u8, // LDA SCRH_TABLE,Y
         0x9D, 0x24, 0x07,                                            // STA Map_Prev_XHi,X  ($0724)
         0x9D, 0x88, 0x79,                                            // STA Map_Prev_XHi2,X ($7988)
+        0xA9, 0x00,                                                  // LDA #$00  ; A as vanilla left it
         0x60,                                                        // RTS
     ];
-    rom.write_range(FS_SAS_SEED_HELPER, &seed_helper);
-
-    rom.set_tag("start_airship_swap/map_init");
-    let seed_helper_cpu = file_to_prg031_cpu(FS_SAS_SEED_HELPER);
-    // Replace the vanilla `STA $0724,X` (the last store before DEX) with
-    // `JSR seed_helper`. The vanilla `LDA #$20 / STA $797A / STA $7982` X-low store
-    // earlier in the same iteration is left intact — the helper re-stamps those
-    // bytes here, so the table values win before any draw.
-    rom.write_range(
-        MAP_INIT_SCROLL_SITE,
-        &[0x20, (seed_helper_cpu & 0xFF) as u8, (seed_helper_cpu >> 8) as u8],
-    );
+    seed_helper
 }
 
 /// Write the PRG011 game-over twirl finalize subroutine and hook it into
@@ -384,4 +373,52 @@ fn file_to_prg031_cpu(file_off: usize) -> u16 {
 /// to a helper in the same bank is bank-local.
 fn file_to_prg011_cpu(file_off: usize) -> u16 {
     (0xA000 + (file_off - 0x16010)) as u16
+}
+
+#[cfg(test)]
+mod asm_checks {
+    use super::*;
+    use crate::randomize::rom_data::{FREE_SPACE_ALLOCATIONS, FS_SAS_BLOCK, asm};
+
+    fn vanilla() -> Option<Vec<u8>> {
+        std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes").ok()
+    }
+
+    /// The helper sits 32 bytes into `FS_SAS_BLOCK`, after the four tables, so
+    /// `.allocation` (which measures from the row's start) cannot bound it;
+    /// the fit is asserted against the row directly instead.
+    #[test]
+    fn seed_helper_is_well_formed() {
+        let code = seed_helper();
+        asm::check(&code).origin(file_to_prg031_cpu(FS_SAS_SEED_HELPER)).assert_ok();
+        let row = FREE_SPACE_ALLOCATIONS
+            .iter()
+            .find(|a| a.offset == FS_SAS_BLOCK)
+            .expect("FS_SAS_BLOCK has a registry row");
+        assert!(
+            FS_SAS_SEED_HELPER - FS_SAS_BLOCK + code.len() <= row.size,
+            "tables + helper overrun the {}-byte row",
+            row.size
+        );
+    }
+
+    /// `Map_Init` clears `Map_WhiteHouse` / `Map_CoinShip` with the A the loop
+    /// leaves behind, so the helper must return with A = 0.
+    #[test]
+    fn seed_helper_returns_a_zero() {
+        assert_eq!(seed_helper()[36..], [0xA9, 0x00, 0x60]);
+    }
+
+    #[test]
+    fn seed_hook_displaces_whole_instructions() {
+        let Some(v) = vanilla() else {
+            eprintln!("SKIP: requires the ROM, which is not included in the repo");
+            return;
+        };
+        let hook = seed_hook();
+        asm::check(&seed_helper())
+            .origin(file_to_prg031_cpu(FS_SAS_SEED_HELPER))
+            .hook(&v, MAP_INIT_SCROLL_SITE, &hook)
+            .assert_ok();
+    }
 }

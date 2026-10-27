@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 
 use super::*;
-use crate::randomize::rom_data::{MAP_TILE_GRIDS, WORLDS};
+use crate::randomize::rom_data::{MAP_TILE_GRIDS, VANILLA_WORLDS};
 
 fn load_rom() -> Option<Rom> {
     let data = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes").ok()?;
@@ -18,7 +18,7 @@ fn test_total_count() {
         None => return,
     };
     let catalog = NodeCatalog::build(&rom, false);
-    let expected: usize = WORLDS.iter().map(|w| w.entry_count).sum();
+    let expected: usize = VANILLA_WORLDS.iter().map(|w| w.entry_count).sum();
     assert_eq!(catalog.entries.len(), expected, "expected {expected} total entries");
 }
 

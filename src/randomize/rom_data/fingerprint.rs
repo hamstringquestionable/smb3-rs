@@ -71,7 +71,8 @@ pub fn overworld_fingerprint(rom: &Rom) -> u64 {
 
     // 2. Where each tile leads: the five parallel per-entry arrays (row/type,
     //    screen-column, and the object and layout pointer halves).
-    for world in &WORLDS {
+    for wi in 0..8 {
+        let world = world_tables(rom, wi);
         h.eat(rom.read_range(world.rowtype_offset, world.entry_count * 5));
     }
 
@@ -80,14 +81,14 @@ pub fn overworld_fingerprint(rom: &Rom) -> u64 {
     //    then every slot's position and type, then its reward.
     for master in [MAP_OBJ_YS_MASTER, MAP_OBJ_XHIS_MASTER, MAP_OBJ_XLOS_MASTER, MAP_OBJ_IDS_MASTER]
     {
-        h.eat(rom.read_range(master, WORLDS.len() * 2));
-        for world_idx in 0..WORLDS.len() {
+        h.eat(rom.read_range(master, VANILLA_WORLDS.len() * 2));
+        for world_idx in 0..VANILLA_WORLDS.len() {
             for slot in 0..MAP_OBJ_SLOTS {
                 h.eat_byte(rom.read_byte(map_obj_slot_offset(rom, master, world_idx, slot)));
             }
         }
     }
-    h.eat(rom.read_range(MAP_OBJ_REWARDS, WORLDS.len() * MAP_OBJ_SLOTS));
+    h.eat(rom.read_range(MAP_OBJ_REWARDS, VANILLA_WORLDS.len() * MAP_OBJ_SLOTS));
 
     // 4. Where a pipe puts the player down.
     for base in [PIPE_MAP_XHI, PIPE_MAP_X, PIPE_MAP_Y, PIPE_MAP_SCRL_XHI] {
@@ -145,7 +146,7 @@ mod tests {
         let map_obj_id = map_obj_slot_offset(&rom, MAP_OBJ_IDS_MASTER, 0, 2);
         for (off, what) in [
             (MAP_TILE_GRIDS[0].file_offset, "a W1 map tile"),
-            (WORLDS[0].rowtype_offset, "a W1 pointer table entry"),
+            (VANILLA_WORLDS[0].rowtype_offset, "a W1 pointer table entry"),
             (map_obj_id, "a map-object sprite id"),
             (map_obj_reward_offset(0, 2), "a map-object reward"),
             (PIPE_MAP_Y, "a pipe destination"),

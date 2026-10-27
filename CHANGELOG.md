@@ -9,6 +9,39 @@ deploys.
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-10-27
+
+### Added
+
+- **Generated Overworld.** Every world's map is drawn from scratch each seed:
+  new paths, islands and scenery, in each world's own style. Turns on Hammer
+  Bro, Piranha and Spade shuffle, and turns off 8s are Wild and More Hammer
+  Rocks. Swap Start / Airship still decides whether a world may start on the
+  airship's side.
+
+### Changed
+
+- **The Map options are grouped** under World Layout, On the Map, Levels and
+  Map Conveniences, with Generated Overworld first. "Shuffle HammerBro
+  Locations" is now **Wandering Hammer Bros**, and Oops all Anchors moved to
+  Items & Pickups.
+
+### Fixed
+
+- **Boom-Boom killed by a shell before his fight starts** now drops the orb.
+  Before, he fell off the screen and the fortress could not be finished.
+- **White Toad House and Coin Ship** never appeared in a world that starts
+  away from the left edge of its map, with Start/Airship Swap on and the World
+  Maze off.
+- **Hammer Bros next to a World 7 piranha plant** could walk onto it after
+  you beat it and pull you back into the level. With Piranha Shuffle off,
+  vanilla's two World 7 plants were never protected.
+- **8s are Wild:** World 8's Hammer Bro can no longer land on a node with
+  nothing behind it.
+- **A telepad or pipe on the right edge of a world's last screen no longer
+  shifts the view off the map.** World 1 never scrolls now, wherever you
+  arrive.
+
 ## [2.5.0] - 2026-10-13
 
 ### Added

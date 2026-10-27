@@ -33,6 +33,9 @@ pub(crate) struct WorldState {
     /// Connectivity never bridges them and no phase claims them; they stay
     /// empty hammer-gated nooks.
     pub(crate) hammer_gated: HashSet<Pos>,
+    /// Path cells no lock may take: a generated river's `$BA` crossings, whose
+    /// lock would draw over the water and reopen as plain land path.
+    pub(crate) no_locks: HashSet<Pos>,
     /// Hard limit on pipe pairs in this world — currently the vanilla
     /// per-world count, a chosen design budget (not an inherent ROM limit;
     /// it may be raised later). All pipe-placing phases share it: whatever
@@ -53,7 +56,7 @@ pub(crate) struct WorldState {
     /// that used to read the constant reads this instead; the constant is
     /// the band's center and the default for the loader sources.
     pub(crate) c1_floor: u32,
-    /// Pointer-table entries available to this world (the pickup pool size).
+    /// Pointer-table entries available to this world (`ClearedWorld::free_rows`).
     /// Every slot — level, fort, hammer bro, pipe endpoint — consumes one;
     /// the hammer-bro fill phase caps itself against this.
     pub(crate) ptr_slots: usize,
@@ -429,6 +432,23 @@ impl WorldState {
     /// scorer (and every census metric built on it) can measure it. This is
     /// the "same measuring stick" bridge — phases never re-implement scoring.
     pub(crate) fn to_built(&self) -> BuiltWorld {
+        // The scorer's cleared-mask layout gives fort `n` bit `n` and starts
+        // the levels at `section_count`; a hole in the ids makes the two
+        // overlap (see `renumber_fort_sections`).
+        debug_assert!(
+            {
+                let mut ids: Vec<usize> = self
+                    .slots
+                    .iter()
+                    .filter(|s| s.kind == SlotKind::Fortress)
+                    .map(|s| s.section)
+                    .collect();
+                ids.sort_unstable();
+                ids.iter().copied().eq(0..ids.len())
+            },
+            "W{}: fort sections are not a dense 0..fort_count",
+            self.world_idx + 1
+        );
         BuiltWorld {
             world_idx: self.world_idx,
             grid: self.grid.clone(),

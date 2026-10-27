@@ -2650,6 +2650,62 @@ world_start + (C // 16) * 144 + R * 16 + (C % 16)
 | 0xEB | Fortress tile | Alternate fortress |
 | 0xFF | Border / unused | Map edge |
 
+> **Stale rows above (noted 2026-10-11, not yet corrected):** `$B4` is the
+> dancing bush, not void; `$68`/`$69` draw as a pyramid; `$5F` is the W5 Spiral
+> Castle (`TILE_SPIRAL`); `$AE`/`$AF` and `$D9`/`$DC`–`$DE` are island and sky
+> blank nodes. Southbird's `TILE_*` constants (`smb3.asm` ~line 3545) are the
+> better source for a single byte.
+
+#### Scenery and decoration tiles
+
+Names from Southbird's `TILE_*` constants where it has one; the rest from the
+project owner (2026-10-11). Gathered for generated-map decorations
+(`docs/procedural_maps_design.md`).
+
+| Tile | Southbird | Looks like | Notes |
+|------|-----------|-----------|-------|
+| `$42` | — | plain ground | all four quadrants blank (`FE`) |
+| `$53` | `TILE_ROCK` | rock | permanent; pixel-identical to breakable `$52` |
+| `$55` | — | star | |
+| `$57`–`$5E` | — | miniature ground | W5's view down from the sky; `$57`–`$5D` appear only in W5, `$5E` nowhere |
+| `$82`–`$A9` | `$82` `TILE_WATER_INVT`, `$9D` `TILE_RIVERVERT` | water and shores | `$9D` is "vertical river segment (gets bridged)": vanilla rivers run north–south under a horizontal bridge `$B3`, the only bridge with a water-gap form |
+| `$B4` | `TILE_DANCINGBUSH` | bush ("cactus") | animated; vanilla's filler in W1's empty space |
+| `$BB` | `TILE_DANCINGPALM` | palm tree | animated; World 2 |
+| `$BD` | `TILE_DANCINGFLOWER` | fire flower | animated; also in `Map_EnterSpecialTiles` (DANCINGFLOWER) |
+| `$BE` | — | plant | |
+| `$BF` | `TILE_POOL` | pool / oasis | W2; completable on page 2 (see the rows 7/8 completion-bit note) |
+| `$E1` | — | mushroom | |
+| `$E9` | `TILE_WORLD5STAR` | star | W5 sky |
+| `$EA` | — | rock | W6 uses it 67 times |
+
+#### Water tiles: one water/land picture each
+
+*(Measured 2026-10-11, and used to draw generated lakes.)* Read through their
+CHR, the 40 tiles `$82`–`$A9` are a complete shoreline kit. In the map's
+background CHR, **colour 1 is water and colour 3 is land** (0 and 2 draw the
+shore outline). Sampled at nine points per tile (the corners, the edge
+middles and the centre, each the majority of a 3×3 pixel block), every one of
+the 40 is water in the centre and a **different** picture around it: `$8D` is
+open water, `$99` the top-left corner of a lake, `$9D` a one-tile vertical
+channel (Southbird's `TILE_RIVERVERT`), `$A2` a horizontal one.
+
+So water is drawn like paths: mark which cells are water, give each cell's
+edge middle water when that neighbour is water and each corner water when
+both edges and the diagonal are, and look the picture up. The table and the
+test that re-derives it from the CHR are `WATER_TILES` and
+`water_pictures_match_the_graphics` in `overworld/map_source/generated.rs`.
+
+In vanilla the kit is used consistently between water tiles: on the edges
+they share, 5555 sample points agree and 307 disagree, and the disagreements
+are almost all open water butting straight onto a node, pipe, bush or plain
+ground (vanilla sometimes skips the shore there).
+
+**Reading the tile byte alone does not work.** Treating `$82`–`$A9` as "water"
+and recording each cell's 8 water/land neighbours (off-map counted as water)
+gives 75 of 132 patterns
+with more than one tile; a cell with water all round is drawn as 11 different
+tiles. The picture lives in the quadrants, not in the neighbourhood.
+
 ### World Map Functionality (PRG010: 0x14010–0x1600F)
 
 Key tables in PRG010 (indexed by World_Num 0–7):
@@ -2995,6 +3051,57 @@ dock tile (`0x4B`) so the player can board it. See the randomizer's
 `write_map_sprite` and W8 `CANOE_EDGES` (mainland `(5,6)` → islands
 `(3,8)/(5,10)/(5,12)`).
 
+**How the canoe moves** (`Map_CheckDoMove`, `prg010.asm` ~line 3378; read
+2026-10-13 for generated W3). One function handles walking and sailing:
+
+1. **Boarding.** On a dock (`TILE_DOCK` `$4B`), a direction press looks for a
+   canoe exactly one tile that way (`Map_CanoeCheck*Off`): a cardinal
+   neighbour of the dock. The search covers map-object slots 7 down to 1,
+   never slot 0, and stops at the first canoe, so **one canoe per map**.
+2. **In the canoe**, the target tile is tested in order:
+   - in the direction's walkable list (`Map_Object_Valid_Left/Right/Down/Up`:
+     path, bridge and over-water path tiles only, by axis; no node tiles):
+     a normal 2-tile walk, *with `Map_InCanoe_Flag` still set*. A lattice map
+     never offers this, since both ends of every path cell are nodes (except
+     the bridge hop below);
+   - `$4B` dock: the flag clears and the player steps off. **The only exit.**
+   - `$82`–`$A9` (`TILE_WATER_INVT` up to, not including,
+     `TILE_VERTPATHWLU`): the canoe moves one tile (16 units). **Any water
+     tile**, including the water gap `$9D`;
+   - below `$82`: bump. `$AA` and up: nothing.
+3. So **paths and bridges over water cut the canoe's water** (all are
+   `$AA`+). A gap `$9D` is sailable while shut and blocks once its fortress
+   bridges it, so canoe reachability must never depend on a gap cell.
+
+**The canoe under a bridge (Generated Overworld only, 2026-10-23).**
+`Map_Object_Valid_Down` (file `0x1526A`, CPU `$D25A`) and `Map_Object_Valid_Up`
+(`0x15273`, `$D263`) are `46 46 46 B1 AA AB B0 DB BA`: three `TILE_VERTPATH`
+pad them to the left/right lists' nine. `qol::canoe_under_bridges` turns the
+first of each into `TILE_BRIDGE` `$B3`, so a canoe pressing up or down into a
+bridge takes the walk branch above: a 32-unit move, which in the canoe runs at
+one unit and one pixel a frame (`PRG010_CEE4`: `-2`, then `+1` back, with the
+`MapMove_Delta*C` steps), so it hops two tiles, over the bridge onto the far
+side, and never rests on it. Hammer Bro marching (`prg011.asm` ~3365) reads
+the same lists. It is safe only where no bridge sits on the top or bottom row
+(the hop leaves the map: vanilla W3 has one at `(0,17)`, reachable once the
+canoe can hop `(2,17)`), none has a path or node above or below, and every
+bridge has the canoe's water on both sides or neither. Generated maps
+guarantee all three; vanilla W3 does not, so the patch goes in only when all
+eight maps were generated.
+
+The always-on canoe summon (`qol/canoe_summon.rs`, A on a dock calls the boat
+to the adjacent water; replaced by `maze::canoe_gate` when item gates are on)
+means a parked canoe never strands anyone. The death-respawn fix
+(`qol/canoe.rs`) is position-independent.
+
+**Paths over water.** Water on both sides of the path; the variant says which
+ends meet land:
+
+| | Water both ends | Land top / left | Land bottom / right | Land both ends |
+|---|---|---|---|---|
+| Vertical | `$B0` `TILE_VERTPATHW` | `$AA` `…WLU` | `$AB` `…WLL` | `$BA` `…WLB` |
+| Horizontal | `$AC` `TILE_HORZPATHW` | `$B7` `…WLL` | `$B8` `…WLR` | `$B9` `…WLB` |
+
 ### World-Map Object March Validation (PRG011)
 
 How wandering map objects (Hammer Bros, N-Spade, white toad house, coin ship)
@@ -3034,6 +3141,20 @@ deltas). The landing tile (2 ahead) is then checked against:
 3. `Tile_AttrTable+4,Y` (`$7E98`, per-palette-page level-gate thresholds, the
    same RAM the player gate uses) — an "enterable" landing (tile ≥ its page
    threshold) also extends the march instead of resting.
+
+**A marcher stops dead on the Player.** `Map_Object_March_NonNormal`
+(`PRG011_AEDF`) runs every frame of the march and clears `Map_March_Count`
+the moment the object's `ActY`/`ActXH`/`ActX` equal either Player's map
+position, mid-march or not. Once `Map_Operation` returns to `$0D`, the
+object-entry check (`PRG011_B6A1`: exact position match) pulls the Player
+into the level on that node. So a bro that merely *passes over* the Player
+catches them. That matters on a beaten plant/army node, where the Player
+stands right when bros march.
+
+**The `$40` hop is never re-validated.** When the +2 landing is enterable
+(or a `Map_MarchXtraForbidTiles` tile), `PRG011_B42A` doubles the counter
+and the object travels to +4 with no check on that tile: not the
+blacklist, not the whitelist, not the march veto. That gap is still open.
 
 **Give-up path:** after 4 failed direction attempts (`Temp_Var2`), the routine
 does `PLA/PLA/RTS` — returning to its caller's *caller*, so the object stays
@@ -5845,6 +5966,49 @@ walls, the castle base `$C9`) goes solid black in page 0. A page-0 copy of a
 page-1 or page-3 building therefore reads as a silhouette, not a recolour,
 which ruled page 0 out for the away-fortress variant (2026-10-02).
 
+**Palette 0 is not spare, and index 1 is its busiest slot** (probed
+2026-10-23 with `testrom --map-color`, screenshots from the headless Mesen
+core). Every `PalSet_*` set in the ROM, not just `PalSet_Maps`, carries `0F 30
+3C` in indices 1-3 of sub-palette 0, because it is also the status bar's
+palette (`prg026.asm:843`, "Ensure status bar color in there!"). What each
+slot paints on the map screen:
+
+| Slot | Paints | Measured how |
+|---|---|---|
+| index 1 (`$0F`) | the level panels' black body (about 140 of 256 pixels per panel; index 0 is almost unused there), the whole band around the status bar, the border of the "WORLD N / MARIO × N" popup | set to `$24`, screenshot |
+| index 2 (`$30`) | the panels' white frame and digit | CHR pixel count only |
+| index 3 (`$3C`) | the flag on every level panel, the status bar's box outlines and the three card slots | set to `$2A`, screenshot |
+
+Paths, nodes and scenery are unaffected. While the item menu opens, a capture
+showed vanilla colours in both probes, so the menu loads palette 0 from
+another source; a recoloured palette 0 would likely flash back to vanilla
+there. That is one captured frame, not traced.
+
+**What this did to the "page-0 path variant" idea (2026-10-23, parked).** A
+path tile needs no new CHR to move to page 0: `$45` paints its ground in index
+3 (the world's colour, from page 1), its stripe in index 1 (`$36`, every
+world) and its edges in index 0; index 2 is unused. So a page-0 copy of
+`$45`/`$46` on a free index (`$16`-`$3F`, outside `ML_RANGE`, unclaimed by the
+lock allocator) would blend in if page 0 held the world's ground in index 3 and
+a new stripe colour in index 1. The cost:
+
+- **Index 3 = ground** tints the panel flags and the status bar outlines with
+  the ground colour.
+- **Freeing index 1** means repainting index 1 to index 0 (both black, so
+  visually identical) in the panel CHR (`$8C`-`$8F`, `$BF`, the digits), the
+  popup border CHR, and whatever tile fills the status bar band, whose bank was
+  not identified. Of the panel CHR only `$BE` is shared with other pages
+  (`$C2`-`$D6`), and it is solid index 2, so unaffected. The digit glyphs may
+  also be nametable text; not checked. The alternative is to accept a per-world
+  tint on the status bar band and the panel bodies.
+- **The horizontal walk lists are full.** `Map_Object_Valid_Left/Right` are
+  `45 B2 B3 AC B7 B8 DA B9 E6`, no duplicates. `Down/Up` are
+  `46 46 46 B1 AA AB B0 DB BA`, so `$46`'s two extra copies are two spare
+  vertical slots. A new horizontal path byte needs a relocated list or a lost
+  entry.
+- Not verified: that the page-0 threshold `$03` never matters for a path byte
+  (it should not, since a path cell is never stood on).
+
 **Unused capacity, measured against all eight world grids:**
 
 - 139 of the 256 tile bytes appear in some world's grid; **117 are unused**.
@@ -6010,7 +6174,12 @@ the *obstacle* role. `$A545`'s test is exactly five bytes, so
 `JSR helper / BCS` splices in at the same size, and a helper of the form
 `CMP UPPER,X / BCS no / CMP $A400,X / RTS` (11 bytes + a 4-byte bound table)
 generalises it to all four pages. It changes only the M/L test, so nothing that
-reads the RAM copy is affected. Not sufficient for a *node* tile (a warp pad,
+reads the RAM copy is affected. Shipped as `lock_keys::ML_RANGE` with bounds
+`16 6A C0 E9`: **page 3's window is empty** (2026-10-18). `$E9` and `$EA` are
+scenery, never a node, and `$EB` reaches the removable scan by name before this
+test — but the maze's packed completion store owns a bit for every cell the
+window admits, and a generated W6 with `$EA` ground overran its 48-byte plane
+reserve (W7/W8 progress lost on a world swap). Not sufficient for a *node* tile (a warp pad,
 say): a node is stood on, so it must also be non-enterable, which means either
 a below-threshold index — what `TILE_TELEPAD` `$DF` does — or splicing the RAM
 consumers, of which there are four.
