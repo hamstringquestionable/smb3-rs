@@ -634,7 +634,7 @@ pub(super) fn assign_pool<R: Rng>(
         // valid pointer entries) use the normal cycling pool.
         let level_like_count =
             fortress.len() + level.len() + pipes.len() * 2 + bonus.len() + toad.len();
-        let remaining_slots = pickup.worlds[wi].pool_indices.len().saturating_sub(level_like_count);
+        let remaining_slots = pickup.worlds[wi].free_rows.saturating_sub(level_like_count);
 
         // When Hammer Bros are redistributed, the sprite positions are the new
         // ones decided in the build phase; otherwise they're the vanilla ROM

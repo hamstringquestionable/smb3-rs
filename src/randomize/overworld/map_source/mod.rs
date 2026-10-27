@@ -25,7 +25,12 @@ pub(crate) struct WorldMap {
     /// must show each entry's own tile at its position: the catalog reads the
     /// tile there to recognise the start.
     pub(crate) entry_pos: Vec<Pos>,
-    /// Every active map-object sprite.
+    /// The entries whose level is a Hammer Bro battle (`HAMMER_BRO_OBJ_PTRS`),
+    /// by `entry_idx`: the only ones a generated map may park off the map,
+    /// since the catalog reads any off-map entry as a Hammer Bro.
+    pub(crate) hammer_bros: Vec<usize>,
+    /// Every map-object sprite that stays where the map puts it. Not W8's
+    /// army: the writer deals it to level and fortress nodes.
     pub(crate) sprites: Vec<Pos>,
     /// The Hammer Bro subset of `sprites`.
     pub(crate) hb_sprites: Vec<Pos>,
@@ -51,7 +56,7 @@ pub(crate) struct WorldMap {
 }
 
 impl WorldMap {
-    /// The sprites that are not Hammer Bros (army, canoe, piranhas, ...).
+    /// The sprites that are not Hammer Bros (canoe, piranhas, ...).
     pub(crate) fn non_hb_sprites(&self) -> Vec<Pos> {
         self.sprites.iter().copied().filter(|p| !self.hb_sprites.contains(p)).collect()
     }

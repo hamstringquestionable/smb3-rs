@@ -12,10 +12,11 @@
 //! testing, and lock testing are all combinations rather than named modes.
 
 use crate::ips;
+use crate::randomize::cosmetic::map_background::PALSET_MAPS;
 use crate::randomize::levels::big_q_rooms;
 use crate::randomize::overworld::node_catalog::{EntryView, NodeCatalog};
 use crate::randomize::overworld::world_order::WORLD_INIT_OPERAND;
-use crate::randomize::rom_data::{self, LevelEntry, WORLDS};
+use crate::randomize::rom_data::{self, LevelEntry};
 use crate::rom::Rom;
 use crate::{Options, randomize_rom};
 
@@ -465,6 +466,12 @@ pub struct TestRomSpec {
     pub set_enemies: Vec<EnemyOverride>,
     /// Layout bytes overwritten by hand, applied with the enemy overrides.
     pub set_layouts: Vec<LayoutOverride>,
+    /// World-map colours to overwrite, as `(page, index, colour)`: palette
+    /// page 0-3 (the tile byte's top two bits), colour index 0-3 within it,
+    /// and the NES colour to put there. Written into all eight BG rows of
+    /// `PalSet_Maps`, so every world shows it. A probe for what a map colour
+    /// slot paints.
+    pub map_colors: Vec<(u8, u8, u8)>,
 }
 
 /// Result of a build: the ROM bytes plus a human-readable account of what was
@@ -1122,7 +1129,7 @@ pub fn build(vanilla: &[u8], spec: &TestRomSpec) -> Result<TestRom, String> {
     if spec.place_all.is_some() || !spec.placements.is_empty() {
         let catalog = source_catalog(vanilla, spec.include_beta)?;
         let slots = numbered_slots(&rom, world_idx, spec.include_beta);
-        let world = &WORLDS[world_idx];
+        let world = &rom_data::world_tables(&rom, world_idx);
 
         if let Some(name) = &spec.place_all {
             let entry = resolve(&catalog, name)?;
@@ -1393,6 +1400,18 @@ pub fn build(vanilla: &[u8], spec: &TestRomSpec) -> Result<TestRom, String> {
         }
     }
 
+    // 10. Hand-set map colours.
+    for &(page, index, color) in &spec.map_colors {
+        if page > 3 || index > 3 || color > 0x3F {
+            return Err(format!("bad map colour {page}:{index}:{color:#04X}"));
+        }
+        for set in 0..8 {
+            let off = PALSET_MAPS + set * 16 + page as usize * 4 + index as usize;
+            rom.write_range(off, &[color]);
+        }
+        report.push(format!("map palette {page} index {index} -> {color:#04X} in all 8 BG rows"));
+    }
+
     Ok(TestRom { bytes: rom.output_bytes().to_vec(), report })
 }
 
@@ -1450,6 +1469,7 @@ mod tests {
             big_q_notes: None,
             set_enemies: Vec::new(),
             set_layouts: Vec::new(),
+            map_colors: Vec::new(),
         }
     }
 
@@ -1502,7 +1522,7 @@ mod tests {
 
         // 6F1 is W6's first fortress: FORTRESS_ENTRIES lists it at (5, 9).
         let src = Rom::from_bytes_lax(&van, true).unwrap();
-        let want = rom_data::read_entry(&src, &WORLDS[5], 9);
+        let want = rom_data::read_entry(&src, &rom_data::world_tables(&src, 5), 9);
 
         let built = build(
             &van,
@@ -1519,7 +1539,7 @@ mod tests {
             .into_iter()
             .find(|(num, _)| *num == 1)
             .expect("W1 has a tile 1");
-        assert_eq!(rom_data::read_entry(&out, &WORLDS[0], slot.1), want);
+        assert_eq!(rom_data::read_entry(&out, &rom_data::world_tables(&out, 0), slot.1), want);
     }
 
     /// `--bigq-unused5` has to line up two independent things: the three
@@ -1673,7 +1693,7 @@ mod tests {
             .into_iter()
             .find(|(num, _)| *num == 1)
             .expect("W1 has a tile 1");
-        let got = rom_data::read_entry(&out, &WORLDS[0], slot.1);
+        let got = rom_data::read_entry(&out, &rom_data::world_tables(&out, 0), slot.1);
         assert_eq!(got.tileset, 10);
         assert_eq!((got.obj_hi, got.obj_lo), (0xDA, 0x04));
         assert_eq!((got.lay_hi, got.lay_lo), (0xBC, 0x15));

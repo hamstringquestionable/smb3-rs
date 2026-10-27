@@ -14,7 +14,9 @@ pub(crate) type TeleportEdge = (Pos, Pos);
 pub(crate) const VALID_HORZ: &[u8] =
     &[0x45, 0x49, 0xB2, 0xB3, 0xAC, 0xB7, 0xB8, 0xDA, 0xB9, 0xE6, 0xE8];
 
-/// Valid vertical path tiles (Map_Object_Valid_Down/Up in PRG010).
+/// Valid vertical path tiles (Map_Object_Valid_Down/Up in PRG010). Without the
+/// bridge `qol::canoe_under_bridges` adds there: on a map it is written for,
+/// nothing on foot can meet a bridge moving up or down, so only the canoe uses it.
 pub(crate) const VALID_VERT: &[u8] = &[0x46, 0xB1, 0xAA, 0xAB, 0xB0, 0xDB, 0xBA, 0xE8];
 
 /// Background / non-walkable tiles.
@@ -621,12 +623,30 @@ pub(crate) const MAP_TILE_GRIDS: [MapGridInfo; 8] = [
 ];
 
 /// Pointer table locations per world.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct WorldTables {
     pub(crate) rowtype_offset: usize,
     pub(crate) entry_count: usize,
 }
 
-pub(crate) const WORLDS: [WorldTables; 8] = [
+/// `Map_ByXHi_InitIndex` master table: 9 CPU words into PRG012, one per world
+/// plus the Warp Zone. The four masters below it are laid out the same way.
+pub(crate) const INIT_INDEX_MASTER: usize = 0x193DA;
+/// `Map_ByRowType` master table (see [`INIT_INDEX_MASTER`]).
+pub(crate) const ROWTYPE_MASTER: usize = 0x193EC;
+/// `Map_ByScrCol` master table (see [`INIT_INDEX_MASTER`]).
+pub(crate) const SCRCOL_MASTER: usize = 0x193FE;
+/// `Map_ObjSets` master table (see [`INIT_INDEX_MASTER`]).
+pub(crate) const OBJSETS_MASTER: usize = 0x19410;
+/// `Map_LevelLayouts` master table (see [`INIT_INDEX_MASTER`]).
+pub(crate) const LAYOUTS_MASTER: usize = 0x19422;
+
+/// The pointer table layout of the vanilla ROM. A seed may lay the tables out
+/// differently, so code reading a ROM's tables asks
+/// [`world_tables`](super::world_tables) instead; this is for the entry-index
+/// constants (`AIRSHIP_ENTRIES`, `FORTRESS_ENTRIES`, ...), which name vanilla
+/// rows, and for tests on synthetic ROMs that have no master tables.
+pub(crate) const VANILLA_WORLDS: [WorldTables; 8] = [
     WorldTables { rowtype_offset: 0x19438, entry_count: 21 },
     WorldTables { rowtype_offset: 0x194BA, entry_count: 47 },
     WorldTables { rowtype_offset: 0x195D8, entry_count: 52 },
@@ -1221,7 +1241,7 @@ mod fortress_table_tests {
         };
         let rom = Rom::from_bytes(&bytes).unwrap();
         for (i, &(w, e)) in FORTRESS_ENTRIES.iter().enumerate() {
-            let entry = read_entry(&rom, &WORLDS[w], e);
+            let entry = read_entry(&rom, &VANILLA_WORLDS[w], e);
             let obj_ptr = ((entry.obj_hi as u16) << 8) | entry.obj_lo as u16;
             assert_eq!(
                 obj_ptr,
@@ -1313,6 +1333,34 @@ pub(crate) const TEMP_VAR9: u8 = 0x08;
 /// makes an "N of K" readout possible without adding CHR.
 pub(crate) const STATUS_GLYPH_DIGIT0: u8 = 0xF0;
 pub(crate) const STATUS_GLYPH_SLASH: u8 = 0xFA;
+
+#[cfg(test)]
+mod world_tables_tests {
+    use super::*;
+    use crate::randomize::rom_data::{prg_bank_cpu_to_file, read_word, world_tables};
+    use crate::rom::Rom;
+
+    /// The masters describe the vanilla layout exactly, and W1-W8's tables
+    /// fill one unbroken run (InitIndex, then the four per-entry tables), so
+    /// a seed can lay them out again in the same bytes.
+    #[test]
+    fn world_tables_read_the_vanilla_layout() {
+        let Ok(bytes) = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes") else {
+            eprintln!("SKIP: requires the ROM, which is not included in the repo");
+            return;
+        };
+        let rom = Rom::from_bytes(&bytes).unwrap();
+        let mut next = VANILLA_WORLDS[0].rowtype_offset - 4;
+        for (wi, vanilla) in VANILLA_WORLDS.iter().enumerate() {
+            let world = world_tables(&rom, wi);
+            assert_eq!(world, *vanilla, "W{}", wi + 1);
+            let init = read_word(&rom, INIT_INDEX_MASTER + wi * 2);
+            assert_eq!(prg_bank_cpu_to_file(12, init), next, "W{} is not contiguous", wi + 1);
+            assert_eq!(world.rowtype_offset - 4, next, "W{} InitIndex is not 4 bytes", wi + 1);
+            next = world.rowtype_offset + world.entry_count * 6;
+        }
+    }
+}
 
 #[cfg(test)]
 mod status_bar_tests {

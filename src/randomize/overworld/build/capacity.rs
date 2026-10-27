@@ -291,7 +291,7 @@ pub(crate) fn fixed_positions_for_world(
 
     // Floating sprite positions from the map object tables. When Hammer Bros
     // are redistributed, their vanilla tiles are freed for placement, so only
-    // the non-HB sprites (army, canoe, piranhas) stay protected.
+    // the non-HB sprites (canoe, piranhas) stay protected.
     let map = &catalog.maps[world_idx];
     let sprite_positions =
         if shuffle_hammer_bros { map.non_hb_sprites() } else { map.sprites.clone() };
@@ -350,7 +350,7 @@ pub(crate) fn prepare_capacities(
         let pipe_endpoints = VANILLA_PIPE_PAIRS[wi] * 2;
         let blanks = find_blank_slots(&patched_grids[wi], &fixed_positions[wi]).len();
         let grid_capacity = blanks.saturating_sub(pipe_endpoints + fort_counts[wi]);
-        let ptr_slots = pickup.worlds[wi].pool_indices.len();
+        let ptr_slots = pickup.worlds[wi].free_rows;
         let ptr_capacity = ptr_slots.saturating_sub(pipe_endpoints + fort_counts[wi]);
         capacities[wi] = grid_capacity.min(ptr_capacity);
     }

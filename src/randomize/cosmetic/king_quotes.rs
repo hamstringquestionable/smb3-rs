@@ -1647,7 +1647,7 @@ mod tests {
                 // Where 1-F actually ended up, read back out of the pointer tables.
                 let world = (0..8)
                     .find(|&wi| {
-                        let wt = &rom_data::WORLDS[wi];
+                        let wt = &rom_data::world_tables(&rom, wi);
                         (0..wt.entry_count).any(|idx| {
                             let e = rom_data::read_entry(&rom, wt, idx);
                             u16::from_le_bytes([e.obj_lo, e.obj_hi])

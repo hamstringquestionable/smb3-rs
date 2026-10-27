@@ -3062,7 +3062,8 @@ dock tile (`0x4B`) so the player can board it. See the randomizer's
    - in the direction's walkable list (`Map_Object_Valid_Left/Right/Down/Up`:
      path, bridge and over-water path tiles only, by axis; no node tiles):
      a normal 2-tile walk, *with `Map_InCanoe_Flag` still set*. A lattice map
-     never offers this, since both ends of every path cell are nodes;
+     never offers this, since both ends of every path cell are nodes (except
+     the bridge hop below);
    - `$4B` dock: the flag clears and the player steps off. **The only exit.**
    - `$82`–`$A9` (`TILE_WATER_INVT` up to, not including,
      `TILE_VERTPATHWLU`): the canoe moves one tile (16 units). **Any water
@@ -3071,6 +3072,22 @@ dock tile (`0x4B`) so the player can board it. See the randomizer's
 3. So **paths and bridges over water cut the canoe's water** (all are
    `$AA`+). A gap `$9D` is sailable while shut and blocks once its fortress
    bridges it, so canoe reachability must never depend on a gap cell.
+
+**The canoe under a bridge (Generated Overworld only, 2026-10-23).**
+`Map_Object_Valid_Down` (file `0x1526A`, CPU `$D25A`) and `Map_Object_Valid_Up`
+(`0x15273`, `$D263`) are `46 46 46 B1 AA AB B0 DB BA`: three `TILE_VERTPATH`
+pad them to the left/right lists' nine. `qol::canoe_under_bridges` turns the
+first of each into `TILE_BRIDGE` `$B3`, so a canoe pressing up or down into a
+bridge takes the walk branch above: a 32-unit move, which in the canoe runs at
+one unit and one pixel a frame (`PRG010_CEE4`: `-2`, then `+1` back, with the
+`MapMove_Delta*C` steps), so it hops two tiles, over the bridge onto the far
+side, and never rests on it. Hammer Bro marching (`prg011.asm` ~3365) reads
+the same lists. It is safe only where no bridge sits on the top or bottom row
+(the hop leaves the map: vanilla W3 has one at `(0,17)`, reachable once the
+canoe can hop `(2,17)`), none has a path or node above or below, and every
+bridge has the canoe's water on both sides or neither. Generated maps
+guarantee all three; vanilla W3 does not, so the patch goes in only when all
+eight maps were generated.
 
 The always-on canoe summon (`qol/canoe_summon.rs`, A on a dock calls the boat
 to the adjacent water; replaced by `maze::canoe_gate` when item gates are on)
@@ -5948,6 +5965,49 @@ visible colours: black, white and light cyan. Art painted in index 1 (fort
 walls, the castle base `$C9`) goes solid black in page 0. A page-0 copy of a
 page-1 or page-3 building therefore reads as a silhouette, not a recolour,
 which ruled page 0 out for the away-fortress variant (2026-10-02).
+
+**Palette 0 is not spare, and index 1 is its busiest slot** (probed
+2026-10-23 with `testrom --map-color`, screenshots from the headless Mesen
+core). Every `PalSet_*` set in the ROM, not just `PalSet_Maps`, carries `0F 30
+3C` in indices 1-3 of sub-palette 0, because it is also the status bar's
+palette (`prg026.asm:843`, "Ensure status bar color in there!"). What each
+slot paints on the map screen:
+
+| Slot | Paints | Measured how |
+|---|---|---|
+| index 1 (`$0F`) | the level panels' black body (about 140 of 256 pixels per panel; index 0 is almost unused there), the whole band around the status bar, the border of the "WORLD N / MARIO × N" popup | set to `$24`, screenshot |
+| index 2 (`$30`) | the panels' white frame and digit | CHR pixel count only |
+| index 3 (`$3C`) | the flag on every level panel, the status bar's box outlines and the three card slots | set to `$2A`, screenshot |
+
+Paths, nodes and scenery are unaffected. While the item menu opens, a capture
+showed vanilla colours in both probes, so the menu loads palette 0 from
+another source; a recoloured palette 0 would likely flash back to vanilla
+there. That is one captured frame, not traced.
+
+**What this did to the "page-0 path variant" idea (2026-10-23, parked).** A
+path tile needs no new CHR to move to page 0: `$45` paints its ground in index
+3 (the world's colour, from page 1), its stripe in index 1 (`$36`, every
+world) and its edges in index 0; index 2 is unused. So a page-0 copy of
+`$45`/`$46` on a free index (`$16`-`$3F`, outside `ML_RANGE`, unclaimed by the
+lock allocator) would blend in if page 0 held the world's ground in index 3 and
+a new stripe colour in index 1. The cost:
+
+- **Index 3 = ground** tints the panel flags and the status bar outlines with
+  the ground colour.
+- **Freeing index 1** means repainting index 1 to index 0 (both black, so
+  visually identical) in the panel CHR (`$8C`-`$8F`, `$BF`, the digits), the
+  popup border CHR, and whatever tile fills the status bar band, whose bank was
+  not identified. Of the panel CHR only `$BE` is shared with other pages
+  (`$C2`-`$D6`), and it is solid index 2, so unaffected. The digit glyphs may
+  also be nametable text; not checked. The alternative is to accept a per-world
+  tint on the status bar band and the panel bodies.
+- **The horizontal walk lists are full.** `Map_Object_Valid_Left/Right` are
+  `45 B2 B3 AC B7 B8 DA B9 E6`, no duplicates. `Down/Up` are
+  `46 46 46 B1 AA AB B0 DB BA`, so `$46`'s two extra copies are two spare
+  vertical slots. A new horizontal path byte needs a relocated list or a lost
+  entry.
+- Not verified: that the page-0 threshold `$03` never matters for a path byte
+  (it should not, since a path cell is never stood on).
 
 **Unused capacity, measured against all eight world grids:**
 

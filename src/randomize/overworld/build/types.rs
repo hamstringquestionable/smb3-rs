@@ -179,7 +179,7 @@ pub(crate) struct BuiltWorld {
     pub(crate) hb_sprites: Vec<HbSprite>,
     /// Cells no phase was allowed to place on: the pinned Airship/Bowser (and
     /// Toad House, when unshuffled) tiles, plus every map-object sprite that
-    /// keeps its vanilla home — the canoe, the W8 army, the W7 piranha plants,
+    /// keeps its vanilla home — the canoe, the W7 piranha plants,
     /// and the wandering Hammer Bros when `shuffle_hammer_bros` is off.
     ///
     /// Carried out of the build because the world maze places ON a finished

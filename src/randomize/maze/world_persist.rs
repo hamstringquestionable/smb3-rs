@@ -1025,7 +1025,8 @@ mod asm_checks {
                 "{name} changed — a telepad must spend no transit room"
             );
         }
-        for world in &crate::randomize::rom_data::WORLDS {
+        for wi in 0..8 {
+            let world = crate::randomize::rom_data::world_tables(&rom, wi);
             let n = world.entry_count * 5;
             assert_eq!(
                 patched.read_range(world.rowtype_offset, n),

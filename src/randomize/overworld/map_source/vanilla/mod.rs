@@ -11,7 +11,7 @@ mod fixes;
 pub(crate) use fixes::HAMMER_ROCKS;
 pub(crate) use fixes::{W8_BRIDGE_COLS, W8_BRIDGE_ROW};
 
-use crate::randomize::rom_data::{self, FxSlot, Grid, Pos, WORLDS};
+use crate::randomize::rom_data::{self, FxSlot, Grid, Pos};
 use crate::rom::Rom;
 
 use super::WorldMap;
@@ -91,14 +91,22 @@ fn read_tiles(rom: &Rom) -> Vec<WorldMap> {
     (0..8)
         .map(|wi| {
             let grid = rom_data::read_tile_grid(rom, wi);
-            let world = &WORLDS[wi];
+            let world = &rom_data::world_tables(rom, wi);
             let entry_pos = (0..world.entry_count)
                 .map(|i| rom_data::entry_grid_position(rom, world, i))
+                .collect();
+            let (_, objsets, _) = rom_data::table_offsets(world);
+            let hammer_bros = (0..world.entry_count)
+                .filter(|i| {
+                    let obj = rom_data::read_word(rom, objsets + i * 2);
+                    rom_data::HAMMER_BRO_OBJ_PTRS.contains(&obj)
+                })
                 .collect();
             WorldMap {
                 grid,
                 entry_pos,
-                sprites: rom_data::read_map_sprite_positions(rom, wi),
+                hammer_bros,
+                sprites: rom_data::read_parked_sprite_positions(rom, wi),
                 hb_sprites: rom_data::read_hb_sprite_positions(rom, wi),
                 gaps: Vec::new(),
                 hammer_gated: HAMMER_GATED_POCKETS

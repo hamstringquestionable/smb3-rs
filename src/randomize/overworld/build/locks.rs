@@ -67,6 +67,7 @@ impl Phase for Locks {
         let mut covered: HashSet<Pos> = HashSet::new();
         state.bridge_spans = deal_bridge_spans(state, &open, &open_reach, rng);
         let mut pending = state.bridge_spans.clone();
+        let mut removed_any = false;
 
         for fort_id in fort_ids {
             if let Some(cut) = claim_bridge_span(state, &open, &open_reach, &mut pending, fort_id) {
@@ -105,10 +106,17 @@ impl Phase for Locks {
                     .expect("fort id came from the slot list");
                 let pos = state.slots[idx].pos;
                 state.slots.remove(idx);
+                removed_any = true;
                 actions.push(format!(
                     "fort {fort_id} REMOVED from {pos:?}: all {tried} lock candidates break completability",
                 ));
             }
+        }
+        // Close the hole now, not at the end of the build: the route scorer
+        // lays out its cleared-mask bits from a dense `0..fort_count`, and
+        // every phase after this one measures with it.
+        if removed_any {
+            super::renumber_fort_sections(state);
         }
 
         recompute_safety_flags(state);

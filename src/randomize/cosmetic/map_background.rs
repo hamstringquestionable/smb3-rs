@@ -20,7 +20,7 @@ const MAP_TILE_COLOR_SETS: usize = PRG012_FILE_BASE + 0x41D;
 
 /// `PalSet_Maps` (`prg027.asm:1458`): the world-map palette sets, 16 bytes
 /// (four palettes, one per palette page) per set.
-const PALSET_MAPS: usize = 0x36BE2;
+pub(crate) const PALSET_MAPS: usize = 0x36BE2;
 
 /// The metatile quadrant tables at PRG012 `$A000`: four 256-byte tables,
 /// indexed by tile byte, in the order upper-left, lower-left, upper-right,

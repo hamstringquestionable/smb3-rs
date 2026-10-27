@@ -105,7 +105,7 @@ fn census_build_arm(
         let mut maps = catalog.maps.clone();
         for (wi, map) in maps.iter_mut().enumerate() {
             let mut gen_rng = ChaCha8Rng::seed_from_u64(seed ^ 0x6E6E_5741 ^ wi as u64);
-            if let Some(generated) = world_map(map, wi, true, &mut gen_rng) {
+            if let Some(generated) = world_map(map, wi, true, 0, &mut gen_rng) {
                 *map = generated;
             }
         }
@@ -684,7 +684,7 @@ fn no_pad_stands_on_a_map_sprite() {
                 } else if shuffle_bros {
                     rom_data::read_non_hb_sprite_positions(&rom, wi).into_iter().collect()
                 } else {
-                    rom_data::read_map_sprite_positions(&rom, wi).into_iter().collect()
+                    rom_data::read_parked_sprite_positions(&rom, wi).into_iter().collect()
                 };
                 parked.extend(result.worlds[wi].hb_sprites.iter().map(|s| s.grid_pos));
                 for edge in &state.edges {
@@ -2166,22 +2166,15 @@ fn one_f_can_always_decline_its_lock() {
     assert!(checked > 0, "no secret-exit slot was ever offered; the check is vacuous");
 }
 
-/// **An uninstalled lock ships as open path, not as a sealed gate.**
+/// **An uninstalled lock leaves a lockless fortress, which panics.**
 ///
-/// `MazeLock::fort = None` is documented as the harmless case — a half-finished
-/// assignment should degrade to a more open maze, never an unwinnable one.
-///
-/// It was not true for as long as the maze ran after the writer:
-/// `overworld::writer::grid` stamps `gap_tile` for every lock in the builder's
-/// list, so the cell reached the ROM as a gate whatever the maze concluded, and
-/// a second pass had to paint over it. `stamp_into` drops the lock from the
-/// model instead, so the writer never stamps the gate at all — the fix is the
-/// absence of a write rather than a second one.
-///
-/// It fires on roughly one seed in sixty — far too rare to be covered by
-/// chance, so the situation is constructed rather than searched for.
+/// `MazeLock::fort = None` keeps a half-finished fill from shipping a gate
+/// nothing opens, but the fortress that was its key is left opening nothing,
+/// and its hint tile would then lie. Forts and locks are 1:1, so
+/// `stamp_into` refuses it. The fill's fallbacks never did this in 1000
+/// seeds (2026-10), so the case is constructed rather than searched for.
 #[test]
-fn an_uninstalled_lock_becomes_open_path() {
+fn an_uninstalled_lock_panics() {
     let Some(raw) = load_rom() else { return };
     let (_, mut build) = census_build(&raw, 1);
     let mut rng = ChaCha8Rng::seed_from_u64(1 ^ 0x5EED_1234);
@@ -2201,21 +2194,10 @@ fn an_uninstalled_lock_becomes_open_path() {
         "the builder must have placed this lock, or the check is vacuous"
     );
     state.locks[0].fort = None;
-
-    // The writer must not be handed a gate that nothing in the game can ever
-    // open — and with the lock gone from the build, no key row names it either.
-    super::stamp_into(&mut build, &state);
-    let keys = overworld::writer::lock_entries(&build);
-    assert!(
-        !keys.iter().any(|e| e.target_world == lock.world && e.target_pos == lock.pos),
-        "an uninstalled lock emitted a key entry"
-    );
-    assert!(
-        !build.worlds[lock.world].locks.iter().any(|l| l.pos == lock.pos),
-        "W{} {:?} would ship as a gate with no key — a permanently sealed gate",
-        lock.world + 1,
-        lock.pos,
-    );
+    let stamped = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        super::stamp_into(&mut build, &state);
+    }));
+    assert!(stamped.is_err(), "a lockless fortress was stamped");
 }
 
 /// **Where does the World 8 bridge lock get its key, and would a constructive

@@ -34,6 +34,30 @@ hashes they describe are gone; the reasoning is not.
 
 ## Entries
 
+### 2026-10-26 — W8's army homes freed; rowless blanks kept from the bros (feature/w8-rowless-page)
+
+**Intended: two changes.** W8's army sprites (`$0D`-`$0F`) no longer reserve
+their vanilla cells: the writer deals each one a level or fortress node, so the
+vanilla map source leaves them out of `WorldMap::sprites`
+(`read_parked_sprite_positions`) and their four blanks join the build. And when
+a world has more blanks than pointer-table rows, `HammerBroFill` leaves one
+march area without Hammer Bro slots (`rowless_area`), so no bro can spawn
+where it could march onto a blank with no row. Before, 8s are Wild drew about
+8 such blanks in W8, scattered across its pages, and the one bro the shuffle
+puts there reached them on every seed (122 hits over 50 seeds). The army
+home at (3,20) was one of them whenever W8 had no spare rows.
+
+**What moved.** All 20 seeds: W8's build sees four more blanks on every seed,
+which shifts the RNG stream from there on.
+
+**How that was established.** `test_route_census` at 1000 seeds, old tree
+against new: every world within noise (W8 2.36 → 2.36 routes, C1 26.3 → 26.4;
+overall 2.588 → 2.598 routes, linear 5.44 → 5.61%, below-floor 0.30 →
+0.22%). `CENSUS_SEEDS=500 all_world_targets_reachable` passes. The new
+`every_blank_a_sprite_reaches_has_a_row` passes at 50 seeds on six arms,
+8s are Wild included, and W8 still gets its bro on 100 of 100 seeds with
+8s are Wild off and on.
+
 ### 2026-10-18 — page 3's M/L window closed (fix/page3-ml-window)
 
 **Intended: `$E9` (W5 star) and `$EA` (tall rock) stop counting as

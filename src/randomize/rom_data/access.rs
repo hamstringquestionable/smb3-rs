@@ -10,6 +10,31 @@ pub(crate) fn read_word(rom: &Rom, offset: usize) -> u16 {
     (hi << 8) | lo
 }
 
+/// A world's pointer table layout, read from the ROM's own master tables.
+///
+/// The engine stores no entry count: `Map_PrepareLevel` scans from the
+/// world's InitIndex until an entry matches. The count is implied by the
+/// layout instead, since the screen-column table starts where the row-type
+/// table ends.
+///
+/// The engine follows each of the five masters on its own, so this panics
+/// if they disagree with that layout. W1-W8 only: the Warp Zone shares one
+/// table between its object and layout masters.
+pub(crate) fn world_tables(rom: &Rom, world_idx: usize) -> WorldTables {
+    assert!(world_idx < 8, "the Warp Zone's tables are not laid out like a world's");
+    let master = |table: usize| read_word(rom, table + world_idx * 2) as usize;
+    let rowtype = master(ROWTYPE_MASTER);
+    let n = master(SCRCOL_MASTER) - rowtype;
+    assert!(
+        master(INIT_INDEX_MASTER) + 4 == rowtype
+            && master(OBJSETS_MASTER) == rowtype + n * 2
+            && master(LAYOUTS_MASTER) == rowtype + n * 4,
+        "W{}: the pointer table masters disagree",
+        world_idx + 1
+    );
+    WorldTables { rowtype_offset: prg_bank_cpu_to_file(12, rowtype as u16), entry_count: n }
+}
+
 /// Compute sub-table file offsets for a world's pointer tables.
 /// Returns (scrcol_offset, objsets_offset, layouts_offset).
 pub(crate) fn table_offsets(world: &WorldTables) -> (usize, usize, usize) {
@@ -330,16 +355,20 @@ pub(crate) fn write_map_sprite(
     rom.write_byte(id_off, id);
 }
 
-/// Move `world_idx`'s canoe (map object `$10`, `MAPOBJ_CANOE`) to a grid
+/// Put `world_idx`'s canoe (map object `$10`, `MAPOBJ_CANOE`) on a grid
 /// cell. The engine finds one canoe per map, so the first slot holding one is
-/// the canoe. `false` if the world has none.
-pub(crate) fn move_canoe(rom: &mut Rom, world_idx: usize, (row, col): (usize, usize)) -> bool {
-    let Some(slot) = (0..MAP_OBJ_SLOTS).find(|&slot| {
+/// the canoe; a world with none (a generated W7 lagoon) takes the highest
+/// empty slot, as the piranha plants do, so the Hammer Bro and plant budgets
+/// that read slot eligibility see it. `false` if no slot is free.
+pub(crate) fn place_canoe(rom: &mut Rom, world_idx: usize, (row, col): (usize, usize)) -> bool {
+    let canoe = (0..MAP_OBJ_SLOTS).find(|&slot| {
         rom.read_byte(map_obj_slot_offset(rom, MAP_OBJ_IDS_MASTER, world_idx, slot)) == 0x10
-    }) else {
+    });
+    let Some(slot) = canoe.or_else(|| last_empty_map_obj_slot(rom, world_idx)) else {
         return false;
     };
-    write_map_sprite_position(rom, world_idx, slot, row, col);
+    write_map_sprite(rom, world_idx, slot, row, col, 0x10);
+    rom.write_byte(map_obj_reward_offset(world_idx, slot), 0);
     true
 }
 
@@ -390,8 +419,17 @@ fn read_sprite_positions(
 /// Each world has up to 9 map object slots. A slot with ID $FF is unused.
 /// These are the positions where floating sprites sit (hammer bros, piranhas,
 /// W8 hand traps, etc.) and should not have level/fort tiles placed under them.
+#[cfg(test)]
 pub(crate) fn read_map_sprite_positions(rom: &Rom, world_idx: usize) -> Vec<(usize, usize)> {
     read_sprite_positions(rom, world_idx, |id| id != 0xFF)
+}
+
+/// Read the positions of the sprites that stay where the ROM puts them: every
+/// active sprite but W8's army (`$0D` battleship, `$0E` tank, `$0F` airship).
+/// The writer deals each of those a level or fortress node
+/// (`writer::sprites`), so their vanilla cells keep nothing.
+pub(crate) fn read_parked_sprite_positions(rom: &Rom, world_idx: usize) -> Vec<(usize, usize)> {
+    read_sprite_positions(rom, world_idx, |id| id != 0xFF && !(0x0D..=0x0F).contains(&id))
 }
 
 /// Read grid positions of hammer bro sprites only (IDs 0x03–0x06).
@@ -509,12 +547,15 @@ pub(crate) fn write_hb_sprite(
     rom.write_byte(map_obj_reward_offset(world_idx, slot), reward);
 }
 
-/// Read the non-Hammer-Bro floating sprite positions for a world (army, canoe,
-/// piranhas, …). When Hammer Bros are redistributed, only these stay fixed and
-/// must be protected from level/fort placement; the vanilla HB tiles are freed.
+/// Read the parked sprites that are not Hammer Bros (canoe, piranhas, …; see
+/// [`read_parked_sprite_positions`]). When Hammer Bros are redistributed, only
+/// these stay fixed; the vanilla HB tiles are freed.
 #[cfg(test)]
 pub(crate) fn read_non_hb_sprite_positions(rom: &Rom, world_idx: usize) -> Vec<(usize, usize)> {
     let hb: std::collections::HashSet<(usize, usize)> =
         read_hb_sprite_positions(rom, world_idx).into_iter().collect();
-    read_map_sprite_positions(rom, world_idx).into_iter().filter(|pos| !hb.contains(pos)).collect()
+    read_parked_sprite_positions(rom, world_idx)
+        .into_iter()
+        .filter(|pos| !hb.contains(pos))
+        .collect()
 }

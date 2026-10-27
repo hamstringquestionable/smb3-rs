@@ -337,19 +337,30 @@ pub(super) fn overworld_catalog(
     // with Generated Overworld). Hammer Bro shuffle is on whenever one is
     // (`resolve`), so the builder places the bros; a world the generator
     // cannot draw keeps its vanilla map.
+    let mut drawn = 0u8;
     if run.shuffle_hammer_bros {
+        use randomize::overworld::map_source::generated;
+        // Each generated world is dealt a few nodes more or fewer, trading
+        // pointer-table rows with the others; pickup reads the rows each
+        // drawn map asks for, and one that falls back to vanilla asks for
+        // vanilla's.
+        let offsets = generated::deal_node_offsets(&maps, run.generated_worlds, rng);
         for (wi, map) in maps.iter_mut().enumerate() {
+            // A world that cannot draw its dealt nodes draws vanilla's count
+            // before it gives up on a generated map.
+            let swap = options.swap_start_airship;
             if run.generated_worlds & (1 << wi) != 0
-                && let Some(generated) = randomize::overworld::map_source::generated::world_map(
-                    map,
-                    wi,
-                    options.swap_start_airship,
-                    rng,
-                )
+                && let Some(generated) = generated::world_map(map, wi, swap, offsets[wi], rng)
+                    .or_else(|| {
+                        (offsets[wi] != 0)
+                            .then(|| generated::world_map(map, wi, swap, 0, rng))
+                            .flatten()
+                    })
             {
                 if let Some(canoe) = generated.canoe {
                     rom.set_tag("overworld/generated_canoe");
-                    randomize::rom_data::move_canoe(rom, wi, canoe);
+                    let placed = randomize::rom_data::place_canoe(rom, wi, canoe);
+                    assert!(placed, "W{} has no map-object slot for its canoe", wi + 1);
                 }
                 if let Some((castle, help)) = generated.castle {
                     use randomize::rom_data::{AIRSHIP_OBJ_SLOT, HELP_OBJ_SLOT};
@@ -374,8 +385,17 @@ pub(super) fn overworld_catalog(
                     rom.write_byte(randomize::rom_data::MAP_MAX_PAN_R + wi, limit);
                 }
                 *map = generated;
+                drawn |= 1 << wi;
             }
         }
+    }
+    // The canoe sails under bridges only when every map is generated: each
+    // generated bridge has the sea on both sides or neither and none is on
+    // an edge row, while vanilla W3 has one on its top row (a world the
+    // generator could not draw keeps its vanilla map).
+    if drawn == 0xFF {
+        rom.set_tag("qol/canoe_under_bridges");
+        randomize::qol::canoe_under_bridges(rom);
     }
     let mut catalog = randomize::overworld::node_catalog::NodeCatalog::from_maps(
         rom,
@@ -899,6 +919,12 @@ pub(super) fn engine_patches(
     // running it unconditionally is correct and safe.
     rom.set_tag("qol/fix_canoe_softlock");
     randomize::qol::fix_canoe_softlock(rom);
+
+    // A Boom-Boom killed before his fight starts (a shuffled-in shell can do
+    // it) still drops the orb. Always applied: vanilla never kills him that
+    // early, so the patch changes nothing there.
+    rom.set_tag("boomboom/early_kill_orb");
+    randomize::enemies::koopalings::boomboom_early_kill_orb(rom);
 
     // Two-player "warp to partner" escape hatch (Start+Select on the map).
     // Always applied: in 2P the players share one map and its movable objects

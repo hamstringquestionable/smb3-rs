@@ -5,7 +5,7 @@ use std::collections::HashMap;
 
 use crate::rom::Rom;
 
-use crate::randomize::rom_data::{self, WORLDS};
+use crate::randomize::rom_data;
 
 // ---------------------------------------------------------------------------
 // Pipe pair matching
@@ -24,7 +24,7 @@ pub(super) fn build_pipe_map(
     spiral_entries: &[usize],
     dest_indices: &[usize],
 ) -> HashMap<usize, (usize, bool)> {
-    let world = &WORLDS[world_idx];
+    let world = &rom_data::world_tables(rom, world_idx);
     let mut result: HashMap<usize, (usize, bool)> = HashMap::new();
 
     // Collect all pipe pairs: (entry_a, entry_b)

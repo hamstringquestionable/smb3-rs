@@ -1193,8 +1193,9 @@ fn assert_one_key_per_lock(entries: &[LockEntry]) {
 ///
 /// # Panics
 ///
-/// If [`assert_one_key_per_lock`] is violated, or if more than [`MAX_ENTRIES`]
-/// are handed over. Truncating would leave a lock no fortress opens, which is an
+/// If [`assert_one_key_per_lock`] is violated, if more than [`MAX_ENTRIES`]
+/// are handed over, or if an away lock's cell owns no packed-store bit.
+/// Truncating or skipping would leave a lock no fortress opens, which is an
 /// unwinnable seed; a build-time failure is the better end of that trade.
 pub(crate) fn apply(rom: &mut Rom, entries: &[LockEntry], grids: &[Grid], tiles: &LockTiles) {
     assert_one_key_per_lock(entries);
@@ -1244,10 +1245,8 @@ pub(crate) fn apply(rom: &mut Rom, entries: &[LockEntry], grids: &[Grid], tiles:
         );
 
         for e in away {
-            let Some(target) = away_target(&map, e.target_world, e.target_pos) else {
-                debug_assert!(false, "lock cell {:?} owns no completion bit", e.target_pos);
-                continue;
-            };
+            let target = away_target(&map, e.target_world, e.target_pos)
+                .unwrap_or_else(|| panic!("lock cell {:?} owns no completion bit", e.target_pos));
             table.extend_from_slice(&e.key());
             table.extend_from_slice(&target);
             away_count += 1;
@@ -1965,7 +1964,8 @@ mod asm_checks {
             let threshold: [u8; 4] =
                 std::array::from_fn(|p| rom.read_byte(PRG012_FILE_BASE + 0x400 + p));
             let removable = |t: u8| REMOVABLE_PAIRS.iter().any(|&(o, _)| o == t) || is_pool_tile(t);
-            for (w, world) in rom_data::WORLDS.iter().enumerate() {
+            for w in 0..8 {
+                let world = &rom_data::world_tables(rom, w);
                 let grid = rom_data::read_tile_grid(rom, w);
                 for idx in 0..world.entry_count {
                     let (r, c) = rom_data::entry_grid_position(rom, world, idx);

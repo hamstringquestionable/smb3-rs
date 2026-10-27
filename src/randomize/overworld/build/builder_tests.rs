@@ -532,6 +532,46 @@ fn test_builder_levels_census() {
     }
 }
 
+/// When a world has fewer unforced blanks than its fort budget, Forts puts
+/// the rest on the path instead of shipping the world a fort short. No real
+/// seed reaches this (a 200-seed census on 2026-10-24 found the smallest
+/// margin was 2 spare unforced blanks), so it is provoked here by raising
+/// the budget past the unforced count on real worlds.
+#[test]
+fn forts_fall_back_to_forced_blanks() {
+    let Some(raw) = load_rom() else {
+        eprintln!("SKIP: requires the ROM, which is not included in the repo");
+        return;
+    };
+    let ctx = census_ctx(&raw, 1);
+    let mut checked = 0;
+    for world_idx in 0..8 {
+        let mut state = ctx.world(world_idx);
+        let mut rng = ChaCha8Rng::seed_from_u64(1);
+        run_schedule(&mut state, &[&Connectivity, &Levels], &mut rng);
+        let legal = state.legal_blanks();
+        let forced: HashSet<Pos> = state.forced_positions(&legal).into_iter().collect();
+        let unforced = legal.len() - forced.len();
+        if unforced == 0 || forced.is_empty() {
+            continue;
+        }
+        state.fort_budget = unforced + 1;
+        run_schedule(&mut state, &[&Forts], &mut rng);
+        let on_path = state
+            .slots
+            .iter()
+            .filter(|s| s.kind == SlotKind::Fortress && forced.contains(&s.pos))
+            .count();
+        assert!(
+            on_path > 0,
+            "W{}: the budget past the unforced blanks went unplaced",
+            world_idx + 1
+        );
+        checked += 1;
+    }
+    assert!(checked > 0, "no world had both forced and unforced blanks to test with");
+}
+
 /// Forts discovery census: the full dumb pipeline so far (connectivity →
 /// levels → spare pipes → forts). The headline number is on-route%: how
 /// often a random fort lands on the cheapest route — where the player pays

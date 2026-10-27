@@ -152,16 +152,19 @@ fn census_build(rom: &Rom, seed: u64) -> BuildResult {
     if let Some(mask) = std::env::var("CENSUS_GENERATE").ok().map(|v| {
         v.parse::<u8>().unwrap_or_else(|_| panic!("CENSUS_GENERATE={v}: want a world mask, 1-255"))
     }) {
+        use crate::randomize::overworld::map_source::generated;
         let mut maps = catalog.maps.clone();
         let mut gen_rng = ChaCha8Rng::seed_from_u64(seed ^ 0x6E6E_5741);
         let mut changed = false;
+        // Dealt node offsets, and the redraw at vanilla's count, as the stage.
+        let offsets = generated::deal_node_offsets(&maps, mask, &mut gen_rng);
         for wi in (0..8).filter(|wi| mask & (1 << wi) != 0) {
-            if let Some(map) = crate::randomize::overworld::map_source::generated::world_map(
-                &maps[wi],
-                wi,
-                true,
-                &mut gen_rng,
-            ) {
+            let draw = |offset: i32, rng: &mut ChaCha8Rng| {
+                generated::world_map(&maps[wi], wi, true, offset, rng)
+            };
+            let drawn = draw(offsets[wi], &mut gen_rng)
+                .or_else(|| (offsets[wi] != 0).then(|| draw(0, &mut gen_rng)).flatten());
+            if let Some(map) = drawn {
                 maps[wi] = map;
                 changed = true;
             }

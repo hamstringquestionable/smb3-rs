@@ -11,7 +11,7 @@ use super::{NodeKind, RawClassifiedEntry};
 use crate::randomize::overworld::map_source::WorldMap;
 use crate::randomize::rom_data::{
     self, AIRSHIP_ENTRIES, BOWSER_ENTRY, FORTRESS_ENTRIES, HAMMER_BRO_OBJ_PTRS,
-    MAP_OBJ_ENTRY_LINKS, TILE_START, TOAD_HOUSE_OBJ_PTRS, WORLDS,
+    MAP_OBJ_ENTRY_LINKS, TILE_START, TOAD_HOUSE_OBJ_PTRS,
 };
 
 // ---------------------------------------------------------------------------
@@ -32,7 +32,7 @@ pub(super) fn classify_world(
     map: &WorldMap,
 ) -> Vec<RawClassifiedEntry> {
     let grid = &map.grid;
-    let world = &WORLDS[world_idx];
+    let world = &rom_data::world_tables(rom, world_idx);
     let n = world.entry_count;
     let (_scrcol, objsets, layouts) = rom_data::table_offsets(world);
 
