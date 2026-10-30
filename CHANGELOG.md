@@ -9,6 +9,14 @@ deploys.
 
 ## [Unreleased]
 
+## [3.0.1] - 2026-10-29
+
+### Fixed
+
+- Rocky Wrench and the giant Piranha Plants no longer replace the piranhas in
+  underwater pipes (the 4-1 reservoir, 6-6, β2), where they were invisible
+  behind the water and only Rocky's wrenches could be seen.
+
 ## [3.0.0] - 2026-10-27
 
 ### Added

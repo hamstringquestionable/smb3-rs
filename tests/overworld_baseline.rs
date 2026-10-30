@@ -66,13 +66,13 @@ fn sweep_is_deterministic() {
 /// dated entry to `docs/overworld_baseline_log.md` in the same commit saying
 /// what moved and how you established it — never to make a red test green.
 ///
-/// Recaptured 2026-10-26 for W8's army homes freed and the Hammer Bro fill's
-/// rowless area — see `docs/overworld_baseline_log.md`.
+/// Recaptured 2026-10-29 for the underwater piranha-slot exclusions (an
+/// upstream RNG shift, seed 11 only) — see `docs/overworld_baseline_log.md`.
 #[rustfmt::skip]
 const BASELINE: [u64; SEEDS as usize] = [
     0xC32990738CA546DD, 0x270C9A3AA427F2F1, 0x983643CA756929A1, 0x1F1F8A4F0582547D,
     0xCB6FC53394BC1C27, 0x8D0ABB2B21589643, 0xE869028037B5E35D, 0xB073E08809B29722,
-    0x693B2D09B7496AF3, 0xC72CF6D370044C28, 0x0E8CADF23C977B9B, 0x14038A730311903F,
+    0x693B2D09B7496AF3, 0xC72CF6D370044C28, 0xE88700DB8082A7E1, 0x14038A730311903F,
     0xB0394B8BF00A2E7A, 0x41ED456B52098DCF, 0x50E8B7C728CAAB91, 0x40EF624687867AD5,
     0x47D7CF2C1A2DD389, 0x5A87CAE61F6E7826, 0x533B6027825E8210, 0xBFAC1A774E534367,
 ];
