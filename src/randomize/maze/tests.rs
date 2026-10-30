@@ -3090,10 +3090,9 @@ fn in_valley((world, pos): super::MazePos) -> bool {
 /// sample must also contain valley pads at all. Same shape, same reason, as
 /// `a_fortress_tile_says_where_its_lock_is`.
 ///
-/// The opening half reads the shipped maze rather than the report, because
-/// `report.pads` leaves out the rescue pass and the rule binds that pass too:
-/// no valley partner in the spine's first two worlds, or in any world a pad
-/// links straight to the first.
+/// The opening half reads the shipped maze rather than the report, so that a
+/// pad placed by any pass is held to it: no valley partner in the spine's first
+/// two worlds, or in any world a pad links straight to the first.
 #[test]
 fn a_valley_pad_is_earned() {
     let Some(raw) = load_rom() else { return };
@@ -3166,8 +3165,8 @@ fn valley_pad_census() {
 
     eprintln!("\n=== the valley (W8 screen 3), {seeds} seeds ===");
     eprintln!(
-        "  {:>3} {:>8} {:>8} {:>9} {:>9}  partner world",
-        "K", "valley%", "redeal%", "content", "content|v"
+        "  {:>3} {:>8} {:>8} {:>9} {:>9} {:>5}  partner world",
+        "K", "valley%", "redeal%", "content", "content|v", "pads"
     );
     for k in [0u8, 3, 7] {
         let mut with_valley = 0usize;
@@ -3175,9 +3174,11 @@ fn valley_pad_census() {
         let mut all: Vec<usize> = Vec::new();
         let mut valley_content: Vec<usize> = Vec::new();
         let mut partner_world = [0usize; 8];
+        let mut pad_tiles: Vec<usize> = Vec::new();
 
         for seed in 0..seeds {
-            let (_, _, report) = generated(&raw, seed, &knobs, k);
+            let (_, state, report) = generated(&raw, seed, &knobs, k);
+            pad_tiles.push(state.pad_edges().len());
             let mut hit = false;
             for pad in &report.pads {
                 let MazeEdge::Pad { from, to } = pad.edge else { unreachable!() };
@@ -3201,11 +3202,12 @@ fn valley_pad_census() {
         let hist: Vec<String> =
             partner_world.iter().enumerate().map(|(w, n)| format!("W{}:{n}", w + 1)).collect();
         eprintln!(
-            "  {k:>3} {:>7.1}% {:>7.1}% {:>9.1} {:>9.1}  {}",
+            "  {k:>3} {:>7.1}% {:>7.1}% {:>9.1} {:>9.1} {:>5.1}  {}",
             pct(with_valley),
             pct(redeal),
             mean(&all),
             mean(&valley_content),
+            mean(&pad_tiles),
             hist.join(" "),
         );
     }

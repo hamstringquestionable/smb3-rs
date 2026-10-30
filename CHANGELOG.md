@@ -14,6 +14,8 @@ deploys.
 - World Maze: a telepad onto Bowser's bridge is no longer reachable from the
   opening. Its other end is never in World 1, World 2, or a world a telepad
   links straight to World 1.
+- World Maze: fewer telepads (about 4–5 pairs instead of 7), so runs are
+  longer and seeds generate faster.
 
 ## [3.0.1] - 2026-10-29
 

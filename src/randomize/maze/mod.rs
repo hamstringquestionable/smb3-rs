@@ -947,10 +947,6 @@ pub(crate) struct GenReport {
     sealable: fill::Sealable,
     fill: fill::FillReport,
     pads: Vec<graph::PlacedPad>,
-    /// Worlds whose start region cannot be escaped with what the player
-    /// carries on arrival. **Must be empty**: each one is a seed that can
-    /// strand a player.
-    unsafe_worlds: Vec<usize>,
     /// Deals this seed paid for, 1..=[`MAX_DEALS`]. Anything above 1 is the
     /// content floor rejecting a short maze.
     deals: usize,
@@ -988,7 +984,6 @@ struct Deal {
     spheres: Spheres,
     fill: fill::FillReport,
     pads: Vec<graph::PlacedPad>,
-    unsafe_worlds: Vec<usize>,
     relocated: relocate::RelocateReport,
 }
 
@@ -1026,7 +1021,7 @@ pub(crate) fn generate<R: Rng>(
     sealable_locks: usize,
     rng: &mut R,
 ) -> (GlobalState, GenReport) {
-    // **One deal**: the pads, the key assignment, and the rescue pass.
+    // **One deal**: the pads and the key assignment.
     // Everything that consumes RNG lives in here, which is what makes a redeal
     // a different maze; nothing after the loop draws at all.
     let deal = |rng: &mut R| {
@@ -1044,47 +1039,19 @@ pub(crate) fn generate<R: Rng>(
 
         let fill = fill::assign_keys(&mut state, spine, knobs, rng);
 
-        // A world whose start region has no walk-out still gets offered a pad,
-        // because an extra edge can only help — but it is **no longer a reason
-        // to throw the assignment away**, and that change is the whole reason
-        // the constructive fill is usable.
-        //
-        // The rule existed because game over, airship arrival and whistle
-        // travel all deposit the player on a start tile. Two things retire it:
-        //
-        // * **The fill cannot strand anyone.** Every gate takes its key from a
-        //   fortress already reachable from the global start at the moment it
-        //   is placed, so every gate it writes is openable — which is strictly
-        //   stronger than the rule. `start_region_escapable` counts only a
-        //   world's OWN fortresses as openers, so it rejects the mode's own
-        //   formula: pad out, beat a fortress there, come back.
-        // * **The whistle is the escape hatch anyway.** It is never consumed,
-        //   survives a game over (nothing on that path clears
-        //   `Inventory_Items`), and the cycler always has the spine's first
-        //   world to return to.
-        //
-        // Enforced, it cost 2.1 crossings a seed and sent a third of seeds to
-        // the fallback; retired, cross-world locks go 51% -> 76% and the World
-        // 8 bridge 37% -> 73%, with nothing falling back.
-        let mut unsafe_worlds: Vec<usize> =
-            (0..state.worlds.len()).filter(|&wi| !state.start_region_escapable(wi)).collect();
-        if !unsafe_worlds.is_empty() {
-            let rescue = graph::rescue_pads(&state, &unsafe_worlds, knobs, rng);
-            state.add_pads(rescue.iter().map(|p| p.edge).collect());
-            unsafe_worlds.retain(|&wi| !state.start_region_escapable(wi));
-        }
+        // **No pad is added after the fill.** A rescue pass used to give a hub
+        // pad to every world whose start region `start_region_escapable` called
+        // trapped, but that check counts only a world's OWN fortresses, and the
+        // fill makes most locks cross-world — so it fired on ~99% of deals and
+        // supplied ~40% of every maze's pads as unplanned extras that answered
+        // to no pad rule. The safety it stood for is held elsewhere: the fill
+        // gives every gate a key reachable from the global start, game over
+        // returns there (`world_travel::GAMEOVER_RETURN`), and the whistle is
+        // permanent. The maze is sparser without it, on purpose — see
+        // `graph::PAD_COUNT_WEIGHTS`.
 
         let spheres = state.spheres();
-        Deal {
-            solvable: spheres.solvable,
-            content: 0,
-            state,
-            spheres,
-            fill,
-            pads,
-            unsafe_worlds,
-            relocated,
-        }
+        Deal { solvable: spheres.solvable, content: 0, state, spheres, fill, pads, relocated }
     };
 
     // **The content floor.** Deal until the maze is long enough, keeping the
@@ -1119,9 +1086,8 @@ pub(crate) fn generate<R: Rng>(
             break;
         }
     }
-    let Deal {
-        content, mut state, mut spheres, fill, pads, mut unsafe_worlds, mut relocated, ..
-    } = best.expect("MAX_DEALS is non-zero, so at least one deal was kept");
+    let Deal { content, mut state, mut spheres, fill, pads, mut relocated, .. } =
+        best.expect("MAX_DEALS is non-zero, so at least one deal was kept");
 
     // Defence in depth, and the one guard this mode cannot do without.
     //
@@ -1142,14 +1108,6 @@ pub(crate) fn generate<R: Rng>(
     if !spheres.solvable {
         state = GlobalState::from_build(result, spine, wands_required);
         spheres = state.spheres();
-        // RECOMPUTE, do not clear. The fallback drops the pads, and a hub pad
-        // is the only rescue an unsafe start region has — so the fallback can
-        // make escapability WORSE, and clearing the list here would report a
-        // clean bill for the one case that needed reporting. This branch is
-        // unreachable today (0 hub pads requested in every census arm, 100%
-        // escapable), which is exactly why it must not lie if it ever fires.
-        unsafe_worlds =
-            (0..state.worlds.len()).filter(|&wi| !state.start_region_escapable(wi)).collect();
         // The fallback rebuilds from the BuildResult, so the relocations are
         // gone with everything else. Report none rather than the ones that
         // were dealt and then discarded.
@@ -1192,7 +1150,7 @@ pub(crate) fn generate<R: Rng>(
         spheres = state.spheres();
     }
 
-    (state, GenReport { spheres, fill, pads, unsafe_worlds, sealable, deals, content, relocated })
+    (state, GenReport { spheres, fill, pads, sealable, deals, content, relocated })
 }
 
 /// Fold the maze's decisions back into the build, for the writer to write.

@@ -260,7 +260,7 @@ fn claim_sites<R: Rng>(state: &GlobalState, terrain: &[WorldTerrain], rng: &mut 
         if out.len() == PAD_BUDGET {
             break;
         }
-        if let Some(site) = claim_one(terrain, wi, PadRole::Hub, &out, None, rng) {
+        if let Some(site) = claim_one(terrain, wi, PadRole::Hub, &out, rng) {
             out.push(site);
         }
     }
@@ -280,7 +280,7 @@ fn claim_sites<R: Rng>(state: &GlobalState, terrain: &[WorldTerrain], rng: &mut 
             // Shortcut is asked for first and falls back to Free, which is what
             // "a request, not a contract" means in code.
             let role = if rng.random_bool(0.5) { PadRole::Shortcut } else { PadRole::Free };
-            if let Some(site) = claim_one(terrain, wi, role, &out, None, rng) {
+            if let Some(site) = claim_one(terrain, wi, role, &out, rng) {
                 out.push(site);
                 spent_this_round = true;
             }
@@ -295,7 +295,15 @@ fn claim_sites<R: Rng>(state: &GlobalState, terrain: &[WorldTerrain], rng: &mut 
 }
 
 /// Pads per world: 0..=3, biased to 1 (the charter's distribution).
-const PAD_COUNT_WEIGHTS: [u32; 4] = [2, 5, 2, 1];
+///
+/// This is now the whole pad count: the post-fill rescue pass that used to
+/// add ~6 tiles a deal is gone (see `generate`). `[2, 5, 3, 1]` was chosen over
+/// rolls that restore the old ~14.7 tiles, because planned pads shorten a run
+/// more than rescue pads did — matching the count pushed the content floor's
+/// redeal rate to 32-48% at K=0. Measured at 200 seeds, this roll gives ~9.2
+/// tiles, content ~16.9 (vanilla) / 16.4 (generated) at K=0, and 12% / 18%
+/// redeals.
+const PAD_COUNT_WEIGHTS: [u32; 4] = [2, 5, 3, 1];
 
 /// Weighted 0..=3.
 pub(crate) fn roll_count<R: Rng>(rng: &mut R) -> usize {
@@ -314,15 +322,12 @@ pub(crate) fn roll_count<R: Rng>(rng: &mut R) -> usize {
 /// host it.
 ///
 /// Falls back from the role's own pool to any free site, and records which role
-/// the chosen tile actually satisfies. `far_from` is the partner constraint: a
-/// site in the same world as an already-claimed half has to be
-/// [`SAME_WORLD_MIN_SPAN`] away from it.
+/// the chosen tile actually satisfies.
 fn claim_one<R: Rng>(
     terrain: &[WorldTerrain],
     world: usize,
     role: PadRole,
     claimed: &[Site],
-    far_from: Option<Pos>,
     rng: &mut R,
 ) -> Option<Site> {
     if claimed.iter().filter(|s| s.world == world).count() >= PADS_PER_WORLD_MAX {
@@ -334,7 +339,6 @@ fn claim_one<R: Rng>(
             .iter()
             .copied()
             .filter(|&p| !claimed.iter().any(|s| s.world == world && s.pos == p))
-            .filter(|&p| far_from.is_none_or(|q| span(p, q) >= SAME_WORLD_MIN_SPAN))
             .collect()
     };
     let mut pool = free(&t.sites_for(role));
@@ -406,90 +410,4 @@ fn half(from: Site, to: Site) -> PlacedPad {
         granted: from.granted,
         foreign: to.world != from.world,
     }
-}
-
-/// Hub pads for worlds the fill left unable to escape their own start region.
-///
-/// Separate from [`plan_pads`] because it runs after the key assignment, on
-/// whatever budget survived it. A rescue costs **two** ids, not one, because a
-/// pad has to have a partner to be a pad at all — so a world with only one id
-/// left gets nothing, and is reported rather than silently shipped.
-pub(crate) fn rescue_pads<R: Rng>(
-    state: &GlobalState,
-    worlds: &[usize],
-    knobs: &Knobs,
-    rng: &mut R,
-) -> Vec<PlacedPad> {
-    let terrain = classify_all(state);
-    let opening = Opening::of(state);
-    let mut pads = state.pad_edges();
-    // Everything already standing counts against the budget and the per-world
-    // cap, whichever pass placed it.
-    let mut claimed: Vec<Site> = state
-        .pad_edges()
-        .iter()
-        .map(|&((world, pos), _)| Site {
-            world,
-            pos,
-            requested: PadRole::Free,
-            granted: PadRole::Free,
-        })
-        .collect();
-
-    let mut out = Vec::new();
-    for &wi in worlds {
-        if claimed.len() + 2 > PAD_BUDGET {
-            break;
-        }
-        let Some(hub) = claim_one(&terrain, wi, PadRole::Hub, &claimed, None, rng) else {
-            continue;
-        };
-        claimed.push(hub);
-        match claim_partner(state, &terrain, &hub, knobs, &claimed, opening, &pads, rng) {
-            Some(partner) => {
-                claimed.push(partner);
-                out.push(half(hub, partner));
-                out.push(half(partner, hub));
-                pads.extend(pad_ends(&out[out.len() - 2..]));
-            }
-            // Nowhere to point: hand the site back rather than ship a pad that
-            // leads nowhere.
-            None => {
-                claimed.pop();
-            }
-        }
-    }
-    out
-}
-
-/// A partner tile for a rescue hub, in a world chosen the way
-/// [`Knobs::foreign_landing_bias`] asks and falling through to any world that
-/// can host one. A world whose pick would break [`valley_earned`] is passed
-/// over, the same as one with no free site.
-// Reason: the two valley arguments are the pair rule's own inputs, and the
-// rest are the claim's; bundling them would be a struct used by one call.
-#[allow(clippy::too_many_arguments)]
-fn claim_partner<R: Rng>(
-    state: &GlobalState,
-    terrain: &[WorldTerrain],
-    hub: &Site,
-    knobs: &Knobs,
-    claimed: &[Site],
-    opening: Opening,
-    pads: &[(MazePos, MazePos)],
-    rng: &mut R,
-) -> Option<Site> {
-    let cross = rng.random_bool(knobs.foreign_landing_bias.clamp(0.0, 1.0));
-    let mut order: Vec<usize> = (0..state.worlds.len()).filter(|&o| o != hub.world).collect();
-    order.shuffle(rng);
-    if cross {
-        order.push(hub.world);
-    } else {
-        order.insert(0, hub.world);
-    }
-    order.into_iter().find_map(|wi| {
-        let far = (wi == hub.world).then_some(hub.pos);
-        claim_one(terrain, wi, PadRole::Free, claimed, far, rng)
-            .filter(|partner| valley_earned(hub, partner, opening, pads))
-    })
 }

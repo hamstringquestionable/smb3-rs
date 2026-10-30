@@ -865,6 +865,13 @@ also the transition signal the packed completion store already tests
    the 16 arrival ids, the fill re-checks it on every swap, and anything still
    failing gets a rescue pad from whatever budget is left.
 
+   *Retired 2026-10-30: the post-fill rescue pad.* Measured on the shipping
+   generator it fired on ~99% of deals and supplied ~40% of every maze's pads,
+   because after the fill most locks are opened by a foreign fortress, which
+   this own-forts-only check reads as permanently shut. The safety it stood for
+   is held by the fill, `GAMEOVER_RETURN` and the permanent whistle. See
+   `graph::PAD_COUNT_WEIGHTS` for the sparser maze that resulted.
+
    **Measured, the correct form holds 800 of 800 world-seeds — 100%**, against
    55.4% for the charter's wording (`start_region_exit_rate`). So the
    start-region rule is a **cheap guard, not a placement phase**: the machinery
