@@ -342,6 +342,10 @@ cargo build --bin testrom
 ./target/debug/testrom --list               # every placeable level name
 ```
 
+**Write every playtest ROM to the repo's `roms/` folder** (`-o roms/<name>.nes`)
+— not `/tmp`, not the scratchpad, not `~/Copyparty`. `roms/` is where the user
+looks, and `.gitignore` already excludes `*.nes`, so nothing there is committed.
+
 ### `--require`: search seeds for the feature under test
 
 A random seed often just doesn't contain the thing you need to test. `--require`
