@@ -212,6 +212,13 @@ struct Cli {
     #[arg(long, value_name = "NAME:OFFSET:HEX")]
     set_layout: Vec<String>,
 
+    /// Overwrite raw ROM bytes, as "OFFSET:HEX" with OFFSET a hex file offset
+    /// (iNES header included, as every offset in rom_data is), e.g.
+    /// "A9C5:00". Repeatable. Applied last, after every other edit, so it
+    /// always wins. For trying an engine change before writing it properly.
+    #[arg(long, value_name = "OFFSET:HEX")]
+    poke: Vec<String>,
+
     /// Overwrite one world-map colour in every world, as "PAGE:INDEX:COLOR"
     /// with COLOR in hex, e.g. "0:1:16" paints palette page 0's index 1 red.
     /// Repeatable. A probe for which tiles and screens a colour slot reaches.
@@ -328,6 +335,24 @@ fn parse_set_enemy(spec: &str) -> Result<EnemyOverride, String> {
         id: byte(parts[2])?,
         pos,
     })
+}
+
+/// Parse a `--poke` item: `"A9C5:00"` — a hex file offset and the hex bytes
+/// to write there.
+fn parse_poke(spec: &str) -> Result<(usize, Vec<u8>), String> {
+    let bad = || format!("bad --poke {spec:?} (expected OFFSET:HEX, e.g. A9C5:00)");
+    let (offset, hex) = spec.split_once(':').ok_or_else(bad)?;
+    let offset =
+        usize::from_str_radix(offset.trim().trim_start_matches("0x"), 16).map_err(|_| bad())?;
+    let hex = hex.trim();
+    if hex.is_empty() || hex.len() % 2 != 0 {
+        return Err(bad());
+    }
+    let bytes = (0..hex.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).map_err(|_| bad()))
+        .collect::<Result<Vec<u8>, String>>()?;
+    Ok((offset, bytes))
 }
 
 /// Parse a `--map-color` item: `"0:1:16"` — palette page, colour index, and
@@ -499,6 +524,9 @@ fn main() {
     let map_colors: Vec<(u8, u8, u8)> =
         cli.map_color.iter().map(|s| parse_map_color(s).unwrap_or_else(|e| die(e))).collect();
 
+    let pokes: Vec<(usize, Vec<u8>)> =
+        cli.poke.iter().map(|s| parse_poke(s).unwrap_or_else(|e| die(e))).collect();
+
     let starting_items: Vec<u8> = cli
         .starting_items
         .iter()
@@ -563,7 +591,19 @@ fn main() {
         map_colors,
     };
 
-    let built = testrom::build(&vanilla, &spec).unwrap_or_else(|e| die(e));
+    let mut built = testrom::build(&vanilla, &spec).unwrap_or_else(|e| die(e));
+
+    // Last, so a poke overrides whatever the build wrote there.
+    for (offset, bytes) in &pokes {
+        let end = offset + bytes.len();
+        if *offset < 0x10 || end > built.bytes.len() {
+            die(format!("--poke {offset:#07X} is outside the ROM's PRG/CHR data"));
+        }
+        let old = &built.bytes[*offset..end];
+        let hex = |b: &[u8]| b.iter().map(|x| format!("{x:02X}")).collect::<Vec<_>>().join(" ");
+        built.report.push(format!("poke {offset:#07X}: {} -> {}", hex(old), hex(bytes)));
+        built.bytes[*offset..end].copy_from_slice(bytes);
+    }
 
     fs::write(&cli.output, &built.bytes)
         .unwrap_or_else(|e| die(format!("writing {}: {e}", cli.output.display())));
