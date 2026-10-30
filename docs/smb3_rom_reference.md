@@ -4901,6 +4901,53 @@ at `$A7C4` (`LDA $A3,X / ADD #$01 / ... / CMP $9A,X`).
 
 Same wild+other-wild gate as the visibility patch above.
 
+### Sprite Priority: Who Draws Behind the Background
+
+The NES gives a sprite one priority bit (`SPR_BEHINDBG`, `$20`). Set, the
+sprite shows only through background pixels of colour index 0 — in SMB3, the
+sky. Any background tile with drawn pixels hides it, and that includes the
+**water body**: the light sky strip above the waves is the backdrop colour, so
+the different blue below must be opaque tiles. So is a waterfall.
+
+**How an object gets the bit:** only through `Objects_FlipBits`.
+`Object_ShakeAndCalcSprite` (PRG000) copies it into `Temp_Var3`, which the
+draw routines build the OAM attribute from. `Level_PrepareNewObject` zeroes
+`Objects_FlipBits` on spawn, and `Objects_SprAttr` takes only the palette
+(`Object_SetPaletteFromAttr`), so nothing inherits the bit — an object's own
+code has to set it. The complete list of setters:
+
+| Object | When | Where |
+|---|---|---|
+| Rocky Wrench `$AD` | every frame (`ORA #$20`; `RockyWrench_FlipBits` is `$60/$20`) | PRG005 `$A9B1`, `Rocky_Draw` `$AB47` |
+| Giant piranhas `$7D` / `$7F` | set at init, never cleared | PRG004 `ObjInit_GiantGreenPiranha` tail |
+| Sideways piranhas | always (`$20` / `$60`) | PRG003 `SidePiranha_Draw` |
+| Vine | always | PRG001 `ObjInit_Vine` |
+| Angry Sun `$AF` | while `Var7 = 0` (idling) | PRG005 `Sun_Draw` |
+| Anything sinking in quicksand | until deleted | PRG000 `Object_DoKilledAction` |
+| Buzzy/Spiny group with `Var1 > 0`, Bullet Bill leaving a cannon | one draw, then restored | PRG004 |
+| Player fireballs / poofs, and Mario | while `Player_Behind` (white block) | PRG007, PRG029 |
+
+**Small piranhas never set it.** They hide with a **masking sprite**: the
+plant draws in front, moves its own `Object_SprRAM` up two sprites, and puts
+two opaque `$77` tiles with attribute `$22` (behind-BG + palette 2) at the
+pipe mouth in the freed, lower OAM slots (`ObjNorm_Piranha`, after
+`PRG005_A738`). The earlier sprite wins an overlap, and being behind-BG it
+lets the pipe tile show — so the plant is clipped exactly at the rim against
+any background. Every object gets 6 sprites (`SprRamOffsets` is `$18` apart):
+a piranha is 4 body + 2 mask. A giant piranha's body is already 6 (24×32), so
+it has no room for a mask and uses the priority bit instead, which only works
+over sky; Rocky (2 body + held wrench) relies on the bit the same way.
+
+**The randomizer consequence:** Shuffle/Wild can deal Rocky and the giant
+green into ordinary piranha slots. Where that pipe stands in water they are
+invisible for their whole cycle (only Rocky's wrench, a special object without
+the bit, shows). Fixed by placement, not by patching: `BEHIND_BG` in
+`enemies/tables.rs` is excluded at the underwater piranha slots in
+`protections.rs` — 4-1's reservoir Venus, β2's low pipe, 6-6's screen-8 pair
+(found by checking every piranha level's water against the wiki and
+playtesting, 2026-10-29). Clearing the bit outright was tried with
+`testrom --poke` and rejected: Rocky's buried half then draws over the deck.
+
 ### Stompability: `OA3_NOTSTOMPABLE` and the in-water gate (PRG000)
 
 Whether landing on an object stomps it or hurts Mario is bit 5 (`$20`) of its

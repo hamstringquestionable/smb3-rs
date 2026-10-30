@@ -246,6 +246,16 @@ pub(super) const HAZARDS: Group = Group::Any(&[
     Group::Ids(BRO_ENEMIES),
 ]);
 
+/// Enemies drawn with the sprite priority bit set (`SPR_BEHINDBG`), so they
+/// only show through sky. Vanilla keeps them in front of sky; over water or a
+/// waterfall they are invisible for their whole cycle. Kept out of the pipe
+/// slots that sit in water — see `protections.rs`.
+pub(super) const BEHIND_BG: Group = Group::Ids(&[
+    0x7D,              // OBJ_BIGGREENPIRANHA
+    GIANT_RED_PIRANHA, // 0x7F
+    ROCKY_WRENCH,      // 0xAD
+]);
+
 /// Enemies whose sprites are taller than a standard 1-tile enemy.
 /// When one of these is the replacement in a swap, Y is decremented by 1
 /// to prevent the taller sprite from clipping into the floor.

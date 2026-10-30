@@ -14,7 +14,7 @@
 //! derived helpers (`entry_protection_at`, `walker_segment_rule_at`)
 //! — never the table directly.
 
-use super::tables::{Group, HAZARDS, ROTODISCS};
+use super::tables::{BEHIND_BG, Group, HAZARDS, ROTODISCS};
 use crate::randomize::rom_data::{HAMMER_BRO_OBJ_PTRS, enemy_ptr_to_file_offset};
 
 /// One logical level or sub-area with protections that affect enemy
@@ -145,11 +145,15 @@ const LEVEL_PROTECTIONS: &[LevelProtection] = &[
     },
     // --- Stompable-locked entries ---
     LevelProtection {
-        label: "6-6 sub-area (floor spikes — non-stompable swap would corner player; screen 8 floor Cheep must not become a hazard)",
+        label: "6-6 sub-area (floor spikes — non-stompable swap would corner player; screen 8 floor Cheep must not become a hazard; screen 8 piranhas are underwater)",
         enemy_ptr: 0xC64B,
         walker_segment: WalkerSegmentRule::Default,
         entries: &[
             EntryRule { offset: 0x0C698, rule: EntryProtection::Exclude(HAZARDS) }, // GreenCheep scr=8 col=13 row=15
+            // Underwater pipes: a Rocky Wrench or giant piranha here is
+            // invisible behind the water tiles (see BEHIND_BG).
+            EntryRule { offset: 0x0C69E, rule: EntryProtection::Exclude(BEHIND_BG) }, // RedPiranha scr=8 col=4
+            EntryRule { offset: 0x0C6A4, rule: EntryProtection::Exclude(BEHIND_BG) }, // RedPiranha scr=8 col=12
             EntryRule { offset: 0x0C6A7, rule: EntryProtection::ForceStompable }, // Spike scr=10 col=0
             EntryRule { offset: 0x0C6AA, rule: EntryProtection::ForceStompable }, // Spike scr=10 col=6
             EntryRule { offset: 0x0C6AD, rule: EntryProtection::ForceStompable }, // Spike scr=10 col=4
@@ -269,14 +273,27 @@ const LEVEL_PROTECTIONS: &[LevelProtection] = &[
         ],
     },
     LevelProtection {
-        label: "4-1 (each troopa sits on a small platform Mario must land on to progress; a hazard here forces an unavoidable hit)",
+        label: "4-1 (each troopa sits on a small platform Mario must land on to progress; a hazard here forces an unavoidable hit; the high Venus pipe is in the reservoir)",
         enemy_ptr: 0xCE97,
         walker_segment: WalkerSegmentRule::Default,
         entries: &[
+            // In the water up top: a Rocky Wrench or giant piranha here is
+            // invisible behind the water tiles (see BEHIND_BG).
+            EntryRule { offset: 0x0CEB1, rule: EntryProtection::Exclude(BEHIND_BG) }, // VenusFireTrap scr=2 col=6
             EntryRule { offset: 0x0CEBD, rule: EntryProtection::Exclude(HAZARDS) }, // BigRedTroopa scr=5 col=8
             EntryRule { offset: 0x0CEC0, rule: EntryProtection::Exclude(HAZARDS) }, // BigRedTroopa scr=5 col=15
             EntryRule { offset: 0x0CEC3, rule: EntryProtection::Exclude(HAZARDS) }, // BigRedTroopa scr=6 col=4
             EntryRule { offset: 0x0CEC9, rule: EntryProtection::Exclude(HAZARDS) }, // BigGreenTroopa scr=7 col=10
+        ],
+    },
+    LevelProtection {
+        label: "β2 (the low pipe is underwater)",
+        enemy_ptr: 0xC221,
+        walker_segment: WalkerSegmentRule::Default,
+        entries: &[
+            // A Rocky Wrench or giant piranha here is invisible behind the
+            // water tiles (see BEHIND_BG).
+            EntryRule { offset: 0x0C23E, rule: EntryProtection::Exclude(BEHIND_BG) }, // GreenPiranha scr=1 col=10
         ],
     },
     LevelProtection {
@@ -454,6 +471,35 @@ mod tests {
         assert!(group.excludes(0x8A, vanilla), "the drop Thwomp must be excluded");
         for variant in 0x8B..=0x8F {
             assert!(!group.excludes(variant, vanilla), "{variant:#04X} must stay allowed");
+        }
+    }
+
+    /// The underwater piranha pipes keep Rocky Wrench and the giant piranhas
+    /// out, and every other piranha-pool member in.
+    #[test]
+    fn underwater_piranha_pipes_exclude_only_behind_bg_enemies() {
+        let Ok(rom) = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes") else {
+            eprintln!("SKIP: requires the ROM");
+            return;
+        };
+        // 4-1 high Venus, β2 low pipe, 6-6 screen-8 pair.
+        for (offset, expected) in
+            [(0x0CEB1, 0xA6), (0x0C23E, 0xA0), (0x0C69E, 0xA2), (0x0C6A4, 0xA2)]
+        {
+            let vanilla = rom[offset];
+            assert_eq!(vanilla, expected, "piranha at {offset:#07X}");
+            let Some(EntryProtection::Exclude(group)) = entry_protection_at(offset) else {
+                panic!("{offset:#07X} carries no exclusion");
+            };
+            for id in [0x7D, 0x7F, 0xAD] {
+                assert!(group.excludes(id, vanilla), "{id:#04X} must be excluded at {offset:#07X}");
+            }
+            for id in [0xA0, 0xA2, 0xA4, 0xA6, 0x9D] {
+                assert!(
+                    !group.excludes(id, vanilla),
+                    "{id:#04X} must stay allowed at {offset:#07X}"
+                );
+            }
         }
     }
 
