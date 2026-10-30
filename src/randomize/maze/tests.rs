@@ -3089,6 +3089,11 @@ fn in_valley((world, pos): super::MazePos) -> bool {
 /// the *other* failure, and the one the design deliberately declined. So the
 /// sample must also contain valley pads at all. Same shape, same reason, as
 /// `a_fortress_tile_says_where_its_lock_is`.
+///
+/// The opening half reads the shipped maze rather than the report, because
+/// `report.pads` leaves out the rescue pass and the rule binds that pass too:
+/// no valley partner in the spine's first two worlds, or in any world a pad
+/// links straight to the first.
 #[test]
 fn a_valley_pad_is_earned() {
     let Some(raw) = load_rom() else { return };
@@ -3096,7 +3101,22 @@ fn a_valley_pad_is_earned() {
     let mut seen = 0usize;
 
     for seed in 0..census_seeds(60) {
-        let (_, _, report) = generated(&raw, seed, &knobs, 3);
+        let (_, state, report) = generated(&raw, seed, &knobs, 3);
+        let pads = state.pad_edges();
+        let start = IDENTITY_SPINE[0];
+        for &(from, to) in &pads {
+            if !in_valley(to) {
+                continue;
+            }
+            let linked = pads.iter().any(|&(a, b)| a.0 == start && b.0 == from.0);
+            assert!(
+                from.0 != start && from.0 != IDENTITY_SPINE[1] && !linked,
+                "seed {seed}: the valley pad at {to:?} is fed from {from:?}, in the \
+                 opening (start W{}, next W{}, linked to the start: {linked})",
+                start + 1,
+                IDENTITY_SPINE[1] + 1,
+            );
+        }
         for pad in &report.pads {
             let MazeEdge::Pad { from, to } = pad.edge else { unreachable!() };
             if !in_valley(to) {
