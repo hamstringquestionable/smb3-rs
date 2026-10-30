@@ -9,6 +9,8 @@ deploys.
 
 ## [Unreleased]
 
+## [3.0.1] - 2026-10-29
+
 ### Fixed
 
 - Rocky Wrench and the giant Piranha Plants no longer replace the piranhas in
