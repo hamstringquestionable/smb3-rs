@@ -343,19 +343,6 @@ fn every_placed_slot_is_reached() {
     }
 }
 
-/// The weighted roll is reachable at every count and biased to 1.
-#[test]
-fn pad_count_roll_is_biased_to_one() {
-    let mut rng = ChaCha8Rng::seed_from_u64(9);
-    let mut hist = [0usize; 4];
-    for _ in 0..40_000 {
-        hist[super::graph::roll_count(&mut rng)] += 1;
-    }
-    assert!(hist.iter().all(|&n| n > 0), "every count 0..=3 must be reachable: {hist:?}");
-    let most = hist.iter().enumerate().max_by_key(|&(_, n)| n).map(|(i, _)| i);
-    assert_eq!(most, Some(1), "1 pad must be the modal count: {hist:?}");
-}
-
 /// What terrain the roles actually have to work with — measured before any role
 /// placer existed, because a role whose pool is empty is a design that cannot
 /// be built.
@@ -3089,6 +3076,10 @@ fn in_valley((world, pos): super::MazePos) -> bool {
 /// the *other* failure, and the one the design deliberately declined. So the
 /// sample must also contain valley pads at all. Same shape, same reason, as
 /// `a_fortress_tile_says_where_its_lock_is`.
+///
+/// The opening half reads the shipped maze rather than the report, so that a
+/// pad placed by any pass is held to it: no valley partner in the spine's first
+/// two worlds, or in any world a pad links straight to the first.
 #[test]
 fn a_valley_pad_is_earned() {
     let Some(raw) = load_rom() else { return };
@@ -3096,7 +3087,22 @@ fn a_valley_pad_is_earned() {
     let mut seen = 0usize;
 
     for seed in 0..census_seeds(60) {
-        let (_, _, report) = generated(&raw, seed, &knobs, 3);
+        let (_, state, report) = generated(&raw, seed, &knobs, 3);
+        let pads = state.pad_edges();
+        let start = IDENTITY_SPINE[0];
+        for &(from, to) in &pads {
+            if !in_valley(to) {
+                continue;
+            }
+            let linked = pads.iter().any(|&(a, b)| a.0 == start && b.0 == from.0);
+            assert!(
+                from.0 != start && from.0 != IDENTITY_SPINE[1] && !linked,
+                "seed {seed}: the valley pad at {to:?} is fed from {from:?}, in the \
+                 opening (start W{}, next W{}, linked to the start: {linked})",
+                start + 1,
+                IDENTITY_SPINE[1] + 1,
+            );
+        }
         for pad in &report.pads {
             let MazeEdge::Pad { from, to } = pad.edge else { unreachable!() };
             if !in_valley(to) {
@@ -3125,10 +3131,10 @@ fn a_valley_pad_is_earned() {
 }
 
 /// How the valley rule actually landed: how often a pad reaches Bowser's
-/// bridge, what it cost the run, and **how deep the hunt is** — the open
-/// question `graph::valley_earned` names. Gatedness is a terrain property, not
-/// a depth one, so if the partners cluster in the early worlds the rule is
-/// buying less than it looks.
+/// bridge, what it cost the run, **which worlds feed it**, and how many pad
+/// tiles a deal places. The partner column is how the opening ban shows up
+/// (W1 and W2 must read 0); the pads column is what the per-world roll
+/// (`graph::OPENING_PAD_WEIGHTS`) is tuned against, alongside redeals.
 ///
 /// Spine position is the world index here because the census walks
 /// `IDENTITY_SPINE`.
@@ -3146,8 +3152,8 @@ fn valley_pad_census() {
 
     eprintln!("\n=== the valley (W8 screen 3), {seeds} seeds ===");
     eprintln!(
-        "  {:>3} {:>8} {:>8} {:>9} {:>9}  partner world",
-        "K", "valley%", "redeal%", "content", "content|v"
+        "  {:>3} {:>8} {:>8} {:>9} {:>9} {:>5}  partner world",
+        "K", "valley%", "redeal%", "content", "content|v", "pads"
     );
     for k in [0u8, 3, 7] {
         let mut with_valley = 0usize;
@@ -3155,9 +3161,11 @@ fn valley_pad_census() {
         let mut all: Vec<usize> = Vec::new();
         let mut valley_content: Vec<usize> = Vec::new();
         let mut partner_world = [0usize; 8];
+        let mut pad_tiles: Vec<usize> = Vec::new();
 
         for seed in 0..seeds {
-            let (_, _, report) = generated(&raw, seed, &knobs, k);
+            let (_, state, report) = generated(&raw, seed, &knobs, k);
+            pad_tiles.push(state.pad_edges().len());
             let mut hit = false;
             for pad in &report.pads {
                 let MazeEdge::Pad { from, to } = pad.edge else { unreachable!() };
@@ -3181,11 +3189,12 @@ fn valley_pad_census() {
         let hist: Vec<String> =
             partner_world.iter().enumerate().map(|(w, n)| format!("W{}:{n}", w + 1)).collect();
         eprintln!(
-            "  {k:>3} {:>7.1}% {:>7.1}% {:>9.1} {:>9.1}  {}",
+            "  {k:>3} {:>7.1}% {:>7.1}% {:>9.1} {:>9.1} {:>5.1}  {}",
             pct(with_valley),
             pct(redeal),
             mean(&all),
             mean(&valley_content),
+            mean(&pad_tiles),
             hist.join(" "),
         );
     }

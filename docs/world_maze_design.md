@@ -134,7 +134,9 @@ The target is the fixed dock/castle tile (`TILE_AIRSHIP` `$C9`, `TILE_BOWSER`
 marks them** — the spine edge is repeatable, which is what keeps reachability
 monotone and lets a fixpoint serve as the solver.
 
-**Telepads are the chords.** 0–3 per world, biased to 1. They may lead anywhere,
+**Telepads are the chords.** 0–3 per world, rolled by where the world sits:
+light in the start world, the world after it and W8, heavy in the five
+between (see "2026-10-30: pads rolled per world" below). They may lead anywhere,
 including into a region reachable *only* by pad — a pad-only island holding a
 fortress for a required lock is a deliberate and desirable shape.
 
@@ -630,6 +632,41 @@ on its own. Accepted as is. The extra redeals cost nothing measurable: WASM
 `generate_patch`, 100 seeds, maze on, median 76.2 → 75.4 ms at K=0 and
 76.2 → 74.3 ms at K=3 — the cheaper check pays for them.
 
+### 2026-10-30: pads rolled per world, rescue retired
+
+Three changes on one branch, each measured with `valley_pad_census` (200 seeds
+x K=0/3/7, vanilla and generated maps):
+
+1. **A valley pad stays out of the opening.** A pad on W8's screen 3 (the
+   bridge approach to the castle) was already "earned": its partner had to be
+   a gated site in another world (`graph::valley_earned`). It now also may
+   not stand in the start world, the world its airship leads to, or any world
+   a pad links straight to the start world (`graph::Opening`). Before this,
+   W1 and W2 hosted roughly a sixth of all valley partners.
+2. **The post-fill rescue pass is gone.** See "Invariant 3 is RETIRED": it fired
+   on ~99% of deals and supplied ~40% of every maze's pads.
+3. **The pad roll is per world.** With rescue gone, one roll dense enough to
+   restore the pad count pushed K=0 redeals to 32–48%, because planned pads
+   shorten a run more than rescue pads did. Where a pad stands decides what
+   it costs: pads in the opening are the earliest shortcuts and drive the
+   redeal rate, and W8's tile count *is* the valley-pad rate (one W8 tile
+   lands in the valley ~30% of the time). So `graph::OPENING_PAD_WEIGHTS`
+   `[3,5,1,0]` covers the start world and its successor, `W8_PAD_WEIGHTS`
+   `[3,5,1,0]` covers W8, and `MIDDLE_PAD_WEIGHTS` `[0,2,4,4]` the rest.
+
+The owner's targets were pads near the rescue-era count, K=0 redeals at most
+~15%, and valley pads on no more than about one seed in five:
+
+| | maps | pad tiles | redeal % K=0/3/7 | valley pad % | content K=0 |
+|---|---|---|---|---|---|
+| before | vanilla | 14.7 | 30 / 26 / 3 | 20–22 | 14.4 |
+| after | vanilla | 12.4 | 14 / 13 / 1 | 14.5–15.5 | 16.2 |
+| before | generated | 14.7 | 34.5 / 30 / 7 | 17–24 | 13.9 |
+| after | generated | 12.4 | 15 / 12.5 / 2.5 | 15–16 | 15.3 |
+
+`maze_route_census`'s shortest-route figures in the table above were **not**
+re-measured for this change.
+
 **Race fairness was looked at and deliberately left alone.** Route counts per
 seed range from a handful to well over a thousand, and the typical random route
 is usually 1–3 items over the shortest, but neither tracked the spread of
@@ -864,6 +901,13 @@ also the transition signal the packed completion store already tests
    The generator treats it as a hard invariant: hub pads are the first claim on
    the 16 arrival ids, the fill re-checks it on every swap, and anything still
    failing gets a rescue pad from whatever budget is left.
+
+   *Retired 2026-10-30: the post-fill rescue pad.* Measured on the shipping
+   generator it fired on ~99% of deals and supplied ~40% of every maze's pads,
+   because after the fill most locks are opened by a foreign fortress, which
+   this own-forts-only check reads as permanently shut. The safety it stood for
+   is held by the fill, `GAMEOVER_RETURN` and the permanent whistle. See
+   `graph::OPENING_PAD_WEIGHTS` for the per-world pad roll that replaced it.
 
    **Measured, the correct form holds 800 of 800 world-seeds — 100%**, against
    55.4% for the charter's wording (`start_region_exit_rate`). So the
