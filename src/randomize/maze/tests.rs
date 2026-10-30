@@ -343,19 +343,6 @@ fn every_placed_slot_is_reached() {
     }
 }
 
-/// The weighted roll is reachable at every count and biased to 1.
-#[test]
-fn pad_count_roll_is_biased_to_one() {
-    let mut rng = ChaCha8Rng::seed_from_u64(9);
-    let mut hist = [0usize; 4];
-    for _ in 0..40_000 {
-        hist[super::graph::roll_count(&mut rng)] += 1;
-    }
-    assert!(hist.iter().all(|&n| n > 0), "every count 0..=3 must be reachable: {hist:?}");
-    let most = hist.iter().enumerate().max_by_key(|&(_, n)| n).map(|(i, _)| i);
-    assert_eq!(most, Some(1), "1 pad must be the modal count: {hist:?}");
-}
-
 /// What terrain the roles actually have to work with — measured before any role
 /// placer existed, because a role whose pool is empty is a design that cannot
 /// be built.

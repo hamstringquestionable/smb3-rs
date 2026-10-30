@@ -1048,7 +1048,7 @@ pub(crate) fn generate<R: Rng>(
         // gives every gate a key reachable from the global start, game over
         // returns there (`world_travel::GAMEOVER_RETURN`), and the whistle is
         // permanent. The maze is sparser without it, on purpose — see
-        // `graph::PAD_COUNT_WEIGHTS`.
+        // `graph::OPENING_PAD_WEIGHTS`.
 
         let spheres = state.spheres();
         Deal { solvable: spheres.solvable, content: 0, state, spheres, fill, pads, relocated }

@@ -870,7 +870,7 @@ also the transition signal the packed completion store already tests
    because after the fill most locks are opened by a foreign fortress, which
    this own-forts-only check reads as permanently shut. The safety it stood for
    is held by the fill, `GAMEOVER_RETURN` and the permanent whistle. See
-   `graph::PAD_COUNT_WEIGHTS` for the sparser maze that resulted.
+   `graph::OPENING_PAD_WEIGHTS` for the per-world pad roll that replaced it.
 
    **Measured, the correct form holds 800 of 800 world-seeds — 100%**, against
    55.4% for the charter's wording (`start_region_exit_rate`). So the

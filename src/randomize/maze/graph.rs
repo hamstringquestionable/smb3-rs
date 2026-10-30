@@ -265,11 +265,15 @@ fn claim_sites<R: Rng>(state: &GlobalState, terrain: &[WorldTerrain], rng: &mut 
         }
     }
 
+    let opening = Opening::of(state);
     let mut order: Vec<usize> = (0..state.worlds.len()).collect();
     order.shuffle(rng);
     let mut want: Vec<usize> = order
         .iter()
-        .map(|&wi| roll_count(rng).saturating_sub(out.iter().filter(|s| s.world == wi).count()))
+        .map(|&wi| {
+            let rolled = roll_count(pad_weights(opening, wi), rng);
+            rolled.saturating_sub(out.iter().filter(|s| s.world == wi).count())
+        })
         .collect();
     while out.len() < PAD_BUDGET && want.iter().any(|&n| n > 0) {
         let mut spent_this_round = false;
@@ -294,22 +298,48 @@ fn claim_sites<R: Rng>(state: &GlobalState, terrain: &[WorldTerrain], rng: &mut 
     out
 }
 
-/// Pads per world: 0..=3, biased to 1 (the charter's distribution).
+/// Pad-tile roll weights for 0..=3 tiles, by where a world sits.
 ///
-/// This is now the whole pad count: the post-fill rescue pass that used to
-/// add ~6 tiles a deal is gone (see `generate`). `[2, 5, 3, 1]` was chosen over
-/// rolls that restore the old ~14.7 tiles, because planned pads shorten a run
-/// more than rescue pads did — matching the count pushed the content floor's
-/// redeal rate to 32-48% at K=0. Measured at 200 seeds, this roll gives ~9.2
-/// tiles, content ~16.9 (vanilla) / 16.4 (generated) at K=0, and 12% / 18%
-/// redeals.
-const PAD_COUNT_WEIGHTS: [u32; 4] = [2, 5, 3, 1];
+/// **Where a pad stands decides what it costs the run**, so one roll for every
+/// world could not hold the pad count, the redeal rate and the valley rate at
+/// once. This roll is the whole pad count — the post-fill rescue pass that
+/// used to add ~6 tiles a deal is gone (see `generate`) — and a uniform roll
+/// dense enough to replace it pushed the content floor's redeals to 32-48% at
+/// K=0, because planned pads shorten a run more than rescue pads did.
+///
+/// * [`OPENING_PAD_WEIGHTS`]: the start world and the one its airship leads
+///   to. Pads there are the earliest shortcuts, so they are what trips the
+///   floor — lightening only these cut K=0 redeals from ~22% to ~13%.
+/// * [`W8_PAD_WEIGHTS`]: the valley's world. Its tile count is the valley-pad
+///   rate (one tile lands in the valley ~30% of the time), so this is the
+///   valley dial: the middle roll here put valley pads on ~25% of seeds.
+/// * [`MIDDLE_PAD_WEIGHTS`]: the other five, which carry the count.
+///
+/// Measured at 200 seeds x K=0/3/7 (`valley_pad_census`), vanilla then
+/// generated maps: ~12.4 tiles a deal (14.7 with rescue), K=0 redeals 14% /
+/// 15% (30% / 34.5% with rescue), valley pads on 15% / 16% of seeds.
+const OPENING_PAD_WEIGHTS: [u32; 4] = [3, 5, 1, 0];
+/// See [`OPENING_PAD_WEIGHTS`].
+const W8_PAD_WEIGHTS: [u32; 4] = [3, 5, 1, 0];
+/// See [`OPENING_PAD_WEIGHTS`].
+const MIDDLE_PAD_WEIGHTS: [u32; 4] = [0, 2, 4, 4];
+
+/// Which roll world `wi` takes — see [`OPENING_PAD_WEIGHTS`].
+fn pad_weights(opening: Opening, wi: usize) -> &'static [u32; 4] {
+    if wi == opening.start || Some(wi) == opening.next {
+        &OPENING_PAD_WEIGHTS
+    } else if wi == rom_data::W8_IDX {
+        &W8_PAD_WEIGHTS
+    } else {
+        &MIDDLE_PAD_WEIGHTS
+    }
+}
 
 /// Weighted 0..=3.
-pub(crate) fn roll_count<R: Rng>(rng: &mut R) -> usize {
-    let total: u32 = PAD_COUNT_WEIGHTS.iter().sum();
+fn roll_count<R: Rng>(weights: &[u32; 4], rng: &mut R) -> usize {
+    let total: u32 = weights.iter().sum();
     let mut roll = rng.random_range(..total);
-    for (n, &w) in PAD_COUNT_WEIGHTS.iter().enumerate() {
+    for (n, &w) in weights.iter().enumerate() {
         if roll < w {
             return n;
         }
@@ -409,5 +439,28 @@ fn half(from: Site, to: Site) -> PlacedPad {
         requested: from.requested,
         granted: from.granted,
         foreign: to.world != from.world,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rand::SeedableRng;
+    use rand_chacha::ChaCha8Rng;
+
+    /// Each roll lands on exactly the counts its table weights: a zero weight
+    /// is a count the world never gets, and every other count turns up.
+    #[test]
+    fn pad_roll_follows_its_weights() {
+        let mut rng = ChaCha8Rng::seed_from_u64(9);
+        for weights in [&OPENING_PAD_WEIGHTS, &W8_PAD_WEIGHTS, &MIDDLE_PAD_WEIGHTS] {
+            let mut hist = [0usize; 4];
+            for _ in 0..40_000 {
+                hist[roll_count(weights, &mut rng)] += 1;
+            }
+            for (n, (&w, &seen)) in weights.iter().zip(&hist).enumerate() {
+                assert_eq!(w > 0, seen > 0, "{weights:?}: count {n} rolled {seen} times");
+            }
+        }
     }
 }
