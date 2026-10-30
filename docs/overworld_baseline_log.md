@@ -34,6 +34,24 @@ hashes they describe are gone; the reasoning is not.
 
 ## Entries
 
+### 2026-10-29 — underwater piranha slots exclude Rocky and giant piranhas (fix/behind-bg-underwater-slots)
+
+**Intended: no overworld change; an enemy-pass change that shifts the shared
+RNG.** Four piranha slots (4-1's reservoir Venus, β2's low pipe, 6-6's
+screen-8 pair) gained `Exclude(BEHIND_BG)`. An `Exclude` slot picks from the
+flat pool instead of the piranha category buckets, so it draws a different
+number of values, and `level_data` runs before the overworld on the one
+pipeline RNG (issue #321).
+
+**What moved.** 1 of the 20 seeds: 11. It is the only one whose enemy pass
+reaches one of those slots in a way that changes the draw count.
+
+**How that was established.** No builder, catalog or writer code changed —
+only the stream position the builder starts from — so the map distribution
+cannot move; seed 11 simply deals a different map, as a different seed
+would. The clean `beta/next` tree passes the old baseline, and the full
+`cargo test` passes with the new one. No census run, by the reasoning above.
+
 ### 2026-10-26 — W8's army homes freed; rowless blanks kept from the bros (feature/w8-rowless-page)
 
 **Intended: two changes.** W8's army sprites (`$0D`-`$0F`) no longer reserve
