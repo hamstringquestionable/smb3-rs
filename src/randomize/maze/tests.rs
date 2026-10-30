@@ -3131,10 +3131,10 @@ fn a_valley_pad_is_earned() {
 }
 
 /// How the valley rule actually landed: how often a pad reaches Bowser's
-/// bridge, what it cost the run, and **how deep the hunt is** — the open
-/// question `graph::valley_earned` names. Gatedness is a terrain property, not
-/// a depth one, so if the partners cluster in the early worlds the rule is
-/// buying less than it looks.
+/// bridge, what it cost the run, **which worlds feed it**, and how many pad
+/// tiles a deal places. The partner column is how the opening ban shows up
+/// (W1 and W2 must read 0); the pads column is what the per-world roll
+/// (`graph::OPENING_PAD_WEIGHTS`) is tuned against, alongside redeals.
 ///
 /// Spine position is the world index here because the census walks
 /// `IDENTITY_SPINE`.
