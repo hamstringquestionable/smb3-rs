@@ -1047,8 +1047,8 @@ pub(crate) fn generate<R: Rng>(
         // to no pad rule. The safety it stood for is held elsewhere: the fill
         // gives every gate a key reachable from the global start, game over
         // returns there (`world_travel::GAMEOVER_RETURN`), and the whistle is
-        // permanent. The maze is sparser without it, on purpose — see
-        // `graph::OPENING_PAD_WEIGHTS`.
+        // permanent. The planned roll makes up the count instead — see
+        // `graph::PAD_WEIGHTS`.
 
         let spheres = state.spheres();
         Deal { solvable: spheres.solvable, content: 0, state, spheres, fill, pads, relocated }

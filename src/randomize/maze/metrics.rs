@@ -244,10 +244,8 @@ pub(crate) fn required_levels(state: &GlobalState) -> Option<usize> {
 /// again), pads and the airship spine, and nothing out of an airship or castle
 /// tile except the global start — built once per maze.
 pub(crate) struct ShortestBound {
-    // Only `cell` reads these; production asks by flat index already.
-    #[cfg(test)]
+    // What `cell` turns a maze position into a flat index with.
     offset: Vec<usize>,
-    #[cfg(test)]
     cols: Vec<usize>,
     edges: Vec<Vec<(usize, Option<FortRef>)>>,
     /// Cells that cost 1 to enter: every level, fort and airship.
@@ -342,9 +340,7 @@ impl ShortestBound {
             start: idx(state.start),
             goal: idx(state.goal),
             k: usize::from(state.wands_required),
-            #[cfg(test)]
             offset,
-            #[cfg(test)]
             cols,
             edges,
             played,
@@ -355,15 +351,42 @@ impl ShortestBound {
 
     /// The flat index of a cell — the unit [`Self::estimate`]'s `cleared` is
     /// asked in.
-    #[cfg(test)]
     pub(crate) fn cell(&self, (w, (r, c)): MazePos) -> usize {
         self.offset[w] + r * self.cols[w] + c
+    }
+
+    /// Add a two-way link, as a pad pair does — so pad planning can ask
+    /// about a maze it is still placing pads into.
+    pub(crate) fn link(&mut self, a: MazePos, b: MazePos) {
+        let (a, b) = (self.cell(a), self.cell(b));
+        self.edges[a].push((b, None));
+        self.edges[b].push((a, None));
+    }
+
+    /// Every cell's cost from the start, `u32::MAX` where even the optimistic
+    /// walk never arrives: how deep into the run a place is.
+    pub(crate) fn depths(&self) -> Vec<u32> {
+        self.solve(|_| false)
     }
 
     /// The fewest levels, forts and airships still to play, with `cleared`
     /// naming the cells already played (they cost nothing). `None` when the
     /// castle cannot be reached even optimistically.
     pub(crate) fn estimate(&self, cleared: impl Fn(usize) -> bool) -> Option<usize> {
+        let dist = self.solve(&cleared);
+        let mut need = dist[self.goal];
+        if self.k > 0 {
+            let mut owed: Vec<u32> =
+                self.wands.iter().map(|&c| if cleared(c) { 0 } else { dist[c] }).collect();
+            owed.sort_unstable();
+            need = need.max(*owed.get(self.k - 1)?);
+        }
+        (need != u32::MAX).then_some(need as usize)
+    }
+
+    /// The Dijkstra under [`Self::estimate`] and [`Self::depths`], re-solved
+    /// until the fort costs settle.
+    fn solve(&self, cleared: impl Fn(usize) -> bool) -> Vec<u32> {
         let enter = |cell: usize| u32::from(self.played[cell] && !cleared(cell));
         let mut fort_cost: HashMap<FortRef, u32> = self
             .forts
@@ -399,17 +422,9 @@ impl ShortestBound {
                     changed = true;
                 }
             }
-            if changed {
-                continue;
+            if !changed {
+                return dist;
             }
-            let mut need = dist[self.goal];
-            if self.k > 0 {
-                let mut owed: Vec<u32> =
-                    self.wands.iter().map(|&c| if cleared(c) { 0 } else { dist[c] }).collect();
-                owed.sort_unstable();
-                need = need.max(*owed.get(self.k - 1)?);
-            }
-            return (need != u32::MAX).then_some(need as usize);
         }
     }
 }
