@@ -11,12 +11,16 @@ deploys.
 
 ### Changed
 
-- World Maze: a telepad onto Bowser's bridge is no longer reachable from the
-  opening. Its other end is never in World 1, World 2, or a world a telepad
-  links straight to World 1.
-- World Maze: slightly fewer telepads (about 6 pairs instead of 7), placed
-  mostly in the middle worlds and rarely in the first two, so runs are longer
-  and seeds generate faster.
+- World Maze: telepads are paired by how far into the run each end is, so a
+  telepad rarely skips a large part of the game, and they prefer worlds two
+  or more airships apart over the next world along. An occasional bigger jump
+  still turns up. Runs are longer, seeds generate faster, and there are about
+  as many telepads as before.
+- World Maze: a telepad on the approach to Bowser's castle only stands on its
+  first two nodes, so the bridges are still between it and the castle.
+- World Maze: the length check now counts every wand airship a seed needs, so
+  seeds with several wands are no longer thrown away for looking short and
+  generate faster.
 
 ## [3.0.1] - 2026-10-29
 
