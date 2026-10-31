@@ -3645,9 +3645,10 @@ fn floor_cost_census() {
 /// them**, per K: pad tiles, redeals, a pad from the opening (start world or
 /// the one its airship leads to) into W8 or the valley, any valley pad, a pad
 /// on the three valley nodes past the first bridge span (always 0 since
-/// `graph::VALLEY_PAD_LAST_COL`), and worlds left with no pad at all. The
-/// yardstick for changes to pad planning; `MAZE_GENERATE=1` runs it over
-/// generated maps.
+/// `graph::VALLEY_PAD_LAST_COL`), worlds left with no pad at all, and how
+/// varied the links are: the share of pairs inside one world or between
+/// worlds one airship apart, and distinct world pairs a seed. The yardstick
+/// for changes to pad planning; `MAZE_GENERATE=1` runs it over generated maps.
 ///
 /// Each seed's worlds are built once and dealt at every K. `CENSUS_FROM`
 /// starts the seed range there, so a batch can split it across processes;
@@ -3669,8 +3670,9 @@ fn pad_pattern_census() {
     let maps = if std::env::var("MAZE_GENERATE").is_ok() { "generated" } else { "vanilla" };
 
     // Per K: pads, redeals, opening->W8, opening->valley, valley, far valley
-    // nodes, deals, content, worlds with no pad, start world with no pad.
-    let mut n = [[0usize; 10]; KS.len()];
+    // nodes, deals, content, worlds with no pad, start world with no pad,
+    // pairs, same-world pairs, neighbour pairs, distinct world pairs.
+    let mut n = [[0usize; 14]; KS.len()];
     for seed in from..from + seeds {
         let (_, result) = census_build(&raw, seed);
         for (ki, &k) in KS.iter().enumerate() {
@@ -3697,12 +3699,27 @@ fn pad_pattern_census() {
             c[7] += report.content;
             c[8] += (0..state.worlds.len()).filter(|&w| !has_pad(w)).count();
             c[9] += !has_pad(start) as usize;
+            // Variety: pairs, same-world pairs, pairs one airship apart (the
+            // census walks `IDENTITY_SPINE`, so that is adjacent indices),
+            // and distinct world pairs.
+            let pairs: Vec<(usize, usize)> = pads
+                .iter()
+                .filter(|&&(a, b)| (a.0, a.1) < (b.0, b.1))
+                .map(|&(a, b)| (a.0.min(b.0), a.0.max(b.0)))
+                .collect();
+            c[10] += pairs.len();
+            c[11] += pairs.iter().filter(|&&(x, y)| x == y).count();
+            c[12] += pairs.iter().filter(|&&(x, y)| y == x + 1).count();
+            let mut distinct = pairs.clone();
+            distinct.sort_unstable();
+            distinct.dedup();
+            c[13] += distinct.len();
         }
     }
 
     eprintln!("\n=== pad patterns, {maps} maps, {seeds} seeds ===");
     eprintln!(
-        "  {:>2} {:>5} {:>7} {:>5} {:>8} {:>10} {:>7} {:>11} {:>7} {:>8} {:>9}",
+        "  {:>2} {:>5} {:>7} {:>5} {:>8} {:>10} {:>7} {:>11} {:>7} {:>8} {:>9} {:>6} {:>6} {:>8}",
         "K",
         "pads",
         "redeal",
@@ -3713,7 +3730,10 @@ fn pad_pattern_census() {
         "W8 54/56/58",
         "content",
         "no-pad/s",
-        "start bare"
+        "start bare",
+        "same",
+        "neigh",
+        "distinct"
     );
     for (ki, &k) in KS.iter().enumerate() {
         let c = n[ki];
@@ -3722,7 +3742,7 @@ fn pad_pattern_census() {
         let pct = |x: usize| 100.0 * x as f64 / seeds as f64;
         let per = |x: usize| x as f64 / seeds as f64;
         eprintln!(
-            "  {k:>2} {:>5.1} {:>6.1}% {:>5.2} {:>7.1}% {:>9.1}% {:>6.1}% {:>10.1}% {:>7.1} {:>8.2} {:>8.1}%",
+            "  {k:>2} {:>5.1} {:>6.1}% {:>5.2} {:>7.1}% {:>9.1}% {:>6.1}% {:>10.1}% {:>7.1} {:>8.2} {:>8.1}% {:>5.1}% {:>5.1}% {:>8.2}",
             per(c[0]),
             pct(c[1]),
             per(c[6]),
@@ -3733,6 +3753,9 @@ fn pad_pattern_census() {
             per(c[7]),
             per(c[8]),
             pct(c[9]),
+            100.0 * c[11] as f64 / c[10].max(1) as f64,
+            100.0 * c[12] as f64 / c[10].max(1) as f64,
+            per(c[13]),
         );
     }
 }

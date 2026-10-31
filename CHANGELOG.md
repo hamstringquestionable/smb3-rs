@@ -12,9 +12,10 @@ deploys.
 ### Changed
 
 - World Maze: telepads are paired by how far into the run each end is, so a
-  telepad rarely skips a large part of the game. An occasional bigger jump
-  still turns up, about one seed in six. Runs are longer, seeds generate
-  faster, and there are about as many telepads as before.
+  telepad rarely skips a large part of the game, and they prefer worlds two
+  or more airships apart over the next world along. An occasional bigger jump
+  still turns up. Runs are longer, seeds generate faster, and there are about
+  as many telepads as before.
 - World Maze: a telepad on the approach to Bowser's castle only stands on its
   first two nodes, so the bridges are still between it and the castle.
 - World Maze: the length check now counts every wand airship a seed needs, so

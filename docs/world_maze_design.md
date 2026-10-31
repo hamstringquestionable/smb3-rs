@@ -135,8 +135,9 @@ marks them** — the spine edge is repeatable, which is what keeps reachability
 monotone and lets a fixpoint serve as the solver.
 
 **Telepads are the chords.** 1–3 per world, the same roll everywhere, paired
-by depth: a pad's two ends may lie at most 8 levels apart in how far into the
-run they are, with an occasional bigger jump on a roll (see "2026-10-31: pads
+by depth: a pad's two ends may lie at most 9 levels apart in how far into the
+run they are, preferring worlds two or more airships apart, with an
+occasional bigger jump on a roll (see "2026-10-31: pads
 paired by depth" below). They may lead anywhere,
 including into a region reachable *only* by pad — a pad-only island holding a
 fortress for a required lock is a deliberate and desirable shape.
@@ -718,6 +719,36 @@ levels; a fifth of the deals that roll one are redealt, against a tenth
 overall. A world can now end up with no pad when all its sites are dropped:
 0.14 such worlds a seed, the start world on ~7% of seeds. That is allowed —
 every world still has its airship.
+
+### 2026-10-31: neighbour hops (playtest)
+
+A playtest of the cap-8 build found too many pads going to the same worlds.
+The census agreed: depth climbs steadily along the airship chain, so "close
+in depth" mostly means "the next world", and 60% of pairs joined worlds one
+airship apart (uncapped: 24%). Raising the cap alone bought variety only at
+the price of redeals (cap 12: 42% neighbours, 26% K=0 redeals); picking the
+widest jump under the cap, or alternating widest and random, sat on the same
+line.
+
+What moved it was choice, not reach. Half of all pairing decisions had a
+partner within the cap two or more worlds away, and a random pick took one
+only a third of the time. `choose_partner` now prefers that partner (two
+airships apart on the spine, `spine_positions`), and with the preference the
+cap could widen to 9. A cycling deck of caps (12/10/8/6) measured the same as
+a flat 9 and was not kept.
+
+2,000 seeds, flat roll, vanilla / generated:
+
+| | neighbour pairs | same-world | redeal % K=0 | redeal % K=4 | content K=0 |
+|---|---|---|---|---|---|
+| cap 8, random pick | 60% / 58% | 7.3% / 7.6% | 9 / 12 | 3 / 7 | 16.8 / 16.2 |
+| cap 8, prefer 2+ away | 36% / 32% | 4.8% / 4.5% | 14 / 18 | 6 / 9 | 15.9 / 15.3 |
+| **cap 9, prefer 2+ away** | **25% / 22%** | **3.4% / 3.5%** | **19 / 25** | **8 / 13** | **15.0 / 14.6** |
+| no cap | 24% / 25% | 5.5% / 6.1% | 39 / 43 | 14 / 20 | 13.0 / 12.8 |
+
+The owner's call on the cost: redeals are not player-facing beyond generation
+time, and a deal is the cheap part (the worlds are built once), so a K=0 rate
+near 20% is accepted for pads that go somewhere.
 
 ### 2026-10-31: the floor counts every wand airship
 

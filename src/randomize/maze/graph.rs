@@ -288,20 +288,25 @@ fn claim_one<R: Rng>(
 /// pad spanning 5 or less saved 6+. Which worlds a pad joins, or its role,
 /// predicted far less.
 ///
-/// **Measured** (2,000 seeds, K=0, vanilla / generated maps, flat
-/// [`PAD_WEIGHTS`]): uncapped, K=0 redeals ran 45% / 51%; capped at 8 with the
-/// over-cap site dropped, 7% / 10% at ~14.6 tiles a deal. A cap of 6 had
-/// fewer redeals but twice the fallbacks, so more big jumps shipped.
-const PAD_JUMP_CAP: u32 = 8;
+/// **Why 9.** Places close in depth are mostly in the same world or the next
+/// one along the airship chain, so a tight cap alone turns pads into
+/// neighbour hops: at 8 with a random pick, 60% of pairs joined adjacent
+/// worlds (uncapped: 24%), which a playtest felt. [`choose_partner`] now
+/// prefers a partner two or more worlds away, and with that the cap could
+/// widen by one. Measured (2,000 seeds, flat [`PAD_WEIGHTS`], vanilla /
+/// generated): neighbour pairs 25% / 22%, K=0 redeals 19% / 25% (uncapped:
+/// 39% / 43%), ~15 tiles a deal. A cycling deck of caps (12/10/8/6) measured
+/// the same and was not worth the machinery.
+const PAD_JUMP_CAP: u32 = 9;
 
 /// The chance, per level past [`PAD_JUMP_CAP`], that a site with nothing in
 /// reach keeps its nearest partner anyway: one past keeps it this often, two
 /// past this squared, and so on. Otherwise the site is dropped.
 ///
-/// This is the dial for the occasional big jump. At 0.7 about one seed in six
-/// ships a pad past the cap, nearly all of them 9-10; about a fifth of the
-/// deals that roll one are redealt by the floor, against a tenth overall, so
-/// most survive to the player.
+/// This is the dial for the occasional big jump. At 0.7 (with a cap of 8)
+/// about one seed in six shipped a pad past the cap, nearly all of them one or
+/// two over; about a fifth of the deals that rolled one were redealt by the
+/// floor, against a tenth overall, so most survive to the player.
 const PAD_JUMP_KEEP: f64 = 0.7;
 
 /// Turn claimed sites into pairs, and throw away anything left over.
@@ -316,6 +321,7 @@ fn pair_up<R: Rng>(
     knobs: &Knobs,
     rng: &mut R,
 ) -> Vec<PlacedPad> {
+    let spine_pos = spine_positions(state);
     // Depth is re-read after every pair: a new pad moves everything past it.
     let mut bound = ShortestBound::new(state);
     let mut depth = bound.depths();
@@ -327,7 +333,7 @@ fn pair_up<R: Rng>(
         // No legal partner left: `a` is dropped rather than shipped pointing
         // nowhere.
         let depth_of = |s: &Site| depth[bound.cell((s.world, s.pos))];
-        let Some(i) = choose_partner(&pool, &a, cross, &depth_of, rng) else {
+        let Some(i) = choose_partner(&pool, &a, cross, &depth_of, &spine_pos, rng) else {
             continue;
         };
         let b = pool.remove(i);
@@ -339,15 +345,42 @@ fn pair_up<R: Rng>(
     out
 }
 
+/// Each world's place on the airship chain, followed from the start world. A
+/// world off the chain gets the chain's length: it is reached only by pad, as
+/// far from anywhere as the graph goes (the fill reads it the same way).
+fn spine_positions(state: &GlobalState) -> [usize; 8] {
+    let mut chain = vec![state.start.0];
+    while let Some(next) = state.edges.iter().find_map(|e| match *e {
+        MazeEdge::Airship { from_world, to_world } if from_world == *chain.last()? => {
+            Some(to_world)
+        }
+        _ => None,
+    }) {
+        if chain.contains(&next) {
+            break;
+        }
+        chain.push(next);
+    }
+    let mut pos = [chain.len(); 8];
+    for (i, &w) in chain.iter().enumerate() {
+        pos[w] = i;
+    }
+    pos
+}
+
 /// Index into `pool` of a site `a` may be paired with: within
-/// [`PAD_JUMP_CAP`] of its depth if any is, the rolled kind before the other;
-/// failing that, the nearest depth there is, on a [`PAD_JUMP_KEEP`] roll.
-/// `None` drops `a`.
+/// [`PAD_JUMP_CAP`] of its depth if any is — a world two or more airships
+/// away first, then the rolled kind, then any; failing that, the nearest
+/// depth there is, on a [`PAD_JUMP_KEEP`] roll. `None` drops `a`.
+///
+/// `spine_pos` is each world's place on the airship chain; "two away" is
+/// measured there, not in ROM order.
 fn choose_partner<R: Rng>(
     pool: &[Site],
     a: &Site,
     cross: bool,
     depth_of: &dyn Fn(&Site) -> u32,
+    spine_pos: &[usize; 8],
     rng: &mut R,
 ) -> Option<usize> {
     // Every `pick` below takes this, the fallbacks included: they relax the
@@ -356,12 +389,14 @@ fn choose_partner<R: Rng>(
     let legal = |b: &Site| b.world != a.world || span(a.pos, b.pos) >= SAME_WORLD_MIN_SPAN;
     let short = |b: &Site| depth_of(a).abs_diff(depth_of(b)) <= PAD_JUMP_CAP;
     let kind = |b: &Site| (b.world != a.world) == cross;
+    let far = |b: &Site| spine_pos[a.world].abs_diff(spine_pos[b.world]) >= 2;
     let pick = |f: &dyn Fn(&Site) -> bool, rng: &mut R| -> Option<usize> {
         let candidates: Vec<usize> =
             pool.iter().enumerate().filter(|(_, b)| f(b)).map(|(i, _)| i).collect();
         candidates.choose(rng).copied()
     };
-    pick(&|b| legal(b) && short(b) && kind(b), rng)
+    pick(&|b| legal(b) && short(b) && far(b), rng)
+        .or_else(|| pick(&|b| legal(b) && short(b) && kind(b), rng))
         .or_else(|| pick(&|b| legal(b) && short(b), rng))
         .or_else(|| {
             // Nothing within the cap: the nearest depth there is, kept only on
