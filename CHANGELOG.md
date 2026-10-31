@@ -17,6 +17,9 @@ deploys.
   faster, and there are about as many telepads as before.
 - World Maze: a telepad on the approach to Bowser's castle only stands on its
   first two nodes, so the bridges are still between it and the castle.
+- World Maze: the length check now counts every wand airship a seed needs, so
+  seeds with several wands are no longer thrown away for looking short and
+  generate faster.
 
 ## [3.0.1] - 2026-10-29
 

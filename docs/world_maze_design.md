@@ -719,13 +719,26 @@ overall. A world can now end up with no pad when all its sites are dropped:
 0.14 such worlds a seed, the start world on ~7% of seeds. That is allowed —
 every world still has its airship.
 
-The floor itself was **not** changed here. It reads the larger of the castle
-path and the path to the K-th nearest wand airship, which leaves out the other
-K-1 airships the run must also play; against exact shortest routes on 120
-seeds it sat +4 under the truth at K=0, +8 at K=4 and +17 at K=7. Adding the K
-airships (the K-th nearest by levels alone, plus K) stays a guarantee and cut
-K=4 false rejections from 10 to 3 in that sample; summing the paths does not
-(39 of 40 K=4 seeds read above the real route). That is the next change.
+### 2026-10-31: the floor counts every wand airship
+
+The bound read the larger of the castle path and the path to the K-th nearest
+wand airship, which leaves out the other K-1 airships the run must also play.
+Against exact shortest routes (40 seeds a K, floor off so rejected deals were
+kept) it sat +4 under the truth at K=0, +8 at K=4 and +17 at K=7, and every
+K=4/K=7 deal it rejected had a real route of 12 or more.
+
+`ShortestBound::estimate` now also prices the wands by levels and forts only
+(wand airships free), takes the K-th smallest, and adds the K airships: one
+of the K the run plays is at least that far in levels, and an airship is
+never shared between paths the way a level is. It never read above a real
+route in that sample. Summing the K paths was tried too and rejected: the
+paths share their early levels, and 39 of 40 K=4 seeds read above the real
+route.
+
+2,000 seeds, `pad_pattern_census`, vanilla / generated, redeal % K=0/4/7:
+9.1 / 7.2 / 2.2 · 12.1 / 10.6 / 4.0 before, 9.1 / 3.2 / 0 · 12.1 / 6.7 / 0
+after. K=0 does not move (no wands to add); at K=7 the bound now reads ~21
+and nothing is redealt.
 
 **Race fairness was looked at and deliberately left alone.** Route counts per
 seed range from a handful to well over a thousand, and the typical random route
