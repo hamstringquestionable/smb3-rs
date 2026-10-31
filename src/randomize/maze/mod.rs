@@ -206,6 +206,9 @@ pub(crate) const DEFAULT_WANDS_REQUIRED: u8 = 3;
 /// predicted the winner's time at r = 0.28. The lower bound tracks the exact
 /// shortest at r = 0.78 (K=3) / 0.84 (K=0), the winner's time at r = 0.63,
 /// and costs a tenth as much to compute (0.12 ms against 1.2 ms native).
+/// Those figures predate the bound counting every wand airship it owes
+/// (2026-10-31, see `metrics::ShortestBound::estimate`), which left K=0 alone
+/// and took K=4 / K=7 redeals from 7% / 2% to 3% / 0% on vanilla maps.
 ///
 /// **Why 10.** A lower bound makes "at least 10" a guarantee: no seed's
 /// shortest route is under 10. The rest is a rate the owner chose — short runs
@@ -1047,8 +1050,8 @@ pub(crate) fn generate<R: Rng>(
         // to no pad rule. The safety it stood for is held elsewhere: the fill
         // gives every gate a key reachable from the global start, game over
         // returns there (`world_travel::GAMEOVER_RETURN`), and the whistle is
-        // permanent. The maze is sparser without it, on purpose — see
-        // `graph::OPENING_PAD_WEIGHTS`.
+        // permanent. The planned roll makes up the count instead — see
+        // `graph::PAD_WEIGHTS`.
 
         let spheres = state.spheres();
         Deal { solvable: spheres.solvable, content: 0, state, spheres, fill, pads, relocated }

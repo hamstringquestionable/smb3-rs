@@ -134,9 +134,10 @@ The target is the fixed dock/castle tile (`TILE_AIRSHIP` `$C9`, `TILE_BOWSER`
 marks them** — the spine edge is repeatable, which is what keeps reachability
 monotone and lets a fixpoint serve as the solver.
 
-**Telepads are the chords.** 0–3 per world, rolled by where the world sits:
-light in the start world, the world after it and W8, heavy in the five
-between (see "2026-10-30: pads rolled per world" below). They may lead anywhere,
+**Telepads are the chords.** 1–3 per world, the same roll everywhere, paired
+by depth: a pad's two ends may lie at most 8 levels apart in how far into the
+run they are, with an occasional bigger jump on a roll (see "2026-10-31: pads
+paired by depth" below). They may lead anywhere,
 including into a region reachable *only* by pad — a pad-only island holding a
 fortress for a required lock is a deliberate and desirable shape.
 
@@ -634,6 +635,9 @@ on its own. Accepted as is. The extra redeals cost nothing measurable: WASM
 
 ### 2026-10-30: pads rolled per world, rescue retired
 
+*Items 1 and 3 were superseded the next day by "2026-10-31: pads paired by
+depth"; the rescue pass (item 2) stays retired.*
+
 Three changes on one branch, each measured with `valley_pad_census` (200 seeds
 x K=0/3/7, vanilla and generated maps):
 
@@ -666,6 +670,75 @@ The owner's targets were pads near the rescue-era count, K=0 redeals at most
 
 `maze_route_census`'s shortest-route figures in the table above were **not**
 re-measured for this change.
+
+### 2026-10-31: pads paired by depth
+
+The per-world roll treated a symptom. A 10,000-deal K=0 study on the 3.0.1
+generator (floor off, every first deal kept) asked which pads put a deal
+under the content floor, and the answer was not a kind of pad:
+
+- **The redeal rate tracked how many pad tiles W1 and W2 held**, ~9 points a
+  tile (0 tiles: 0%, 5+: 46%). No single world pair or role stood out.
+- **Removing one pad fixed 75% of rejected deals**, and the culprits were
+  spread over every pairing; 43% of rejected deals had two or more, usually
+  a chain (a W1 pad out, then a second pad on).
+- **What a pad saves is its jump**: the depth of its far end minus its near
+  end, depth being the bound's cost from the start with that pad removed.
+  68% of pads saved nothing; pads spanning 8+ were 21% of all pads and
+  carried half of every level saved; none spanning 5 or less saved 6+.
+  Hub or Shortcut made no difference (1.3 vs 1.1 levels).
+
+So pairing now reads depth (`metrics::ShortestBound::depths`, recomputed after
+every pair) and prefers partners within `graph::PAD_JUMP_CAP` (8). A site with
+nothing in reach takes its nearest partner on a roll of
+`graph::PAD_JUMP_KEEP` (0.7) per level over, and is otherwise dropped. That
+roll is the dial for the occasional big jump.
+
+With that in place the earlier hand tuning came out:
+
+- **One roll for every world**, `graph::PAD_WEIGHTS` `[0,2,4,4]`.
+- **`valley_earned` is gone** (gated partner, other world, opening ban). With
+  the cap, pads from W1/W2 into the valley ran 0.1% without it, and it moved
+  K=0 redeals by under 2 points.
+- **A valley pad stands on the first two nodes**, (5,50) and (5,52)
+  (`graph::VALLEY_PAD_LAST_COL`). On 3.0.1 about 80% of valley pads were on
+  (5,54/56/58), next to Bowser and past every bridge span. The cap does not
+  touch these: a valley pad pairs deep with deep, a small jump.
+
+2,000 seeds, `pad_pattern_census`, vanilla / generated maps:
+
+| | pad tiles | redeal % K=0/4/7 | W1/2→W8 | valley pad | on 54/56/58 | content K=0 |
+|---|---|---|---|---|---|---|
+| 3.0.1 (rescue) | 14.5 / 14.3 | 30 / 20 / 4 · 35 / 26 / 7 | 33–38% | 26–31% | 21–25% | – |
+| flat roll, no cap | 15.4 / 15.5 | 45 / 33 / 8 · 51 / 40 / 12 | 40–46% | 37–46% | 30–40% | 12.9 / 12.7 |
+| **shipped** | 14.9 / 14.9 | **9 / 7 / 2 · 12 / 11 / 4** | 2.5–4% | **12% / 11%** | **0%** | 16.8 / 16.2 |
+
+About one seed in six ships a pad past the cap, nearly all of them 9–10
+levels; a fifth of the deals that roll one are redealt, against a tenth
+overall. A world can now end up with no pad when all its sites are dropped:
+0.14 such worlds a seed, the start world on ~7% of seeds. That is allowed —
+every world still has its airship.
+
+### 2026-10-31: the floor counts every wand airship
+
+The bound read the larger of the castle path and the path to the K-th nearest
+wand airship, which leaves out the other K-1 airships the run must also play.
+Against exact shortest routes (40 seeds a K, floor off so rejected deals were
+kept) it sat +4 under the truth at K=0, +8 at K=4 and +17 at K=7, and every
+K=4/K=7 deal it rejected had a real route of 12 or more.
+
+`ShortestBound::estimate` now also prices the wands by levels and forts only
+(wand airships free), takes the K-th smallest, and adds the K airships: one
+of the K the run plays is at least that far in levels, and an airship is
+never shared between paths the way a level is. It never read above a real
+route in that sample. Summing the K paths was tried too and rejected: the
+paths share their early levels, and 39 of 40 K=4 seeds read above the real
+route.
+
+2,000 seeds, `pad_pattern_census`, vanilla / generated, redeal % K=0/4/7:
+9.1 / 7.2 / 2.2 · 12.1 / 10.6 / 4.0 before, 9.1 / 3.2 / 0 · 12.1 / 6.7 / 0
+after. K=0 does not move (no wands to add); at K=7 the bound now reads ~21
+and nothing is redealt.
 
 **Race fairness was looked at and deliberately left alone.** Route counts per
 seed range from a handful to well over a thousand, and the typical random route
@@ -906,8 +979,8 @@ also the transition signal the packed completion store already tests
    generator it fired on ~99% of deals and supplied ~40% of every maze's pads,
    because after the fill most locks are opened by a foreign fortress, which
    this own-forts-only check reads as permanently shut. The safety it stood for
-   is held by the fill, `GAMEOVER_RETURN` and the permanent whistle. See
-   `graph::OPENING_PAD_WEIGHTS` for the per-world pad roll that replaced it.
+   is held by the fill, `GAMEOVER_RETURN` and the permanent whistle. The
+   planned roll makes up the count now; see "2026-10-31: pads paired by depth".
 
    **Measured, the correct form holds 800 of 800 world-seeds — 100%**, against
    55.4% for the charter's wording (`start_region_exit_rate`). So the
