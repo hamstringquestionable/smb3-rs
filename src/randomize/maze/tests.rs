@@ -3673,6 +3673,8 @@ fn pad_pattern_census() {
     // nodes, deals, content, worlds with no pad, start world with no pad,
     // pairs, same-world pairs, neighbour pairs, distinct world pairs.
     let mut n = [[0usize; 14]; KS.len()];
+    // Per K: pad tiles in world a whose partner is in world b.
+    let mut dest = [[[0usize; 8]; 8]; KS.len()];
     for seed in from..from + seeds {
         let (_, result) = census_build(&raw, seed);
         for (ki, &k) in KS.iter().enumerate() {
@@ -3688,6 +3690,9 @@ fn pad_pattern_census() {
             let pads = state.pad_edges();
             let any = |f: &dyn Fn(MazePos, MazePos) -> bool| pads.iter().any(|&(a, b)| f(a, b));
             let has_pad = |w: usize| pads.iter().any(|&(a, _)| a.0 == w);
+            for &(a, b) in &pads {
+                dest[ki][a.0][b.0] += 1;
+            }
             let c = &mut n[ki];
             c[0] += pads.len();
             c[1] += (report.deals > 1) as usize;
@@ -3739,6 +3744,10 @@ fn pad_pattern_census() {
         let c = n[ki];
         let sums: Vec<String> = c.iter().map(|x| x.to_string()).collect();
         println!("PADSUM,{maps},{k},{seeds},{}", sums.join(","));
+        for (w, row) in dest[ki].iter().enumerate() {
+            let row: Vec<String> = row.iter().map(|x| x.to_string()).collect();
+            println!("PADDEST,{maps},{k},{w},{}", row.join(","));
+        }
         let pct = |x: usize| 100.0 * x as f64 / seeds as f64;
         let per = |x: usize| x as f64 / seeds as f64;
         eprintln!(
