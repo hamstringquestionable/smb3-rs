@@ -9,6 +9,14 @@ deploys.
 
 ## [Unreleased]
 
+### Added
+
+- World Maze: Uncapped Pad Jumps option. Telepads may join any two points in
+  the maze rather than places a similar distance into the run. It allows big
+  jumps rather than forcing them, but they become common: routes run about two
+  levels shorter, and a telepad from the first worlds into World 8 turns up on
+  about half of seeds.
+
 ### Changed
 
 - World Maze: telepads are paired by how far into the run each end is, so a

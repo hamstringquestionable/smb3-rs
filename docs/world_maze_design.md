@@ -750,6 +750,26 @@ The owner's call on the cost: redeals are not player-facing beyond generation
 time, and a deal is the cheap part (the worlds are built once), so a K=0 rate
 near 20% is accepted for pads that go somewhere.
 
+### 2026-11-01: the Uncapped Pad Jumps option
+
+An opt-in flag (`Options::uncapped_pad_jumps`, maze only) sets
+`Knobs::pad_jump_cap` to `u32::MAX`, so every legal site is a candidate
+partner and the `PAD_JUMP_KEEP` fallback never fires. Nothing is forced: the
+partner is still a random pick. The 2+-airships preference stays on, and
+uncapped it can nearly always be met, which is what moves the last two
+columns. 1,000 seeds, K=0, vanilla / generated (`PAD_UNCAPPED=1
+pad_pattern_census`):
+
+| | redeal % | deals a seed | content | neighbour pairs | W1/2 → W8 pad |
+|---|---|---|---|---|---|
+| cap 9 | 21 / 25 | 1.3 / 1.4 | 15.0 / 14.7 | 25% / 22% | 9% / 10% |
+| uncapped | 43 / 48 | 1.9 / 2.0 | 12.6 / 12.4 | 3% / 3% | 50% / 46% |
+
+K=4 redeals 16 / 21%, K=7 none. Valley pads unchanged (~12%). The
+early-to-Dark-Land pad on half of seeds is the honest description of the
+flag, and the tooltip says so. The owner chose to keep the preference rather
+than pair at random uncapped, which would bring neighbour hops back.
+
 ### 2026-10-31: the floor counts every wand airship
 
 The bound read the larger of the castle path and the path to the K-th nearest

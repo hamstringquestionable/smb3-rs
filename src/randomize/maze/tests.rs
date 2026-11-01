@@ -422,7 +422,10 @@ fn the_generator_never_ships_an_unwinnable_maze() {
     let arms: [(&str, Knobs); 3] = [
         ("null", Knobs::default()),
         ("local keys", Knobs { fort_distance_bias: -1.0, ..Default::default() }),
-        ("far keys, all pads cross", Knobs { fort_distance_bias: 1.0, foreign_landing_bias: 1.0 }),
+        (
+            "far keys, all pads cross",
+            Knobs { fort_distance_bias: 1.0, foreign_landing_bias: 1.0, ..Default::default() },
+        ),
     ];
     for seed in 0..census_seeds(4) {
         for (name, knobs) in &arms {
@@ -530,8 +533,14 @@ fn every_pad_is_half_of_a_pair() {
     let Some(raw) = load_rom() else { return };
     let arms: [(&str, Knobs); 3] = [
         ("null", Knobs::default()),
-        ("all pads stay home", Knobs { foreign_landing_bias: 0.0, fort_distance_bias: 0.0 }),
-        ("all pads cross", Knobs { foreign_landing_bias: 1.0, fort_distance_bias: 1.0 }),
+        (
+            "all pads stay home",
+            Knobs { foreign_landing_bias: 0.0, fort_distance_bias: 0.0, ..Default::default() },
+        ),
+        (
+            "all pads cross",
+            Knobs { foreign_landing_bias: 1.0, fort_distance_bias: 1.0, ..Default::default() },
+        ),
     ];
     for seed in 0..census_seeds(4) {
         for (name, knobs) in &arms {
@@ -966,7 +975,10 @@ fn maze_generator_census() {
         ("null (bias 0)", Knobs::default()),
         ("local keys (-1)", Knobs { fort_distance_bias: -1.0, ..Default::default() }),
         ("far keys (+1)", Knobs { fort_distance_bias: 1.0, ..Default::default() }),
-        ("far keys + all pads cross", Knobs { fort_distance_bias: 1.0, foreign_landing_bias: 1.0 }),
+        (
+            "far keys + all pads cross",
+            Knobs { fort_distance_bias: 1.0, foreign_landing_bias: 1.0, ..Default::default() },
+        ),
     ];
 
     eprintln!("\n=== world-maze generator, {seeds} seeds per arm ===");
@@ -1428,7 +1440,8 @@ fn the_pads_still_fit_the_packed_store() {
     let mut worst_seed = 0;
     for seed in 0..census_seeds(12) {
         // The knobs that place the most pads: every id spent, all crossing.
-        let knobs = Knobs { foreign_landing_bias: 1.0, fort_distance_bias: 1.0 };
+        let knobs =
+            Knobs { foreign_landing_bias: 1.0, fort_distance_bias: 1.0, ..Default::default() };
         let (rom, state, _) = generated(&raw, seed, &knobs, super::DEFAULT_WANDS_REQUIRED);
         let mut after = rom.clone();
         super::writer::install_pad_metatile(&mut after, &state);
@@ -3649,6 +3662,7 @@ fn floor_cost_census() {
 /// varied the links are: the share of pairs inside one world or between
 /// worlds one airship apart, and distinct world pairs a seed. The yardstick
 /// for changes to pad planning; `MAZE_GENERATE=1` runs it over generated maps.
+/// `PAD_UNCAPPED=1` lifts the jump cap, as the `uncapped_pad_jumps` option does.
 ///
 /// Each seed's worlds are built once and dealt at every K. `CENSUS_FROM`
 /// starts the seed range there, so a batch can split it across processes;
@@ -3665,7 +3679,11 @@ fn pad_pattern_census() {
     let Some(raw) = load_rom() else { return };
     let seeds = census_seeds(100);
     let from: u64 = std::env::var("CENSUS_FROM").ok().and_then(|s| s.parse().ok()).unwrap_or(0);
-    let knobs = Knobs::default();
+    let uncapped = std::env::var("PAD_UNCAPPED").is_ok_and(|v| v == "1");
+    let knobs = Knobs {
+        pad_jump_cap: if uncapped { u32::MAX } else { super::graph::PAD_JUMP_CAP },
+        ..Default::default()
+    };
     let w8 = crate::randomize::rom_data::W8_IDX;
     let maps = if std::env::var("MAZE_GENERATE").is_ok() { "generated" } else { "vanilla" };
 

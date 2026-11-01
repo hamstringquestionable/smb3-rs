@@ -571,7 +571,17 @@ pub(super) fn maze_model(
             build,
             &spine,
             wands,
-            &randomize::maze::graph::Knobs::default(),
+            &randomize::maze::graph::Knobs {
+                // Uncapped, every legal site is a candidate partner: it allows
+                // big jumps rather than forcing them, but over a seed they
+                // become the norm. See `Options::uncapped_pad_jumps`.
+                pad_jump_cap: if options.uncapped_pad_jumps {
+                    u32::MAX
+                } else {
+                    randomize::maze::graph::PAD_JUMP_CAP
+                },
+                ..Default::default()
+            },
             // The writer needs one fortress slot it can park a secret-exit
             // level on. The maze re-pairs forts and locks, which invalidates
             // the builder's answer, so it restores the invariant rather than
