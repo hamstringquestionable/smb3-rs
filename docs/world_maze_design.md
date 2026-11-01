@@ -1922,6 +1922,47 @@ K-sensitive:
 So the check has to be made at the shipping K, and the risk concentrates at high
 wand counts — which is also the hardest setting. Nothing asks today.
 
+## Required stages: the linearity baseline
+
+A stage is **required** when the walk cannot reach the castle with every
+other stage beaten and that one walled off — the exact test
+`routes::stage_tiers` uses. It costs one walk per stage, and it predicts how
+much choice a seed has better than anything else measured (2026-11-01, 480
+seeds with a full route census, Spearman against the required count):
+
+| measure | rank correlation |
+|---|---|
+| best route length | +0.87 |
+| route families (the set of worlds a route plays) | −0.76 |
+| share of players in the commonest family | +0.68 |
+| distinct routes | +0.03 |
+
+"Distinct routes" measures nothing: a swap of one level counts as a new
+route. Families fall off with two knees, not a cliff: ~10 families up to 5
+required, about half that by 9, a majority with two or fewer from 14, and
+effectively one route from 26. Families say nothing at K=7, where every route
+visits all eight worlds.
+
+**The baseline** (`required_sweep`, 500 seeds per arm, both of the owner's
+flag keys, vanilla and generated maps, `beta/next` at be26241):
+
+| K | mean | p10 | median | p90 | max |
+|---|---|---|---|---|---|
+| 0, 3, 4 | 11.9 | 6 | 11 | 19 | 35 |
+| 7 | 23.6 | 18 | 23 | 30 | 42 |
+
+Flag key, vanilla vs generated and K within 0-4 move the median by one at
+most. A maze change that shifts this distribution owes an account of it, the
+same as the content floor:
+
+```sh
+SWEEP_FLAGS=<maze key> SWEEP_K=3 SWEEP_SEEDS=500 SWEEP_TAILS=0 SWEEP_RANDOM=0 \
+  cargo test --release --lib required_sweep -- --ignored --nocapture
+```
+
+Every type of seed exists today and that is wanted; the goal is more families
+without losing the linear end entirely.
+
 ## Still open
 
 - ~~**Per-world flags `$84A0` resets**~~ — **investigated and declined**, all
