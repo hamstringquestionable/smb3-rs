@@ -528,8 +528,10 @@ pub struct Options {
     /// telepad's two ends may be (`maze::graph::Knobs::pad_jump_cap`). It
     /// forces nothing: a pad's partner is still drawn at random from the legal
     /// sites, only from all of them. Over a seed that makes big jumps common,
-    /// which shortens the cheapest route by about two levels and roughly
-    /// doubles content-floor redeals (K=0: 19% -> ~40%, generation time only).
+    /// which shortens the cheapest route by about a level against the default
+    /// (which already deals one long pad, `graph::ANCHOR_SPAN`) and raises
+    /// content-floor redeals by half again (K=0: 30% -> ~45%, generation time
+    /// only).
     ///
     /// **Only read when `world_maze` is on.**
     #[serde(default)]

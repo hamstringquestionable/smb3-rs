@@ -82,6 +82,9 @@ pub(crate) struct Knobs {
     /// under the `uncapped_pad_jumps` option, which makes every legal site a
     /// candidate.
     pub(crate) pad_jump_cap: u32,
+    /// The anchor pair's span along the airship chain: see [`ANCHOR_SPAN`].
+    /// `None` deals no anchor, which only a census asks for.
+    pub(crate) anchor_span: Option<usize>,
 }
 
 impl Default for Knobs {
@@ -93,6 +96,7 @@ impl Default for Knobs {
             foreign_landing_bias: 7.0 / 8.0,
             fort_distance_bias: 0.0,
             pad_jump_cap: PAD_JUMP_CAP,
+            anchor_span: Some(ANCHOR_SPAN),
         }
     }
 }
@@ -318,6 +322,27 @@ pub(crate) const PAD_JUMP_CAP: u32 = 9;
 /// floor, against a tenth overall, so most survive to the player.
 const PAD_JUMP_KEEP: f64 = 0.7;
 
+/// **The anchor pair**: before any other pair, one site in the world at
+/// airship-chain position 1 or 2 (game worlds 2-3) is joined to a site this
+/// many positions further along, past [`PAD_JUMP_CAP`]. The cap then governs
+/// every other pair.
+///
+/// **Why.** What makes a seed linear is how many stages every route must
+/// play, and the pad deal drives that more than anything else in a maze. An
+/// early shortcut into the middle of the run is the pad shape that lowers
+/// it, and a capped pairing deals none on over half of seeds. One guaranteed
+/// one does what uncapping every pad does to the linear tail without
+/// flattening the long seeds. Harness census, K 0/3/4, vanilla / generated
+/// maps, before → after: seeds with 14 or fewer required stages 71 / 69% →
+/// 84 / 82%, with 20+ 9 / 9% → 2 / 3%; route families 4.5 / 4.2 → 5.3 / 4.6;
+/// long *and* varied seeds (content 16+, 5+ families) 4.6% → 7.7%, where
+/// uncapped halves them; content 15.1 / 14.8 → 13.9 / 13.7; K=0-4 redeals
+/// 14 / 18% → 21 / 23%. A pad from the first two worlds into the last rises
+/// 11% → 22% of seeds: the anchor pulls the deep worlds closer, and the cap
+/// then admits more of those. A span of 5 was worse on every figure. See
+/// `docs/world_maze_design.md`, "The anchor pair".
+const ANCHOR_SPAN: usize = 4;
+
 /// Turn claimed sites into pairs, and throw away anything left over.
 ///
 /// Each site is offered the kind of partner [`Knobs::foreign_landing_bias`]
@@ -337,6 +362,28 @@ fn pair_up<R: Rng>(
     let mut pool = sites;
     pool.shuffle(rng);
     let mut out = Vec::new();
+    // The anchor pair is dealt first, so the cap and every preference below
+    // see it in the depths. No early site, or nothing at its span: no anchor.
+    if let Some(span) = knobs.anchor_span {
+        let early: Vec<usize> =
+            (0..pool.len()).filter(|&i| (1..=2).contains(&spine_pos[pool[i].world])).collect();
+        if let Some(&i) = early.choose(rng) {
+            let a = pool.remove(i);
+            let far: Vec<usize> = (0..pool.len())
+                .filter(|&j| spine_pos[pool[j].world] == spine_pos[a.world] + span)
+                .collect();
+            match far.choose(rng) {
+                Some(&j) => {
+                    let b = pool.remove(j);
+                    bound.link((a.world, a.pos), (b.world, b.pos));
+                    depth = bound.depths();
+                    out.push(half(a, b));
+                    out.push(half(b, a));
+                }
+                None => pool.push(a),
+            }
+        }
+    }
     while let Some(a) = pool.pop() {
         let cross = rng.random_bool(knobs.foreign_landing_bias.clamp(0.0, 1.0));
         // No legal partner left: `a` is dropped rather than shipped pointing

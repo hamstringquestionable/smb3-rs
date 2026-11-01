@@ -236,7 +236,7 @@ struct Cli {
 
     /// Let a telepad join any two depths of the maze rather than capping the
     /// jump. Allows big jumps, does not force them, but they become common:
-    /// routes run about two levels shorter. Requires --world-maze.
+    /// routes run about a level shorter. Requires --world-maze.
     #[arg(long)]
     uncapped_pad_jumps: bool,
 

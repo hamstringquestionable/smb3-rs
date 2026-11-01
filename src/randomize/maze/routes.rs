@@ -940,7 +940,7 @@ pub(crate) fn families(c: &Census) -> (usize, f64) {
 /// widest chain gap one pair spans, the furthest chain place a pad from the
 /// first two worlds reaches, and pairs touching the goal world. A world off
 /// the chain counts as the chain's length.
-fn pad_features(state: &GlobalState) -> [usize; 4] {
+pub(crate) fn pad_features(state: &GlobalState) -> [usize; 4] {
     let mut chain: [Option<usize>; 8] = [None; 8];
     let mut world = Some(state.start.0);
     let mut n = 0usize;

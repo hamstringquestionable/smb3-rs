@@ -537,7 +537,7 @@ export const SCHEMA = [
 		mode: "maze" },
 	{ id: "uncapped_pad_jumps", type: "bool", default: false,
 		label: "Uncapped Pad Jumps",
-		tip: "Telepads can join any two points in the maze, however far apart they sit in the run. This doesn't force long jumps, it only allows them, but with nothing holding them back they turn up often, so expect routes about two levels shorter, and a pad from the early worlds into Dark Land on about half of seeds. Off, a pad's two ends stay close in how deep into the run they are.",
+		tip: "Telepads can join any two points in the maze, however far apart they sit in the run. This doesn't force long jumps, it only allows them, but with nothing holding them back they turn up often, so expect shorter routes, and a pad from the early worlds into Dark Land on about half of seeds. Off, every seed still gets one long pad from an early world into the middle of the run, and the rest keep their two ends close in how deep into the run they are.",
 		group: "maze", inFlagKey: true,
 		mode: "maze" },
 
