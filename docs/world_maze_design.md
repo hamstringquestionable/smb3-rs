@@ -1963,6 +1963,24 @@ SWEEP_FLAGS=<maze key> SWEEP_K=3 SWEEP_SEEDS=500 SWEEP_TAILS=0 SWEEP_RANDOM=0 \
 Every type of seed exists today and that is wanted; the goal is more families
 without losing the linear end entirely.
 
+**The target is 14 or fewer** (the owner's call, 2026-11-01): the knee where
+two families or fewer becomes the majority. Today about 73% of K 0-4 seeds
+meet it. No change is planned on this yet; the breakpoints are recorded so
+the next maze change can be read against them:
+
+| required | families (mean) | ≤2 families | one family |
+|---|---|---|---|
+| 2–5 | ~10 | 0% | 0% |
+| 6–7 | 7.3 | 6% | 0% |
+| 8–9 | 5.1 | 21% | 0% |
+| 12–13 | 3.7 | 40% | 8% |
+| 14–15 | 2.9 | 49% | 16% |
+| 18–21 | ~2.2 | 77% | 29% |
+| 26+ | ~1.1 | 100% | ~85% |
+
+The Uncapped Pad Jumps option moves seeds down this curve rather than
+changing it: K 0-4 median 11 → 8, p90 19 → 13, seeds at 20+ 8% → 0.8%.
+
 ## Still open
 
 - ~~**Per-world flags `$84A0` resets**~~ — **investigated and declined**, all

@@ -911,6 +911,31 @@ fn required_stages(model: &RouteModel) -> [usize; 3] {
     by_kind
 }
 
+/// Every required stage, all kinds together, or `None` when the maze cannot
+/// be won at all.
+pub(crate) fn required_count(state: &GlobalState) -> Option<usize> {
+    let model = RouteModel::new(state, state.wands_required, 0);
+    let all: u128 = (0..model.n()).fold(0, |s, i| s | 1u128 << i);
+    model.wins(all).then(|| required_stages(&model).iter().sum())
+}
+
+/// Route families among the census's random players, and the share of
+/// players in the commonest. A family is the set of worlds a route plays
+/// stages in, so swapping one level for another in the same world stays in it.
+pub(crate) fn families(c: &Census) -> (usize, f64) {
+    let mut families: HashMap<u8, usize> = HashMap::new();
+    for (route, n) in &c.routes {
+        let worlds = route
+            .iter()
+            .filter(|&&s| c.stages[s].0 != StageKind::Rock)
+            .fold(0u8, |m, &s| m | 1 << c.stages[s].1.0);
+        *families.entry(worlds).or_default() += n;
+    }
+    let players: usize = families.values().sum();
+    let top = families.values().max().copied().unwrap_or(0);
+    (families.len(), top as f64 / players.max(1) as f64)
+}
+
 /// The pad layout, read against the airship chain (start = 0): pairs, the
 /// widest chain gap one pair spans, the furthest chain place a pad from the
 /// first two worlds reaches, and pairs touching the goal world. A world off
@@ -1010,26 +1035,18 @@ fn required_sweep() {
         let c = census(state, &params, seed ^ 0x2007_00E5);
         let Some(best) = c.shortest.as_ref().map(|s| c.played(s)) else { continue };
         let mut sizes: Vec<usize> = Vec::new();
-        let mut families: HashMap<u8, usize> = HashMap::new();
         for (route, n) in &c.routes {
             sizes.extend(std::iter::repeat_n(c.played(route), *n));
-            let worlds = route
-                .iter()
-                .filter(|&&s| c.stages[s].0 != StageKind::Rock)
-                .fold(0u8, |m, &s| m | 1 << c.stages[s].1.0);
-            *families.entry(worlds).or_default() += n;
         }
         sizes.sort_unstable();
         let players = sizes.len().max(1);
         let within = sizes.iter().filter(|&&s| s * 100 <= best * (100 + BAND_PERCENT)).count();
-        let top = families.values().max().copied().unwrap_or(0);
+        let (families, top) = families(&c);
         println!(
-            "VAR,{seed},{pick},{required},{best},{},{:.3},{},{},{:.3}",
+            "VAR,{seed},{pick},{required},{best},{},{:.3},{},{families},{top:.3}",
             sizes.get(sizes.len() / 2).copied().unwrap_or(0),
             within as f64 / players as f64,
             c.routes.len(),
-            families.len(),
-            top as f64 / players as f64,
         );
     }
 }

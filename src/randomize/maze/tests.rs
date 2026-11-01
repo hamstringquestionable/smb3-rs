@@ -3786,3 +3786,165 @@ fn pad_pattern_census() {
         );
     }
 }
+
+/// Where [`relocate_pads`] moves each pad end inside its own world, by depth
+/// into the run as dealt.
+#[derive(Clone, Copy)]
+enum PadSpot {
+    Start,
+    Middle,
+    End,
+    Random(u64),
+}
+
+/// `state` with every pad end moved to a free path node of its own world,
+/// chosen by `spot`; each pair keeps the two worlds it joins. A model
+/// experiment: any node the walk reaches is a candidate, whether or not the
+/// generator would ever put a pad there.
+fn relocate_pads(state: &GlobalState, spot: PadSpot) -> GlobalState {
+    use super::metrics::ShortestBound;
+    use std::collections::{HashMap, HashSet};
+    // Ranked by depth in the maze as dealt. With its pads taken out most of a
+    // maze is unreachable (the fill puts lock keys behind pads), so there is
+    // no pad-free depth to rank by.
+    let bound = ShortestBound::new(state);
+    let depth = bound.depths();
+    let grids = state.base_grids(&HashSet::new());
+
+    let mut taken: HashSet<MazePos> = [state.start, state.goal].into_iter().collect();
+    for w in &state.worlds {
+        taken.extend(w.slots.iter().map(|s| (w.world_idx, s.pos)));
+        taken.extend(w.target.map(|t| (w.world_idx, t)));
+    }
+    let mut ends: Vec<MazePos> = state.pad_edges().into_iter().map(|(from, _)| from).collect();
+    ends.sort_unstable();
+    ends.dedup();
+
+    let mut moved: HashMap<MazePos, MazePos> = HashMap::new();
+    for (w, g) in grids.iter().enumerate() {
+        let mine: Vec<MazePos> = ends.iter().copied().filter(|e| e.0 == w).collect();
+        if mine.is_empty() {
+            continue;
+        }
+        let mut free: Vec<(u32, MazePos)> = (0..g.rows())
+            .flat_map(|r| (0..g.cols).map(move |c| (w, (r, c))))
+            .filter(|p| !taken.contains(p))
+            .map(|p| (depth[bound.cell(p)], p))
+            .filter(|&(d, _)| d != u32::MAX)
+            .collect();
+        free.sort_unstable();
+        let m = mine.len().min(free.len());
+        let from = match spot {
+            PadSpot::Start => 0,
+            PadSpot::Middle => (free.len() - m) / 2,
+            PadSpot::End => free.len() - m,
+            PadSpot::Random(_) => 0,
+        };
+        if let PadSpot::Random(r) = spot {
+            free.shuffle(&mut ChaCha8Rng::seed_from_u64(r ^ w as u64));
+        }
+        for (old, &(_, new)) in mine.iter().zip(&free[from..from + m]) {
+            moved.insert(*old, new);
+        }
+    }
+    let mut out = state.clone();
+    for e in &mut out.edges {
+        if let MazeEdge::Pad { from, to } = e {
+            *from = moved.get(from).copied().unwrap_or(*from);
+            *to = moved.get(to).copied().unwrap_or(*to);
+        }
+    }
+    out
+}
+
+/// `label` with how many of the pad halves [`relocate_pads`] actually moved,
+/// so a placement that changed nothing is visible as such.
+fn moved_label(label: &str, state: &GlobalState, spot: PadSpot) -> String {
+    let (a, b) = (state.pad_edges(), relocate_pads(state, spot).pad_edges());
+    format!("{label}:{}/{}", a.iter().zip(&b).filter(|(x, y)| x != y).count(), a.len())
+}
+
+/// **What can pad placement alone do to one seed?** Finds `PROBE_SEEDS`
+/// harness seeds whose maze has exactly `PROBE_REQUIRED` required stages at
+/// `PROBE_K`, then measures: the maze as dealt; `PROBE_REDEALS` fresh deals
+/// on the same worlds; and the dealt pads, pairings kept, with every end moved
+/// to the start, middle or end of its world, or to `PROBE_RANDOM` random
+/// spots. One `PROBE,seed,variant,required,best,families,top_family` line a
+/// variant (`unwinnable` when the move breaks the seed).
+///
+/// ```sh
+/// cargo test --release --lib pad_placement_probe -- --ignored --nocapture
+/// ```
+#[test]
+#[ignore]
+fn pad_placement_probe() {
+    use super::routes::{families, required_count};
+    use std::time::Duration;
+    let Some(raw) = load_rom() else { return };
+    let env = |k: &str, d: u64| std::env::var(k).ok().and_then(|s| s.parse().ok()).unwrap_or(d);
+    let k = env("PROBE_K", 3) as u8;
+    let target = env("PROBE_REQUIRED", 12) as usize;
+    let (count, redeals, randoms) =
+        (env("PROBE_SEEDS", 3), env("PROBE_REDEALS", 30), env("PROBE_RANDOM", 20));
+    let params = CensusParams {
+        samples: 1000,
+        guided: 20,
+        hammers: 0,
+        exact_cap: 50_000,
+        exact_limit: Duration::from_secs(2),
+        threads: 0,
+    };
+    let measure = |seed: u64, label: &str, state: &GlobalState| {
+        let Some(required) = required_count(state) else {
+            println!("PROBE,{seed},{label},unwinnable");
+            return;
+        };
+        let c = census(state, &params, seed ^ 0x2007_00E5);
+        let best = c.shortest.as_ref().map_or(0, |s| c.played(s));
+        let (families, top) = families(&c);
+        println!("PROBE,{seed},{label},{required},{best},{families},{top:.2}");
+    };
+
+    let mut found = 0;
+    for seed in 0.. {
+        if found == count {
+            break;
+        }
+        let (_, result) = census_build(&raw, seed);
+        let deal = |r: u64| {
+            let mut rng = ChaCha8Rng::seed_from_u64(
+                seed ^ 0x5EED_1234 ^ r.wrapping_mul(0x9E37_79B9_7F4A_7C15),
+            );
+            super::generate(
+                &result,
+                &IDENTITY_SPINE,
+                k,
+                &Knobs::default(),
+                SEALABLE_NEEDED,
+                &mut rng,
+            )
+            .0
+        };
+        let base = deal(0);
+        if required_count(&base) != Some(target) {
+            continue;
+        }
+        found += 1;
+        measure(seed, "dealt", &base);
+        for r in 1..=redeals {
+            measure(seed, "redeal", &deal(r));
+        }
+        for (label, spot) in
+            [("start", PadSpot::Start), ("middle", PadSpot::Middle), ("end", PadSpot::End)]
+        {
+            measure(seed, &moved_label(label, &base, spot), &relocate_pads(&base, spot));
+        }
+        for r in 0..randoms {
+            measure(
+                seed,
+                &moved_label("random", &base, PadSpot::Random(r)),
+                &relocate_pads(&base, PadSpot::Random(r)),
+            );
+        }
+    }
+}
