@@ -77,6 +77,14 @@ pub(crate) struct Knobs {
     /// breaking is the only feedback that says which fort did it), so the
     /// assignment is a bijection and "how many locks" is not a free parameter.
     pub(crate) fort_distance_bias: f64,
+    /// The widest depth gap a pad pair may span before its site falls back to
+    /// the [`PAD_JUMP_KEEP`] roll. [`PAD_JUMP_CAP`] by default; `u32::MAX`
+    /// under the `uncapped_pad_jumps` option, which makes every legal site a
+    /// candidate.
+    pub(crate) pad_jump_cap: u32,
+    /// The anchor pair's span along the airship chain: see [`ANCHOR_SPAN`].
+    /// `None` deals no anchor, which only a census asks for.
+    pub(crate) anchor_span: Option<usize>,
 }
 
 impl Default for Knobs {
@@ -84,7 +92,12 @@ impl Default for Knobs {
     /// that makes it do nothing, so a census with defaults reproduces the
     /// baseline and any movement is attributable to a single dial.
     fn default() -> Self {
-        Knobs { foreign_landing_bias: 7.0 / 8.0, fort_distance_bias: 0.0 }
+        Knobs {
+            foreign_landing_bias: 7.0 / 8.0,
+            fort_distance_bias: 0.0,
+            pad_jump_cap: PAD_JUMP_CAP,
+            anchor_span: Some(ANCHOR_SPAN),
+        }
     }
 }
 
@@ -297,7 +310,7 @@ fn claim_one<R: Rng>(
 /// generated): neighbour pairs 25% / 22%, K=0 redeals 19% / 25% (uncapped:
 /// 39% / 43%), ~15 tiles a deal. A cycling deck of caps (12/10/8/6) measured
 /// the same and was not worth the machinery.
-const PAD_JUMP_CAP: u32 = 9;
+pub(crate) const PAD_JUMP_CAP: u32 = 9;
 
 /// The chance, per level past [`PAD_JUMP_CAP`], that a site with nothing in
 /// reach keeps its nearest partner anyway: one past keeps it this often, two
@@ -308,6 +321,27 @@ const PAD_JUMP_CAP: u32 = 9;
 /// two over; about a fifth of the deals that rolled one were redealt by the
 /// floor, against a tenth overall, so most survive to the player.
 const PAD_JUMP_KEEP: f64 = 0.7;
+
+/// **The anchor pair**: before any other pair, one site in the world at
+/// airship-chain position 1 or 2 (game worlds 2-3) is joined to a site this
+/// many positions further along, past [`PAD_JUMP_CAP`]. The cap then governs
+/// every other pair.
+///
+/// **Why.** What makes a seed linear is how many stages every route must
+/// play, and the pad deal drives that more than anything else in a maze. An
+/// early shortcut into the middle of the run is the pad shape that lowers
+/// it, and a capped pairing deals none on over half of seeds. One guaranteed
+/// one does what uncapping every pad does to the linear tail without
+/// flattening the long seeds. Harness census, K 0/3/4, vanilla / generated
+/// maps, before → after: seeds with 14 or fewer required stages 71 / 69% →
+/// 84 / 82%, with 20+ 9 / 9% → 2 / 3%; route families 4.5 / 4.2 → 5.3 / 4.6;
+/// long *and* varied seeds (content 16+, 5+ families) 4.6% → 7.7%, where
+/// uncapped halves them; content 15.1 / 14.8 → 13.9 / 13.7; K=0-4 redeals
+/// 14 / 18% → 21 / 23%. A pad from the first two worlds into the last rises
+/// 11% → 22% of seeds: the anchor pulls the deep worlds closer, and the cap
+/// then admits more of those. A span of 5 was worse on every figure. See
+/// `docs/world_maze_design.md`, "The anchor pair".
+const ANCHOR_SPAN: usize = 4;
 
 /// Turn claimed sites into pairs, and throw away anything left over.
 ///
@@ -328,12 +362,36 @@ fn pair_up<R: Rng>(
     let mut pool = sites;
     pool.shuffle(rng);
     let mut out = Vec::new();
+    // The anchor pair is dealt first, so the cap and every preference below
+    // see it in the depths. No early site, or nothing at its span: no anchor.
+    if let Some(span) = knobs.anchor_span {
+        let early: Vec<usize> =
+            (0..pool.len()).filter(|&i| (1..=2).contains(&spine_pos[pool[i].world])).collect();
+        if let Some(&i) = early.choose(rng) {
+            let a = pool.remove(i);
+            let far: Vec<usize> = (0..pool.len())
+                .filter(|&j| spine_pos[pool[j].world] == spine_pos[a.world] + span)
+                .collect();
+            match far.choose(rng) {
+                Some(&j) => {
+                    let b = pool.remove(j);
+                    bound.link((a.world, a.pos), (b.world, b.pos));
+                    depth = bound.depths();
+                    out.push(half(a, b));
+                    out.push(half(b, a));
+                }
+                None => pool.push(a),
+            }
+        }
+    }
     while let Some(a) = pool.pop() {
         let cross = rng.random_bool(knobs.foreign_landing_bias.clamp(0.0, 1.0));
         // No legal partner left: `a` is dropped rather than shipped pointing
         // nowhere.
         let depth_of = |s: &Site| depth[bound.cell((s.world, s.pos))];
-        let Some(i) = choose_partner(&pool, &a, cross, &depth_of, &spine_pos, rng) else {
+        let Some(i) =
+            choose_partner(&pool, &a, cross, knobs.pad_jump_cap, &depth_of, &spine_pos, rng)
+        else {
             continue;
         };
         let b = pool.remove(i);
@@ -368,9 +426,9 @@ fn spine_positions(state: &GlobalState) -> [usize; 8] {
     pos
 }
 
-/// Index into `pool` of a site `a` may be paired with: within
-/// [`PAD_JUMP_CAP`] of its depth if any is — a world two or more airships
-/// away first, then the rolled kind, then any; failing that, the nearest
+/// Index into `pool` of a site `a` may be paired with: within `cap` (normally
+/// [`PAD_JUMP_CAP`]) of its depth if any is — a world two or more airships away
+/// first, then the rolled kind, then any; failing that, the nearest
 /// depth there is, on a [`PAD_JUMP_KEEP`] roll. `None` drops `a`.
 ///
 /// `spine_pos` is each world's place on the airship chain; "two away" is
@@ -379,6 +437,7 @@ fn choose_partner<R: Rng>(
     pool: &[Site],
     a: &Site,
     cross: bool,
+    cap: u32,
     depth_of: &dyn Fn(&Site) -> u32,
     spine_pos: &[usize; 8],
     rng: &mut R,
@@ -387,7 +446,7 @@ fn choose_partner<R: Rng>(
     // *preferences* (the rolled cross/local kind, then the jump), never
     // legality.
     let legal = |b: &Site| b.world != a.world || span(a.pos, b.pos) >= SAME_WORLD_MIN_SPAN;
-    let short = |b: &Site| depth_of(a).abs_diff(depth_of(b)) <= PAD_JUMP_CAP;
+    let short = |b: &Site| depth_of(a).abs_diff(depth_of(b)) <= cap;
     let kind = |b: &Site| (b.world != a.world) == cross;
     let far = |b: &Site| spine_pos[a.world].abs_diff(spine_pos[b.world]) >= 2;
     let pick = |f: &dyn Fn(&Site) -> bool, rng: &mut R| -> Option<usize> {
@@ -404,7 +463,7 @@ fn choose_partner<R: Rng>(
             // Losing the roll drops the site.
             let jump = |b: &Site| depth_of(a).abs_diff(depth_of(b));
             let nearest = pool.iter().filter(|b| legal(b)).map(jump).min()?;
-            let over = nearest.saturating_sub(PAD_JUMP_CAP).min(64) as i32;
+            let over = nearest.saturating_sub(cap).min(64) as i32;
             if !rng.random_bool(PAD_JUMP_KEEP.powi(over)) {
                 return None;
             }

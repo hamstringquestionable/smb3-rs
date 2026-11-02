@@ -524,6 +524,18 @@ pub struct Options {
     /// front of its own gate — see `canoe_gate` for the whole argument.
     #[serde(default)]
     pub item_gates: bool,
+    /// **Uncapped pad jumps.** Lifts the cap on how far apart in depth a
+    /// telepad's two ends may be (`maze::graph::Knobs::pad_jump_cap`). It
+    /// forces nothing: a pad's partner is still drawn at random from the legal
+    /// sites, only from all of them. Over a seed that makes big jumps common,
+    /// which shortens the cheapest route by about a level against the default
+    /// (which already deals one long pad, `graph::ANCHOR_SPAN`) and raises
+    /// content-floor redeals by half again (K=0: 30% -> ~45%, generation time
+    /// only).
+    ///
+    /// **Only read when `world_maze` is on.**
+    #[serde(default)]
+    pub uncapped_pad_jumps: bool,
     #[serde(default)]
     pub big_q_blocks: bool,
     /// Shuffle airship levels across worlds 1-7.
@@ -860,6 +872,7 @@ impl Default for Options {
             world_maze: false,
             maze_wands: default_maze_wands(),
             item_gates: false,
+            uncapped_pad_jumps: false,
             big_q_blocks: false,
             shuffle_airships: true,
             shuffle_hammer_bros: true,

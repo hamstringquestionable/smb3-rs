@@ -535,6 +535,11 @@ export const SCHEMA = [
 		tip: "Ways forward can be locked behind an item you have to find first, and a seed always puts that item somewhere you can reach without it. Right now that means the water: canoes sit one tile offshore, and the only way to call one over is to use an Anchor while standing on a dock. The Anchor is never used up, so one opens every boat in every world, and Toad Houses can hand you one. Off, a boat waits at its dock and any dock summons it for free.",
 		group: "maze", inFlagKey: true,
 		mode: "maze" },
+	{ id: "uncapped_pad_jumps", type: "bool", default: false,
+		label: "Uncapped Pad Jumps",
+		tip: "Telepads can join any two points in the maze, however far apart they sit in the run. This doesn't force long jumps, it only allows them, but with nothing holding them back they turn up often, so expect shorter routes, and a pad from the early worlds into Dark Land on about half of seeds. Off, every seed still gets one long pad from an early world into the middle of the run, and the rest keep their two ends close in how deep into the run they are.",
+		group: "maze", inFlagKey: true,
+		mode: "maze" },
 
 	// --- Enemies ---
 	{ id: "ground", type: "tri", options: TRI, default: "shuffle",

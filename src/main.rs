@@ -234,6 +234,12 @@ struct Cli {
     #[arg(long)]
     item_gates: bool,
 
+    /// Let a telepad join any two depths of the maze rather than capping the
+    /// jump. Allows big jumps, does not force them, but they become common:
+    /// routes run about a level shorter. Requires --world-maze.
+    #[arg(long)]
+    uncapped_pad_jumps: bool,
+
     /// Enable Big ? Block randomization
     #[arg(long)]
     big_q_blocks: bool,
@@ -639,6 +645,7 @@ fn build_options(cli: &Cli) -> Options {
             world_maze: cli.world_maze,
             maze_wands: cli.maze_wands,
             item_gates: cli.item_gates,
+            uncapped_pad_jumps: cli.uncapped_pad_jumps,
             big_q_blocks: cli.big_q_blocks,
             shuffle_airships: !cli.no_shuffle_airships,
             shuffle_hammer_bros: !cli.no_shuffle_hammer_bros,
@@ -759,6 +766,9 @@ fn print_summary(options: &Options, seed: u64, output_path: &std::path::Path) {
             "  Item gates: {}",
             if options.item_gates { "on (boats need an Anchor)" } else { "off" }
         );
+        if options.uncapped_pad_jumps {
+            eprintln!("  Pad jumps: uncapped");
+        }
     }
     // Silent under --world-maze: the mode pins the spine to all eight worlds, so
     // printing the player's value would report a setting the run ignores.

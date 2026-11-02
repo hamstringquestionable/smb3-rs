@@ -9,8 +9,21 @@ deploys.
 
 ## [Unreleased]
 
+### Added
+
+- World Maze: Uncapped Pad Jumps option. Telepads may join any two points in
+  the maze rather than places a similar distance into the run. It allows big
+  jumps rather than forcing them, but they become common: routes run about a
+  level shorter, and a telepad from the first worlds into World 8 turns up on
+  about half of seeds.
+
 ### Changed
 
+- World Maze: every seed gets one long telepad from World 2 or 3 into a world
+  four airships further along. Seeds with only one or two ways through become
+  rare, there are more different routes, and long seeds keep more of their
+  variety. Runs are about a level shorter on average, and a telepad from the
+  first worlds into World 8 turns up more often (about 1 seed in 5).
 - World Maze: telepads are paired by how far into the run each end is, so a
   telepad rarely skips a large part of the game, and they prefer worlds two
   or more airships apart over the next world along. An occasional bigger jump

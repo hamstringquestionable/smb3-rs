@@ -894,6 +894,163 @@ fn routes_report() {
     }
 }
 
+/// Stages no winning route skips — the exact test [`stage_tiers`] uses, run on
+/// every played stage rather than the best route's, so it needs no players.
+/// Counted by kind: levels, forts, airships.
+fn required_stages(model: &RouteModel) -> [usize; 3] {
+    let all: u128 = (0..model.n()).fold(0, |s, i| s | 1u128 << i);
+    let mut by_kind = [0; 3];
+    for i in (0..model.n()).filter(|&i| !model.wins(all & !(1u128 << i))) {
+        match model.items[i] {
+            RouteItem::Level(_) => by_kind[0] += 1,
+            RouteItem::Fort(..) => by_kind[1] += 1,
+            RouteItem::Airship(_) => by_kind[2] += 1,
+            RouteItem::Rock(_) => {}
+        }
+    }
+    by_kind
+}
+
+/// Every required stage, all kinds together, or `None` when the maze cannot
+/// be won at all.
+pub(crate) fn required_count(state: &GlobalState) -> Option<usize> {
+    let model = RouteModel::new(state, state.wands_required, 0);
+    let all: u128 = (0..model.n()).fold(0, |s, i| s | 1u128 << i);
+    model.wins(all).then(|| required_stages(&model).iter().sum())
+}
+
+/// Route families among the census's random players, and the share of
+/// players in the commonest. A family is the set of worlds a route plays
+/// stages in, so swapping one level for another in the same world stays in it.
+pub(crate) fn families(c: &Census) -> (usize, f64) {
+    let mut families: HashMap<u8, usize> = HashMap::new();
+    for (route, n) in &c.routes {
+        let worlds = route
+            .iter()
+            .filter(|&&s| c.stages[s].0 != StageKind::Rock)
+            .fold(0u8, |m, &s| m | 1 << c.stages[s].1.0);
+        *families.entry(worlds).or_default() += n;
+    }
+    let players: usize = families.values().sum();
+    let top = families.values().max().copied().unwrap_or(0);
+    (families.len(), top as f64 / players.max(1) as f64)
+}
+
+/// The pad layout, read against the airship chain (start = 0): pairs, the
+/// widest chain gap one pair spans, the furthest chain place a pad from the
+/// first two worlds reaches, and pairs touching the goal world. A world off
+/// the chain counts as the chain's length.
+pub(crate) fn pad_features(state: &GlobalState) -> [usize; 4] {
+    let mut chain: [Option<usize>; 8] = [None; 8];
+    let mut world = Some(state.start.0);
+    let mut n = 0usize;
+    while let Some(w) = world.filter(|&w| chain[w].is_none()) {
+        chain[w] = Some(n);
+        n += 1;
+        world = state.edges.iter().find_map(|e| match *e {
+            super::MazeEdge::Airship { from_world, to_world } if from_world == w => Some(to_world),
+            _ => None,
+        });
+    }
+    let at = |w: usize| chain[w].unwrap_or(n);
+    let pads = state.pad_edges();
+    let gap = pads.iter().map(|&((a, _), (b, _))| at(a).abs_diff(at(b))).max().unwrap_or(0);
+    let opening =
+        pads.iter().filter(|&&((a, _), _)| at(a) <= 1).map(|&(_, (b, _))| at(b)).max().unwrap_or(0);
+    let goal = pads.iter().filter(|&&((a, _), (b, _))| a == state.goal.0 || b == state.goal.0);
+    [pads.len() / 2, gap, opening, goal.count() / 2]
+}
+
+/// **Does the required-stage count predict route variety?** One arm per
+/// process: a flag key through the real pipeline with K and Generated
+/// Overworld overridden. Every seed gets the cheap count (one walk per stage);
+/// the `SWEEP_TAILS` lowest and highest, plus `SWEEP_RANDOM` drawn at random,
+/// also get a census of `SWEEP_SAMPLES` random players.
+///
+/// A route's **family** is the set of worlds it plays stages in, so two routes
+/// that swap one level for another in the same world are one family.
+///
+/// Env: `SWEEP_FLAGS` (a maze flag key), `SWEEP_K`, `SWEEP_GEN` (1 = generated
+/// maps), `SWEEP_SEEDS` (300), `SWEEP_TAILS` (5), `SWEEP_RANDOM` (20),
+/// `SWEEP_SAMPLES` (1000), `SWEEP_THREADS` (0 = every core). Output: a
+/// `REQ,seed,stages,required,req_levels,req_forts,req_airships,pad_pairs,
+/// max_chain_gap,opening_reach,goal_pairs` line a seed, then
+/// `VAR,seed,pick,required,best,typical,within10,distinct,families,top_family`
+/// for each detailed seed (`top_family` = share of players in the commonest).
+#[test]
+#[ignore]
+fn required_sweep() {
+    use rand::SeedableRng;
+    let env = |k: &str, d: u64| std::env::var(k).ok().and_then(|s| s.parse().ok()).unwrap_or(d);
+    let Ok(bytes) = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes") else {
+        eprintln!("no ROM at roms/");
+        return;
+    };
+    let flags = std::env::var("SWEEP_FLAGS").expect("set SWEEP_FLAGS to a maze flag key");
+    let mut options = crate::Options::from_flag_key(&flags).expect("the flag key decodes");
+    assert!(options.world_maze, "the flag key has World Maze off");
+    options.maze_wands = env("SWEEP_K", 3) as u8;
+    options.generated_overworld = env("SWEEP_GEN", 0) == 1;
+    let (seeds, tails, random) =
+        (env("SWEEP_SEEDS", 300), env("SWEEP_TAILS", 5) as usize, env("SWEEP_RANDOM", 20));
+    let params = CensusParams {
+        samples: env("SWEEP_SAMPLES", 1000) as usize,
+        guided: 20,
+        hammers: 0,
+        exact_cap: 50_000,
+        exact_limit: Duration::from_secs(2),
+        threads: env("SWEEP_THREADS", 0) as usize,
+    };
+
+    let mut mazes: Vec<(u64, GlobalState, usize)> = Vec::new();
+    for seed in 1..=seeds {
+        crate::randomize_rom_with_overworld_capture(&bytes, seed, &options, None)
+            .expect("the pipeline runs");
+        let state = super::LAST_MAZE
+            .with(|slot| slot.borrow_mut().take())
+            .expect("the pipeline generated a maze");
+        let model = RouteModel::new(&state, state.wands_required, 0);
+        let kinds = required_stages(&model);
+        let required = kinds.iter().sum();
+        let [pairs, gap, opening, goal] = pad_features(&state);
+        let stages = (0..model.n()).filter(|&i| model.items[i].played()).count();
+        println!(
+            "REQ,{seed},{stages},{required},{},{},{},{pairs},{gap},{opening},{goal}",
+            kinds[0], kinds[1], kinds[2]
+        );
+        mazes.push((seed, state, required));
+    }
+
+    // Lowest and highest by required count, then a random draw from the rest.
+    let mut order: Vec<usize> = (0..mazes.len()).collect();
+    order.sort_by_key(|&i| (mazes[i].2, mazes[i].0));
+    let mut picks: Vec<(usize, &str)> = order.iter().take(tails).map(|&i| (i, "low")).collect();
+    picks.extend(order.iter().rev().take(tails).map(|&i| (i, "high")));
+    let mut rest: Vec<usize> = order[tails..order.len().saturating_sub(tails).max(tails)].to_vec();
+    rest.shuffle(&mut rand_chacha::ChaCha8Rng::seed_from_u64(0x5EED));
+    picks.extend(rest.into_iter().take(random as usize).map(|i| (i, "random")));
+
+    for (i, pick) in picks {
+        let (seed, state, required) = &mazes[i];
+        let c = census(state, &params, seed ^ 0x2007_00E5);
+        let Some(best) = c.shortest.as_ref().map(|s| c.played(s)) else { continue };
+        let mut sizes: Vec<usize> = Vec::new();
+        for (route, n) in &c.routes {
+            sizes.extend(std::iter::repeat_n(c.played(route), *n));
+        }
+        sizes.sort_unstable();
+        let players = sizes.len().max(1);
+        let within = sizes.iter().filter(|&&s| s * 100 <= best * (100 + BAND_PERCENT)).count();
+        let (families, top) = families(&c);
+        println!(
+            "VAR,{seed},{pick},{required},{best},{},{:.3},{},{families},{top:.3}",
+            sizes.get(sizes.len() / 2).copied().unwrap_or(0),
+            within as f64 / players as f64,
+            c.routes.len(),
+        );
+    }
+}
+
 #[test]
 fn parses_share_links() {
     let url = "https://hamstringquestionable.github.io/smb3-rs/beta/?seed=7457942570878277&flags=SMB3R-3PTZZZVZ7YGABAKAMVX7PVZF80";
