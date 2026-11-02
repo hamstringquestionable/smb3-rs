@@ -28,11 +28,12 @@ export const HINT_TILES = [
 // palette 3), and the maze's own telepad 0xDF. The pad's quadrants are
 // TELEPAD_QUADRANTS ($80-$83), which the randomizer writes over vanilla's
 // alternate spiral — the player's ROM doesn't draw 0xDF this way.
+export const TELEPAD = { tiles: [1408, 1409, 1410, 1411], cols: 2, palette: W1_PAL3 }; // 0xDF
 export const MAZE_TILES = [
 	{ tiles: [1534, 1472, 1505, 1485], cols: 2, clear: 3, palette: W1_PAL1 }, // 0x4A
 	{ tiles: [1296, 1473, 1474, 1475], cols: 2, palette: W1_PAL2 }, // 0xAF
 	{ tiles: [1534, 1472, 1505, 1485], cols: 2, clear: 3, palette: [0x0F, 0x36, 0x21, 0x30] }, // 0xDE
-	{ tiles: [1408, 1409, 1410, 1411], cols: 2, palette: W1_PAL3 }, // 0xDF telepad
+	TELEPAD,
 ];
 
 // World 8's tank, battleship and airship.
