@@ -30,6 +30,11 @@ pub mod rom;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod testrom;
 
+// Read-only ROM lookups (`rominfo` binary), the Rust replacement for
+// `tools/rom_map.py`. Native-only, like testrom.
+#[cfg(not(target_arch = "wasm32"))]
+pub mod rominfo;
+
 #[cfg(target_arch = "wasm32")]
 pub mod wasm;
 

@@ -20,6 +20,11 @@ path = "src/main.rs"
 name = "testrom"
 path = "src/bin/testrom.rs"
 
+# Read-only ROM lookups (the rom_map.py replacement). Native-only tooling.
+[[bin]]
+name = "rominfo"
+path = "src/bin/rominfo.rs"
+
 # GoatCounter flag-key census. Native-only tooling; not part of the web build.
 [[bin]]
 name = "flagstats"

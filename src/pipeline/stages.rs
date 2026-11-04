@@ -48,6 +48,13 @@ pub(super) struct Resolved {
     shuffle_spade_games: bool,
 }
 
+#[cfg(test)]
+impl Resolved {
+    pub(super) fn piranha_active(&self) -> bool {
+        self.piranha_active
+    }
+}
+
 /// The maze's model-side decisions, handed from [`maze_model`] to [`maze_rom`].
 pub(super) struct MazeModel {
     state: GlobalState,
@@ -1192,7 +1199,17 @@ pub(super) fn macobra_layer(rom: &mut Rom, options: &Options) {
     }
 }
 
-/// Stage 17: stamp the flag key and seed into the ROM.
+/// Stage 17: cosmetic level music. Last of the level edits, because it traces
+/// each level through the alt pointers the level stages may have rewritten;
+/// its own substream keeps its place in the order out of the seed.
+pub(super) fn level_music(rom: &mut Rom, seed: u64, options: &Options) {
+    if options.level_music {
+        rom.set_tag("cosmetic/level_music");
+        randomize::cosmetic::level_music::randomize(rom, seed);
+    }
+}
+
+/// Stage 18: stamp the flag key and seed into the ROM.
 pub(super) fn stamp(rom: &mut Rom, seed: u64, options: &Options) {
     // Stamp flag key + seed into free space at STAMP_OFFSET (PRG012):
     //   "S3R" magic, a length byte, the flag key bytes, then the seed

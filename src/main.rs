@@ -194,6 +194,11 @@ struct Cli {
     #[arg(long)]
     fireball_hearts: bool,
 
+    /// Give each level its own song remap. Cosmetic; not in the flag key,
+    /// and moves no other part of the seed.
+    #[arg(long)]
+    level_music: bool,
+
     /// Recolor levels, enemies, and world maps with a random theme (world
     /// colors). Independent of player colors.
     /// Cosmetic; not encoded in the flag key.
@@ -617,6 +622,10 @@ fn build_options(cli: &Cli) -> Options {
                 if cli.fireball_hearts {
                     opts.fireball_hearts = true;
                 }
+                // And level_music — cosmetic, absent from the key.
+                if cli.level_music {
+                    opts.level_music = true;
+                }
                 // Same for skip_rom_validation — a property of the input ROM.
                 if cli.skip_rom_validation {
                     opts.skip_rom_validation = true;
@@ -637,6 +646,7 @@ fn build_options(cli: &Cli) -> Options {
             remove_flashing: !cli.keep_flashing,
             king_quotes: !cli.vanilla_king_quotes,
             fireball_hearts: cli.fireball_hearts,
+            level_music: cli.level_music,
             // The maze reads `world_order`'s table as its airship spine and
             // chains the wand counter through the routine it installs, so it
             // cannot run without it.
@@ -734,6 +744,7 @@ fn print_summary(options: &Options, seed: u64, output_path: &std::path::Path) {
     eprintln!("  Remove flashing: {}", if options.remove_flashing { "on" } else { "off" });
     eprintln!("  King quotes: {}", if options.king_quotes { "random" } else { "vanilla" });
     eprintln!("  Fireballs: {}", if options.fireball_hearts { "hearts" } else { "vanilla" });
+    eprintln!("  Level music: {}", if options.level_music { "random" } else { "vanilla" });
     eprintln!("  Enemies:  {}", if options.any_enemies_active() { "on" } else { "off" });
     eprintln!(
         "  Limit hazards: {}",

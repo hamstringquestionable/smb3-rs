@@ -12,20 +12,28 @@ Examples:
 
 ## Instructions
 
-Run the rom_map.py level lookup:
+Run the Rust lookup (`src/rominfo.rs`, read through `rom_data::level_index`):
 
 ```
-nix-shell -p python3 --run "python3 tools/rom_map.py --level $ARGUMENTS"
+nix-shell --run "cargo run --release --quiet --bin rominfo -- --level $ARGUMENTS"
 ```
+
+Add `--rom <path>` to look inside a randomized ROM; names are then that ROM's own
+(`1-1` is whatever level now sits in 1-1's slot). `--list` prints every name.
 
 Present the full output to the user. The output includes:
-- Level identity: world, entry index, type, tileset, obj_ptr, lay_ptr, grid position
-- All enemies with ROM offsets, names, classes, screen/row/col positions
-- All sub-areas with their enemies
-- All powerup blocks with ROM offsets, item types, randomization class, protection status
-- Boss presence (Boom-Boom, Koopaling, Bowser)
+- Level identity: kind, world, entry index, map position and tile, pointer table tileset/layout/objects
+- Other entries that share the same main area (Toad Houses, Hammer Bro battles)
+- Every area a junction reaches, main first: header bytes decoded (screens, music
+  and its byte offset, time, alt pointers), command count and junctions
+- Each area's powerup blocks: shape-byte offset, block, position, and whether the
+  powerup randomizer protects or restricts it
+- Each area's objects: offset, ID, disassembly name, position
+- Why the area chain stops, and which bosses appear
 
-When the user references specific enemies or items from the output, the ROM offsets are directly usable for patching in `src/randomize/` code. The obj_ptr identifies the enemy data segment, and byte2_offset identifies individual powerup blocks.
+The offsets are file offsets, directly usable in `src/randomize/` code: a powerup
+block's offset is its shape byte (the one the randomizer rewrites), an object's is
+its ID byte. Enemy classes are not shown: they depend on the enemy options.
 
 ## Name formats
 - `N-M` — World N level M (e.g., 3-2, 1-1, 6-5)

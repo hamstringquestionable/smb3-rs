@@ -469,6 +469,14 @@ pub struct Options {
     /// Dr. Mario reskins). Cosmetic — not encoded in the flag key, no RNG.
     #[serde(default)]
     pub fireball_hearts: bool,
+    /// Deal each level its own song remap: every overworld, underground,
+    /// water, fortress, airship, athletic or sky song in a level becomes a
+    /// different one of those, consistently within the level. Boss, battle,
+    /// Toad House and throne room music stay. Cosmetic — not encoded in the
+    /// flag key; drawn from its own substream, so it moves no other part of
+    /// the seed.
+    #[serde(default)]
+    pub level_music: bool,
     #[serde(default)]
     pub world_order: bool,
     /// Number of worlds before Dark Land (0–7, default 7). Only read when
@@ -867,6 +875,7 @@ impl Default for Options {
             remove_flashing: true,
             king_quotes: true,
             fireball_hearts: false,
+            level_music: false,
             world_order: false,
             world_count: default_world_count(),
             world_maze: false,

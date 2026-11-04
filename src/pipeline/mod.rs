@@ -158,10 +158,11 @@ fn randomize_inner(
     stages::locks(rom, &run, &build, &written);
     stages::after_the_map(rom, options, &written, progression.as_deref(), &mut rng);
 
-    // 13-17. Bosses and quotes, engine patches, title screen, stamp.
+    // 13-18. Bosses and quotes, engine patches, title screen, music, stamp.
     stages::bosses_and_quotes(rom, options, &written, progression.as_deref(), &mut rng);
     stages::engine_patches(rom, options, &run, &written, canoe_gated, &mut rng);
     stages::title_and_starting_items(rom, seed, options, &run);
     stages::macobra_layer(rom, options);
+    stages::level_music(rom, seed, options);
     stages::stamp(rom, seed, options);
 }
