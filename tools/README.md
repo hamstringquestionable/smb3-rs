@@ -31,6 +31,27 @@ Two scripts need Pillow — use `nix-shell -p python3 python3Packages.pillow`
 > `validate_shuffleable.py` currently reports 4 discrepancies against
 > `rom_map.json` — unproven until re-checked; do not "fix" Rust on its say-so.
 
+## Retirement: every ROM question moves to Rust
+
+These scripts are being retired (see CLAUDE.md → Tooling). The end state is a
+`tools/` holding only the generators that write checked-in artifacts; every
+question about what is *in* a ROM is answered by Rust — `rominfo`, the main
+CLI, or a test. A mode is ported by the PR that deletes it, after a one-time
+comparison of both outputs. Don't add a script or a mode here.
+
+| Tool / mode | Rust replacement | Status |
+|---|---|---|
+| `rom_map.py --level` | `rominfo --level` (`/level` skill) | **Done** 2026-11 — removed from `rom_map.py` |
+| `rom_map.py --tile` | `rominfo --tile` (`/tile` skill) | Not started |
+| `rom_map.py` → `rom_map.json` | `rominfo` lookups over `rom_data::level_index` and the catalog | Not started |
+| `rom_map.py --numbered / --walk / --progression / --check / --viz` | `rominfo` map views | Not started |
+| `rom_map.py --check-dispatches / --antechamber` | Tests over `level_index` | Not started |
+| `validate_shuffleable.py` | Retires with `rom_map.json`, which it validates against | Not started |
+| `map_viz.py` | The Rust ASCII renderer in `docs/seed_report_design.md` | Not started |
+| `map_walker.py`, `fx_check.py`, `required_progression.py`, `level_sim.py`, `parse_ips.py`, `credits_render.py` | Not yet decided | Not started |
+| `offset_dups.py` | Stays for now: it checks Rust *source*, not ROM facts | — |
+| `gen_palette_variants.py`, `gen_visual_previews.py`, `preview_palette_*.py` | Stay: they generate checked-in artifacts | — |
+
 **Verified 2026-08-03** by executing every script and reading its git history.
 Commit counts below exclude `ecfc1b3` (a bulk path-fixup chore that touched 20
 files without changing behaviour), so "1 commit" means *created once, never
@@ -45,7 +66,7 @@ these working.
 
 | Tool | Status | Notes |
 |------|--------|-------|
-| `rom_map.py` | OK | **30 commits** — the workhorse. Generates `rom_map.json`; also `--level <name>`, `--tile <byte>`, `--numbered`, `--walk`, `--progression`, `--check`. |
+| `rom_map.py` | OK, retiring | **30 commits** — the workhorse. Generates `rom_map.json`; also `--tile <byte>`, `--numbered`, `--walk`, `--progression`, `--check`. Its `--level` mode moved to `rominfo --level` (see Retirement above). |
 | `gen_palette_variants.py` | **rewrites source** | Generates all of `src/randomize/cosmetic/palette_variants.rs` (vanilla + Recolored IPS, on the real `PalSet_*` grid; hue families like tuscan are applied at runtime in `palettes.rs`). Nothing in the file is hand-made, so rerunning is safe; check `git diff`. |
 | `gen_visual_previews.py` | OK **[PIL]** | Regenerates `web/assets/visual-previews/*.png`, shipped in the web app. |
 | `required_progression.py` | needs args | Required-progression / linearity metric for randomized ROMs. |

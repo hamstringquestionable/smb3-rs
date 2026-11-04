@@ -8,8 +8,9 @@
 //! data), `grid` (the overworld grid), `access` (typed read/write helpers),
 //! `engine` (RAM addresses and vanilla routine entry points the 6502 patches
 //! name), `tiles` (overworld tile classification — the single producer for
-//! "which bytes mean what"). All items are re-exported flat so callers keep
-//! using `rom_data::ITEM`.
+//! "which bytes mean what"), `level_index` (every level area traced from its
+//! pointers; addressed by path, not re-exported). Everything else is
+//! re-exported flat so callers keep using `rom_data::ITEM`.
 
 use crate::rom::Rom;
 
@@ -21,6 +22,10 @@ mod engine;
 mod fingerprint;
 mod free_space;
 mod grid;
+// Native-only until a randomizer module reads through it; `rominfo` and the
+// tests are its only users so far, and wasm clippy would flag it unused.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) mod level_index;
 mod tables;
 mod tiles;
 

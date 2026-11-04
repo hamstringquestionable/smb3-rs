@@ -424,6 +424,8 @@ src/
     flag_key.rs        #   Options <-> the shareable flag key
   testrom.rs           # Playtest ROM builder (native-only) — see below
   bin/testrom.rs       # `testrom` CLI: thin clap wrapper over testrom.rs
+  rominfo.rs           # Read-only ROM lookups (native-only): the rom_map.py replacement
+  bin/rominfo.rs       # `rominfo` CLI: thin clap wrapper over rominfo.rs
   bin/flagstats.rs     # `flagstats`: decode the flag keys GoatCounter recorded into
                        #   a per-option census (needs GOATCOUNTER_TOKEN)
   wasm.rs              # wasm-bindgen glue (only compiled for wasm32)
@@ -435,7 +437,9 @@ src/
                        #   tables.rs (offset tables), free_space.rs (the allocation
                        #   registry), asm.rs (the 6502 patch checker), access.rs
                        #   (bank<->file mapping), grid.rs, tiles.rs, engine.rs,
-                       #   fingerprint.rs (the overworld baseline hash)
+                       #   fingerprint.rs (the overworld baseline hash),
+                       #   level_index/ (every level area traced from its pointers:
+                       #   headers, commands, powerup blocks, objects, names)
     overworld/         # The world maps
       map_source/      #   Where each world's map comes from: WorldMap (grid,
                        #     positions, sprites, gaps). vanilla/ reads the ROM and
@@ -518,19 +522,44 @@ The airship shuffle (`overworld/airship_shuffle.rs`) runs before the catalog, at
 
 ## Tooling
 
-**`tools/README.md` indexes all 14 scripts** with a verified status for each.
-Read it before scanning the ROM by hand or writing a throwaway script. In
+**The Python tools are being retired. Rust is the only source of truth for
+what is in the ROM.** A Python script and the Rust code describing the same
+bytes is two answers that can drift, and they have: `rom_map.py`'s region scan
+missed 5-7's sub-area for years, and its copies of Rust tables went stale. The
+rules, until `tools/` holds only the palette and preview generators:
+
+- **Answer new ROM questions in Rust**, as a `rominfo` lookup or a test, never
+  as a new `tools/*.py` script or a new mode on an old one.
+- **Port a Python mode by replacing it**: the PR that ships the Rust version
+  deletes the Python one, after a one-time comparison of the two outputs whose
+  disagreements are reported, not silently resolved.
+- **Until a mode is ported, Rust still wins**: when a script disagrees with
+  Rust, suspect the script.
+
+`tools/README.md` tracks what is left, with the Rust replacement for each
+script. `rom_map.py --level` was the first to go (2026-11): `rominfo --level`
+and the `/level` skill replace it.
+
+`rominfo` (`src/rominfo.rs`, `src/bin/rominfo.rs`) is the Rust home for
+lookups. It reads through the same model the randomizer uses
+(`rom_data::level_index`), so a lookup and a randomizer module cannot disagree
+about where a level's bytes are:
+
+```sh
+cargo run --release --bin rominfo -- --level 6F1   # areas, headers, blocks, objects
+cargo run --release --bin rominfo -- --list        # every name --level accepts
+cargo run --release --bin rominfo -- --rom roms/out.nes --level 1-1   # any ROM
+```
+
+Two other answers live in the main CLI, because they read the allocation
+registry: `--free-space [--fit N]` for where a patch can go, and `--write-log`
+for what a run changed, which module owns each byte, and whether any patch
+overran its allocation. Don't write a script to scan for free space.
+
+Until they are ported, `tools/README.md` still indexes the scripts with a
+verified status for each; read it before scanning the ROM by hand. In
 particular `map_viz.py <rom.nes> --world N` renders any ROM's map as labelled
 ASCII; don't hand-decode tile grids.
-
-Two answers live in the Rust CLI rather than in `tools/`, because they read the
-allocation registry: `--free-space [--fit N]` for where a patch can go, and
-`--write-log` for what a run changed, which module owns each byte, and whether
-any patch overran its allocation. Don't write a script to scan for free space.
-
-Tier 1 (5) is live: `rom_map.py` plus the palette-codegen and visual-preview
-pipelines that regenerate checked-in artifacts. Tier 2 (9) is working general
-diagnostics.
 
 **Keep `tools/` from re-accumulating.** 15 one-off investigation scripts were
 deleted on 2026-08-03 once their findings were captured in the Rust source and
@@ -539,12 +568,36 @@ should end with its answer folded into the docs and the script deleted — not
 left behind to rot into a trap for the next reader. Recover any of them from git
 history if a line of investigation reopens.
 
-Remember that Rust is the source of truth, not the Python tooling — when a
-script disagrees with Rust, suspect the script.
+## Level Contents: `rom_data::level_index`
+
+**Find a level's bytes through `rom_data::level_index`, never by scanning a
+level-data region.** The index reaches every header the way the engine does —
+from a world pointer table entry, then each header's alt pointer (bytes 0-3,
+tileset in byte 6) — and decodes each area's commands, powerup blocks and
+object list with their file offsets. A scan from a region's start finds ~380
+"headers" that are filler, zeroes or misaligned commands, and cannot tell when
+it has slipped.
+
+It is read-only and cheap (a few ms), and the ROM changes as the pipeline runs,
+so build it from the ROM you are about to edit rather than reusing one. The
+vanilla quirks it has to respect are pinned by its tests (`level_index/tests.rs`):
+3HB18 names tileset 3 where its siblings name 1, so its layout pointer lands
+inside 7-3's last command (a garbled arena; `HB_EXCLUDE_ENTRIES` keeps it unused),
+and 3-9 and 3HB18 end on alt pointers naming tileset 0.
+
+**Known bug, deliberately not fixed yet:** the shared
+`LevelDataRegion::command_size` sizes junction commands (`b0 >= $E0`) through the
+tileset table, but `LevelLoad` always reads them as 3 bytes, so the powerup walk
+misreads Ice/Sky levels after a junction. The index has the correct rule. The fix
+lands when `items::powerups` moves onto the index, with a byte-identity diff
+showing exactly what it changes.
 
 ## ROM Map
 
-**`tools/rom_map.json`** is a pre-built JSON map of the entire ROM. Before scanning the ROM manually for offsets, powerup locations, level data, enemy positions, or pointer tables, **always check `tools/rom_map.json` first**. It contains:
+**`tools/rom_map.json`** is a pre-built JSON map of the entire ROM, generated by
+`rom_map.py`. **For a level's contents use `rominfo --level` instead** (see
+Tooling); the JSON is still the place for the tables below until they are ported.
+It contains:
 
 - All 493 powerup block offsets (byte2 values, tile IDs, randomize class, protection flags)
 - All 9 level data regions with every level header, command count, and per-level powerup lists

@@ -124,11 +124,25 @@ pub(crate) struct EntryView {
     pub(crate) world_idx: usize,
     pub(crate) entry_idx: usize,
     pub(crate) tile: u8,
+    /// Grid position (row, col) on the source map; `usize::MAX` for beta stages.
+    pub(crate) grid_pos: (usize, usize),
     /// Short kind name for display, e.g. "level", "fortress", "airship".
     pub(crate) kind_label: &'static str,
     /// True only for numbered action levels (the tiles `--place` targets).
     pub(crate) is_numbered_level: bool,
     pub(crate) level_entry: Option<LevelEntry>,
+}
+
+/// A level name reduced to what a lookup compares: case-insensitive, dashes,
+/// underscores and spaces optional. The catalog spells fortresses `6F1` while
+/// the CLI and docs have long used `6-F1`; both must resolve, and neither
+/// spelling is worth making canonical.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn level_name_key(name: &str) -> String {
+    name.chars()
+        .filter(|c| *c != '-' && *c != '_' && !c.is_whitespace())
+        .flat_map(|c| c.to_lowercase())
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -238,6 +252,7 @@ impl NodeCatalog {
                 world_idx: e.world_idx,
                 entry_idx: e.entry_idx,
                 tile: e.tile,
+                grid_pos: e.grid_pos,
                 kind_label: e.kind.label(),
                 is_numbered_level: matches!(e.kind, NodeKind::Level),
                 level_entry: e.level_entry.clone(),

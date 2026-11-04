@@ -103,15 +103,72 @@ Each range contains the level layout generators for that tileset/theme.
 
 ### Level Header Format (9 bytes per level)
 
+Bit meanings as `LevelLoad` (PRG030 `$97B7`) reads them; `rom_data::level_index::LevelHeader`
+decodes the same fields.
+
 | Byte | Bitmask | Contents |
 |------|---------|----------|
-| 0–1 | `aaaaaaaaaaaaaaaa` | Transition scenery address (16-bit pointer) |
-| 2–3 | `aaaaaaaaaaaaaaaa` | Transition actor/enemy address (16-bit pointer) |
-| 4 | `aaa0bbbb` | a = Y-start properties (indexed table); b = course end page (0-15 screens) |
-| 5 | `_abbccddd` | a = unused; b = X-start properties; c = object palette (2 bits); d = BG palette (3 bits) |
-| 6 | `abbcdddd` | a = pipe transition type; b = vertical scroll mode; c = scroll direction; d = transition course type |
-| 7 | `aaabbbbb` | a = friction factor (3 bits); b = BG banks / CHR selection (5 bits) |
-| 8 | `aa00bbbb` | a = timer seed (2 bits, indexed); b = music track selection (4 bits) |
+| 0–1 | `aaaaaaaaaaaaaaaa` | `Level_AltLayout`: the layout a junction switches to |
+| 2–3 | `aaaaaaaaaaaaaaaa` | `Level_AltObjects`: the object set a junction switches to |
+| 4 | `aaa0bbbb` | a = Y-start properties (indexed table); b = last screen index (width = b + 1) |
+| 5 | `abbccddd` | a = `Level_UnusedFlag` (set, never read); b = `Level_SelXStart`; c = object palette; d = BG palette |
+| 6 | `abbcdddd` | a = `Level_PipeNotExit`; b = `Level_FreeVertScroll`; c = `Level_7Vertical`; d = `Level_AltTileset` |
+| 7 | `aaabbbbb` | a = `Level_InitAction` (see `Level_InitAction_JumpTable`); b = `Level_BG_Page1_2` (BG CHR pages) |
+| 8 | `aa00bbbb` | a = timer index into `GamePlay_TimeStart`; b = song index into `GamePlay_BGM` |
+
+Byte 7's top bits were long documented here as a "friction factor"; the
+engine reads them as the level's init action.
+
+`GamePlay_BGM` is 11 bytes at PRG030 `$97AC` (file `0x3D7BC`, read by
+`LDA $97AC,X` at file `0x3D8DD`): overworld, underground, underwater, fortress,
+boss, airship, battle, toad house, athletic, throne room, sky. `LevelLoad`
+queues the song through `Level_MusicQueue` (skipped while the P-switch or star
+song plays, and always stored as the song to restore after them), and
+`Level_MainLoop` starts it once the enter-level sound ends — not at all if it is
+already playing, which is why music carries across a pipe between two areas
+with the same index.
+
+#### Finding Level Headers: Follow Pointers, Never Scan
+
+A level's areas are reached only through pointers: the world pointer table
+entry names the main area (layout, objects, tileset), and each header's bytes
+0-3 plus byte 6's low nibble name the next area, which `Level_JctInit`
+(PRG026) loads when Mario takes a pipe or door. Area N's objects therefore come
+from area N-1's header. `rom_data::level_index::trace` walks exactly this.
+
+**Scanning a level-data region from its start is not a way to find headers.**
+Walking header → commands → `$FF` → header from each region start yields 729
+"headers" in vanilla, 381 of them impossible (bank-end `$FF` filler, zeroed
+blocks, and command bytes read as a header after the walk slips). The pointer
+trace reaches 224 distinct areas from 322 entries.
+
+Facts the trace pins (tests in `level_index/tests.rs`):
+
+- **A command whose first byte is `$E0` or more is a junction, always 3 bytes.**
+  `LevelLoad` (PRG030 `$98EE`) checks `AND #$E0 / CMP #$E0` before any tileset
+  dispatch. Sizing it through the tileset's variable-size table instead (Ice/Sky
+  lists dispatch 112 as 4-byte) swallows the `$FF` after `E7 xx 80`, running
+  1-4, 6-2, 6-7, β7 and β8 into the next area. The shared
+  `LevelDataRegion::command_size` still has this bug (see CLAUDE.md).
+- **Two chains end on dead alt pointers**, both naming tileset 0 (the map's):
+  3-9's bonus room and 3HB18. The areas' exits never follow them.
+- **3HB18 is a broken Hammer Bro entry: tileset 3 where its siblings have 1.**
+  It shares their layout (`$B3E7`) and objects (`$C640`), but tileset 3 maps
+  the Hilly bank, so `$B3E7` lands inside 7-3's last command. Loaded in Mesen
+  (2026-11-03, `testrom --place 3HB18` against a `3HB17` control) it does not
+  crash: the clock runs and Mario walks, but the arena is Hilly art with a
+  wall-to-wall bush backdrop and one brick row instead of two. Treat it as
+  unused: `HB_EXCLUDE_ENTRIES` keeps it out of the Hammer Bro pool, and
+  anything that writes through headers must skip it. Untried: writing tileset
+  1 into its pointer table entry would presumably make it a copy of its
+  siblings' arena.
+- **Plains level data starts no later than `0x1E509`**, not at `0x1E512`:
+  5-7's sub-area header is there. `LEVEL_DATA_REGIONS` and `rom_map.py` both
+  use the later start, which is how `rom_map.py` missed that sub-area.
+- **Toad Houses (tileset 7) reuse the objects pointer** as a house ID and
+  treasure; `LevelLoad` swaps in the `TOADO` object set.
+- **6A places object `$AB`**, which has no `OBJ_` constant in the disassembly;
+  its init slot (PRG005) is `ObjInit_FireJetRight`, "doesn't really work".
 
 #### The Level Clock
 

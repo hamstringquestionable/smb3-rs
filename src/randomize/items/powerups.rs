@@ -46,7 +46,7 @@ const LEVEL_HEADER_SIZE: usize = 9;
 /// 7-7 (Muncher level): four Q-star blocks that must stay star — stars are
 /// required to cross muncher fields. Found by brute-scanning the sub-area
 /// at 0x23D48–0x23F1F for group 1 fixed-size byte2=0x02 patterns.
-const PROTECTED_OFFSETS: &[usize] = &[
+pub(crate) const PROTECTED_OFFSETS: &[usize] = &[
     0x22D74, // 6-5 Q-leaf byte2 — leaf required for flight in ice level
     0x23D7F, // 7-7 Q-star byte2 (screen 1)
     0x23DB0, // 7-7 Q-star byte2 (screen 2)
@@ -61,14 +61,14 @@ const PROTECTED_OFFSETS: &[usize] = &[
 ///
 /// 7-F1: the Q-block gating the Tanooki area. Small Mario must break bricks to
 /// reach it, so the block has to grant a persistent power-up (flower or leaf).
-const FLOWER_OR_LEAF_QBLOCK_OFFSETS: &[usize] = &[
+pub(crate) const FLOWER_OR_LEAF_QBLOCK_OFFSETS: &[usize] = &[
     0x2B39E, // 7-F1 Q-block — flower/leaf so small Mario can break bricks for Tanooki area
 ];
 
 /// Airship Q-block byte2 offsets (all 9 powerup blocks across W1-W7 airships).
 /// When hammer_vulnerable_koopalings is on, these draw from {flower, leaf} only
 /// (no star) to prevent trivializing Koopaling boss fights.
-const AIRSHIP_QBLOCK_OFFSETS: &[usize] = &[
+pub(crate) const AIRSHIP_QBLOCK_OFFSETS: &[usize] = &[
     0x2ED22, // W5 airship
     0x2EE46, // W1 airship
     0x2EF6D, // W2 airship
