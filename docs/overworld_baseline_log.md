@@ -34,6 +34,31 @@ hashes they describe are gone; the reasoning is not.
 
 ## Entries
 
+### 2026-11-03 — junction commands are always 3 bytes (feature/random-music)
+
+**Intended: no overworld change; a powerups fix that shifts the shared RNG.**
+`LevelDataRegion::command_size` sized a junction command (`b0 >= $E0`) through
+the tileset's dispatch table, where `LevelLoad` (PRG030 `$98EE`) always reads
+it as 3 bytes. In Ice/Sky (dispatch 112 is 4-byte) the powerups walk swallowed
+the `$FF` after `E7 12 80` and read the next header as commands, rerolling the
+song byte of 6-7's bonus room (`0x23CC8`, sometimes to the undefined song
+`$0B`) and a byte of the unreferenced header-shaped data after 6-2's main area
+(`0x2323A`, which no level loads). Those two draws are gone: the
+walk now consumes 241 words where it consumed 243, on every seed.
+
+**What moved.** 6 of the 20 seeds: 5, 6, 15, 18, 19 and 20. Every seed's
+enemies moved, but the enemy pass draws a variable number of words (its picks
+retry), and on 14 seeds it happens to end at the same stream position under
+both rules — seed 1 reaches word 1378 either way — after which ChaCha's output
+is identical and so is the map. Seed 5 ends at 1378 before and 1370 after, and
+never falls back into step.
+
+**How that was established.** The word positions above were printed at each
+stage boundary for seeds 1 and 5 under both rules. On vanilla, the old and new
+walks find the same blocks except those two song bytes (248 vs 246). No
+builder, catalog or writer code changed, so the map distribution cannot move.
+No census run, by the reasoning of the 2026-10-29 entry.
+
 ### 2026-10-29 — underwater piranha slots exclude Rocky and giant piranhas (fix/behind-bg-underwater-slots)
 
 **Intended: no overworld change; an enemy-pass change that shifts the shared

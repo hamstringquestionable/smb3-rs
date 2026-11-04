@@ -115,7 +115,16 @@ impl LevelDataRegion {
     /// dispatch reads an extra byte. Every level-stream walker (powerups,
     /// enemy entry points) must step with this — a re-derived copy of the
     /// formula is how parsers drift out of alignment.
+    ///
+    /// A first byte of `$E0` or more is a junction, always 3 bytes:
+    /// `LevelLoad` (PRG030 `$98EE`) checks for it before any tileset
+    /// dispatch. Sizing one through the dispatch instead (Ice/Sky list 112 as
+    /// 4-byte) swallows the `$FF` after 6-7's `E7 12 80`, and the powerups
+    /// walk then rerolled the bonus room's song byte as a block.
     pub(crate) fn command_size(&self, b0: u8, b2: u8) -> usize {
+        if b0 >= 0xE0 {
+            return 3; // junction
+        }
         if (b2 & 0xF0) == 0 {
             return 3; // fixed-size generator
         }

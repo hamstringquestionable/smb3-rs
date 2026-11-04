@@ -35,6 +35,12 @@ deploys.
   seeds with several wands are no longer thrown away for looking short and
   generate faster.
 
+### Fixed
+
+- 6-7's bonus room could play the wrong song: the powerup randomizer misread
+  where 6-7's main area ends and rerolled the room's song as if it were a
+  block.
+
 ## [3.0.1] - 2026-10-29
 
 ### Fixed

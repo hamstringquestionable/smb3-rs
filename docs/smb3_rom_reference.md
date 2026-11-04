@@ -149,7 +149,8 @@ Facts the trace pins (tests in `level_index/tests.rs`):
   dispatch. Sizing it through the tileset's variable-size table instead (Ice/Sky
   lists dispatch 112 as 4-byte) swallows the `$FF` after `E7 xx 80`, running
   1-4, 6-2, 6-7, β7 and β8 into the next area. The shared
-  `LevelDataRegion::command_size` still has this bug (see CLAUDE.md).
+  `LevelDataRegion::command_size` had this bug until 2026-11-03: the powerups
+  walk rerolled the song byte of 6-7's bonus room (`0x23CC8`) as a block.
 - **Two chains end on dead alt pointers**, both naming tileset 0 (the map's):
   3-9's bonus room and 3HB18. The areas' exits never follow them.
 - **3HB18 is a broken Hammer Bro entry: tileset 3 where its siblings have 1.**

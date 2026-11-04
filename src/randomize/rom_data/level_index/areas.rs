@@ -89,7 +89,7 @@ pub(crate) fn read_area(
         if i + 3 > bank_end {
             return Err(DeadAlt::Unterminated(offset));
         }
-        i += command_size(region, rom.read_byte(i), rom.read_byte(i + 2));
+        i += region.command_size(rom.read_byte(i), rom.read_byte(i + 2));
     }
     Ok(Area { header, layout_ptr: layout, objects_ptr: objects, tileset, terminator: i })
 }
@@ -117,11 +117,4 @@ pub(crate) fn trace(rom: &Rom, entry: &LevelEntry) -> Result<Trace, DeadAlt> {
         }
         areas.push(next);
     }
-}
-
-/// Width of the command starting with `b0`..`b2`. `LevelLoad` (PRG030 `$98EE`)
-/// handles a first byte of `$E0` or more as a junction start, always 3 bytes,
-/// before any tileset dispatch; everything else is the tileset's to size.
-pub(super) fn command_size(region: &LevelDataRegion, b0: u8, b2: u8) -> usize {
-    if b0 >= 0xE0 { 3 } else { region.command_size(b0, b2) }
 }

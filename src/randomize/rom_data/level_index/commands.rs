@@ -10,7 +10,7 @@ use crate::randomize::rom_data::LevelDataRegion;
 use crate::rom::Rom;
 
 use super::Area;
-use super::areas::{command_size, region_for_tileset};
+use super::areas::region_for_tileset;
 
 /// Group 1 fixed shapes: the powerup blocks, the same in every tileset.
 const GROUP_POWER_BLOCK: u8 = 1;
@@ -100,7 +100,7 @@ pub(crate) fn read_commands(rom: &Rom, area: &Area) -> Vec<Command> {
     let mut out = Vec::new();
     let mut i = area.header.offset + super::LEVEL_HEADER_SIZE;
     while i < area.terminator {
-        let len = command_size(region, rom.read_byte(i), rom.read_byte(i + 2));
+        let len = region.command_size(rom.read_byte(i), rom.read_byte(i + 2));
         let mut bytes = [0; 4];
         bytes[..len].copy_from_slice(rom.read_range(i, len));
         out.push(Command { offset: i, bytes, len });

@@ -585,12 +585,11 @@ vanilla quirks it has to respect are pinned by its tests (`level_index/tests.rs`
 inside 7-3's last command (a garbled arena; `HB_EXCLUDE_ENTRIES` keeps it unused),
 and 3-9 and 3HB18 end on alt pointers naming tileset 0.
 
-**Known bug, deliberately not fixed yet:** the shared
-`LevelDataRegion::command_size` sizes junction commands (`b0 >= $E0`) through the
-tileset table, but `LevelLoad` always reads them as 3 bytes, so the powerup walk
-misreads Ice/Sky levels after a junction. The index has the correct rule. The fix
-lands when `items::powerups` moves onto the index, with a byte-identity diff
-showing exactly what it changes.
+`items::powerups` still walks each region from its start rather than through
+the index. Measured against the index on vanilla (2026-11-03) it rerolls every
+real block, plus 15 header-shaped bytes in data no level loads; the one real
+misread, junction commands sized through the tileset table instead of as 3
+bytes, is fixed in the shared `LevelDataRegion::command_size`.
 
 ## ROM Map
 
