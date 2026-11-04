@@ -336,6 +336,9 @@ const BIG_Q = {
 	cols: 4,
 	palette: [0x0F, 0x1D, 0x28, 0x20],
 };
+// The note block, level tile $2E: BG patterns $B8-$BB in the first frame of
+// the animated bank ($60, like Q_BLOCK), Plains BG palette 0.
+const NOTE_BLOCK = { tiles: [6200, 6202, 6201, 6203], cols: 2, palette: [0x0F, 0x0F, 0x30, 0x3C] };
 const SPADE = { tiles: [1448, 1448, 1449, 1449], cols: 2, palette: [0x0F, 0x20, 0x20, 0x1D], flipRight: true }; // $16
 const N_CARD = { tiles: [2064, 2064, 2065, 2065], cols: 2, palette: [0x0F, 0x20, 0x20, 0x1D], flipRight: true }; // $20
 
@@ -802,6 +805,7 @@ export const SCHEMA = [
 	{ id: "level_music", type: "bool", default: false,
 		label: "Random level music",
 		tip: "Each level gets its own mix of songs: overworld, underground, water, fortress, airship, athletic and sky music trade places. Boss, battle, Toad House and throne room music stay put.",
+		icon: NOTE_BLOCK,
 		group: "cosmetic", inFlagKey: false },
 	{ id: "king_quotes", type: "bool", default: true,
 		label: "King quotes",
