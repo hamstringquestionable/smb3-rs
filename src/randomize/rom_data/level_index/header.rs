@@ -6,6 +6,7 @@ pub(crate) const LEVEL_HEADER_SIZE: usize = 9;
 
 /// `GamePlay_TimeStart` (PRG030 `$97A8`): the clock's hundreds digit, by
 /// [`LevelHeader::timer_index`]. 0 means no clock.
+#[cfg(not(target_arch = "wasm32"))]
 const GAMEPLAY_TIME_START: usize = 0x3D7B8;
 
 /// `GamePlay_BGM` (PRG030 `$97AC`, read by `LDA $97AC,X` at file `0x3D8DD`):
@@ -13,6 +14,7 @@ const GAMEPLAY_TIME_START: usize = 0x3D7B8;
 const GAMEPLAY_BGM_LEN: usize = 11;
 
 /// The disassembly's names for `GamePlay_BGM`'s entries, by index.
+#[cfg(not(target_arch = "wasm32"))]
 const BGM_NAMES: [&str; GAMEPLAY_BGM_LEN] = [
     "overworld",
     "underground",
@@ -54,6 +56,28 @@ impl LevelHeader {
         u16::from_le_bytes([self.bytes[2], self.bytes[3]])
     }
 
+    /// Byte 6 bits 0-3: `Level_AltTileset`, the tileset a junction switches to.
+    pub(crate) fn alt_tileset(&self) -> u8 {
+        self.bytes[6] & 0x0F
+    }
+
+    /// Byte 8 bits 0-3: index into `GamePlay_BGM`.
+    pub(crate) fn music(&self) -> u8 {
+        self.bytes[8] & 0x0F
+    }
+
+    /// True when the bits `LevelLoad` never reads are clear and the song
+    /// index is one `GamePlay_BGM` defines. Every header a vanilla pointer
+    /// reaches passes; bytes that are not a header usually fail, which is how
+    /// a dead alt pointer gets caught.
+    pub(crate) fn is_plausible(&self) -> bool {
+        self.bytes[8] & 0x30 == 0 && (self.music() as usize) < GAMEPLAY_BGM_LEN
+    }
+}
+
+/// The fields only `rominfo` displays (native-only, like it).
+#[cfg(not(target_arch = "wasm32"))]
+impl LevelHeader {
     /// Byte 4 bits 0-3: last screen index, so the width is this plus one.
     pub(crate) fn screens(&self) -> u8 {
         (self.bytes[4] & 0x0F) + 1
@@ -64,19 +88,9 @@ impl LevelHeader {
         self.bytes[6] & 0x10 != 0
     }
 
-    /// Byte 6 bits 0-3: `Level_AltTileset`, the tileset a junction switches to.
-    pub(crate) fn alt_tileset(&self) -> u8 {
-        self.bytes[6] & 0x0F
-    }
-
     /// Byte 8 bits 6-7: index into `GamePlay_TimeStart` (300/400/200/none).
     pub(crate) fn timer_index(&self) -> u8 {
         self.bytes[8] >> 6
-    }
-
-    /// Byte 8 bits 0-3: index into `GamePlay_BGM`.
-    pub(crate) fn music(&self) -> u8 {
-        self.bytes[8] & 0x0F
     }
 
     /// The song's name, for an index `GamePlay_BGM` defines.
@@ -94,13 +108,5 @@ impl LevelHeader {
     pub(crate) fn time(&self, rom: &Rom) -> Option<u16> {
         let hundreds = rom.read_byte(GAMEPLAY_TIME_START + self.timer_index() as usize);
         (hundreds != 0).then(|| hundreds as u16 * 100)
-    }
-
-    /// True when the bits `LevelLoad` never reads are clear and the song
-    /// index is one `GamePlay_BGM` defines. Every header a vanilla pointer
-    /// reaches passes; bytes that are not a header usually fail, which is how
-    /// a dead alt pointer gets caught.
-    pub(crate) fn is_plausible(&self) -> bool {
-        self.bytes[8] & 0x30 == 0 && (self.music() as usize) < GAMEPLAY_BGM_LEN
     }
 }

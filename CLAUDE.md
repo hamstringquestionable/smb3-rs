@@ -417,7 +417,7 @@ src/
   rom.rs               # iNES header parsing, ROM validation, Rom struct
   ips.rs               # IPS patch builder (build_ips_patch) and applier (apply_ips_patch)
   pipeline/            # Orchestration: vanilla ROM in, randomized ROM out
-    mod.rs             #   randomize_inner(): the table of contents — 18 stage
+    mod.rs             #   randomize_inner(): the table of contents — 19 stage
                        #   calls, in order. Start here to find where anything runs.
     stages.rs          #   each stage's body; calls the randomize modules
     options.rs         #   the Options struct — one field per player-facing choice

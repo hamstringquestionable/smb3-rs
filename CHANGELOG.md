@@ -16,6 +16,11 @@ deploys.
   jumps rather than forcing them, but they become common: routes run about a
   level shorter, and a telepad from the first worlds into World 8 turns up on
   about half of seeds.
+- Random level music option (cosmetic, not in the flag key). Each level gets
+  its own mix of songs: overworld, underground, water, fortress, airship,
+  athletic and sky music trade places, and a bonus room that sounded different
+  from its level still does. Boss, battle, Toad House and throne room music
+  stay put.
 
 ### Changed
 

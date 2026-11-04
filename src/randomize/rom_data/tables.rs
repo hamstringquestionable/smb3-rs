@@ -964,10 +964,8 @@ pub(crate) struct LevelEntry {
 /// the real thing only spawns when `OBJ_BONUSCONTROLLER`'s coin/score check
 /// fires.
 ///
-/// Native-only: `testrom` (itself `cfg(not(wasm32))`) is the sole consumer, so
-/// on the WASM build this is dead code and warns. Gated rather than
-/// `allow(dead_code)`d so that a genuinely unused item still gets caught.
-#[cfg(not(target_arch = "wasm32"))]
+/// `level_music` deals the Coin Ship a song through this entry too, which is
+/// why it is no longer native-only.
 pub(crate) const UNLISTED_LEVELS: &[(&str, LevelEntry)] = &[(
     "CoinShip",
     LevelEntry { tileset: 10, obj_lo: 0x04, obj_hi: 0xDA, lay_lo: 0x15, lay_hi: 0xBC },

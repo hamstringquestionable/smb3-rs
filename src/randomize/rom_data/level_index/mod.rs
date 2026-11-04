@@ -11,15 +11,25 @@
 //! repointed and cloned), so build it from the ROM you are about to edit.
 
 mod areas;
-mod commands;
 mod header;
+// Commands, objects and their names are read only by `rominfo` and the tests
+// so far, both native-only; a randomizer module that needs one ungates it.
+#[cfg(not(target_arch = "wasm32"))]
+mod commands;
+#[cfg(not(target_arch = "wasm32"))]
 mod object_names;
+#[cfg(not(target_arch = "wasm32"))]
 mod objects;
 
-pub(crate) use areas::{Area, ChainEnd, DeadAlt, trace};
+pub(crate) use areas::{Area, trace};
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use areas::{ChainEnd, DeadAlt};
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) use commands::{power_blocks, read_commands};
 pub(crate) use header::{LEVEL_HEADER_SIZE, LevelHeader};
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) use object_names::object_name;
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) use objects::{Object, read_objects};
 
 #[cfg(test)]

@@ -22,9 +22,6 @@ mod engine;
 mod fingerprint;
 mod free_space;
 mod grid;
-// Native-only until a randomizer module reads through it; `rominfo` and the
-// tests are its only users so far, and wasm clippy would flag it unused.
-#[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod level_index;
 mod tables;
 mod tiles;

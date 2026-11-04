@@ -284,6 +284,7 @@ pub(super) const NOT_ENCODED: &[&str] = &[
     "remove_flashing",     // cosmetic/accessibility; static patch, no RNG
     "king_quotes",         // cosmetic flavor text; draws its RNG either way
     "fireball_hearts",     // cosmetic; static patch, no RNG
+    "level_music",         // cosmetic; its own RNG substream
     "skip_rom_validation", // operational (CLI/WASM input handling), not randomization
     "generated_worlds",    // testrom's per-world switch; keys carry `generated_overworld`
 ];
@@ -550,7 +551,8 @@ impl Options {
             starting_items,
             // Not encoded — see NOT_ENCODED for the reason on each.
             palettes: _, palette_themed: _, player_color: _,
-            remove_flashing: _, king_quotes: _, fireball_hearts: _, skip_rom_validation: _,
+            remove_flashing: _, king_quotes: _, fireball_hearts: _, level_music: _,
+            skip_rom_validation: _,
             generated_worlds: _,
         } = self;
 
@@ -759,6 +761,7 @@ impl Options {
             remove_flashing: true,
             king_quotes: true,
             fireball_hearts: false,
+            level_music: false,
             skip_rom_validation: false,
             generated_worlds: 0,
         }
