@@ -35,6 +35,13 @@ deploys.
   seeds with several wands are no longer thrown away for looking short and
   generate faster.
 
+### Fixed
+
+- Big ? Rooms: a Big ? block could already be opened the first time you
+  reached it, when another level in the same world had a room on the same
+  screen (for example one reached through a shuffled lobby). Each level's
+  block now starts fresh every time you enter the level from the map.
+
 ## [3.0.1] - 2026-10-29
 
 ### Fixed

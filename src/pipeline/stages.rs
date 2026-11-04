@@ -777,10 +777,7 @@ pub(super) fn after_the_map(
 ) {
     // Big [?] bonus-room shuffle: every level with a Big [?] pipe draws from a
     // pool of 19 rooms (11 vanilla + 8 in the otherwise-dead "Unused Level 5").
-    // Runs after the overworld builder because the BigQBlock_GotIt "already
-    // opened" bit is per world *and* per screen, so the legal rooms for a host
-    // depend on where its level ended up — and after `write_overworld`, so the
-    // RNG it consumes cannot move the maps.
+    // Runs after `write_overworld`, so the RNG it consumes cannot move the maps.
     // Off by default. `vanilla_assignments` takes no `rng` *by signature* and
     // writes no bytes, so with the option off every module downstream of here
     // sees the stream it would see if this pass did not exist. It just reports

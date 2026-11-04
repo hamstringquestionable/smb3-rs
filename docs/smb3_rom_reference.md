@@ -777,9 +777,14 @@ So converting an ordinary pipe into a Big [?] pipe is a layout edit ($AD/$AE →
 $AF/$B0) **plus** a group-7 junction command at `slot == the pipe's screen` —
 without one, the arrival reads a stale slot from a previous parse.
 
-**One block per screen, once per world.** `BigQBlock_GotIt` is an 8-bit mask
-indexed by the block's `Objects_XHi` — its *screen* — cleared on world entry,
-game over, and map re-init. Two rooms on the same screen number share one bit.
+**One block per screen, once per world.** `BigQBlock_GotIt` (`$07E2`) is an
+8-bit mask indexed by the block's `Objects_XHi` — its *screen*. Vanilla clears
+it on world entry (`PRG030_84A0`), on returning to the map dead, and on game
+over; `ObjInit_BigQBlock` spawns a block whose bit is set in its opened frame.
+Two rooms on the same screen number share one bit. **The randomizer also clears
+it on every level entry from the map** (`qol::big_q` Part A), so the bit lasts
+one visit: piping out of the room and back in still finds the block opened,
+but no other level's room can empty it.
 
 **Vanilla reaches 11 of the 15 blocks.** Counting `OBJ_BIGQBLOCK_*` entries per
 area: W1 0, W2 1, W3 3, W4 2, W5 2, W6 3, W7 2, W8 2. Eleven levels have a Big
@@ -5858,19 +5863,22 @@ scratch RAM at $7EB4/$7EB5 before the W8-specific overwrite can destroy it. Usin
 fixed bank ensures this fires for ALL entry paths — normal tile entry, army sprite
 encounters, and any other mechanism.
 
-Hook point: ROM **0x3C958** — replaces `CPY #$07; BNE +$18` (4 bytes) with `JMP $9F2C` + NOP.
+Hook point: ROM **0x3C955** (CPU $8945) — replaces `STA ClearPattern` (3 bytes)
+with `JSR $9F2C`. The `CPY #$07` that follows is the Toad House test
+(`Level_Tileset == 7`), whose branch overwrites the object pointer with TOADO;
+an earlier version of this hook sat over that test and called it the W8 check.
 
-Trampoline at ROM **0x3DF3C** (PRG030 free space, CPU $9F2C), 20 bytes:
+Subroutine at ROM **0x3DF3C** (PRG030 free space, CPU $9F2C), 20 reserved, 19 used:
 
 ```
-LDA $65            ; real obj_lo (before W8 overwrite)
+STA ClearPattern   ; (displaced)
+LDA $65            ; real obj_lo (before the Toad House overwrite)
 STA $7EB4          ; scratch: saved entry obj_lo
 LDA $66            ; real obj_hi
 STA $7EB5          ; scratch: saved entry obj_hi
-CPY #$07           ; (displaced: W8 check)
-BNE +3             ; non-W8: skip to JMP $8964
-JMP $894C          ; W8 path: continue with overwrite
-JMP $8964          ; non-W8 path: skip overwrite
+LDA #$00
+STA BigQBlock_GotIt ; the Big ? mask lasts one visit, not one world
+RTS
 ```
 
 **Part B — Two-pass lookup replaces World_Num indexing (PRG026)**
