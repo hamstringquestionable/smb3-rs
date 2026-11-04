@@ -24,12 +24,13 @@
 //! Rooms in Unused Level 5 open through bonus-area slot 0, which is vanilla's
 //! empty World 1 area and is referenced by nothing.
 //!
-//! # The one constraint
+//! # No constraint on screens
 //!
-//! `BigQBlock_GotIt` is an 8-bit mask indexed by the block's *screen* and
-//! cleared on world entry, so two hosts in the same world holding rooms with
-//! the same screen number would share one "already opened" bit. Rooms are drawn
-//! per world with the screens already taken excluded.
+//! `BigQBlock_GotIt` is an 8-bit mask indexed by the block's *screen*, so two
+//! rooms on the same screen share one "already opened" bit. Vanilla clears it
+//! only on world entry; `qol::big_q` also clears it on every level entry from
+//! the map, so the bit lasts one visit and one visit opens one room. Any host
+//! can draw any room, wherever lobby shuffle or Deja Vu put its pipe.
 
 use rand::Rng;
 use rand::seq::SliceRandom;
@@ -106,12 +107,16 @@ const UNUSED5_ROOMS: [Room; 8] = [
 ];
 
 /// A level with a Big [?] pipe: its row in the lookup table, its entry
-/// `obj_ptr` (used to find which world it ended up in), and the mirror row that
-/// must move with it — the lobby-shuffle path into the same level.
+/// `obj_ptr` (the row's key, checked by `host_rows_match_the_lookup_table`),
+/// and the mirror row that must move with it — the lobby-shuffle path into the
+/// same level.
 struct Host {
     name: &'static str,
     row: usize,
     mirror: Option<usize>,
+    // Reason: only the row/key test reads it; it is the record of which level
+    // each row belongs to, so it stays beside the row rather than in the test.
+    #[allow(dead_code)]
     obj_ptr: u16,
 }
 
@@ -140,24 +145,6 @@ pub(crate) struct Assignment {
     pub(crate) screen: u8,
 }
 
-/// Which world a host's level sits in after the overworld builder has run, by
-/// looking its `obj_ptr` up in the world pointer tables. `None` means the level
-/// is not placed on any map, in which case its room can never be opened and the
-/// screen rule does not apply to it.
-fn world_of(rom: &Rom, obj_ptr: u16) -> Option<usize> {
-    let (lo, hi) = (obj_ptr as u8, (obj_ptr >> 8) as u8);
-    for wi in 0..8 {
-        let world = &rom_data::world_tables(rom, wi);
-        for idx in 0..world.entry_count {
-            let e = rom_data::read_entry(rom, world, idx);
-            if e.obj_lo == lo && e.obj_hi == hi {
-                return Some(wi);
-            }
-        }
-    }
-    None
-}
-
 /// What every host opens when the shuffle is off — read back out of the vanilla
 /// lookup tables rather than restated, so there is one source of truth for
 /// "7-F1 opens BigQ7 s6".
@@ -178,48 +165,24 @@ pub(crate) fn vanilla_assignments() -> Vec<Assignment> {
 /// Draw a room for every Big [?] host and write the lookup tables.
 ///
 /// Runs after `qol::fix_big_q_block_rooms` (which writes the routine this fills
-/// in) and after the overworld builder (which decides what world each host is
 /// in). Returns the assignments so callers can protect 7-F1's block.
 pub(crate) fn shuffle<R: Rng>(rom: &mut Rom, rng: &mut R) -> Vec<Assignment> {
     let mut rooms: Vec<Room> = VANILLA_ROOMS.iter().chain(UNUSED5_ROOMS.iter()).copied().collect();
     rooms.shuffle(rng);
 
-    let mut order: Vec<usize> = (0..HOSTS.len()).collect();
-    order.shuffle(rng);
-
-    let mut screens_used: [Vec<u8>; 8] = Default::default();
-    let mut rooms_out: Vec<Option<Room>> = vec![None; HOSTS.len()];
-    let mut assignments = Vec::new();
-    let mut any_unused5 = false;
-
-    for hi in order {
-        let h = &HOSTS[hi];
-        let world = world_of(rom, h.obj_ptr);
-        // Skip screens already spoken for in this world — they would share one
-        // BigQBlock_GotIt bit.
-        let taken: &[u8] = world.map(|w| screens_used[w].as_slice()).unwrap_or(&[]);
-        let Some(pos) = rooms.iter().position(|r| !taken.contains(&r.screen)) else {
-            continue; // nothing legal left; the host keeps whatever it has
-        };
-        let r = rooms.remove(pos);
-        if let Some(w) = world {
-            screens_used[w].push(r.screen);
-        }
-        any_unused5 |= r.unused5;
-        rooms_out[hi] = Some(r);
-        assignments.push(Assignment { name: h.name, area: r.area, screen: r.screen });
-    }
-
-    // Start from vanilla so any host that drew nothing keeps working.
     let mut area_of = big_q::BQ_ROOM;
     let mut arrive = big_q::BQ_ARRIVE;
     let ret = big_q::BQ_RETURN;
-    for (hi, drawn) in rooms_out.iter().enumerate() {
-        let (Some(r), h) = (drawn, &HOSTS[hi]) else { continue };
+    let mut assignments = Vec::new();
+    let mut any_unused5 = false;
+
+    for (h, r) in HOSTS.iter().zip(rooms) {
         for row in [Some(h.row), h.mirror].into_iter().flatten() {
             area_of[row] = r.area;
             arrive[row] = r.arrive;
         }
+        any_unused5 |= r.unused5;
+        assignments.push(Assignment { name: h.name, area: r.area, screen: r.screen });
     }
     big_q::write_room_tables(rom, &area_of, &arrive, &ret);
 

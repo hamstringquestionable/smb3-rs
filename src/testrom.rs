@@ -1052,8 +1052,11 @@ pub fn build(vanilla: &[u8], spec: &TestRomSpec) -> Result<TestRom, String> {
             crate::randomize::qol::apply_real_time_clock(&mut rom);
             rom.set_tag("qol/desert_bro_arena");
             crate::randomize::qol::rebuild_desert_bro_arena(&mut rom);
+            rom.set_tag("qol/big_q_blocks");
+            crate::randomize::qol::fix_big_q_block_rooms(&mut rom);
             report.push(
-                "always-on patches: stomp_fairness, real_time_clock, desert_bro_arena".to_string(),
+                "always-on patches: stomp_fairness, real_time_clock, desert_bro_arena, big_q_blocks"
+                    .to_string(),
             );
         } else {
             report.push("always-on patches: already present (randomized base)".to_string());
