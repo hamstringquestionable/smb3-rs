@@ -132,11 +132,13 @@ Data to assemble:
 
 Constraints the pairing must enforce:
 
-- **Distinct room screens per world.** `BigQBlock_GotIt` is an 8-bit mask
-  indexed by the room's screen and cleared on world entry, so two hosts in the
-  same world paired to rooms with the same screen number share one
-  "already opened" bit. "Same world" means after the overworld builder has
-  placed levels, so this pass runs downstream of it.
+- ~~**Distinct room screens per world.**~~ Retired 2026-11: `BigQBlock_GotIt`
+  is an 8-bit mask indexed by the room's screen and vanilla clears it only on
+  world entry, so two rooms in one world on the same screen shared one
+  "already opened" bit. The rule checked the host's own map tile, which missed
+  a pipe reached through a foreign lobby (5-2's room opened from 6-6's tile
+  emptied 7-8's block on a beta seed) and a second Deja Vu copy. `qol::big_q`
+  now clears the mask on every level entry from the map, so the rule is gone.
 - **7-F1's room holds a flight suit** (see above).
 - **Pairing runs before `randomize_big_q_blocks`**, or the protection cannot be
   expressed.
@@ -335,8 +337,9 @@ host's pointer, so it is the same key pass 1 already scans:
 - **The frozen-screen problem.** The arrival is ours, so the room is a free
   choice per host rather than whatever vanilla's byte2 said.
 
-Net effect: 19 rooms, 11 hosts, unconstrained draw. Only the per-world
-`BigQBlock_GotIt` screen rule survives, and that one was never binding.
+Net effect: 19 rooms, 11 hosts, unconstrained draw. The per-world
+`BigQBlock_GotIt` screen rule survived this, and was later retired by clearing
+the mask on level entry (see Constraints).
 
 ### Cost
 
@@ -359,9 +362,8 @@ absolute operands from its own base, so it is not origin-locked and can move.
 - **`Level_7Vertical` on the return.** The arrival byte1's bit 7 sets vertical
   mode. Seeding a return for a vertical host has to reproduce whatever the
   vanilla return command carried, which the part-1 table already records.
-- **Two hosts, one room.** Now allowed, but both then share one
-  `BigQBlock_GotIt` bit if they are in the same world. The per-world screen rule
-  still applies.
+- **Two hosts, one room.** Now allowed. They would share one `BigQBlock_GotIt`
+  bit, but the mask is cleared on every level entry, so that no longer matters.
 - The `asm::check` in the same commit, per CLAUDE.md, with `.allocation` and
   `.origin`.
 
@@ -524,10 +526,9 @@ the CLI's defaults, which moves the shared RNG, so the same seed number picks
 different rooms under `smb3-rs`. Read the room out of the ROM (the four payload
 tables start at `FS_BIG_Q_LOOKUP + 0x86`) rather than assuming.
 
-Parking both levels on World 1 also puts both rooms under **one** world's
-`BigQBlock_GotIt` mask, which the real seed would not necessarily do — so these
-six were picked to have distinct room screens. A pair that collided would show
-the second block already collected.
+These six were picked to have distinct room screens, back when both levels on
+World 1 shared one world's `BigQBlock_GotIt` mask. The mask is now cleared on
+level entry, so a colliding pair would work too.
 
 To look at one Unused Level 5 room in isolation, without the randomizer, the old
 knob still works: `testrom --place 5-2 --bigq-unused5 <screen> --bigq-palette 4`.
