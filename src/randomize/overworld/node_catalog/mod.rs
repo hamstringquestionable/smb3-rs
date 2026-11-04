@@ -206,13 +206,7 @@ impl NodeCatalog {
                     name: beta.name.to_string(),
                     grid_pos: (usize::MAX, usize::MAX),
                     tile: 0,
-                    level_entry: Some(LevelEntry {
-                        tileset: beta.tileset,
-                        obj_lo: beta.obj_lo,
-                        obj_hi: beta.obj_hi,
-                        lay_lo: beta.lay_lo,
-                        lay_hi: beta.lay_hi,
-                    }),
+                    level_entry: Some(beta.entry()),
                 });
             }
         }

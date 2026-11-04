@@ -1502,6 +1502,43 @@ fn level_music_changes_only_song_nibbles() {
     }
 }
 
+/// `items::chest_item_offsets` is a hand-kept list of chest item bytes (the
+/// Y byte of each `$D6` treasure object). It must name every chest a level
+/// can load and nothing else, on finished ROMs, where `hand_rooms` and
+/// `piranha_rooms` have cloned chest rooms and the level passes have
+/// rewritten object lists.
+#[test]
+fn the_chest_list_names_every_chest_the_levels_load() {
+    use crate::randomize::rom_data::level_index::{self, read_objects};
+    use std::collections::BTreeSet;
+    if make_test_rom().is_none() {
+        eprintln!("SKIP: requires the ROM, which is not included in the repo");
+        return;
+    }
+    let seeds: u64 = std::env::var("CENSUS_SEEDS").ok().and_then(|s| s.parse().ok()).unwrap_or(3);
+    for (name, o) in
+        [("defaults", test_options()), ("all_on", all_on_options()), ("all_off", all_off_options())]
+    {
+        for seed in 1..=seeds {
+            let mut rom = make_test_rom().unwrap();
+            randomize(&mut rom, seed, &o);
+            let run = super::stages::resolve(seed, &o, &mut ChaCha8Rng::seed_from_u64(seed));
+            let listed: BTreeSet<usize> =
+                crate::randomize::items::chest_item_offsets(run.piranha_active())
+                    .into_iter()
+                    .collect();
+            let found: BTreeSet<usize> = level_index::every_level(&rom)
+                .iter()
+                .flatten()
+                .flat_map(|a| read_objects(&rom, a.objects_ptr, a.tileset).unwrap_or_default())
+                .filter(|obj| obj.id == 0xD6)
+                .map(|obj| obj.offset + 2)
+                .collect();
+            assert_eq!(found, listed, "{name}/seed {seed}");
+        }
+    }
+}
+
 #[test]
 fn maybe_flags_are_deterministic_and_hidden() {
     // A `Maybe` flag must (1) round-trip through the flag key as `Maybe`,

@@ -984,6 +984,19 @@ pub(crate) struct BetaLevel {
     pub(crate) name: &'static str,
 }
 
+impl BetaLevel {
+    /// The pointer table entry that loads this level.
+    pub(crate) fn entry(&self) -> LevelEntry {
+        LevelEntry {
+            tileset: self.tileset,
+            obj_lo: self.obj_lo,
+            obj_hi: self.obj_hi,
+            lay_lo: self.lay_lo,
+            lay_hi: self.lay_hi,
+        }
+    }
+}
+
 /// Nine unreferenced beta levels found in the level data banks.
 pub(crate) const BETA_LEVELS: &[BetaLevel] = &[
     BetaLevel {

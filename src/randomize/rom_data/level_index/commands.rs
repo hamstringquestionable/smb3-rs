@@ -62,6 +62,15 @@ impl Command {
         self.bytes[0] >> 5
     }
 
+    /// A fixed-size shape's index within its group.
+    pub(crate) fn fixed_shape(&self) -> Option<u8> {
+        (!self.is_junction() && self.bytes[2] & 0xF0 == 0).then_some(self.bytes[2])
+    }
+}
+
+/// Where a command sits, which only `rominfo` displays (native-only, like it).
+#[cfg(not(target_arch = "wasm32"))]
+impl Command {
     pub(crate) fn row(&self) -> u8 {
         self.bytes[0] & 0x1F
     }
@@ -72,11 +81,6 @@ impl Command {
 
     pub(crate) fn column(&self) -> u8 {
         self.bytes[1] & 0x0F
-    }
-
-    /// A fixed-size shape's index within its group.
-    pub(crate) fn fixed_shape(&self) -> Option<u8> {
-        (!self.is_junction() && self.bytes[2] & 0xF0 == 0).then_some(self.bytes[2])
     }
 }
 
@@ -91,6 +95,16 @@ impl PowerBlock {
     /// File offset of the shape byte (`b2`), the one a randomizer rewrites.
     pub(crate) fn shape_offset(&self) -> usize {
         self.command.offset + 2
+    }
+
+    /// The shape byte: which block this is, and so what it holds.
+    pub(crate) fn shape(&self) -> u8 {
+        self.command.bytes[2]
+    }
+
+    /// A note or wood block (group 2), not a ? block or brick (group 1).
+    pub(crate) fn is_note_or_wood(&self) -> bool {
+        self.command.group() == GROUP_NOTE_WOOD
     }
 }
 

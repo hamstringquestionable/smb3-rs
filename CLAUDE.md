@@ -585,11 +585,14 @@ vanilla quirks it has to respect are pinned by its tests (`level_index/tests.rs`
 inside 7-3's last command (a garbled arena; `HB_EXCLUDE_ENTRIES` keeps it unused),
 and 3-9 and 3HB18 end on alt pointers naming tileset 0.
 
-`items::powerups` still walks each region from its start rather than through
-the index. Measured against the index on vanilla (2026-11-03) it rerolls every
-real block, plus 15 header-shaped bytes in data no level loads; the one real
-misread, junction commands sized through the tileset table instead of as 3
-bytes, is fixed in the shared `LevelDataRegion::command_size`.
+Modules that read through it: `items::powerups` (`every_power_block`) and
+`cosmetic::level_music` (`every_level`). The region walk powerups used before
+rerolled every real block but also 15 header-shaped bytes no level loads, and
+misread junctions after an Ice/Sky `E7` (fixed in the shared
+`LevelDataRegion::command_size`, which still sizes every command).
+`items::chest_item_offsets` stays a hand-kept list; a pipeline test checks it
+against every `$D6` chest the index finds on finished ROMs. The enemy modules
+have not been compared with the index yet and are due a review of their own.
 
 ## ROM Map
 

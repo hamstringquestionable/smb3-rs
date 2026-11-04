@@ -34,6 +34,27 @@ hashes they describe are gone; the reasoning is not.
 
 ## Entries
 
+### 2026-11-03 — powerups reads its blocks from the level index (feature/random-music)
+
+**Intended: no overworld change; a powerups rewrite that shifts the shared
+RNG.** `items::powerups` stopped walking each `LEVEL_DATA_REGIONS` range from
+its start and now rerolls `level_index::every_power_block`: every block of
+every level the pointers reach (plus the beta stages and the Coin Ship), once
+each, in file order.
+
+**What moved.** All 20 seeds. Two things change the stream at once: the walk
+used to reroll 15 header-shaped bytes that no level loads (all outside every
+traced area), so powerups draws 226 words where it drew 241; and the blocks
+are visited in file order rather than region order, so even an equal count
+would hand out different values.
+
+**How that was established.** On the ROM powerups actually receives (after
+stage 1 and the autoscroll and beta-stage patches), under the defaults,
+all-on and all-off option sets, the old walk and the index find the same 232
+blocks, and the old walk's only extras are those 15 bytes. The rerolled set,
+the pools and the protected offsets are unchanged, and no builder, catalog or
+writer code changed. No census run, by the reasoning of the 2026-10-29 entry.
+
 ### 2026-11-03 — junction commands are always 3 bytes (feature/random-music)
 
 **Intended: no overworld change; a powerups fix that shifts the shared RNG.**

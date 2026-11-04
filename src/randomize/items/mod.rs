@@ -8,7 +8,7 @@ use rand::seq::IndexedRandom;
 use super::rom_data::FS_MYSTERY_ANCHOR;
 use crate::rom::Rom;
 
-/// ? block contents.
+// ? block contents.
 pub(crate) mod powerups;
 
 // --- Power-up behaviour patches ---
@@ -230,19 +230,23 @@ pub(crate) fn randomize<R: Rng>(
     });
 
     // In-level treasure chests: randomize each D6 Y-byte.
-    for &offset in TREASURE_CHEST_OFFSETS {
+    for offset in chest_item_offsets(piranha_chests) {
         rom.write_byte(offset, *pool.choose(rng).unwrap());
     }
+}
 
-    // Piranha-shuffle chest rooms (7-P1/7-P2 cloned streams).
+/// The item byte (the `D6` object's Y byte) of every treasure chest a run
+/// has: [`TREASURE_CHEST_OFFSETS`], then the two chest rooms
+/// `piranha_rooms::install_treasure_sets` clones when `piranha_chests`.
+pub(crate) fn chest_item_offsets(piranha_chests: bool) -> Vec<usize> {
+    let mut offsets = TREASURE_CHEST_OFFSETS.to_vec();
     if piranha_chests {
-        for offset in [
+        offsets.extend([
             crate::randomize::levels::piranha_rooms::P1_ROOM_ITEM,
             crate::randomize::levels::piranha_rooms::P2_ROOM_ITEM,
-        ] {
-            rom.write_byte(offset, *pool.choose(rng).unwrap());
-        }
+        ]);
     }
+    offsets
 }
 
 /// Remove warp whistles without full item randomization. Replaces the 3 known

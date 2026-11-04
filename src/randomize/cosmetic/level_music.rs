@@ -24,8 +24,7 @@ use rand::SeedableRng;
 use rand::seq::SliceRandom;
 use rand_chacha::ChaCha8Rng;
 
-use crate::randomize::rom_data::level_index::{self, Area};
-use crate::randomize::rom_data::{self, UNLISTED_LEVELS};
+use crate::randomize::rom_data::level_index;
 use crate::rom::Rom;
 
 /// Salt for the music substream.
@@ -61,11 +60,7 @@ pub(crate) fn randomize(rom: &mut Rom, seed: u64) {
 /// them (main area first); the groups are in order of their first header.
 /// Headers that overlap another area's bytes are left out.
 fn level_groups(rom: &Rom) -> Vec<Vec<usize>> {
-    let levels: Vec<Vec<Area>> = level_entries(rom)
-        .iter()
-        .filter_map(|e| level_index::trace(rom, e).ok())
-        .map(|(areas, _)| areas)
-        .collect();
+    let levels = level_index::every_level(rom);
 
     // Sweep the areas in file order: one that starts inside an earlier real
     // area's bytes (header through terminator) is that area's data, not a
@@ -114,18 +109,6 @@ fn level_groups(rom: &Rom) -> Vec<Vec<usize>> {
     let mut groups: Vec<Vec<usize>> = groups.into_values().filter(|g| !g.is_empty()).collect();
     groups.sort_by_key(|g| *g.iter().min().unwrap());
     groups
-}
-
-/// Every pointer table entry in the eight worlds, then the levels the engine
-/// loads by address (the Coin Ship).
-fn level_entries(rom: &Rom) -> Vec<rom_data::LevelEntry> {
-    let mut entries = Vec::new();
-    for world in 0..8 {
-        let tables = rom_data::world_tables(rom, world);
-        entries.extend((0..tables.entry_count).map(|i| rom_data::read_entry(rom, &tables, i)));
-    }
-    entries.extend(UNLISTED_LEVELS.iter().map(|(_, e)| e.clone()));
-    entries
 }
 
 #[cfg(test)]
@@ -190,8 +173,8 @@ mod tests {
         let headers: BTreeSet<usize> = level_groups(&rom).into_iter().flatten().collect();
         assert!(!headers.contains(&0x213F7));
         assert!(headers.contains(&0x213FB), "its neighbour is still dealt");
-        // 224 areas less 3HB18 and the 11 of the beta stages, which no vanilla
-        // pointer table reaches (a seed that places one deals it).
-        assert_eq!(headers.len(), 212);
+        // The index's 224 areas (pointer tables and beta stages), plus the
+        // Coin Ship's two, less 3HB18.
+        assert_eq!(headers.len(), 225);
     }
 }

@@ -48,6 +48,13 @@ pub(super) struct Resolved {
     shuffle_spade_games: bool,
 }
 
+#[cfg(test)]
+impl Resolved {
+    pub(super) fn piranha_active(&self) -> bool {
+        self.piranha_active
+    }
+}
+
 /// The maze's model-side decisions, handed from [`maze_model`] to [`maze_rom`].
 pub(super) struct MazeModel {
     state: GlobalState,
