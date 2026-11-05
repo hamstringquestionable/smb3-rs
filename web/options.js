@@ -539,8 +539,8 @@ export const SCHEMA = [
 		group: "maze", inFlagKey: true,
 		mode: "maze" },
 	{ id: "uncapped_pad_jumps", type: "bool", default: false,
-		label: "Uncapped Pad Jumps",
-		tip: "Telepads can link any two worlds, however far apart. Expect shorter runs and more shortcuts toward Dark Land.",
+		label: "Telepad Reach", pills: ["Standard", "Uncapped"],
+		tip: "Standard telepads only warp you so far through the game. Uncapped telepads have no limit, which can make for shorter runs that skip more of the game.",
 		icon: TELEPAD,
 		group: "maze", inFlagKey: true,
 		mode: "maze" },
@@ -1503,6 +1503,10 @@ function iconCanvas(entry) {
 // Bool entries render as a two-state Off/On pill group (same shape as `renderTri`)
 // so checkboxes and pills share the same visual rhythm. The underlying state is
 // still a real bool — `readValue` collapses the radio "on"/"off" back to true/false.
+// An entry may rename the two pills with `pills: [offLabel, onLabel]`; the values
+// stay "off"/"on", so the flag key and saved settings do not change. Neither
+// pill means "off" to the player, so they take the Shuffle / Wild colours
+// (`pills-named`) rather than gray and green.
 const BOOL_OPTIONS = [
 	{ value: "off", label: "Off" },
 	{ value: "on", label: "On" },
@@ -1525,16 +1529,16 @@ function renderBool(entry) {
 			class: "opt-badge", id: `${domId(entry.id)}-warn`, hidden: true,
 		}, entry.warnWhenOn));
 	}
-	const group = el("div", { class: "pill-group" });
-	for (const opt of BOOL_OPTIONS) {
+	const group = el("div", { class: "pill-group" + (entry.pills ? " pills-named" : "") });
+	BOOL_OPTIONS.forEach((opt, i) => {
 		const inputId = `${domId(entry.id)}-${opt.value}`;
 		const isChecked = (opt.value === "on") === !!entry.default;
 		group.appendChild(el("input", {
 			type: "radio", name: radioName(entry.id), id: inputId,
 			value: opt.value, checked: isChecked,
 		}));
-		group.appendChild(el("label", { for: inputId }, opt.label));
-	}
+		group.appendChild(el("label", { for: inputId }, entry.pills?.[i] ?? opt.label));
+	});
 	wrap.appendChild(group);
 	return wrap;
 }
@@ -2133,7 +2137,11 @@ export function applyRowStates() {
 		if (!wrap) continue;
 		const value = readValue(entry);
 		let on = false, maybe = false;
-		if (entry.type === "bool") {
+		if (entry.type === "bool" && entry.pills) {
+			// Named pills read as Shuffle / Wild, not off / on.
+			on = value === false;
+			maybe = value === true;
+		} else if (entry.type === "bool") {
 			on = value === true;
 		} else if (entry.type === "toggles") {
 			on = Array.isArray(value) && value.length > 0;
