@@ -113,7 +113,7 @@ const OFF_DOUBLE_WILD = [
 // be read before the options it governs, not found underneath them.
 export const GROUPS = [
 	{ id: "maze", label: "World Maze",
-		note: "The mode switch, and the settings only it uses. Options elsewhere that the maze takes over or has no use for say so in their own row.",
+		note: "Maze settings. Turning the maze on forces some other settings; those are marked.",
 		// Relative on purpose: the /beta/ deploy is a copy of this whole folder,
 		// so the beta page links to the beta tracker and the root page to the
 		// root one, with no build-time knowledge of which it is.
