@@ -24,6 +24,9 @@ deploys.
 
 ### Changed
 
+- Web app: once your ROM is loaded, the page dresses itself in the game's own
+  art. The title is written in SMB3's font, three status-bar cards (dealt at
+  random) sit under it, and the two panels become islands on the map.
 - World Maze: every seed gets one long telepad from World 2 or 3 into a world
   four airships further along. Seeds with only one or two ways through become
   rare, there are more different routes, and long seeds keep more of their

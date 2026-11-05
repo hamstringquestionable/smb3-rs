@@ -14,7 +14,7 @@ import init, {
 	apply_ips_patch,
 	version,
 } from "./pkg/smb3_rs.js";
-import { renderIcon as renderChrIcon, renderIconBox, renderMapBackground, setFavicon } from "./chr.js";
+import { renderIcon as renderChrIcon, renderIconBox, NES_PALETTE, renderIsland, renderMapBackground, renderText, setFavicon } from "./chr.js";
 import { loadRom, saveRom, deleteCached } from "./rom-cache.js";
 import { Q_BLOCK } from "./icons.js";
 import {
@@ -478,7 +478,88 @@ function refreshRomGraphics() {
 	renderAllIcons();
 	renderTheEnd();
 	renderPageMap();
+	renderTitle();
+	renderHeaderCards();
+	renderIslands();
 	setFavicon(previewRom(), Q_BLOCK);
+}
+
+// The page title in the game's own font, in the heading's color. The text
+// stays in the heading for screen readers, and shows until a ROM is loaded.
+function renderTitle() {
+	const art = document.getElementById("title-art");
+	const text = document.getElementById("title-text");
+	if (!art || !text) return;
+	const rom = previewRom();
+	if (rom) {
+		const rgb = getComputedStyle(art.parentElement).color.match(/\d+/g).slice(0, 3).map(Number);
+		renderText(art, rom, text.textContent, rgb);
+		art.style.setProperty("--title-w", art.width);
+	}
+	art.hidden = !rom;
+	text.classList.toggle("visually-hidden", !!rom);
+}
+
+// The two page blocks as islands on the map: a 3x3 ring of the shore tiles
+// (`WATER_TILES` in map_source/generated.rs: corners $87 $88 $8F $90, edges
+// $95 $85 $8E $8C) used as their CSS border image. The land is the panel color,
+// so the panel reads as the island itself; the grass is gold on the main block
+// and teal on the control panel. Drawn at 1x and 2x so the border is never
+// resampled.
+function renderIslands() {
+	const rom = previewRom();
+	const root = document.documentElement;
+	root.classList.toggle("islands", !!rom);
+	if (!rom) return;
+	const tiles = [
+		1296, 1297, 1296, 1297, 1296, 1297,
+		1310, 1428, 1430, 1429, 1431, 1311,
+		1296, 1434, null, null, 1435, 1297,
+		1310, 1432, null, null, 1433, 1311,
+		1296, 1436, 1438, 1437, 1439, 1297,
+		1310, 1311, 1310, 1311, 1310, 1311,
+	];
+	for (const [name, grass] of [["island", 0x28], ["panel-island", 0x1C]]) {
+		// Outline, water (cleared), grass, land.
+		const rgb = [[0, 0, 0], [0, 0, 0], NES_PALETTE[grass], [0x14, 0x14, 0x28]];
+		for (const scale of [1, 2]) {
+			const canvas = document.createElement("canvas");
+			renderIsland(canvas, rom, tiles, 6, rgb, scale);
+			root.style.setProperty(`--${name}-${scale}x`, `url(${canvas.toDataURL()})`);
+		}
+	}
+}
+
+// The status bar's three card slots, as the game draws them: the frame from
+// the `StatusBar` macro in prg030.asm, each slot holding a mushroom, flower or
+// star (`CardUL`-`CardLR` in prg031.asm, as [UL, UR, LL, LR]). Each slot is
+// dealt once per page load and kept on the function, so a new ROM redraws the
+// same hand. Tile bytes $80-$FF are CHR pages $5E-$5F; the colors are the
+// status bar's, which every palette set carries.
+function renderHeaderCards() {
+	const canvas = document.getElementById("header-cards");
+	if (!canvas) return;
+	const rom = previewRom();
+	if (rom) {
+		const cards = [
+			[0xE0, 0xE1, 0xE2, 0xE3], // mushroom
+			[0xE4, 0xE6, 0xE7, 0xE8], // flower
+			[0xAC, 0xAD, 0xAE, 0xAF], // star
+		];
+		renderHeaderCards.hand ??= [0, 1, 2].map(() => cards[Math.floor(Math.random() * cards.length)]);
+		const [a, b, c] = renderHeaderCards.hand;
+		renderChrIcon(canvas, rom, {
+			tiles: [
+				0xA0, 0xA1, 0xA1, 0xA3, 0xA1, 0xA1, 0xA3, 0xA1, 0xA1, 0xA2,
+				0xA6, a[0], a[1], 0xAA, b[0], b[1], 0xAA, c[0], c[1], 0xA7,
+				0xA6, a[2], a[3], 0xAA, b[2], b[3], 0xAA, c[2], c[3], 0xA7,
+				0xA8, 0xA4, 0xA4, 0xA9, 0xA4, 0xA4, 0xA9, 0xA4, 0xA4, 0xA5,
+			].map(t => 0x5E * 64 + (t & 0x7F)),
+			cols: 10,
+			palette: [0x0F, 0x0F, 0x30, 0x3C],
+		});
+	}
+	canvas.hidden = !rom;
 }
 
 // Page background: one world's map from the player's own ROM (not a visual

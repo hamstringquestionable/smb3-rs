@@ -262,3 +262,89 @@ export function setFavicon(romBytes, spec) {
 	renderIconBox(canvas, romBytes, spec, 32, 2);
 	link.href = canvas.toDataURL("image/png");
 }
+
+// The game's text font, CHR pages $5E-$5F. A text byte $80-$FF draws tile
+// (byte & $7F) of those two pages; the bytes are the ones the King's letters
+// use (`encode_char` in king_quotes.rs), plus the font's own "3" at $9F.
+// That "3" belongs to the numbers set, which sits a pixel lower than the
+// letters, so it is drawn a row higher to share their baseline.
+// Letters are color 0 on a color-3 box, the reverse of a sprite.
+const FONT_PAGE = 0x5E * 64;
+
+function fontByte(c) {
+	if (c >= "A" && c <= "Z") return 0xB0 + c.charCodeAt(0) - 65;
+	if (c >= "a" && c <= "p") return 0xD0 + c.charCodeAt(0) - 97;
+	if (c >= "q" && c <= "v") return 0xCA + c.charCodeAt(0) - 113;
+	return { w: 0x81, x: 0x88, y: 0x8C, z: 0x8F, "3": 0x9F }[c] ?? 0xFE;
+}
+
+// Draw `text` in the game's font, one tile per character the way the game
+// lays it out, letter pixels in `rgb` and the rest transparent. The canvas is
+// trimmed to the letters, so it carries no box margin.
+export function renderText(canvas, romBytes, text, rgb) {
+	const w = text.length * 8;
+	const img = new ImageData(w, 8);
+	let x0 = w, x1 = -1, y1 = -1;
+	[...text].forEach((c, i) => {
+		const tile = FONT_PAGE + (fontByte(c) & 0x7F);
+		const lift = c === "3" ? 1 : 0;
+		for (let y = 0; y < 8; y++) {
+			for (let x = 0; x < 8; x++) {
+				if (c === " " || tilePixel(romBytes, tile, x, y) !== 0) continue;
+				const px = i * 8 + x;
+				const py = y - lift;
+				if (py < 0) continue;
+				img.data.set([...rgb, 255], (py * w + px) * 4);
+				x0 = Math.min(x0, px);
+				x1 = Math.max(x1, px);
+				y1 = Math.max(y1, py);
+			}
+		}
+	});
+	if (x1 < 0) return;
+	canvas.width = x1 - x0 + 1;
+	canvas.height = y1 + 1;
+	canvas.getContext("2d").putImageData(img, -x0, 0);
+}
+
+// Draw a ring of world-map shore tiles as a floating island: `tiles` is a
+// row-major grid of CHR tiles, `null` for open land. The water (color 1), and
+// the wave marks on it (color 3), go transparent wherever they are reachable
+// from the edge, so only the coast and the land inside it are drawn. `rgb`
+// gives the colors for indices 0-3; `scale` draws each pixel as a whole square.
+export function renderIsland(canvas, romBytes, tiles, cols, rgb, scale) {
+	const w = cols * 8;
+	const h = Math.ceil(tiles.length / cols) * 8;
+	const idx = new Int8Array(w * h).fill(3);
+	tiles.forEach((tid, i) => {
+		if (tid == null) return;
+		const ox = (i % cols) * 8;
+		const oy = Math.floor(i / cols) * 8;
+		for (let y = 0; y < 8; y++) {
+			for (let x = 0; x < 8; x++) idx[(oy + y) * w + ox + x] = tilePixel(romBytes, tid, x, y);
+		}
+	});
+	const stack = [];
+	for (let x = 0; x < w; x++) stack.push(x, (h - 1) * w + x);
+	for (let y = 0; y < h; y++) stack.push(y * w, y * w + w - 1);
+	while (stack.length) {
+		const p = stack.pop();
+		if (idx[p] !== 1 && idx[p] !== 3) continue;
+		idx[p] = -1;
+		const x = p % w;
+		if (x > 0) stack.push(p - 1);
+		if (x < w - 1) stack.push(p + 1);
+		if (p >= w) stack.push(p - w);
+		if (p < w * (h - 1)) stack.push(p + w);
+	}
+	canvas.width = w * scale;
+	canvas.height = h * scale;
+	const img = new ImageData(canvas.width, canvas.height);
+	for (let y = 0; y < canvas.height; y++) {
+		for (let x = 0; x < canvas.width; x++) {
+			const v = idx[Math.floor(y / scale) * w + Math.floor(x / scale)];
+			if (v >= 0) img.data.set([...rgb[v], 255], (y * canvas.width + x) * 4);
+		}
+	}
+	canvas.getContext("2d").putImageData(img, 0, 0);
+}
