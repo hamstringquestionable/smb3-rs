@@ -452,10 +452,18 @@ input[type="radio"] {
     color: #b8b8d0;
 }
 
+/* A bool with named pills (Telepad Reach) has no "off" to the player: its
+   first pill takes the green shuffle accent, its second the violet below. */
+.pill-group.pills-named input[value="off"]:checked + label {
+    background: var(--pill-active, #4a8a4f);
+    color: var(--pill-active-text, #fff);
+}
+
 /* "Maybe" and "Wild" share a cool violet to mark "the seed picks something
    spicier than a plain shuffle". Visually distinct from the green on/shuffle accent. */
 .pill-group input[value="maybe"]:checked + label,
-.pill-group input[value="wild"]:checked + label {
+.pill-group input[value="wild"]:checked + label,
+.pill-group.pills-named input[value="on"]:checked + label {
     background: #6f5fb8;
     color: #fff;
 }
