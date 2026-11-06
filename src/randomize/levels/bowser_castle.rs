@@ -59,13 +59,14 @@ const MIN_X_GAP: u8 = 2;
 const SEG_X_MIN: u8 = 0x55;
 const SEG_X_MAX: u8 = 0xEF; // a few past last vanilla fireball at 0xE5
 
-/// To the players there are two distinct fireball gauntlets in the castle
-/// one in the basement and one upstairs however the actual map has them
-/// in parallel and we need to add a gap in the fireballs so the rng does
-/// NOT drop one in an unfair location on top of or too near the basement
-/// entryway. The door is located at 0x83; this is a range around it.
-const LOWER_DOOR_ANCHOR_LO: u8 = 0x80;
-const LOWER_DOOR_ANCHOR_HI: u8 = 0x86;
+/// Four doors in the main area drop the player into this sub-area. Their
+/// arrival X comes from the main area's junction commands (byte 2: screen in
+/// the low nibble, column in the high): `$12`, `$23`, `$36` and `$96`. The
+/// first three sit left of [`SEG_X_MIN`]; `$96` lands mid-gauntlet, and a
+/// fireball spawns aimed at the player, so keep clear roughly the screen the
+/// player arrives on.
+const DOOR_ARRIVAL_CLEAR_LO: u8 = 0x8E;
+const DOOR_ARRIVAL_CLEAR_HI: u8 = 0x9E;
 
 /// Vanilla fixed entries (DryBones + Thwomp) — hard-coded so the composer
 /// produces the same 14-entry segment regardless of what bytes the input
@@ -93,7 +94,7 @@ pub(crate) fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R) {
         .iter()
         .map(|e| e.x)
         .chain(lasers.iter().map(|e| e.x))
-        .chain(LOWER_DOOR_ANCHOR_LO..=LOWER_DOOR_ANCHOR_HI)
+        .chain(DOOR_ARRIVAL_CLEAR_LO..=DOOR_ARRIVAL_CLEAR_HI)
         .collect();
     anchors.sort();
 
@@ -246,7 +247,7 @@ mod tests {
     }
 
     #[test]
-    fn no_fireball_at_lower_door() {
+    fn no_fireball_near_door_arrival() {
         for seed in 0..200u64 {
             let mut rom = make_test_rom();
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
@@ -255,11 +256,34 @@ mod tests {
             let out = segment_writer::read_segment(&rom, SEG_OFFSET, ENTRY_COUNT);
             for e in out.iter().filter(|e| e.obj_id == FIREBALL) {
                 assert!(
-                    !(LOWER_DOOR_ANCHOR_LO..=LOWER_DOOR_ANCHOR_HI).contains(&e.x),
-                    "seed {seed}: fireball at x={:02X} is on the lower door",
+                    !(DOOR_ARRIVAL_CLEAR_LO..=DOOR_ARRIVAL_CLEAR_HI).contains(&e.x),
+                    "seed {seed}: fireball at x={:02X} is where the door drops the player",
                     e.x
                 );
             }
+        }
+    }
+
+    /// The arrival X the window guards is the one vanilla's junction encodes:
+    /// the main area's slot-11 door (file 0x2BE16) lands at screen 9, column 6.
+    /// The other three arrivals must stay left of the fireball range.
+    #[test]
+    fn door_arrivals_match_the_rom() {
+        let Some(rom) = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes")
+            .ok()
+            .and_then(|b| Rom::from_bytes(&b).ok())
+        else {
+            return;
+        };
+        let arrival = |off: usize| {
+            let b2 = rom.read_byte(off + 2);
+            (b2 & 0x0F) << 4 | b2 >> 4
+        };
+        let x = arrival(0x2BE16);
+        assert_eq!(x, 0x96);
+        assert!((DOOR_ARRIVAL_CLEAR_LO..=DOOR_ARRIVAL_CLEAR_HI).contains(&x));
+        for off in [0x2BCB3, 0x2BDBD, 0x2BDED] {
+            assert!(arrival(off) < SEG_X_MIN, "junction at 0x{off:05X} lands in the fireballs");
         }
     }
 
