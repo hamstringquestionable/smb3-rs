@@ -52,6 +52,9 @@ deploys.
   reached it, when another level in the same world had a room on the same
   screen (for example one reached through a shuffled lobby). Each level's
   block now starts fresh every time you enter the level from the map.
+- Bowser's Castle: a statue fireball could still appear right on top of you
+  as you came through the door into the lower corridor. The 2.2.2 fix guarded
+  the wrong spot; the screen you arrive on is now kept clear.
 
 ## [3.0.1] - 2026-10-29
 

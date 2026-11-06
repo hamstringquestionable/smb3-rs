@@ -1285,6 +1285,24 @@ slots, coordinating fireball placement so the segment stays X-sorted.
 Fireball X spread in fred's data spans the whole segment
 (`0x18..0xEF`). Y values cluster in `0x11..0x17` (7-row band).
 
+**Where the doors drop the player.** The main area's four junction
+commands give the arrival X in this sub-area (byte 2: screen = low
+nibble, column = high nibble):
+
+| Junction (file) | Bytes | Arrival X |
+|---|---|---|
+| 0x2BCB3 | `E3 48 21` | `$12` |
+| 0x2BDED | `E9 68 32` | `$23` |
+| 0x2BDBD | `E8 68 63` | `$36` |
+| 0x2BE16 | `EB 68 69` | `$96` |
+
+`$96` lands mid-gauntlet; the others are left of every fireball the
+composer places. A statue fireball spawns aimed at the player, so one
+within a screen of `$96` hits a player who has just come through the
+door. The composer keeps `$8E..$9E` clear. (The 2.2.2 fix kept `$80..$86`
+clear instead, around this sub-area's own slot-8 junction — the way back
+up, not the way in.)
+
 #### 5-F2 Sub-Area 1 (file offset `0xD2C9`, 26 entries)
 
 Podoboo gauntlet — 16 Podoboo (0x9E) + 6 Ceiling Podoboo (0x53) + 2
