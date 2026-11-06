@@ -977,6 +977,39 @@ fn cpu_addr(file_offset: usize) -> u16 {
 ///   Form < 4 (no suit) → index by World_Num for per-world quotes
 const QUOTE_SELECT_PATCH: usize = 0x362A3;
 
+/// The princess's closing speech, `EndText` in PRG024 (CPU `$BAC9`). The
+/// routine draws exactly 6 rows of 15 characters, wrapping on screen column,
+/// so every row is padded to 15 and the `$00` after it stays put.
+const PRINCESS_TEXT_OFFSET: usize = 0x31AD9;
+
+/// What she says instead of vanilla's "...Just kidding!" joke. The first
+/// letters of the rows spell TYMAC: Thank You MaCobra.
+#[rustfmt::skip]
+const PRINCESS_THANKS: [&str; 6] = [
+    "Thank you!",
+    "Your princess",
+    "May be in",
+    "Another",
+    "Castle!",
+    "...Bye Bye!",
+];
+
+/// Encode the princess's 6x15 speech box.
+fn encode_princess(lines: &[&str; 6]) -> [u8; 90] {
+    let mut buf = [0xFE; 90];
+    for (i, line) in lines.iter().enumerate() {
+        for (j, c) in line.chars().take(15).enumerate() {
+            buf[i * 15 + j] = encode_char(c);
+        }
+    }
+    buf
+}
+
+/// Replace the princess's ending speech with a thank-you to MaCobra.
+pub(crate) fn write_princess_thanks(rom: &mut Rom) {
+    rom.write_range(PRINCESS_TEXT_OFFSET, &encode_princess(&PRINCESS_THANKS));
+}
+
 /// The king who speaks for the oracle: the king of the world the player
 /// **starts** in — `world_order`'s first entry.
 ///
@@ -1683,6 +1716,38 @@ mod tests {
         assert_eq!(encoded[0], 0xB7);
         // Space padding at end of short lines
         assert_eq!(encoded[19], 0xFE);
+    }
+
+    /// Every line must fit the 15-wide box and use only glyphs the font has:
+    /// `encode_char` turns anything else into a silent space.
+    #[test]
+    fn princess_thanks_fits_the_box() {
+        for line in PRINCESS_THANKS {
+            assert!(line.len() <= 15, "{line:?} is wider than the princess's box");
+            for c in line.chars() {
+                assert!(c == ' ' || encode_char(c) != 0xFE, "{c:?} in {line:?} has no glyph");
+            }
+        }
+    }
+
+    /// The offset and the encoding are right if vanilla's own speech, run
+    /// through `encode_princess`, reproduces the vanilla bytes there.
+    #[test]
+    fn princess_offset_holds_vanilla_speech() {
+        let Ok(bytes) = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes") else {
+            return;
+        };
+        #[rustfmt::skip]
+        let vanilla = encode_princess(&[
+            "Thank you. But",
+            "our Princess is",
+            "in another",
+            "castle!...Just",
+            "kidding! Ha ha",
+            "ha! Bye bye.",
+        ]);
+        assert_eq!(&bytes[PRINCESS_TEXT_OFFSET..PRINCESS_TEXT_OFFSET + 90], &vanilla);
+        assert_eq!(bytes[PRINCESS_TEXT_OFFSET + 90], 0x00, "terminator moved");
     }
 
     /// The `enabled` gate must not change how much RNG the module consumes.
