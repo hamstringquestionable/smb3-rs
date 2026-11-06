@@ -24,6 +24,8 @@ deploys.
 
 ### Changed
 
+- The princess's closing speech is new, with a thank-you to MaCobra hidden in
+  it.
 - Web app: once your ROM is loaded, the page dresses itself in the game's own
   art. The title is written in SMB3's font, three status-bar cards (dealt at
   random) sit under it, and the two panels become islands on the map.

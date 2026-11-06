@@ -896,6 +896,8 @@ pub(super) fn bosses_and_quotes(
             one_f_chest,
         },
     );
+    rom.set_tag("princess_thanks");
+    randomize::cosmetic::king_quotes::write_princess_thanks(rom);
 }
 
 /// Stage 14: engine patches — always-on fixes and the option toggles.

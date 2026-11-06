@@ -4228,6 +4228,16 @@ this redundant write is safe.
 STA instructions with separate LDA operands. This caused a 2-player switching bug
 and was abandoned in favor of the simpler NOP approach.
 
+## The Princess's Speech (PRG024)
+
+`EndText` (CPU `$BAC9`, file 0x31AD9) is the princess's "...Just kidding!"
+speech: 90 bytes in the king's-letter font (`encode_char` in
+`king_quotes.rs`), then a `$00` at 0x31B33. `EndText_DoPrincessText` draws one
+byte per tick from VRAM `$2969` and wraps after screen column 23, so the box
+is **6 rows of exactly 15 characters**; it stops after the sixth row, not at
+the `$00`. Short lines are padded with `$FE`. The randomizer replaces it on
+every seed (`write_princess_thanks`).
+
 ## Ending Credits Montage (PRG024/PRG025)
 
 After Bowser, `Ending_Credits` (PRG024, CPU $BB8B) raises a curtain and plays a
