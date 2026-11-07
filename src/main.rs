@@ -4,8 +4,8 @@ use std::path::PathBuf;
 use std::process;
 
 use smb3_rs::{
-    DejaVuMode, EnemyMode, FireFlowerMode, HazardLimit, HintMode, ITEMS, Options, PiranhaMode,
-    STARTING_LIVES_VALUES, Tri, WildChaser, item_display_name, item_id,
+    DejaVuMode, EnemyMode, FireFlowerMode, HazardLimit, HintMode, ITEMS, MAZE_WANDS_WANDOM,
+    Options, PiranhaMode, STARTING_LIVES_VALUES, Tri, WildChaser, item_display_name, item_id,
 };
 
 /// Human-readable label for a tri-state flag in the run summary.
@@ -45,6 +45,17 @@ fn parse_starting_lives(s: &str) -> Result<u8, String> {
             STARTING_LIVES_VALUES.iter().map(u8::to_string).collect::<Vec<_>>().join(", "),
             n
         ))
+    }
+}
+
+/// CLI validator for `--maze-wands`: 0-7, or `?` (also `wandom`) for Wandom.
+fn parse_maze_wands(s: &str) -> Result<u8, String> {
+    if s == "?" || s.eq_ignore_ascii_case("wandom") {
+        return Ok(MAZE_WANDS_WANDOM);
+    }
+    match s.parse::<u8>() {
+        Ok(n) if n <= 7 => Ok(n),
+        _ => Err(format!("must be 0-7 or ? (got {s})")),
     }
 }
 
@@ -228,8 +239,9 @@ struct Cli {
     #[arg(long)]
     world_maze: bool,
 
-    /// Wands Bowser's castle demands in world-maze mode (0-7, default 3)
-    #[arg(long, default_value_t = 3, value_parser = clap::value_parser!(u8).range(0..=7))]
+    /// Wands Bowser's castle demands in world-maze mode (0-7, default 3), or `?`
+    /// for Wandom: the seed rolls 2-6 and hides it behind an obelisk level
+    #[arg(long, default_value_t = 3, value_parser = parse_maze_wands)]
     maze_wands: u8,
 
     /// Lock ways forward behind the item that opens them, with the item placed
@@ -770,7 +782,11 @@ fn print_summary(options: &Options, seed: u64, output_path: &std::path::Path) {
     );
     eprintln!("  World order: {}", if options.world_order { "on" } else { "off" });
     if options.world_maze {
-        eprintln!("  World maze: on ({} wand(s) to open the castle)", options.maze_wands);
+        if options.maze_wands == MAZE_WANDS_WANDOM {
+            eprintln!("  World maze: on (Wandom: 2-6 wands, revealed by the obelisk)");
+        } else {
+            eprintln!("  World maze: on ({} wand(s) to open the castle)", options.maze_wands);
+        }
         // Only under the mode: outside it the option is inert, so reporting it
         // would name a setting the run ignores.
         eprintln!(

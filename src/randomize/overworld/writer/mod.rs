@@ -54,7 +54,7 @@ pub(crate) fn write_overworld<R: Rng>(
 
     // Compute W8 army sprite target positions before writing tiles,
     // so write_tile_grid can stamp connectivity-aware blank tiles under the sprites.
-    let w8_sprite_positions = pick_w8_sprite_positions(&assignments[7], rng);
+    let w8_sprite_positions = pick_w8_sprite_positions(&assignments[7], &build.worlds[7], rng);
     let w8_sprite_pos_set: HashSet<(usize, usize)> =
         w8_sprite_positions.iter().map(|&(_, pos)| pos).collect();
 

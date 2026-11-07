@@ -102,9 +102,9 @@ use crate::randomize::maze::completion_bits::{CompletionMap, HALF_LEN, PLANE_RES
 use crate::randomize::rom_data::NMI_SAFE_MAX;
 use crate::randomize::rom_data::{
     self, FS_COMPLETION_BASES, FS_FORTRESS_FX, FS_LOCK_ENTRIES, FS_LOCK_MIRROR, FS_MAP_REMOVABLE,
-    FS_ML_RANGE, Grid, MAP_COMPLETE_BIT_CPU, MAP_COMPLETE_BITS, MAP_COMPLETIONS, PLAYER_CURRENT,
-    PRG012_FILE_BASE, REMOVABLE_STRIDE, WORLD_NUM, prg_bank_file_to_cpu, prg010_file_to_cpu,
-    prg011_file_to_cpu,
+    FS_ML_RANGE, FS_ON_CLEAR, Grid, MAP_COMPLETE_BIT_CPU, MAP_COMPLETE_BITS, MAP_COMPLETIONS,
+    PLAYER_CURRENT, PRG012_FILE_BASE, REMOVABLE_STRIDE, WORLD_NUM, prg_bank_file_to_cpu,
+    prg010_file_to_cpu, prg011_file_to_cpu,
 };
 
 // --- Siting -------------------------------------------------------------
@@ -140,6 +140,103 @@ const MAP_OP8_VECTOR: usize = 0x144D2;
 /// What stands there in vanilla: `$C8A9`, the head of `MO_DoFortressFX`.
 #[cfg(test)]
 const MAP_OP8_VANILLA: u16 = 0xC8A9;
+
+// --- The on-clear hook -------------------------------------------------
+
+/// `advance:` inside [`FORTRESS_FX`] — `INC Map_Operation / JMP
+/// WorldMap_UpdateAndDraw`, where an ordinary level clear (no orb) leaves map
+/// operation 8. An [`ON_CLEAR_CPU`] routine ends with `JMP ADVANCE_CPU`.
+///
+/// Offset 64, and fixed: [`install_on_clear`] rearranges only the first 35
+/// bytes, so nothing at or past offset 35 ever moves.
+pub(crate) const ADVANCE_CPU: u16 = FORTRESS_FX_CPU + 64;
+
+/// Where the on-clear routine runs. `$C9AD`, in the tail of the freed
+/// fortress-FX block — see `FS_ON_CLEAR`.
+pub(crate) const ON_CLEAR_CPU: u16 = prg010_file_to_cpu(FS_ON_CLEAR);
+
+/// Bytes the prologue swap touches: everything before the armed path's
+/// `LDX #$00`.
+const PROLOGUE_LEN: usize = 35;
+
+/// [`FORTRESS_FX`] with its unarmed exit sent through [`ON_CLEAR_CPU`].
+///
+/// # What it changes
+///
+/// Map operation 8 runs after *every* return to the map alive — a level card,
+/// a chest, a Toad House, a pipe — because `MO_DoLevelClear` (op 7) has one
+/// exit, `PRG011_ABBE`, and it sets op 8. With no orb armed the routine used to
+/// leave at once:
+///
+/// ```text
+///  7: LDA MAP_DO_FX / BNE armed     ; orb?
+/// 12: JMP advance                   ; no: next map op
+/// 15: armed: key0 -> T1, key1 -> T2 ; the player's cell (20 bytes)
+/// 35: LDX #$00 ...                  ; the lock search
+/// ```
+///
+/// This moves the key calculation above the orb test, so both paths have it,
+/// and aims the unarmed exit at the on-clear routine instead:
+///
+/// ```text
+///  7: key0 -> T1, key1 -> T2        ; same 20 bytes, moved up
+/// 27: LDA MAP_DO_FX / BNE armed     ; same 5 bytes (BNE +3 lands on 35 again)
+/// 32: JMP ON_CLEAR                  ; was JMP advance
+/// 35: LDX #$00 ...                  ; does not move
+/// ```
+///
+/// Same instructions, same length, reordered. **Nothing from offset 35 on
+/// moves**, so not one absolute address into the body changes, and the armed
+/// path computes the same keys it always did, a few instructions earlier.
+///
+/// # Why a separate routine
+///
+/// So the next "beat a level, do something" feature is a block added to the
+/// on-clear routine and never another edit here. That routine finds the
+/// player's cell in `T1`/`T2` (`$00`/`$01`, which the NMI saves and restores,
+/// so they survive the jump) in exactly [`cell_key`]'s encoding, and ends with
+/// `JMP` [`ADVANCE_CPU`].
+pub(crate) fn fortress_fx_with_on_clear(code: &[u8; 484]) -> [u8; 484] {
+    let [lo, hi] = ON_CLEAR_CPU.to_le_bytes();
+    let [adv_lo, adv_hi] = ADVANCE_CPU.to_le_bytes();
+    assert_eq!(
+        &code[7..15],
+        &[0xAD, 0x45, 0x07, 0xD0, 0x03, 0x4C, adv_lo, adv_hi],
+        "FORTRESS_FX's orb test moved — the on-clear prologue swap no longer fits it"
+    );
+    let mut out = *code;
+    let keys = &code[15..PROLOGUE_LEN];
+    out[7..27].copy_from_slice(keys);
+    out[27..32].copy_from_slice(&code[7..12]); // LDA MAP_DO_FX / BNE +3
+    out[32..PROLOGUE_LEN].copy_from_slice(&[0x4C, lo, hi]);
+    out
+}
+
+/// Send an ordinary level clear through the on-clear routine. Rewrites the
+/// first 35 bytes of the [`FORTRESS_FX`] that [`apply`] already wrote, so it
+/// runs after it — and only when a routine has been written at
+/// [`ON_CLEAR_CPU`], since the unarmed exit then lands there.
+pub(crate) fn install_on_clear(rom: &mut Rom) {
+    let mut code = [0u8; 484];
+    code.copy_from_slice(rom.read_range(FS_FORTRESS_FX, FORTRESS_FX.len()));
+    let hooked = fortress_fx_with_on_clear(&code);
+    rom.write_range(FS_FORTRESS_FX, &hooked[..PROLOGUE_LEN]);
+}
+
+/// `[key0, key1]` for a map cell — what [`FORTRESS_FX`] builds from the
+/// player's position into `T1`/`T2`, so a routine keyed on a cell compares
+/// against these two bytes.
+///
+/// `key0` is `World_Map_Y & $F0` (which is `(grid row + 2) << 4`) with the
+/// world in the free low nibble; `key1` is `World_Map_X & $F0` (the column
+/// within the screen) with `World_Map_XHi` (the screen) in its low nibble.
+pub(crate) fn cell_key(world: usize, pos: (usize, usize)) -> [u8; 2] {
+    let (row, col) = pos;
+    debug_assert!(world < 8, "a world index is three bits");
+    debug_assert!(row <= 8, "a map grid has nine rows");
+    debug_assert!(col < HALF_LEN, "a map column is six bits");
+    [(((row + 2) as u8) << 4) | world as u8, (((col % 16) as u8) << 4) | (col / 16) as u8]
+}
 
 /// Offset of the `LDX #` immediate that sizes the scan: `(entries - 1) * 4`.
 const COUNT_OPERAND: usize = 36;
@@ -876,14 +973,7 @@ impl LockEntry {
     /// every grid row stays distinct — unlike `Map_MarkLevelComplete`'s
     /// completion index, which folds rows 7 and 8 together.
     fn key(&self) -> [u8; 2] {
-        let (row, col) = self.key_pos;
-        debug_assert!(self.key_world < 8, "a world index is three bits");
-        debug_assert!(row <= 8, "a map grid has nine rows");
-        debug_assert!(col < HALF_LEN, "a map column is six bits");
-        [
-            (((row + 2) as u8) << 4) | self.key_world as u8,
-            (((col % 16) as u8) << 4) | (col / 16) as u8,
-        ]
+        cell_key(self.key_world, self.key_pos)
     }
 }
 
@@ -1359,6 +1449,109 @@ mod asm_checks {
             .origin(FORTRESS_FX_CPU)
             .zero_page(NMI_SAFE_MAX, &FX_ENGINE_VARS)
             .assert_ok();
+    }
+
+    #[test]
+    fn the_effect_with_on_clear_is_well_formed() {
+        asm::check(&fortress_fx_with_on_clear(&FORTRESS_FX))
+            .allocation(FS_FORTRESS_FX)
+            .origin(FORTRESS_FX_CPU)
+            .zero_page(NMI_SAFE_MAX, &FX_ENGINE_VARS)
+            .assert_ok();
+    }
+
+    /// The swap touches the prologue and nothing else, and `advance` is where
+    /// [`ADVANCE_CPU`] says — the address every on-clear routine jumps back to.
+    #[test]
+    fn the_on_clear_swap_moves_only_the_prologue() {
+        let hooked = fortress_fx_with_on_clear(&FORTRESS_FX);
+        assert_eq!(&hooked[PROLOGUE_LEN..], &FORTRESS_FX[PROLOGUE_LEN..]);
+        assert_eq!(&hooked[..7], &FORTRESS_FX[..7], "the poof test must stay first");
+        let at = usize::from(ADVANCE_CPU - FORTRESS_FX_CPU);
+        assert_eq!(&FORTRESS_FX[at..at + 3], &[0xEE, 0x29, 0x07], "advance is INC Map_Operation");
+    }
+
+    /// `Map_Operation`.
+    const MAP_OPERATION: u16 = 0x0729;
+
+    /// The fixture [`armed_at`] builds, with the orb *not* armed — an ordinary
+    /// level clear.
+    fn unarmed_at(rom: &Rom, world: usize, at: (usize, usize)) -> CPU<Memory, Ricoh2a03> {
+        let mut cpu = armed_at(rom, world, at, 0);
+        cpu.memory.set_byte(MAP_DO_FX, 0);
+        cpu
+    }
+
+    /// Run from op 8's vector until the CPU reaches `stop` or the map update.
+    fn run_until(cpu: &mut CPU<Memory, Ricoh2a03>, stop: u16) -> u16 {
+        cpu.registers.stack_pointer = mos6502::registers::StackPointer(0xFD);
+        cpu.registers.program_counter = FORTRESS_FX_CPU;
+        for _ in 0..200_000 {
+            let pc = cpu.registers.program_counter;
+            if pc == stop || pc == WORLDMAP_UPDATE_DRAW {
+                return pc;
+            }
+            cpu.single_step();
+        }
+        panic!("MO_DoFortressFX ran away");
+    }
+
+    /// **An ordinary clear reaches the on-clear routine, with the cell in hand.**
+    /// Unhooked it still advances straight away, as it always has.
+    #[test]
+    fn an_unarmed_clear_reaches_on_clear_with_the_cell_key() {
+        let Some(rom) = vanilla() else {
+            eprintln!("SKIP: requires the ROM");
+            return;
+        };
+        let (world, at) = (3usize, (4usize, 21usize));
+        let e = LockEntry {
+            key_world: world,
+            key_pos: (2, 4),
+            target_world: world,
+            target_pos: (3, 5),
+        };
+        let (plain, _) = one_lock(&rom, e);
+
+        let mut cpu = unarmed_at(&plain, world, at);
+        assert_eq!(run_until(&mut cpu, ON_CLEAR_CPU), WORLDMAP_UPDATE_DRAW, "unhooked");
+        assert_eq!(cpu.memory.get_byte(MAP_OPERATION), 1, "unhooked: advanced from op 0 to 1");
+
+        let mut hooked = plain.clone();
+        install_on_clear(&mut hooked);
+        let mut cpu = unarmed_at(&hooked, world, at);
+        assert_eq!(run_until(&mut cpu, ON_CLEAR_CPU), ON_CLEAR_CPU);
+        let [k0, k1] = cell_key(world, at);
+        assert_eq!(cpu.memory.get_byte(0x0000), k0, "T1");
+        assert_eq!(cpu.memory.get_byte(0x0001), k1, "T2");
+    }
+
+    /// The armed path does exactly what it did before the swap: the same lock
+    /// opens, the same bits go up, the same buffer goes out.
+    #[test]
+    fn the_on_clear_swap_leaves_the_lock_effect_alone() {
+        let Some(rom) = vanilla() else {
+            eprintln!("SKIP: requires the ROM");
+            return;
+        };
+        let (world, fort, lock_at) = (1usize, (2usize, 4usize), (3usize, 5usize));
+        let e =
+            LockEntry { key_world: world, key_pos: fort, target_world: world, target_pos: lock_at };
+        let (plain, _) = one_lock(&rom, e);
+        let mut hooked = plain.clone();
+        install_on_clear(&mut hooked);
+
+        let mut a = armed_at(&plain, world, fort, 0);
+        let mut b = armed_at(&hooked, world, fort, 0);
+        run_effect(&mut a);
+        run_effect(&mut b);
+        for addr in (0x0000u16..0x0800).chain(0x6000..0x8000) {
+            assert_eq!(
+                a.memory.get_byte(addr),
+                b.memory.get_byte(addr),
+                "RAM ${addr:04X} differs once the prologue is swapped"
+            );
+        }
     }
 
     /// [`REMOVABLE_PAIRS`] is a Rust copy of eight ROM bytes, and a copy that is

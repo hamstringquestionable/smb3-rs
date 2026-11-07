@@ -217,9 +217,11 @@ The fortress-FX rework (2026-09-06) retired vanilla's `MO_DoFortressFX` and its
 seven slot tables by repointing one word of the map-operation jump table,
 freeing `$C7BD..$C9D5` — 537 contiguous bytes, the largest run in the map bank.
 Those bytes were never `$FF`, so `--free-space` counts none of them. The
-registry row is the record instead: `FS_FORTRESS_FX` claims the whole run at
-537 reserved / 484 used, leaving **53 spare bytes the per-bank table above does
-not know about**. The same is true of every allocation sited on retired vanilla
+registry rows are the record instead: `FS_FORTRESS_FX` claims the first 496
+(484 used) and `FS_ON_CLEAR` the last 41 (25 used) — the on-clear hook a "beat
+this level, do that" feature extends rather than editing the effect (see
+`lock_keys::install_on_clear`). Those slack bytes are **not visible to the
+per-bank table above**. The same is true of every allocation sited on retired vanilla
 code — check `FREE_SPACE_ALLOCATIONS` alongside the scan, not instead of it.
 
 **Repointing a jump-table vector is the cheapest way to reclaim a large run**

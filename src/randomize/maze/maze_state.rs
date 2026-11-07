@@ -110,9 +110,21 @@ pub(crate) const PLAYER_WORLD_LEN: usize = 2;
 /// three-way branch in two bytes.
 pub(crate) const HANDOVER: u16 = PLAYER_WORLD + PLAYER_WORLD_LEN as u16;
 
+/// Wandom's reveal: `$00` until the pyramid level is beaten, then the status-bar
+/// tile for K (`$F0 + K`). See [`crate::randomize::maze::wandom`].
+///
+/// **The flag is the tile.** The readout needs a digit, and the only thing that
+/// ever sets this byte is the one place that knows K, so storing the digit
+/// instead of a 1 lets the readout draw it straight from here — no K constant
+/// in the readout, and no compare against one.
+///
+/// One byte for both players. They share one screen and one castle, so there
+/// is nothing to hide from one player that the other has learned.
+pub(crate) const WANDOM_REVEAL: u16 = HANDOVER + 1;
+
 /// First byte after everything allocated above — where the next allocation
 /// starts.
-pub(crate) const MAZE_STATE_NEXT: u16 = HANDOVER + 1;
+pub(crate) const MAZE_STATE_NEXT: u16 = WANDOM_REVEAL + 1;
 
 /// Every byte the maze owns, as one contiguous run.
 ///
@@ -148,4 +160,5 @@ const _: () = {
         PLAYER_WORLD + PLAYER_WORLD_LEN as u16 <= HANDOVER,
         "the per-player world bytes overlap the hand-over flag"
     );
+    assert!(HANDOVER < WANDOM_REVEAL, "the Wandom reveal overlaps the hand-over flag");
 };

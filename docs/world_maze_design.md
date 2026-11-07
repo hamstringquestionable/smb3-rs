@@ -1525,6 +1525,48 @@ removable. With a removable wall on the map it would blow a hole in it. The
 builder's shared-bit rule (#212) predates any removable wall, so the gate cell's
 row/column pairing has to be held to it explicitly.
 
+### Wandom: a hidden K (2026-11-07)
+
+`maze_wands = 8` (`?` on the web page, `--maze-wands ?` on the CLI) rolls K
+uniformly from 2-6 (capped by the airships the spine offers) and hides it: the
+readout shows `N/×` until the player beats one level drawn as a **pyramid**
+(`$69`). Then a 1-up plays and the readout shows `N/K` for the rest of the game.
+The oracle king always names the pyramid's world on these seeds. The code is
+`maze::wandom`; what follows is the reasoning it rests on.
+
+- **Which level.** Telepad depth from the start world, where the start world
+  is depth 1 and a pad or the spine's airship hop is one step. Depths are
+  searched in the order 3, 4, 2, 5, 1, 6, 7, 8; within a depth the candidates
+  are shuffled and the first that qualifies wins. Qualifying means a plain
+  level slot (no hand trap, no troll pipe), reachable at all, and **optional**:
+  `spheres_with_blocked({cell}).solvable` — the same counterfactual the
+  required-stage count asks. Measured over 200 seeds: depth 3 every time, no
+  seed fell back, 0.43 ms per pick (release).
+- **How the clear is noticed: by cell, not by level.** Every return to the map
+  alive passes map operation 8 with the player on the cell just cleared (see
+  the ROM reference, "Op 8 runs after every return to the map alive").
+  `lock_keys::install_on_clear` swaps the first 35 bytes of the op-8 effect so
+  the cell key is built before the orb test and the no-orb exit jumps to
+  `FS_ON_CLEAR` instead of advancing. Nothing at or past offset 35 moves.
+  Keying on the cell is what makes Deja Vu, chest endings and secret exits all
+  correct for free: none of them changes which cell the player stands on.
+- **The on-clear hook is general.** Wandom is its first client; a later "beat
+  this level, do that" feature adds a compare block to the same routine and
+  never touches the effect again. 41 bytes reserved, 25 used.
+- **The reveal byte is the digit.** `maze_state::WANDOM_REVEAL` (`$7ADD`; two
+  free maze bytes remain after it) holds `$00` or `$F0 + K`, so the readout draws it
+  directly and holds no K of its own. Shared by both players: one screen, one
+  castle.
+- **The writer keeps sprites off it.** The W8 tank and piranha plants blank the
+  cell under them to a path node, which would erase the pyramid; both pickers
+  skip a pyramid slot.
+- **The hidden K is `×` (`$FB`), not `?`.** The dialog font's `?` (`$EB`) was
+  tried first. It is drawn in colour 0 and sits a pixel above the digits, and
+  moving it would take a CHR edit that also moves every `?` in the king's
+  letters. `×` uses the bar's own colours.
+- **Players see an obelisk.** The king, the web tip and the changelog call it
+  an obelisk; the code says pyramid, after the tile.
+
 ## Data model
 
 Sketch, not a signature list — the point is that the maze's state is a thin

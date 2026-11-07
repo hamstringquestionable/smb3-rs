@@ -24,6 +24,8 @@ h1 { color: #5c94fc; margin: 0 0 0.5rem; font-size: 1rem; }
   <label>ROM: <input type="file" id="rom-input" accept=".nes"></label>
   <label>Palette: <input type="text" id="palette" value="0F,16,27,36" size="14"></label>
   <label>Page range: <input type="text" id="pages" value="0-31" size="6"></label>
+  <button type="button" id="preset-bar" title="The 256 tiles the status bar can draw (1 KiB CHR pages $5C-$5F). Each tile's hex label is the byte a patch writes to show it.">Status bar</button>
+  <button type="button" id="preset-all">All pages</button>
   <span class="note">Click a tile to inspect. Palette is 4 NES color indices in hex.</span>
 </div>
 <div id="output"></div>
@@ -49,12 +51,14 @@ function parseRange(s) {
   return isNaN(n) ? [0, 31] : [n, n];
 }
 
-function renderPage(pageIdx, palette) {
+// A single page is drawn large, with each tile's hex index on it, so a
+// candidate glyph can be named without clicking every tile.
+function renderPage(pageIdx, palette, labelled) {
   const canvas = document.createElement("canvas");
   canvas.className = "page-grid";
   const tilesPerRow = 16;
   const rows = 16;
-  const scale = 2;
+  const scale = labelled ? 6 : 2;
   canvas.width = tilesPerRow * 8 * scale;
   canvas.height = rows * 8 * scale;
   const ctx = canvas.getContext("2d");
@@ -69,6 +73,13 @@ function renderPage(pageIdx, palette) {
     const tx = (t % tilesPerRow) * 8 * scale;
     const ty = Math.floor(t / tilesPerRow) * 8 * scale;
     ctx.drawImage(off, tx, ty, 8 * scale, 8 * scale);
+    if (labelled) {
+      ctx.font = "10px monospace";
+      ctx.fillStyle = "#000";
+      ctx.fillRect(tx, ty, 14, 10);
+      ctx.fillStyle = "#ff0";
+      ctx.fillText(t.toString(16).toUpperCase().padStart(2, "0"), tx + 1, ty + 8);
+    }
   }
   canvas.addEventListener("click", (e) => {
     const rect = canvas.getBoundingClientRect();
@@ -132,7 +143,7 @@ function rerender() {
     const row = document.createElement("div");
     row.className = "page-row";
     row.appendChild(Object.assign(document.createElement("div"), { className: "page-label", textContent: `page 0x${p.toString(16).toUpperCase().padStart(2, "0")}` }));
-    row.appendChild(renderPage(p, palette));
+    row.appendChild(renderPage(p, palette, pStart === pEnd));
     out.appendChild(row);
   }
 }
@@ -145,6 +156,18 @@ romInput.addEventListener("change", async (e) => {
 });
 paletteInput.addEventListener("change", rerender);
 pagesInput.addEventListener("change", rerender);
+
+// The status bar renders only from 1 KiB CHR pages $5C-$5F, which is 4 KiB
+// page 23 here, and a tile's intra-page index is the byte the bar writes.
+const STATUS_BAR_PAGE = 0x5C / 4;
+document.getElementById("preset-bar").addEventListener("click", () => {
+  pagesInput.value = String(STATUS_BAR_PAGE);
+  rerender();
+});
+document.getElementById("preset-all").addEventListener("click", () => {
+  pagesInput.value = "0-31";
+  rerender();
+});
 
 // Try to use cached ROM
 loadRom().then(b => { if (b) { rom = b; rerender(); } });

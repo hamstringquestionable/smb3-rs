@@ -247,6 +247,7 @@ fn vanilla_slots(rom: &Rom, catalog: &NodeCatalog, world_idx: usize) -> Vec<Slot
             section,
             is_hand_trap: false,
             is_troll_pipe: false,
+            is_pyramid: false,
             pin: None,
             lock_hint: LockHint::default(),
         });

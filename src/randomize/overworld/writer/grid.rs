@@ -136,12 +136,19 @@ pub(super) fn write_tile_grid<R: Rng>(
         .filter(|pos| !wa.demoted_troll_pipes.contains(pos))
         .collect();
 
+    // Wandom's pyramid (`maze::wandom`). Takes no number, so the panels
+    // either side of it stay consecutive.
+    let pyramid_positions: HashSet<(usize, usize)> =
+        built.slots.iter().filter(|s| s.is_pyramid).map(|s| s.pos).collect();
+
     let mut level_idx: usize = 0;
     let mut assigned: Vec<bool> = vec![false; wa.level.len()];
 
     let mut pick_level_tile = |pos: (usize, usize)| -> u8 {
         if hand_trap_positions.contains(&pos) {
             TILE_HAND_TRAP
+        } else if pyramid_positions.contains(&pos) {
+            crate::randomize::maze::wandom::TILE_PYRAMID
         } else if troll_pipe_positions.contains(&pos) {
             TILE_TROLL_PIPE
         } else {

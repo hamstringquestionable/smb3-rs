@@ -53,6 +53,12 @@ pub(crate) struct SlotAssignment {
     /// tile drops the player into the underlying level (uniform Map_Op = $10
     /// dispatch — no pipe-transit state).
     pub(crate) is_troll_pipe: bool,
+    /// When true, the writer stamps the pyramid (`$69`) here instead of a
+    /// level-number tile, and the numbering skips it. Only set on
+    /// `SlotKind::Level` slots, and only by the world maze's Wandom
+    /// (`maze::wandom::mark_pyramid`): beating this level reveals the wand
+    /// count. The level underneath is an ordinary draw.
+    pub(crate) is_pyramid: bool,
     /// **Deal this exact pointer-table entry here.** The `(world_idx,
     /// entry_idx)` of a vanilla entry, set by a model pass before the writer
     /// runs; `None` on every slot in every mode that does not use it.

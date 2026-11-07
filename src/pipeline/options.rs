@@ -94,6 +94,12 @@ fn default_world_count() -> u8 {
     7
 }
 
+/// The [`Options::maze_wands`] value that means **Wandom**: K is rolled per
+/// seed and hidden until the pyramid level is beaten. One past the largest real
+/// K, so every other value keeps its meaning; the flag key spends a bit of its
+/// own on it rather than widening `maze_wands` (see `flag_key.rs`).
+pub const MAZE_WANDS_WANDOM: u8 = 8;
+
 /// Wands the world maze's castle demands by default — see
 /// [`Options::maze_wands`] for the measurement that chose 3.
 pub(super) fn default_maze_wands() -> u8 {
@@ -502,7 +508,10 @@ pub struct Options {
     /// the wand counter chains through the routine it installs.
     #[serde(default)]
     pub world_maze: bool,
-    /// Wands the castle demands, 0–7. Only read when `world_maze` is on.
+    /// Wands the castle demands, 0–7, or [`MAZE_WANDS_WANDOM`] (8) for
+    /// **Wandom**: the seed rolls K from 2–6 and the map's readout shows `N/×`
+    /// until the player beats the pyramid level that reveals it. Only read
+    /// when `world_maze` is on.
     ///
     /// **This is a floor, not a length dial** (`maze_wand_gate_sweep`, 40 seeds
     /// per K): at 0 a telepad chain finishes some seeds in a *single level*; at

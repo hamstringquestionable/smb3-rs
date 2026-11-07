@@ -183,7 +183,7 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
         0x35530,
         48,
         &["wand_readout"],
-        "world-maze: N/K wand count in the map status bar (48 reserved, 35 used)",
+        "world-maze: N/K wand count in the map status bar (48 reserved, 40 used)",
     ),
     fs(0x35572, 13, &["mystery_anchor"], "item redirect trampoline (13 reserved, 10 used)"),
     fs(0x3557F, 50, &["hammer_breaks_tiles"], "hammer_locks: tile check subroutine (32 used)"),
@@ -232,9 +232,15 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
     // PRG010 (file 0x14010, CPU $C000–$DFFF during map)
     fs(
         0x147CD,
-        537,
+        496,
         &["lock_keys"],
-        "MO_DoFortressFX, rewritten position-keyed (537 reserved, 484 used)",
+        "MO_DoFortressFX, rewritten position-keyed (496 reserved, 484 used)",
+    ),
+    fs(
+        0x149BD,
+        41,
+        &["wandom"],
+        "on-clear hook: map op 8 after a clear with no orb (41 reserved, 25 used)",
     ),
     fs(0x15554, 112, &["lock_keys"], "position-keyed lock table: 28 entries of (fortress, lock)"),
     fs(
@@ -754,9 +760,18 @@ pub(crate) const FS_LOCK_ENTRIES: usize = 0x15554; // 112 reserved, 4 per lock
 // unreferenced. Nothing else reaches into either: every label inside the
 // routine is internal to it, and the tables were read only by the routine.
 // Together they are one 537-byte contiguous run, by far the largest in the map
-// bank, and the routine takes all of it — the mirror lives in PRG011 so this
-// one can grow without anything moving.
-pub(crate) const FS_FORTRESS_FX: usize = 0x147CD; // 537 reserved, 484 used
+// bank. The routine takes the first 496 (484 used, 12 headroom) — the mirror
+// lives in PRG011 so this one can grow without anything moving — and
+// FS_ON_CLEAR takes the last 41.
+pub(crate) const FS_FORTRESS_FX: usize = 0x147CD; // 496 reserved, 484 used
+
+// The tail of the same retired run: the routine FORTRESS_FX's unarmed exit
+// jumps to (`lock_keys::install_on_clear`), so a "beat this level, do that"
+// feature never edits the origin-locked effect again. Its first client is
+// Wandom's pyramid (`maze::wandom`). It ends `JMP advance` back into
+// FS_FORTRESS_FX, at an offset the prologue swap never moves. Mapped at
+// $C000 for the whole map, which is the only time op 8 runs.
+pub(crate) const FS_ON_CLEAR: usize = 0x149BD; // 41 reserved, 25 used (CPU $C9AD)
 
 // World-maze POC. Sits in the tail of the same $FF run as
 // FS_LOCK_ENTRIES, which reserves 112 from 0x15554 and leaves the run
@@ -888,7 +903,7 @@ pub(crate) const FS_WAND_READOUT_FLIP: usize = 0x356FD; // 32 reserved, 20 used 
 // run that opened up when big_q_blocks was relocated off 0x35530 into the bank
 // tail; the run ends exactly where FS_MYSTERY_ANCHOR begins, so the reserve
 // below is the most it can ever hold.
-pub(crate) const FS_WAND_READOUT: usize = 0x35530; // 48 reserved, 35 used (CPU $B520)
+pub(crate) const FS_WAND_READOUT: usize = 0x35530; // 48 reserved, 40 used (35 without Wandom) (CPU $B520)
 
 pub(crate) const FS_MYSTERY_ANCHOR: usize = 0x35572; // 13 reserved, 10 used
 
@@ -1527,6 +1542,7 @@ mod free_space_tests {
             (FS_SAS_GAMEOVER_FINALIZE, "FS_SAS_GAMEOVER_FINALIZE"),
             (FS_BIG_Q_LOOKUP, "FS_BIG_Q_LOOKUP"),
             (FS_WAND_READOUT, "FS_WAND_READOUT"),
+            (FS_ON_CLEAR, "FS_ON_CLEAR"),
             (FS_WAND_READOUT_FLIP, "FS_WAND_READOUT_FLIP"),
             (FS_MYSTERY_ANCHOR, "FS_MYSTERY_ANCHOR"),
             (FS_HAMMER_LOCKS, "FS_HAMMER_LOCKS"),

@@ -519,11 +519,14 @@ export const SCHEMA = [
 		tip: "The eight maps become one big maze. Warp pads link them, a fortress can open a lock in another world, and your progress in a world is still there when you come back. Turns World Order on, and uses all eight worlds.",
 		icon: MAZE_TILES,
 		group: "maze", inFlagKey: true },
+	// 8 is Wandom (`MAZE_WANDS_WANDOM` in options.rs): the seed rolls 2-6 and
+	// hides it. Its pill reads "?" because that is what the map shows.
 	{ id: "maze_wands", type: "tri", numeric: true,
-		options: [0,1,2,3,4,5,6,7].map(n => ({ value: n, label: String(n) })),
+		options: [0,1,2,3,4,5,6,7].map(n => ({ value: n, label: String(n) }))
+			.concat([{ value: 8, label: "?" }]),
 		default: 3,
-		label: "Wands To Enter",
-		tip: "Wands needed before Bowser's castle will open. Fewer is a shorter game; 0 lets you walk straight in if you find a way there.",
+		label: "Wands To Enter", flavorWhen: { value: 8, text: "Wandom" },
+		tip: "Wands needed before Bowser's castle will open. Fewer is a shorter game; 0 lets you walk straight in if you find a way there. ? picks a secret number from 2 to 6. Beat the obelisk level, somewhere early in the maze, to find out what it is.",
 		icon: WANDS,
 		group: "maze", inFlagKey: true,
 		mode: "maze" },
@@ -1548,6 +1551,14 @@ function renderTri(entry) {
 	const icon = iconCanvas(entry);
 	if (icon) wrap.appendChild(icon);
 	wrap.appendChild(document.createTextNode(entry.label));
+	// A row's own `flavorWhen: { value, text }` shows only while that value is
+	// picked (see `applyPillFlavors`) — Wandom's "?" on the wand count.
+	if (entry.flavorWhen) {
+		wrap.appendChild(el("span", {
+			class: "option-flavor", id: `${domId(entry.id)}-flavor`,
+			hidden: entry.default !== entry.flavorWhen.value,
+		}, entry.flavorWhen.text));
+	}
 	// A pill's flavor shows on its host's label, only while the pill is lit
 	// (see `applyPillFlavors`).
 	for (const flag of pillFlagsFor(entry)) {
@@ -2044,13 +2055,18 @@ export function applyEnabledWhen() {
 	applyPillFlavors();
 }
 
-// A pill's `flavorWhenOn` shows while the pill is lit. A row's `warnWhenOn`
+// A pill's `flavorWhenOn` shows while the pill is lit, and a row's
+// `flavorWhen` while its one value is picked. A row's `warnWhenOn`
 // shows while the row is on and, with `warnWithVisualPatch`, only while one of
 // those re-skins is picked. The visual-patch radio is app.js's, so app.js calls
 // this when it changes.
 export function applyPillFlavors() {
 	const visualPatch = document.querySelector('input[name="visual-patch"]:checked')?.value ?? "";
 	for (const entry of SCHEMA) {
+		if (entry.flavorWhen) {
+			const span = document.getElementById(`${domId(entry.id)}-flavor`);
+			if (span) span.hidden = readValue(entry) !== entry.flavorWhen.value;
+		}
 		if (entry.flavorWhenOn) {
 			const span = document.getElementById(`${domId(entry.id)}-flavor`);
 			if (span) span.hidden = !readValue(entry);

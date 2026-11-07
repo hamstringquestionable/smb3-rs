@@ -20,8 +20,8 @@ use options::*;
 pub use flag_key::{current_flag_key_version, flag_key_fields, flag_key_version_of};
 pub use options::{
     DejaVuMode, EnemyMode, FireFlowerMode, HazardLimit, HintMode, ITEM_RANDOM,
-    ITEM_RANDOM_NO_SUITS, ITEM_RANDOM_NO_WHISTLE, ITEM_RANDOM_SUIT_ONLY, ITEMS, Options,
-    PiranhaMode, STARTING_LIVES_VALUES, Tri, WildChaser, item_display_name, item_id,
+    ITEM_RANDOM_NO_SUITS, ITEM_RANDOM_NO_WHISTLE, ITEM_RANDOM_SUIT_ONLY, ITEMS, MAZE_WANDS_WANDOM,
+    Options, PiranhaMode, STARTING_LIVES_VALUES, Tri, WildChaser, item_display_name, item_id,
 };
 
 #[cfg(test)]
@@ -139,7 +139,8 @@ fn randomize_inner(
     let catalog = stages::overworld_catalog(rom, options, &run, &mut rng);
     stages::item_tables(rom, options, &run, &mut item_rng);
     let (pickup, mut build) = stages::overworld_build(rom, options, &run, &catalog, &mut rng);
-    let maze = stages::maze_model(rom, options, &run, &mut build, progression.as_deref(), &mut rng);
+    let maze =
+        stages::maze_model(rom, options, &run, &mut build, progression.as_deref(), seed, &mut rng);
 
     // --- OVERWORLD CAPTURE POINT ---
     // Hand a clone of the finalized BuildResult (post hands/troll mutations,
@@ -154,13 +155,21 @@ fn randomize_inner(
 
     // 9-12. Write the map, then everything that reads the finished map.
     let written = stages::write_overworld(rom, options, &run, &build, &pickup, &catalog, &mut rng);
-    let canoe_gated = stages::maze_rom(rom, options, maze, &written, progression.as_deref());
-    stages::locks(rom, &run, &build, &written);
+    let maze_out = stages::maze_rom(rom, options, maze, &written, progression.as_deref());
+    stages::locks(rom, &run, &build, &written, maze_out.pyramid.is_some());
     stages::after_the_map(rom, options, &written, progression.as_deref(), &mut rng);
 
     // 13-18. Bosses and quotes, engine patches, title screen, music, stamp.
-    stages::bosses_and_quotes(rom, options, &written, progression.as_deref(), &mut rng);
-    stages::engine_patches(rom, options, &run, &written, canoe_gated, &mut rng);
+    let pyramid_world = maze_out.pyramid.map(|(world, _)| world);
+    stages::bosses_and_quotes(
+        rom,
+        options,
+        &written,
+        progression.as_deref(),
+        pyramid_world,
+        &mut rng,
+    );
+    stages::engine_patches(rom, options, &run, &written, maze_out.canoe_gated, &mut rng);
     stages::title_and_starting_items(rom, seed, options, &run);
     stages::macobra_layer(rom, options);
     stages::level_music(rom, seed, options);
