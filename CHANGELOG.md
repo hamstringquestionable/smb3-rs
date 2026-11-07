@@ -9,6 +9,8 @@ deploys.
 
 ## [Unreleased]
 
+## [3.1.0] - 2026-11-07
+
 ### Added
 
 - World Maze: Telepad Reach option (Standard / Uncapped). Uncapped, telepads may
