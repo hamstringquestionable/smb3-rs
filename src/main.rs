@@ -194,6 +194,11 @@ struct Cli {
     #[arg(long)]
     fireball_hearts: bool,
 
+    /// Give each level its own song remap. Cosmetic; not in the flag key,
+    /// and moves no other part of the seed.
+    #[arg(long)]
+    level_music: bool,
+
     /// Recolor levels, enemies, and world maps with a random theme (world
     /// colors). Independent of player colors.
     /// Cosmetic; not encoded in the flag key.
@@ -233,6 +238,12 @@ struct Cli {
     /// standing on a dock. Requires --world-maze; ignored without it.
     #[arg(long)]
     item_gates: bool,
+
+    /// Let a telepad join any two depths of the maze rather than capping the
+    /// jump. Allows big jumps, does not force them, but they become common:
+    /// routes run about a level shorter. Requires --world-maze.
+    #[arg(long)]
+    uncapped_pad_jumps: bool,
 
     /// Enable Big ? Block randomization
     #[arg(long)]
@@ -611,6 +622,10 @@ fn build_options(cli: &Cli) -> Options {
                 if cli.fireball_hearts {
                     opts.fireball_hearts = true;
                 }
+                // And level_music — cosmetic, absent from the key.
+                if cli.level_music {
+                    opts.level_music = true;
+                }
                 // Same for skip_rom_validation — a property of the input ROM.
                 if cli.skip_rom_validation {
                     opts.skip_rom_validation = true;
@@ -631,6 +646,7 @@ fn build_options(cli: &Cli) -> Options {
             remove_flashing: !cli.keep_flashing,
             king_quotes: !cli.vanilla_king_quotes,
             fireball_hearts: cli.fireball_hearts,
+            level_music: cli.level_music,
             // The maze reads `world_order`'s table as its airship spine and
             // chains the wand counter through the routine it installs, so it
             // cannot run without it.
@@ -639,6 +655,7 @@ fn build_options(cli: &Cli) -> Options {
             world_maze: cli.world_maze,
             maze_wands: cli.maze_wands,
             item_gates: cli.item_gates,
+            uncapped_pad_jumps: cli.uncapped_pad_jumps,
             big_q_blocks: cli.big_q_blocks,
             shuffle_airships: !cli.no_shuffle_airships,
             shuffle_hammer_bros: !cli.no_shuffle_hammer_bros,
@@ -727,6 +744,7 @@ fn print_summary(options: &Options, seed: u64, output_path: &std::path::Path) {
     eprintln!("  Remove flashing: {}", if options.remove_flashing { "on" } else { "off" });
     eprintln!("  King quotes: {}", if options.king_quotes { "random" } else { "vanilla" });
     eprintln!("  Fireballs: {}", if options.fireball_hearts { "hearts" } else { "vanilla" });
+    eprintln!("  Level music: {}", if options.level_music { "random" } else { "vanilla" });
     eprintln!("  Enemies:  {}", if options.any_enemies_active() { "on" } else { "off" });
     eprintln!(
         "  Limit hazards: {}",
@@ -759,6 +777,9 @@ fn print_summary(options: &Options, seed: u64, output_path: &std::path::Path) {
             "  Item gates: {}",
             if options.item_gates { "on (boats need an Anchor)" } else { "off" }
         );
+        if options.uncapped_pad_jumps {
+            eprintln!("  Pad jumps: uncapped");
+        }
     }
     // Silent under --world-maze: the mode pins the spine to all eight worlds, so
     // printing the player's value would report a setting the run ignores.

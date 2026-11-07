@@ -103,15 +103,73 @@ Each range contains the level layout generators for that tileset/theme.
 
 ### Level Header Format (9 bytes per level)
 
+Bit meanings as `LevelLoad` (PRG030 `$97B7`) reads them; `rom_data::level_index::LevelHeader`
+decodes the same fields.
+
 | Byte | Bitmask | Contents |
 |------|---------|----------|
-| 0–1 | `aaaaaaaaaaaaaaaa` | Transition scenery address (16-bit pointer) |
-| 2–3 | `aaaaaaaaaaaaaaaa` | Transition actor/enemy address (16-bit pointer) |
-| 4 | `aaa0bbbb` | a = Y-start properties (indexed table); b = course end page (0-15 screens) |
-| 5 | `_abbccddd` | a = unused; b = X-start properties; c = object palette (2 bits); d = BG palette (3 bits) |
-| 6 | `abbcdddd` | a = pipe transition type; b = vertical scroll mode; c = scroll direction; d = transition course type |
-| 7 | `aaabbbbb` | a = friction factor (3 bits); b = BG banks / CHR selection (5 bits) |
-| 8 | `aa00bbbb` | a = timer seed (2 bits, indexed); b = music track selection (4 bits) |
+| 0–1 | `aaaaaaaaaaaaaaaa` | `Level_AltLayout`: the layout a junction switches to |
+| 2–3 | `aaaaaaaaaaaaaaaa` | `Level_AltObjects`: the object set a junction switches to |
+| 4 | `aaa0bbbb` | a = Y-start properties (indexed table); b = last screen index (width = b + 1) |
+| 5 | `abbccddd` | a = `Level_UnusedFlag` (set, never read); b = `Level_SelXStart`; c = object palette; d = BG palette |
+| 6 | `abbcdddd` | a = `Level_PipeNotExit`; b = `Level_FreeVertScroll`; c = `Level_7Vertical`; d = `Level_AltTileset` |
+| 7 | `aaabbbbb` | a = `Level_InitAction` (see `Level_InitAction_JumpTable`); b = `Level_BG_Page1_2` (BG CHR pages) |
+| 8 | `aa00bbbb` | a = timer index into `GamePlay_TimeStart`; b = song index into `GamePlay_BGM` |
+
+Byte 7's top bits were long documented here as a "friction factor"; the
+engine reads them as the level's init action.
+
+`GamePlay_BGM` is 11 bytes at PRG030 `$97AC` (file `0x3D7BC`, read by
+`LDA $97AC,X` at file `0x3D8DD`): overworld, underground, underwater, fortress,
+boss, airship, battle, toad house, athletic, throne room, sky. `LevelLoad`
+queues the song through `Level_MusicQueue` (skipped while the P-switch or star
+song plays, and always stored as the song to restore after them), and
+`Level_MainLoop` starts it once the enter-level sound ends — not at all if it is
+already playing, which is why music carries across a pipe between two areas
+with the same index.
+
+#### Finding Level Headers: Follow Pointers, Never Scan
+
+A level's areas are reached only through pointers: the world pointer table
+entry names the main area (layout, objects, tileset), and each header's bytes
+0-3 plus byte 6's low nibble name the next area, which `Level_JctInit`
+(PRG026) loads when Mario takes a pipe or door. Area N's objects therefore come
+from area N-1's header. `rom_data::level_index::trace` walks exactly this.
+
+**Scanning a level-data region from its start is not a way to find headers.**
+Walking header → commands → `$FF` → header from each region start yields 729
+"headers" in vanilla, 381 of them impossible (bank-end `$FF` filler, zeroed
+blocks, and command bytes read as a header after the walk slips). The pointer
+trace reaches 224 distinct areas from 322 entries.
+
+Facts the trace pins (tests in `level_index/tests.rs`):
+
+- **A command whose first byte is `$E0` or more is a junction, always 3 bytes.**
+  `LevelLoad` (PRG030 `$98EE`) checks `AND #$E0 / CMP #$E0` before any tileset
+  dispatch. Sizing it through the tileset's variable-size table instead (Ice/Sky
+  lists dispatch 112 as 4-byte) swallows the `$FF` after `E7 xx 80`, running
+  1-4, 6-2, 6-7, β7 and β8 into the next area. The shared
+  `LevelDataRegion::command_size` had this bug until 2026-11-03: the powerups
+  walk rerolled the song byte of 6-7's bonus room (`0x23CC8`) as a block.
+- **Two chains end on dead alt pointers**, both naming tileset 0 (the map's):
+  3-9's bonus room and 3HB18. The areas' exits never follow them.
+- **3HB18 is a broken Hammer Bro entry: tileset 3 where its siblings have 1.**
+  It shares their layout (`$B3E7`) and objects (`$C640`), but tileset 3 maps
+  the Hilly bank, so `$B3E7` lands inside 7-3's last command. Loaded in Mesen
+  (2026-11-03, `testrom --place 3HB18` against a `3HB17` control) it does not
+  crash: the clock runs and Mario walks, but the arena is Hilly art with a
+  wall-to-wall bush backdrop and one brick row instead of two. Treat it as
+  unused: `HB_EXCLUDE_ENTRIES` keeps it out of the Hammer Bro pool, and
+  anything that writes through headers must skip it. Untried: writing tileset
+  1 into its pointer table entry would presumably make it a copy of its
+  siblings' arena.
+- **Plains level data starts no later than `0x1E509`**, not at `0x1E512`:
+  5-7's sub-area header is there. `LEVEL_DATA_REGIONS` and `rom_map.py` both
+  use the later start, which is how `rom_map.py` missed that sub-area.
+- **Toad Houses (tileset 7) reuse the objects pointer** as a house ID and
+  treasure; `LevelLoad` swaps in the `TOADO` object set.
+- **6A places object `$AB`**, which has no `OBJ_` constant in the disassembly;
+  its init slot (PRG005) is `ObjInit_FireJetRight`, "doesn't really work".
 
 #### The Level Clock
 
@@ -777,9 +835,14 @@ So converting an ordinary pipe into a Big [?] pipe is a layout edit ($AD/$AE →
 $AF/$B0) **plus** a group-7 junction command at `slot == the pipe's screen` —
 without one, the arrival reads a stale slot from a previous parse.
 
-**One block per screen, once per world.** `BigQBlock_GotIt` is an 8-bit mask
-indexed by the block's `Objects_XHi` — its *screen* — cleared on world entry,
-game over, and map re-init. Two rooms on the same screen number share one bit.
+**One block per screen, once per world.** `BigQBlock_GotIt` (`$07E2`) is an
+8-bit mask indexed by the block's `Objects_XHi` — its *screen*. Vanilla clears
+it on world entry (`PRG030_84A0`), on returning to the map dead, and on game
+over; `ObjInit_BigQBlock` spawns a block whose bit is set in its opened frame.
+Two rooms on the same screen number share one bit. **The randomizer also clears
+it on every level entry from the map** (`qol::big_q` Part A), so the bit lasts
+one visit: piping out of the room and back in still finds the block opened,
+but no other level's room can empty it.
 
 **Vanilla reaches 11 of the 15 blocks.** Counting `OBJ_BIGQBLOCK_*` entries per
 area: W1 0, W2 1, W3 3, W4 2, W5 2, W6 3, W7 2, W8 2. Eleven levels have a Big
@@ -1221,6 +1284,24 @@ slots, coordinating fireball placement so the segment stays X-sorted.
 
 Fireball X spread in fred's data spans the whole segment
 (`0x18..0xEF`). Y values cluster in `0x11..0x17` (7-row band).
+
+**Where the doors drop the player.** The main area's four junction
+commands give the arrival X in this sub-area (byte 2: screen = low
+nibble, column = high nibble):
+
+| Junction (file) | Bytes | Arrival X |
+|---|---|---|
+| 0x2BCB3 | `E3 48 21` | `$12` |
+| 0x2BDED | `E9 68 32` | `$23` |
+| 0x2BDBD | `E8 68 63` | `$36` |
+| 0x2BE16 | `EB 68 69` | `$96` |
+
+`$96` lands mid-gauntlet; the others are left of every fireball the
+composer places. A statue fireball spawns aimed at the player, so one
+within a screen of `$96` hits a player who has just come through the
+door. The composer keeps `$8E..$9E` clear. (The 2.2.2 fix kept `$80..$86`
+clear instead, around this sub-area's own slot-8 junction — the way back
+up, not the way in.)
 
 #### 5-F2 Sub-Area 1 (file offset `0xD2C9`, 26 entries)
 
@@ -4165,6 +4246,16 @@ this redundant write is safe.
 STA instructions with separate LDA operands. This caused a 2-player switching bug
 and was abandoned in favor of the simpler NOP approach.
 
+## The Princess's Speech (PRG024)
+
+`EndText` (CPU `$BAC9`, file 0x31AD9) is the princess's "...Just kidding!"
+speech: 90 bytes in the king's-letter font (`encode_char` in
+`king_quotes.rs`), then a `$00` at 0x31B33. `EndText_DoPrincessText` draws one
+byte per tick from VRAM `$2969` and wraps after screen column 23, so the box
+is **6 rows of exactly 15 characters**; it stops after the sixth row, not at
+the `$00`. Short lines are padded with `$FE`. The randomizer replaces it on
+every seed (`write_princess_thanks`).
+
 ## Ending Credits Montage (PRG024/PRG025)
 
 After Bowser, `Ending_Credits` (PRG024, CPU $BB8B) raises a curtain and plays a
@@ -5858,19 +5949,22 @@ scratch RAM at $7EB4/$7EB5 before the W8-specific overwrite can destroy it. Usin
 fixed bank ensures this fires for ALL entry paths — normal tile entry, army sprite
 encounters, and any other mechanism.
 
-Hook point: ROM **0x3C958** — replaces `CPY #$07; BNE +$18` (4 bytes) with `JMP $9F2C` + NOP.
+Hook point: ROM **0x3C955** (CPU $8945) — replaces `STA ClearPattern` (3 bytes)
+with `JSR $9F2C`. The `CPY #$07` that follows is the Toad House test
+(`Level_Tileset == 7`), whose branch overwrites the object pointer with TOADO;
+an earlier version of this hook sat over that test and called it the W8 check.
 
-Trampoline at ROM **0x3DF3C** (PRG030 free space, CPU $9F2C), 20 bytes:
+Subroutine at ROM **0x3DF3C** (PRG030 free space, CPU $9F2C), 20 reserved, 19 used:
 
 ```
-LDA $65            ; real obj_lo (before W8 overwrite)
+STA ClearPattern   ; (displaced)
+LDA $65            ; real obj_lo (before the Toad House overwrite)
 STA $7EB4          ; scratch: saved entry obj_lo
 LDA $66            ; real obj_hi
 STA $7EB5          ; scratch: saved entry obj_hi
-CPY #$07           ; (displaced: W8 check)
-BNE +3             ; non-W8: skip to JMP $8964
-JMP $894C          ; W8 path: continue with overwrite
-JMP $8964          ; non-W8 path: skip overwrite
+LDA #$00
+STA BigQBlock_GotIt ; the Big ? mask lasts one visit, not one world
+RTS
 ```
 
 **Part B — Two-pass lookup replaces World_Num indexing (PRG026)**
@@ -6113,7 +6207,7 @@ runtime state and no tracing of the world-number remap.
 `ORACLE_WORLD` in `king_quotes.rs` relies on exactly this: pinning the world is
 what pins the sprite.
 
-### The letter is level data, and its font has not been located
+### The letter is level data; its font is the status bar's CHR
 
 `TAndK_FadeOutAndGetItem` notes it outright (`prg027.asm:142`):
 
@@ -6128,8 +6222,17 @@ punctuation at `$9A , $E9 . $AB ' $EA ! $EB ?`. **There are no digits**, and the
 scattered tail suggests the set was scavenged from whatever glyphs existed
 rather than read off a proper font block.
 
-Whether digit tiles exist at all is **still open**. Four approaches failed on
-2026-09-13; recording them so they are not repeated:
+**Located 2026-11-04:** the glyphs are in 1 KiB CHR pages `$5E`–`$5F`, the
+pair `StatusBarMTCHR_0800` loads for tiles `$80`–`$FF` (see the status-bar
+section below). A text byte `b` is CHR tile `$5E*64 + (b & $7F)`, at file
+offset `0x40010 + tile*16`. Letter pixels are colour 0 on a colour-3 box. The
+web app's `renderText` (`web/chr.js`) draws the page header from it, and found
+the location by rendering all of CHR to sheets and looking, not by tracing
+banks. `$9F` is a `3`, drawn one pixel lower than the letters. No other digit
+has been checked yet; rendering page `$5E` answers that.
+
+The four approaches that failed on 2026-09-13 stay recorded so they are not
+repeated:
 
 1. *Assume a flat BG pattern table.* Rendering tile `$B0` at `page*4096 + 0xB0*16`
    for every 4 KiB CHR page gives no letterform.
@@ -6145,16 +6248,8 @@ Whether digit tiles exist at all is **still open**. Four approaches failed on
    font-shaped glyphs (2-colour, plausible ink density) finds only a filler `X`
    pattern at CHR offset `0x16940`.
 
-The unexplored lead is (2)'s premise: the letter being level data means its
-glyphs come from a level tileset's banks, so the banks loaded by
-`TAndK_WaitForA` may be superseded before the letter is drawn.
-
-**The cheap way to settle it** is empirical rather than archaeological: write a
-king quote whose bytes sweep `$80..$FF` as raw tile values instead of encoded
-text, build it with `testrom`, and read the letter screen. That renders the
-entire available character set in situ with whatever banks are really live, and
-answers "which digits exist, at which tile numbers" in one screenshot. Fold the
-answer back into this section.
+Approach 3 looked in the wrong banks: the font comes from the status bar's
+pages, not the letter screen's own.
 
 ## World-map tile behavior registries
 

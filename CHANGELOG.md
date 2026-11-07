@@ -9,6 +9,56 @@ deploys.
 
 ## [Unreleased]
 
+## [3.1.0] - 2026-11-07
+
+### Added
+
+- World Maze: Telepad Reach option (Standard / Uncapped). Uncapped, telepads may
+  join any two points in the maze rather than places a similar distance into
+  the run. It allows big jumps rather than forcing them, but they become
+  common: routes run about a level shorter, and a telepad from the first
+  worlds into World 8 turns up on about half of seeds.
+- Random level music option (cosmetic, not in the flag key). Each level gets
+  its own mix of songs: overworld, underground, water, fortress, airship,
+  athletic and sky music trade places, and a bonus room that sounded different
+  from its level still does. Boss, battle, Toad House and throne room music
+  stay put.
+
+### Changed
+
+- The princess has something new to say at the end of the game.
+- Web app: once your ROM is loaded, the page dresses itself in the game's own
+  art. The title is written in SMB3's font, three status-bar cards (dealt at
+  random) sit under it, and the two panels become islands on the map.
+- World Maze: every seed gets one long telepad from World 2 or 3 into a world
+  four airships further along. Seeds with only one or two ways through become
+  rare, there are more different routes, and long seeds keep more of their
+  variety. Runs are about a level shorter on average, and a telepad from the
+  first worlds into World 8 turns up more often (about 1 seed in 5).
+- World Maze: telepads are paired by how far into the run each end is, so a
+  telepad rarely skips a large part of the game, and they prefer worlds two
+  or more airships apart over the next world along. An occasional bigger jump
+  still turns up. Runs are longer, seeds generate faster, and there are about
+  as many telepads as before.
+- World Maze: a telepad on the approach to Bowser's castle only stands on its
+  first two nodes, so the bridges are still between it and the castle.
+- World Maze: the length check now counts every wand airship a seed needs, so
+  seeds with several wands are no longer thrown away for looking short and
+  generate faster.
+
+### Fixed
+
+- 6-7's bonus room could play the wrong song: the powerup randomizer misread
+  where 6-7's main area ends and rerolled the room's song as if it were a
+  block.
+- Big ? Rooms: a Big ? block could already be opened the first time you
+  reached it, when another level in the same world had a room on the same
+  screen (for example one reached through a shuffled lobby). Each level's
+  block now starts fresh every time you enter the level from the map.
+- Bowser's Castle: a statue fireball could still appear right on top of you
+  as you came through the door into the lower corridor. The 2.2.2 fix guarded
+  the wrong spot; the screen you arrive on is now kept clear.
+
 ## [3.0.1] - 2026-10-29
 
 ### Fixed

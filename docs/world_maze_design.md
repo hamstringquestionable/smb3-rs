@@ -134,7 +134,11 @@ The target is the fixed dock/castle tile (`TILE_AIRSHIP` `$C9`, `TILE_BOWSER`
 marks them** — the spine edge is repeatable, which is what keeps reachability
 monotone and lets a fixpoint serve as the solver.
 
-**Telepads are the chords.** 0–3 per world, biased to 1. They may lead anywhere,
+**Telepads are the chords.** 1–3 per world, the same roll everywhere, paired
+by depth: a pad's two ends may lie at most 9 levels apart in how far into the
+run they are, preferring worlds two or more airships apart, with an
+occasional bigger jump on a roll (see "2026-10-31: pads
+paired by depth" below). They may lead anywhere,
 including into a region reachable *only* by pad — a pad-only island holding a
 fortress for a required lock is a deliberate and desirable shape.
 
@@ -630,6 +634,232 @@ on its own. Accepted as is. The extra redeals cost nothing measurable: WASM
 `generate_patch`, 100 seeds, maze on, median 76.2 → 75.4 ms at K=0 and
 76.2 → 74.3 ms at K=3 — the cheaper check pays for them.
 
+### 2026-10-30: pads rolled per world, rescue retired
+
+*Items 1 and 3 were superseded the next day by "2026-10-31: pads paired by
+depth"; the rescue pass (item 2) stays retired.*
+
+Three changes on one branch, each measured with `valley_pad_census` (200 seeds
+x K=0/3/7, vanilla and generated maps):
+
+1. **A valley pad stays out of the opening.** A pad on W8's screen 3 (the
+   bridge approach to the castle) was already "earned": its partner had to be
+   a gated site in another world (`graph::valley_earned`). It now also may
+   not stand in the start world, the world its airship leads to, or any world
+   a pad links straight to the start world (`graph::Opening`). Before this,
+   W1 and W2 hosted roughly a sixth of all valley partners.
+2. **The post-fill rescue pass is gone.** See "Invariant 3 is RETIRED": it fired
+   on ~99% of deals and supplied ~40% of every maze's pads.
+3. **The pad roll is per world.** With rescue gone, one roll dense enough to
+   restore the pad count pushed K=0 redeals to 32–48%, because planned pads
+   shorten a run more than rescue pads did. Where a pad stands decides what
+   it costs: pads in the opening are the earliest shortcuts and drive the
+   redeal rate, and W8's tile count *is* the valley-pad rate (one W8 tile
+   lands in the valley ~30% of the time). So `graph::OPENING_PAD_WEIGHTS`
+   `[3,5,1,0]` covers the start world and its successor, `W8_PAD_WEIGHTS`
+   `[3,5,1,0]` covers W8, and `MIDDLE_PAD_WEIGHTS` `[0,2,4,4]` the rest.
+
+The owner's targets were pads near the rescue-era count, K=0 redeals at most
+~15%, and valley pads on no more than about one seed in five:
+
+| | maps | pad tiles | redeal % K=0/3/7 | valley pad % | content K=0 |
+|---|---|---|---|---|---|
+| before | vanilla | 14.7 | 30 / 26 / 3 | 20–22 | 14.4 |
+| after | vanilla | 12.4 | 14 / 13 / 1 | 14.5–15.5 | 16.2 |
+| before | generated | 14.7 | 34.5 / 30 / 7 | 17–24 | 13.9 |
+| after | generated | 12.4 | 15 / 12.5 / 2.5 | 15–16 | 15.3 |
+
+`maze_route_census`'s shortest-route figures in the table above were **not**
+re-measured for this change.
+
+### 2026-10-31: pads paired by depth
+
+The per-world roll treated a symptom. A 10,000-deal K=0 study on the 3.0.1
+generator (floor off, every first deal kept) asked which pads put a deal
+under the content floor, and the answer was not a kind of pad:
+
+- **The redeal rate tracked how many pad tiles W1 and W2 held**, ~9 points a
+  tile (0 tiles: 0%, 5+: 46%). No single world pair or role stood out.
+- **Removing one pad fixed 75% of rejected deals**, and the culprits were
+  spread over every pairing; 43% of rejected deals had two or more, usually
+  a chain (a W1 pad out, then a second pad on).
+- **What a pad saves is its jump**: the depth of its far end minus its near
+  end, depth being the bound's cost from the start with that pad removed.
+  68% of pads saved nothing; pads spanning 8+ were 21% of all pads and
+  carried half of every level saved; none spanning 5 or less saved 6+.
+  Hub or Shortcut made no difference (1.3 vs 1.1 levels).
+
+So pairing now reads depth (`metrics::ShortestBound::depths`, recomputed after
+every pair) and prefers partners within `graph::PAD_JUMP_CAP` (8). A site with
+nothing in reach takes its nearest partner on a roll of
+`graph::PAD_JUMP_KEEP` (0.7) per level over, and is otherwise dropped. That
+roll is the dial for the occasional big jump.
+
+With that in place the earlier hand tuning came out:
+
+- **One roll for every world**, `graph::PAD_WEIGHTS` `[0,2,4,4]`.
+- **`valley_earned` is gone** (gated partner, other world, opening ban). With
+  the cap, pads from W1/W2 into the valley ran 0.1% without it, and it moved
+  K=0 redeals by under 2 points.
+- **A valley pad stands on the first two nodes**, (5,50) and (5,52)
+  (`graph::VALLEY_PAD_LAST_COL`). On 3.0.1 about 80% of valley pads were on
+  (5,54/56/58), next to Bowser and past every bridge span. The cap does not
+  touch these: a valley pad pairs deep with deep, a small jump.
+
+2,000 seeds, `pad_pattern_census`, vanilla / generated maps:
+
+| | pad tiles | redeal % K=0/4/7 | W1/2→W8 | valley pad | on 54/56/58 | content K=0 |
+|---|---|---|---|---|---|---|
+| 3.0.1 (rescue) | 14.5 / 14.3 | 30 / 20 / 4 · 35 / 26 / 7 | 33–38% | 26–31% | 21–25% | – |
+| flat roll, no cap | 15.4 / 15.5 | 45 / 33 / 8 · 51 / 40 / 12 | 40–46% | 37–46% | 30–40% | 12.9 / 12.7 |
+| **shipped** | 14.9 / 14.9 | **9 / 7 / 2 · 12 / 11 / 4** | 2.5–4% | **12% / 11%** | **0%** | 16.8 / 16.2 |
+
+About one seed in six ships a pad past the cap, nearly all of them 9–10
+levels; a fifth of the deals that roll one are redealt, against a tenth
+overall. A world can now end up with no pad when all its sites are dropped:
+0.14 such worlds a seed, the start world on ~7% of seeds. That is allowed —
+every world still has its airship.
+
+### 2026-10-31: neighbour hops (playtest)
+
+A playtest of the cap-8 build found too many pads going to the same worlds.
+The census agreed: depth climbs steadily along the airship chain, so "close
+in depth" mostly means "the next world", and 60% of pairs joined worlds one
+airship apart (uncapped: 24%). Raising the cap alone bought variety only at
+the price of redeals (cap 12: 42% neighbours, 26% K=0 redeals); picking the
+widest jump under the cap, or alternating widest and random, sat on the same
+line.
+
+What moved it was choice, not reach. Half of all pairing decisions had a
+partner within the cap two or more worlds away, and a random pick took one
+only a third of the time. `choose_partner` now prefers that partner (two
+airships apart on the spine, `spine_positions`), and with the preference the
+cap could widen to 9. A cycling deck of caps (12/10/8/6) measured the same as
+a flat 9 and was not kept.
+
+2,000 seeds, flat roll, vanilla / generated:
+
+| | neighbour pairs | same-world | redeal % K=0 | redeal % K=4 | content K=0 |
+|---|---|---|---|---|---|
+| cap 8, random pick | 60% / 58% | 7.3% / 7.6% | 9 / 12 | 3 / 7 | 16.8 / 16.2 |
+| cap 8, prefer 2+ away | 36% / 32% | 4.8% / 4.5% | 14 / 18 | 6 / 9 | 15.9 / 15.3 |
+| **cap 9, prefer 2+ away** | **25% / 22%** | **3.4% / 3.5%** | **19 / 25** | **8 / 13** | **15.0 / 14.6** |
+| no cap | 24% / 25% | 5.5% / 6.1% | 39 / 43 | 14 / 20 | 13.0 / 12.8 |
+
+The owner's call on the cost: redeals are not player-facing beyond generation
+time, and a deal is the cheap part (the worlds are built once), so a K=0 rate
+near 20% is accepted for pads that go somewhere.
+
+### 2026-11-01: the Uncapped Pad Jumps option
+
+An opt-in flag (`Options::uncapped_pad_jumps`, maze only) sets
+`Knobs::pad_jump_cap` to `u32::MAX`, so every legal site is a candidate
+partner and the `PAD_JUMP_KEEP` fallback never fires. Nothing is forced: the
+partner is still a random pick. The 2+-airships preference stays on, and
+uncapped it can nearly always be met, which is what moves the last two
+columns. 1,000 seeds, K=0, vanilla / generated (`PAD_UNCAPPED=1
+pad_pattern_census`):
+
+| | redeal % | deals a seed | content | neighbour pairs | W1/2 → W8 pad |
+|---|---|---|---|---|---|
+| cap 9 | 21 / 25 | 1.3 / 1.4 | 15.0 / 14.7 | 25% / 22% | 9% / 10% |
+| uncapped | 43 / 48 | 1.9 / 2.0 | 12.6 / 12.4 | 3% / 3% | 50% / 46% |
+
+K=4 redeals 16 / 21%, K=7 none. Valley pads unchanged (~12%). The
+early-to-Dark-Land pad on half of seeds is the honest description of the
+flag, and the tooltip says so. The owner chose to keep the preference rather
+than pair at random uncapped, which would bring neighbour hops back.
+
+Measured again over the anchor pair (below), which stays on under the flag:
+K=0 redeals 43 / 48%, content 12.5 / 12.5, W1/2 → W8 48 / 49% — the flag
+reaches the same place either way, so its own figures barely move. What
+moves is the gap to the default, which the anchor narrowed: content 13.8 →
+12.5 at K=0 rather than 15.0 → 12.6.
+
+### 2026-11-01: the anchor pair
+
+`graph::ANCHOR_SPAN`. Before any other pair, one site in the world at
+airship-chain position 1 or 2 (game worlds 2-3) is joined to a site four
+positions further along, past the cap; the cap then governs every other
+pair. Which world, which site and which partner are all still rolled.
+
+**How it was found.** The required-stage count (see "Required stages: the
+linearity baseline") turned linearity into something cheap to measure, and
+three probes narrowed down what drives it:
+
+- **Redealing a maze on the same eight worlds** swings a 12-required seed
+  anywhere from 3 to 23, and its families from 1 to 17. The worlds do not fix
+  linearity; the deal does.
+- **Re-rolling one layer of the deal at a time** (pads / fort relocation / key
+  fill, the others held): the pad layer alone carries nearly all of a full
+  redeal's spread (required sd 5.5 against 5.6), the key fill 3.4,
+  relocation 2.0. Re-rolling the pads also re-fits the keys to them, so "the
+  pads" means the pads plus the keys they make the fill choose.
+- **Moving dealt pads within their worlds**, pairings and keys kept, moves
+  required by only 1-3, mostly *lowers* families, and breaks 15-20% of seeds.
+  Where a pad stands inside a world is not the lever; which places it joins
+  is.
+
+Over 45,000 pads, a pad's jump size predicts nothing on its own (mean jump
++0.04 against required). What does is a **big jump (6+) whose shallow end is
+within 4 stages of the start**: seeds with none average 12.8 required, with
+one 11.3, two 10.1, three 8.8, and the effect holds in the 90% of seeds with
+no early pad into World 8 (13.2 → 11.1). A capped pairing deals no such pad
+on 56% of seeds. One guaranteed early pad into the middle of the run is the
+smallest rule that supplies it.
+
+**Measured** (`pad_rule_census`, harness, 500 seeds a K at K 0/3/4, families
+from 80 a K; vanilla / generated):
+
+| | required | ≤14 | 20+ | families | long & varied | content | content 18+ | redeal | W1/2 → W8 |
+|---|---|---|---|---|---|---|---|---|---|
+| cap 9 alone | 11.9 / 12.1 | 71 / 69% | 9.3 / 8.6% | 4.5 / 4.2 | 5.4 / 3.8% | 15.1 / 14.8 | 25 / 23% | 14 / 18% | 12 / 12% |
+| **anchor pair** | 10.0 / 10.7 | 84 / 82% | 2.0 / 2.8% | 5.3 / 4.6 | 10.8 / 4.6% | 13.9 / 13.7 | 16 / 11% | 21 / 23% | 22 / 24% |
+| uncapped | 8.2 / 8.6 | 94 / 92% | 0.4 / 1.4% | 6.2 / 5.9 | 4.6 / 2.5% | 12.6 / 12.4 | 4 / 5% | 29 / 35% | 47 / 47% |
+
+"Long & varied" is content 16+ with 5+ families. Uncapped buys the most
+families but does it by making seeds short — it halves the long-and-varied
+share and leaves 1 seed in 20 at content 18+. The anchor is the only rule
+tried that *raised* the long-and-varied share. Redeals by K, cap / anchor /
+uncapped: K=0 21 / 30 / 44%, K=3 17 / 24 / 35%, K=4 10 / 12 / 18%.
+
+**The cost to know about: early pads into World 8 double** (12% → 22% of
+seeds). The anchor itself never lands there — chain position 1-2 plus four
+is 5-6 — but it pulls the deep worlds closer, so the cap then admits more
+early → W8 pairs. Valley pads are unchanged (~11%), and neighbour pairs fall
+25% → 13% (`pad_pattern_census`).
+
+**Tried and not kept**, all on the same census:
+
+- *Span 5* (2→7 / 3→8): worse than 4 on every figure, with W1/2 → W8 at 29%.
+- *An early floor*: shallow sites choose first and prefer a jump of 6 to the
+  cap. Mild on vanilla maps, nothing on generated ones; alone it halved
+  early → W8 pads, but that vanished combined with the anchor.
+- *Anchor plus floor*: vanilla families 6.0 (uncapped's 6.1) at a third of
+  uncapped's extra redeals, but on generated maps half the family gain for
+  nearly uncapped's redeals, and the long-and-varied share back at the cap's.
+
+### 2026-10-31: the floor counts every wand airship
+
+The bound read the larger of the castle path and the path to the K-th nearest
+wand airship, which leaves out the other K-1 airships the run must also play.
+Against exact shortest routes (40 seeds a K, floor off so rejected deals were
+kept) it sat +4 under the truth at K=0, +8 at K=4 and +17 at K=7, and every
+K=4/K=7 deal it rejected had a real route of 12 or more.
+
+`ShortestBound::estimate` now also prices the wands by levels and forts only
+(wand airships free), takes the K-th smallest, and adds the K airships: one
+of the K the run plays is at least that far in levels, and an airship is
+never shared between paths the way a level is. It never read above a real
+route in that sample. Summing the K paths was tried too and rejected: the
+paths share their early levels, and 39 of 40 K=4 seeds read above the real
+route.
+
+2,000 seeds, `pad_pattern_census`, vanilla / generated, redeal % K=0/4/7:
+9.1 / 7.2 / 2.2 · 12.1 / 10.6 / 4.0 before, 9.1 / 3.2 / 0 · 12.1 / 6.7 / 0
+after. K=0 does not move (no wands to add); at K=7 the bound now reads ~21
+and nothing is redealt.
+
 **Race fairness was looked at and deliberately left alone.** Route counts per
 seed range from a handful to well over a thousand, and the typical random route
 is usually 1–3 items over the shortest, but neither tracked the spread of
@@ -864,6 +1094,13 @@ also the transition signal the packed completion store already tests
    The generator treats it as a hard invariant: hub pads are the first claim on
    the 16 arrival ids, the fill re-checks it on every swap, and anything still
    failing gets a rescue pad from whatever budget is left.
+
+   *Retired 2026-10-30: the post-fill rescue pad.* Measured on the shipping
+   generator it fired on ~99% of deals and supplied ~40% of every maze's pads,
+   because after the fill most locks are opened by a foreign fortress, which
+   this own-forts-only check reads as permanently shut. The safety it stood for
+   is held by the fill, `GAMEOVER_RETURN` and the permanent whistle. The
+   planned roll makes up the count now; see "2026-10-31: pads paired by depth".
 
    **Measured, the correct form holds 800 of 800 world-seeds — 100%**, against
    55.4% for the charter's wording (`start_region_exit_rate`). So the
@@ -1753,6 +1990,75 @@ K-sensitive:
 
 So the check has to be made at the shipping K, and the risk concentrates at high
 wand counts — which is also the hardest setting. Nothing asks today.
+
+## Required stages: the linearity baseline
+
+A stage is **required** when the walk cannot reach the castle with every
+other stage beaten and that one walled off — the exact test
+`routes::stage_tiers` uses. It costs one walk per stage, and it predicts how
+much choice a seed has better than anything else measured (2026-11-01, 480
+seeds with a full route census, Spearman against the required count):
+
+| measure | rank correlation |
+|---|---|
+| best route length | +0.87 |
+| route families (the set of worlds a route plays) | −0.76 |
+| share of players in the commonest family | +0.68 |
+| distinct routes | +0.03 |
+
+"Distinct routes" measures nothing: a swap of one level counts as a new
+route. Families fall off with two knees, not a cliff: ~10 families up to 5
+required, about half that by 9, a majority with two or fewer from 14, and
+effectively one route from 26. Families say nothing at K=7, where every route
+visits all eight worlds.
+
+**The baseline** (`required_sweep`, 500 seeds per arm, both of the owner's
+flag keys, vanilla and generated maps). The anchor pair's rows are current;
+the cap-9 rows are `beta/next` at be26241, kept to read them against:
+
+| | K | mean | p10 | median | p90 | max | ≤14 | 20+ |
+|---|---|---|---|---|---|---|---|---|
+| **anchor pair (current)** | 0, 3, 4 | 10.5 | 5 | 10 | 17 | 31 | 82% | 3.7% |
+| | 7 | 22.9 | 17 | 23 | 29 | 42 | | |
+| cap 9 alone | 0, 3, 4 | 11.9 | 6 | 11 | 19 | 35 | 73% | 8.0% |
+| | 7 | 23.6 | 18 | 23 | 30 | 42 | | |
+
+Flag key, vanilla vs generated and K within 0-4 move the median by one at
+most. A maze change that shifts this distribution owes an account of it, the
+same as the content floor:
+
+```sh
+SWEEP_FLAGS=<maze key> SWEEP_K=3 SWEEP_SEEDS=500 SWEEP_TAILS=0 SWEEP_RANDOM=0 \
+  cargo test --release --lib required_sweep -- --ignored --nocapture
+```
+
+Every type of seed exists today and that is wanted; the goal is more families
+without losing the linear end entirely.
+
+**The target is 14 or fewer** (the owner's call, 2026-11-01): the knee where
+two families or fewer becomes the majority. About 73% of K 0-4 seeds met it
+under the cap alone, and 82% do with the anchor pair (see "The anchor pair").
+The breakpoints are recorded so the next maze change can be read against
+them:
+
+| required | families (mean) | ≤2 families | one family |
+|---|---|---|---|
+| 2–5 | ~10 | 0% | 0% |
+| 6–7 | 7.3 | 6% | 0% |
+| 8–9 | 5.1 | 21% | 0% |
+| 12–13 | 3.7 | 40% | 8% |
+| 14–15 | 2.9 | 49% | 16% |
+| 18–21 | ~2.2 | 77% | 29% |
+| 26+ | ~1.1 | 100% | ~85% |
+
+The anchor pair and the Uncapped Pad Jumps option both move seeds down this
+curve rather than changing it (cap alone / anchor / uncapped, harness): seeds
+at 14 or fewer 71 / 84 / 94%, at 20+ 9 / 2 / 0.4%, on vanilla maps.
+
+**Fewer families in longer seeds is structural, not a defect** (the owner,
+2026-11-01): the more stages every route must play, the more routes overlap.
+The thing to protect is that long seeds keep *some* variety, which is why
+the long-and-varied share is tracked beside the families mean.
 
 ## Still open
 

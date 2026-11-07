@@ -343,19 +343,6 @@ fn every_placed_slot_is_reached() {
     }
 }
 
-/// The weighted roll is reachable at every count and biased to 1.
-#[test]
-fn pad_count_roll_is_biased_to_one() {
-    let mut rng = ChaCha8Rng::seed_from_u64(9);
-    let mut hist = [0usize; 4];
-    for _ in 0..40_000 {
-        hist[super::graph::roll_count(&mut rng)] += 1;
-    }
-    assert!(hist.iter().all(|&n| n > 0), "every count 0..=3 must be reachable: {hist:?}");
-    let most = hist.iter().enumerate().max_by_key(|&(_, n)| n).map(|(i, _)| i);
-    assert_eq!(most, Some(1), "1 pad must be the modal count: {hist:?}");
-}
-
 /// What terrain the roles actually have to work with — measured before any role
 /// placer existed, because a role whose pool is empty is a design that cannot
 /// be built.
@@ -435,7 +422,10 @@ fn the_generator_never_ships_an_unwinnable_maze() {
     let arms: [(&str, Knobs); 3] = [
         ("null", Knobs::default()),
         ("local keys", Knobs { fort_distance_bias: -1.0, ..Default::default() }),
-        ("far keys, all pads cross", Knobs { fort_distance_bias: 1.0, foreign_landing_bias: 1.0 }),
+        (
+            "far keys, all pads cross",
+            Knobs { fort_distance_bias: 1.0, foreign_landing_bias: 1.0, ..Default::default() },
+        ),
     ];
     for seed in 0..census_seeds(4) {
         for (name, knobs) in &arms {
@@ -543,8 +533,14 @@ fn every_pad_is_half_of_a_pair() {
     let Some(raw) = load_rom() else { return };
     let arms: [(&str, Knobs); 3] = [
         ("null", Knobs::default()),
-        ("all pads stay home", Knobs { foreign_landing_bias: 0.0, fort_distance_bias: 0.0 }),
-        ("all pads cross", Knobs { foreign_landing_bias: 1.0, fort_distance_bias: 1.0 }),
+        (
+            "all pads stay home",
+            Knobs { foreign_landing_bias: 0.0, fort_distance_bias: 0.0, ..Default::default() },
+        ),
+        (
+            "all pads cross",
+            Knobs { foreign_landing_bias: 1.0, fort_distance_bias: 1.0, ..Default::default() },
+        ),
     ];
     for seed in 0..census_seeds(4) {
         for (name, knobs) in &arms {
@@ -979,7 +975,10 @@ fn maze_generator_census() {
         ("null (bias 0)", Knobs::default()),
         ("local keys (-1)", Knobs { fort_distance_bias: -1.0, ..Default::default() }),
         ("far keys (+1)", Knobs { fort_distance_bias: 1.0, ..Default::default() }),
-        ("far keys + all pads cross", Knobs { fort_distance_bias: 1.0, foreign_landing_bias: 1.0 }),
+        (
+            "far keys + all pads cross",
+            Knobs { fort_distance_bias: 1.0, foreign_landing_bias: 1.0, ..Default::default() },
+        ),
     ];
 
     eprintln!("\n=== world-maze generator, {seeds} seeds per arm ===");
@@ -1441,7 +1440,8 @@ fn the_pads_still_fit_the_packed_store() {
     let mut worst_seed = 0;
     for seed in 0..census_seeds(12) {
         // The knobs that place the most pads: every id spent, all crossing.
-        let knobs = Knobs { foreign_landing_bias: 1.0, fort_distance_bias: 1.0 };
+        let knobs =
+            Knobs { foreign_landing_bias: 1.0, fort_distance_bias: 1.0, ..Default::default() };
         let (rom, state, _) = generated(&raw, seed, &knobs, super::DEFAULT_WANDS_REQUIRED);
         let mut after = rom.clone();
         super::writer::install_pad_metatile(&mut after, &state);
@@ -3079,116 +3079,44 @@ fn in_valley((world, pos): super::MazePos) -> bool {
     world == crate::randomize::rom_data::W8_IDX && pos.1 / 16 == 3
 }
 
-/// **A pad into the valley has to be earned.** `graph::valley_earned` allows a
-/// pad on Bowser's bridge only when its partner is a gated site
-/// ([`PadRole::Shortcut`] — behind a fortress) in a different world, so finding
-/// the shortcut costs a crossing and a fort rather than being tripped over.
+/// **A valley pad stands before the bridges.** `graph::VALLEY_PAD_LAST_COL`
+/// keeps a pad tile on the valley's first two nodes, (5,50) and (5,52), so a
+/// pad there still leaves the dealt bridge spans between the player and
+/// Bowser — never on the three nodes beside the castle.
 ///
-/// Two assertions, and the second is the one that matters. "Every valley pad is
-/// earned" passes vacuously if the rule bans valley pads outright — which is
-/// the *other* failure, and the one the design deliberately declined. So the
-/// sample must also contain valley pads at all. Same shape, same reason, as
+/// Two assertions, and the second is the one that matters. "Every valley pad
+/// is on the first two nodes" passes vacuously if the filter bans valley pads
+/// outright, which is the other failure. So the sample must also contain
+/// valley pads at all. Same shape, same reason, as
 /// `a_fortress_tile_says_where_its_lock_is`.
+///
+/// Reads the shipped maze rather than the report, so a pad placed by any pass
+/// is held to it.
 #[test]
-fn a_valley_pad_is_earned() {
+fn a_valley_pad_stands_before_the_bridges() {
     let Some(raw) = load_rom() else { return };
     let knobs = Knobs::default();
     let mut seen = 0usize;
 
     for seed in 0..census_seeds(60) {
-        let (_, _, report) = generated(&raw, seed, &knobs, 3);
-        for pad in &report.pads {
-            let MazeEdge::Pad { from, to } = pad.edge else { unreachable!() };
+        let (_, state, _) = generated(&raw, seed, &knobs, 3);
+        for (_, to) in state.pad_edges() {
             if !in_valley(to) {
                 continue;
             }
             seen += 1;
             assert!(
-                pad.granted == super::roles::PadRole::Shortcut,
-                "seed {seed}: the valley pad at {to:?} is fed from {from:?}, \
-                 which is not gated ({:?})",
-                pad.granted,
-            );
-            assert!(
-                from.0 != to.0,
-                "seed {seed}: the valley pad at {to:?} is fed from {from:?} \
-                 in its own world — the hunt has to cross",
+                to.1.1 <= 52,
+                "seed {seed}: the valley pad at {to:?} is past the first two nodes"
             );
         }
     }
 
     assert!(
         seen > 0,
-        "no valley pad in the whole sample: the rule is banning them outright \
-         rather than pricing them, which is the shape this design declined",
+        "no valley pad in the whole sample: the filter is banning them outright \
+         rather than placing them early",
     );
-}
-
-/// How the valley rule actually landed: how often a pad reaches Bowser's
-/// bridge, what it cost the run, and **how deep the hunt is** — the open
-/// question `graph::valley_earned` names. Gatedness is a terrain property, not
-/// a depth one, so if the partners cluster in the early worlds the rule is
-/// buying less than it looks.
-///
-/// Spine position is the world index here because the census walks
-/// `IDENTITY_SPINE`.
-///
-/// ```sh
-/// CENSUS_SEEDS=300 cargo test --release --lib valley_pad_census \
-///     -- --ignored --nocapture
-/// ```
-#[test]
-#[ignore]
-fn valley_pad_census() {
-    let Some(raw) = load_rom() else { return };
-    let seeds = census_seeds(100);
-    let knobs = Knobs::default();
-
-    eprintln!("\n=== the valley (W8 screen 3), {seeds} seeds ===");
-    eprintln!(
-        "  {:>3} {:>8} {:>8} {:>9} {:>9}  partner world",
-        "K", "valley%", "redeal%", "content", "content|v"
-    );
-    for k in [0u8, 3, 7] {
-        let mut with_valley = 0usize;
-        let mut redeal = 0usize;
-        let mut all: Vec<usize> = Vec::new();
-        let mut valley_content: Vec<usize> = Vec::new();
-        let mut partner_world = [0usize; 8];
-
-        for seed in 0..seeds {
-            let (_, _, report) = generated(&raw, seed, &knobs, k);
-            let mut hit = false;
-            for pad in &report.pads {
-                let MazeEdge::Pad { from, to } = pad.edge else { unreachable!() };
-                if in_valley(to) {
-                    hit = true;
-                    partner_world[from.0] += 1;
-                }
-            }
-            with_valley += hit as usize;
-            redeal += (report.deals > 1) as usize;
-            all.push(report.content);
-            if hit {
-                valley_content.push(report.content);
-            }
-        }
-
-        let pct = |n: usize| 100.0 * n as f64 / seeds as f64;
-        let mean = |v: &[usize]| {
-            if v.is_empty() { f64::NAN } else { v.iter().sum::<usize>() as f64 / v.len() as f64 }
-        };
-        let hist: Vec<String> =
-            partner_world.iter().enumerate().map(|(w, n)| format!("W{}:{n}", w + 1)).collect();
-        eprintln!(
-            "  {k:>3} {:>7.1}% {:>7.1}% {:>9.1} {:>9.1}  {}",
-            pct(with_valley),
-            pct(redeal),
-            mean(&all),
-            mean(&valley_content),
-            hist.join(" "),
-        );
-    }
 }
 
 /// **How often is the boat required with no Anchor reachable in front of it?**
@@ -3724,4 +3652,195 @@ fn floor_cost_census() {
         states.len(),
         est / lazy
     );
+}
+
+/// **Which pad patterns a player meets, and what the deal loop paid for
+/// them**, per K: pad tiles, redeals, a pad from the opening (start world or
+/// the one its airship leads to) into W8 or the valley, any valley pad, a pad
+/// on the three valley nodes past the first bridge span (always 0 since
+/// `graph::VALLEY_PAD_LAST_COL`), worlds left with no pad at all, and how
+/// varied the links are: the share of pairs inside one world or between
+/// worlds one airship apart, and distinct world pairs a seed. The yardstick
+/// for changes to pad planning; `MAZE_GENERATE=1` runs it over generated maps.
+/// `PAD_UNCAPPED=1` lifts the jump cap, as the `uncapped_pad_jumps` option does.
+///
+/// Each seed's worlds are built once and dealt at every K. `CENSUS_FROM`
+/// starts the seed range there, so a batch can split it across processes;
+/// the `PADSUM` lines are the raw counts to add back up.
+///
+/// ```sh
+/// CENSUS_SEEDS=2000 cargo test --release --lib pad_pattern_census \
+///     -- --ignored --nocapture
+/// ```
+#[test]
+#[ignore]
+fn pad_pattern_census() {
+    const KS: [u8; 3] = [0, 4, 7];
+    let Some(raw) = load_rom() else { return };
+    let seeds = census_seeds(100);
+    let from: u64 = std::env::var("CENSUS_FROM").ok().and_then(|s| s.parse().ok()).unwrap_or(0);
+    let uncapped = std::env::var("PAD_UNCAPPED").is_ok_and(|v| v == "1");
+    let knobs = Knobs {
+        pad_jump_cap: if uncapped { u32::MAX } else { super::graph::PAD_JUMP_CAP },
+        ..Default::default()
+    };
+    let w8 = crate::randomize::rom_data::W8_IDX;
+    let maps = if std::env::var("MAZE_GENERATE").is_ok() { "generated" } else { "vanilla" };
+
+    // Per K: pads, redeals, opening->W8, opening->valley, valley, far valley
+    // nodes, deals, content, worlds with no pad, start world with no pad,
+    // pairs, same-world pairs, neighbour pairs, distinct world pairs.
+    let mut n = [[0usize; 14]; KS.len()];
+    // Per K: pad tiles in world a whose partner is in world b.
+    let mut dest = [[[0usize; 8]; 8]; KS.len()];
+    for seed in from..from + seeds {
+        let (_, result) = census_build(&raw, seed);
+        for (ki, &k) in KS.iter().enumerate() {
+            let mut rng = ChaCha8Rng::seed_from_u64(seed ^ 0x5EED_1234);
+            let (state, report) =
+                super::generate(&result, &IDENTITY_SPINE, k, &knobs, SEALABLE_NEEDED, &mut rng);
+            let start = IDENTITY_SPINE[0];
+            let next = state.edges.iter().find_map(|e| match *e {
+                MazeEdge::Airship { from_world, to_world } if from_world == start => Some(to_world),
+                _ => None,
+            });
+            let opening = |w: usize| w == start || Some(w) == next;
+            let pads = state.pad_edges();
+            let any = |f: &dyn Fn(MazePos, MazePos) -> bool| pads.iter().any(|&(a, b)| f(a, b));
+            let has_pad = |w: usize| pads.iter().any(|&(a, _)| a.0 == w);
+            for &(a, b) in &pads {
+                dest[ki][a.0][b.0] += 1;
+            }
+            let c = &mut n[ki];
+            c[0] += pads.len();
+            c[1] += (report.deals > 1) as usize;
+            c[2] += any(&|a, b| opening(a.0) && b.0 == w8) as usize;
+            c[3] += any(&|a, b| opening(a.0) && in_valley(b)) as usize;
+            c[4] += any(&|_, b| in_valley(b)) as usize;
+            c[5] += any(&|_, b| b.0 == w8 && b.1.0 == 5 && [54, 56, 58].contains(&b.1.1)) as usize;
+            c[6] += report.deals;
+            c[7] += report.content;
+            c[8] += (0..state.worlds.len()).filter(|&w| !has_pad(w)).count();
+            c[9] += !has_pad(start) as usize;
+            // Variety: pairs, same-world pairs, pairs one airship apart (the
+            // census walks `IDENTITY_SPINE`, so that is adjacent indices),
+            // and distinct world pairs.
+            let pairs: Vec<(usize, usize)> = pads
+                .iter()
+                .filter(|&&(a, b)| (a.0, a.1) < (b.0, b.1))
+                .map(|&(a, b)| (a.0.min(b.0), a.0.max(b.0)))
+                .collect();
+            c[10] += pairs.len();
+            c[11] += pairs.iter().filter(|&&(x, y)| x == y).count();
+            c[12] += pairs.iter().filter(|&&(x, y)| y == x + 1).count();
+            let mut distinct = pairs.clone();
+            distinct.sort_unstable();
+            distinct.dedup();
+            c[13] += distinct.len();
+        }
+    }
+
+    eprintln!("\n=== pad patterns, {maps} maps, {seeds} seeds ===");
+    eprintln!(
+        "  {:>2} {:>5} {:>7} {:>5} {:>8} {:>10} {:>7} {:>11} {:>7} {:>8} {:>9} {:>6} {:>6} {:>8}",
+        "K",
+        "pads",
+        "redeal",
+        "deals",
+        "W1/2>W8",
+        "W1/2>vall",
+        "valley",
+        "W8 54/56/58",
+        "content",
+        "no-pad/s",
+        "start bare",
+        "same",
+        "neigh",
+        "distinct"
+    );
+    for (ki, &k) in KS.iter().enumerate() {
+        let c = n[ki];
+        let sums: Vec<String> = c.iter().map(|x| x.to_string()).collect();
+        println!("PADSUM,{maps},{k},{seeds},{}", sums.join(","));
+        for (w, row) in dest[ki].iter().enumerate() {
+            let row: Vec<String> = row.iter().map(|x| x.to_string()).collect();
+            println!("PADDEST,{maps},{k},{w},{}", row.join(","));
+        }
+        let pct = |x: usize| 100.0 * x as f64 / seeds as f64;
+        let per = |x: usize| x as f64 / seeds as f64;
+        eprintln!(
+            "  {k:>2} {:>5.1} {:>6.1}% {:>5.2} {:>7.1}% {:>9.1}% {:>6.1}% {:>10.1}% {:>7.1} {:>8.2} {:>8.1}% {:>5.1}% {:>5.1}% {:>8.2}",
+            per(c[0]),
+            pct(c[1]),
+            per(c[6]),
+            pct(c[2]),
+            pct(c[3]),
+            pct(c[4]),
+            pct(c[5]),
+            per(c[7]),
+            per(c[8]),
+            pct(c[9]),
+            100.0 * c[11] as f64 / c[10].max(1) as f64,
+            100.0 * c[12] as f64 / c[10].max(1) as f64,
+            per(c[13]),
+        );
+    }
+}
+
+/// **What the anchor pair and the uncapped option do**, one arm per process
+/// (`RULE`): `default` (cap plus [`super::graph::Knobs::anchor_span`]),
+/// `noanchor` (the cap alone, the shape before the anchor) or `uncapped`
+/// (the Uncapped Pad Jumps option). Every seed reports the required count,
+/// the deals the content floor paid for, the content it kept, pad pairs and
+/// whether a pad joins the first two chain worlds to the last; the first
+/// `RULE_FAMILY_SEEDS` also get a census for route families.
+/// `MAZE_GENERATE=1` builds generated maps.
+///
+/// Output: `RULE,arm,seed,required,deals,content,pairs,opening_w8,families`
+/// (`-` for families past the census seeds).
+///
+/// ```sh
+/// RULE=noanchor CENSUS_SEEDS=500 cargo test --release --lib pad_rule_census \
+///     -- --ignored --nocapture
+/// ```
+#[test]
+#[ignore]
+fn pad_rule_census() {
+    use super::routes::{families, pad_features, required_count};
+    use std::time::Duration;
+    let Some(raw) = load_rom() else { return };
+    let env = |k: &str, d: u64| std::env::var(k).ok().and_then(|s| s.parse().ok()).unwrap_or(d);
+    let arm = std::env::var("RULE").unwrap_or_else(|_| "default".into());
+    let knobs = match arm.as_str() {
+        "default" => Knobs::default(),
+        "noanchor" => Knobs { anchor_span: None, ..Default::default() },
+        "uncapped" => Knobs { pad_jump_cap: u32::MAX, ..Default::default() },
+        other => panic!("unknown RULE {other}"),
+    };
+    let k = env("RULE_K", 3) as u8;
+    let family_seeds = env("RULE_FAMILY_SEEDS", 60);
+    let params = CensusParams {
+        samples: 500,
+        guided: 20,
+        hammers: 0,
+        exact_cap: 20_000,
+        exact_limit: Duration::from_secs(1),
+        threads: env("RULE_THREADS", 0) as usize,
+    };
+    for seed in 0..census_seeds(100) {
+        let (_, state, report) = generated(&raw, seed, &knobs, k);
+        let required = required_count(&state).map_or(-1, |r| r as i64);
+        let [pairs, _, opening, _] = pad_features(&state);
+        let fams = if seed < family_seeds {
+            families(&census(&state, &params, seed ^ 0x2007_00E5)).0.to_string()
+        } else {
+            "-".into()
+        };
+        println!(
+            "RULE,{arm},{seed},{required},{},{},{pairs},{},{fams}",
+            report.deals,
+            report.content,
+            u8::from(opening == 7),
+        );
+    }
 }

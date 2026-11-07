@@ -469,6 +469,14 @@ pub struct Options {
     /// Dr. Mario reskins). Cosmetic — not encoded in the flag key, no RNG.
     #[serde(default)]
     pub fireball_hearts: bool,
+    /// Deal each level its own song remap: every overworld, underground,
+    /// water, fortress, airship, athletic or sky song in a level becomes a
+    /// different one of those, consistently within the level. Boss, battle,
+    /// Toad House and throne room music stay. Cosmetic — not encoded in the
+    /// flag key; drawn from its own substream, so it moves no other part of
+    /// the seed.
+    #[serde(default)]
+    pub level_music: bool,
     #[serde(default)]
     pub world_order: bool,
     /// Number of worlds before Dark Land (0–7, default 7). Only read when
@@ -524,6 +532,18 @@ pub struct Options {
     /// front of its own gate — see `canoe_gate` for the whole argument.
     #[serde(default)]
     pub item_gates: bool,
+    /// **Uncapped pad jumps.** Lifts the cap on how far apart in depth a
+    /// telepad's two ends may be (`maze::graph::Knobs::pad_jump_cap`). It
+    /// forces nothing: a pad's partner is still drawn at random from the legal
+    /// sites, only from all of them. Over a seed that makes big jumps common,
+    /// which shortens the cheapest route by about a level against the default
+    /// (which already deals one long pad, `graph::ANCHOR_SPAN`) and raises
+    /// content-floor redeals by half again (K=0: 30% -> ~45%, generation time
+    /// only).
+    ///
+    /// **Only read when `world_maze` is on.**
+    #[serde(default)]
+    pub uncapped_pad_jumps: bool,
     #[serde(default)]
     pub big_q_blocks: bool,
     /// Shuffle airship levels across worlds 1-7.
@@ -855,11 +875,13 @@ impl Default for Options {
             remove_flashing: true,
             king_quotes: true,
             fireball_hearts: false,
+            level_music: false,
             world_order: false,
             world_count: default_world_count(),
             world_maze: false,
             maze_wands: default_maze_wands(),
             item_gates: false,
+            uncapped_pad_jumps: false,
             big_q_blocks: false,
             shuffle_airships: true,
             shuffle_hammer_bros: true,

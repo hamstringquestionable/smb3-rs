@@ -31,6 +31,7 @@ fn normalized(mut o: Options) -> Options {
     o.remove_flashing = true;
     o.king_quotes = true;
     o.fireball_hearts = false;
+    o.level_music = false;
     o
 }
 
@@ -496,6 +497,7 @@ fn flag_key_per_option_round_trip() {
         ("remove_flashing", Box::new(|o| o.remove_flashing = !o.remove_flashing)),
         ("king_quotes", Box::new(|o| o.king_quotes = !o.king_quotes)),
         ("fireball_hearts", Box::new(|o| o.fireball_hearts = !o.fireball_hearts)),
+        ("level_music", Box::new(|o| o.level_music = !o.level_music)),
     ];
     for (label, mutate) in cosmetic {
         check_round_trip(label, mutate, false);
@@ -1143,11 +1145,13 @@ fn all_off_options() -> Options {
         remove_flashing: false,
         king_quotes: false,
         fireball_hearts: false,
+        level_music: false,
         world_order: false,
         world_count: 7,
         world_maze: false,
         maze_wands: 3,
         item_gates: false,
+        uncapped_pad_jumps: false,
         big_q_blocks: false,
         shuffle_airships: false,
         shuffle_hammer_bros: false,
@@ -1227,11 +1231,13 @@ fn all_on_options() -> Options {
         remove_flashing: true,
         king_quotes: true,
         fireball_hearts: true,
+        level_music: true,
         world_order: true,
         world_count: 3,
         world_maze: true,
         maze_wands: 5,
         item_gates: true,
+        uncapped_pad_jumps: true,
         big_q_blocks: true,
         shuffle_airships: true,
         shuffle_hammer_bros: true,
@@ -1441,6 +1447,96 @@ fn king_quotes_off_only_skips_its_own_writes() {
         }
     }
     assert_eq!(compared, configs.len() * seeds as usize);
+}
+
+/// Turning `level_music` on changes only the song bytes it wrote, and each of
+/// those is the song nibble of a real header: timer bits kept, a defined song
+/// before and after. Run on randomized ROMs because that is where a level
+/// stage may have rewritten the alt pointers the module traces.
+///
+/// `CENSUS_SEEDS` sets the seeds per configuration (default 3), as for
+/// [`king_quotes_off_only_skips_its_own_writes`].
+#[test]
+fn level_music_changes_only_song_nibbles() {
+    if make_test_rom().is_none() {
+        eprintln!("SKIP: requires the ROM, which is not included in the repo");
+        return;
+    }
+    let seeds: u64 = std::env::var("CENSUS_SEEDS").ok().and_then(|s| s.parse().ok()).unwrap_or(3);
+    let configs: Vec<(&str, Options)> = vec![
+        ("defaults", test_options()),
+        ("all_on", all_on_options()),
+        ("all_off", all_off_options()),
+    ];
+    for (name, base) in &configs {
+        assert!(!base.palettes, "{name}: palettes must be off or this test is nondeterministic");
+        let mut on = base.clone();
+        on.level_music = true;
+        let mut off = base.clone();
+        off.level_music = false;
+        for seed in 1..=seeds {
+            let mut rom_on = make_test_rom().unwrap();
+            randomize(&mut rom_on, seed, &on);
+            let mut rom_off = make_test_rom().unwrap();
+            randomize(&mut rom_off, seed, &off);
+            assert!(rom_off.writes_by_tag("cosmetic/level_music").is_empty());
+
+            let (a, b) = (rom_on.output_bytes(), rom_off.output_bytes());
+            let mut changed = 0;
+            for i in 0..a.len() {
+                if a[i] == b[i] {
+                    continue;
+                }
+                changed += 1;
+                let (new, old) = (a[i], b[i]);
+                assert!(
+                    old & 0x30 == 0
+                        && old & 0x0F < 11
+                        && new & 0x0F < 11
+                        && new & 0xF0 == old & 0xF0,
+                    "{name}/seed {seed}: 0x{i:05X} went ${old:02X} -> ${new:02X}, not a song nibble"
+                );
+            }
+            assert!(changed > 0, "{name}/seed {seed}: level_music on changed nothing");
+        }
+    }
+}
+
+/// `items::chest_item_offsets` is a hand-kept list of chest item bytes (the
+/// Y byte of each `$D6` treasure object). It must name every chest a level
+/// can load and nothing else, on finished ROMs, where `hand_rooms` and
+/// `piranha_rooms` have cloned chest rooms and the level passes have
+/// rewritten object lists.
+#[test]
+fn the_chest_list_names_every_chest_the_levels_load() {
+    use crate::randomize::rom_data::level_index::{self, read_objects};
+    use std::collections::BTreeSet;
+    if make_test_rom().is_none() {
+        eprintln!("SKIP: requires the ROM, which is not included in the repo");
+        return;
+    }
+    let seeds: u64 = std::env::var("CENSUS_SEEDS").ok().and_then(|s| s.parse().ok()).unwrap_or(3);
+    for (name, o) in
+        [("defaults", test_options()), ("all_on", all_on_options()), ("all_off", all_off_options())]
+    {
+        for seed in 1..=seeds {
+            let mut rom = make_test_rom().unwrap();
+            randomize(&mut rom, seed, &o);
+            let run = super::stages::resolve(seed, &o, &mut ChaCha8Rng::seed_from_u64(seed));
+            let listed: BTreeSet<usize> =
+                crate::randomize::items::chest_item_offsets(run.piranha_active())
+                    .into_iter()
+                    .collect();
+            let found: BTreeSet<usize> = level_index::every_level(&rom)
+                .iter()
+                .flatten()
+                .flat_map(|a| read_objects(&rom, a.objects_ptr, a.tileset).unwrap_or_default())
+                .filter(|obj| obj.id == 0xD6)
+                .map(|obj| obj.offset + 2)
+                .collect();
+            assert_eq!(found, listed, "{name}/seed {seed}");
+        }
+    }
 }
 
 #[test]

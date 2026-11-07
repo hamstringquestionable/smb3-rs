@@ -14,7 +14,7 @@
 // drift in either direction via console.error.
 
 import { NES_PALETTE } from "./chr.js";
-import { W1_PAL0, W1_PAL1, W1_PAL2, W1_PAL3, HINT_TILES, MAZE_TILES, W8_MILITARY, WORLD_TILES, WANDS } from "./icons.js";
+import { W1_PAL0, W1_PAL1, W1_PAL2, W1_PAL3, HINT_TILES, MAZE_TILES, TELEPAD, W8_MILITARY, WORLD_TILES, WANDS } from "./icons.js";
 
 const ITEM_OPTIONS = [
 	{ value: 0, label: "None" },
@@ -113,7 +113,7 @@ const OFF_DOUBLE_WILD = [
 // be read before the options it governs, not found underneath them.
 export const GROUPS = [
 	{ id: "maze", label: "World Maze",
-		note: "The mode switch, and the settings only it uses. Options elsewhere that the maze takes over or has no use for say so in their own row.",
+		note: "Maze settings. Turning the maze on forces some other settings; those are marked.",
 		// Relative on purpose: the /beta/ deploy is a copy of this whole folder,
 		// so the beta page links to the beta tracker and the root page to the
 		// root one, with no build-time knowledge of which it is.
@@ -336,6 +336,9 @@ const BIG_Q = {
 	cols: 4,
 	palette: [0x0F, 0x1D, 0x28, 0x20],
 };
+// The note block, level tile $2E: BG patterns $B8-$BB in the first frame of
+// the animated bank ($60, like Q_BLOCK), Plains BG palette 0.
+const NOTE_BLOCK = { tiles: [6200, 6202, 6201, 6203], cols: 2, palette: [0x0F, 0x0F, 0x30, 0x3C] };
 const SPADE = { tiles: [1448, 1448, 1449, 1449], cols: 2, palette: [0x0F, 0x20, 0x20, 0x1D], flipRight: true }; // $16
 const N_CARD = { tiles: [2064, 2064, 2065, 2065], cols: 2, palette: [0x0F, 0x20, 0x20, 0x1D], flipRight: true }; // $20
 
@@ -533,6 +536,12 @@ export const SCHEMA = [
 	{ id: "item_gates", type: "bool", default: false,
 		label: "Item Gates",
 		tip: "Ways forward can be locked behind an item you have to find first, and a seed always puts that item somewhere you can reach without it. Right now that means the water: canoes sit one tile offshore, and the only way to call one over is to use an Anchor while standing on a dock. The Anchor is never used up, so one opens every boat in every world, and Toad Houses can hand you one. Off, a boat waits at its dock and any dock summons it for free.",
+		group: "maze", inFlagKey: true,
+		mode: "maze" },
+	{ id: "uncapped_pad_jumps", type: "bool", default: false,
+		label: "Telepad Reach", pills: ["Standard", "Uncapped"],
+		tip: "Standard telepads only warp you so far through the game. Uncapped telepads have no limit, which can make for shorter runs that skip more of the game.",
+		icon: TELEPAD,
 		group: "maze", inFlagKey: true,
 		mode: "maze" },
 
@@ -792,6 +801,11 @@ export const SCHEMA = [
 		warnWithVisualPatch: ["dr_mario", "dr_mario_viruses"],
 		tip: "Every fireball becomes a heart: yours, the enemies', and the Fire Chomp's tail. Picked with Dr. Mario, this replaces that patch's fireballs.",
 		credit: { name: "MaCobra52", url: "https://github.com/macobra52" },
+		group: "cosmetic", inFlagKey: false },
+	{ id: "level_music", type: "bool", default: false,
+		label: "Random level music",
+		tip: "Each level gets its own mix of songs: overworld, underground, water, fortress, airship, athletic and sky music trade places. Boss, battle, Toad House and throne room music stay put.",
+		icon: NOTE_BLOCK,
 		group: "cosmetic", inFlagKey: false },
 	{ id: "king_quotes", type: "bool", default: true,
 		label: "King quotes",
@@ -1489,6 +1503,10 @@ function iconCanvas(entry) {
 // Bool entries render as a two-state Off/On pill group (same shape as `renderTri`)
 // so checkboxes and pills share the same visual rhythm. The underlying state is
 // still a real bool — `readValue` collapses the radio "on"/"off" back to true/false.
+// An entry may rename the two pills with `pills: [offLabel, onLabel]`; the values
+// stay "off"/"on", so the flag key and saved settings do not change. Neither
+// pill means "off" to the player, so they take the Shuffle / Wild colours
+// (`pills-named`) rather than gray and green.
 const BOOL_OPTIONS = [
 	{ value: "off", label: "Off" },
 	{ value: "on", label: "On" },
@@ -1511,16 +1529,16 @@ function renderBool(entry) {
 			class: "opt-badge", id: `${domId(entry.id)}-warn`, hidden: true,
 		}, entry.warnWhenOn));
 	}
-	const group = el("div", { class: "pill-group" });
-	for (const opt of BOOL_OPTIONS) {
+	const group = el("div", { class: "pill-group" + (entry.pills ? " pills-named" : "") });
+	BOOL_OPTIONS.forEach((opt, i) => {
 		const inputId = `${domId(entry.id)}-${opt.value}`;
 		const isChecked = (opt.value === "on") === !!entry.default;
 		group.appendChild(el("input", {
 			type: "radio", name: radioName(entry.id), id: inputId,
 			value: opt.value, checked: isChecked,
 		}));
-		group.appendChild(el("label", { for: inputId }, opt.label));
-	}
+		group.appendChild(el("label", { for: inputId }, entry.pills?.[i] ?? opt.label));
+	});
 	wrap.appendChild(group);
 	return wrap;
 }
@@ -2119,7 +2137,11 @@ export function applyRowStates() {
 		if (!wrap) continue;
 		const value = readValue(entry);
 		let on = false, maybe = false;
-		if (entry.type === "bool") {
+		if (entry.type === "bool" && entry.pills) {
+			// Named pills read as Shuffle / Wild, not off / on.
+			on = value === false;
+			maybe = value === true;
+		} else if (entry.type === "bool") {
 			on = value === true;
 		} else if (entry.type === "toggles") {
 			on = Array.isArray(value) && value.length > 0;

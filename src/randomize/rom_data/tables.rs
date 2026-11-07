@@ -115,7 +115,16 @@ impl LevelDataRegion {
     /// dispatch reads an extra byte. Every level-stream walker (powerups,
     /// enemy entry points) must step with this — a re-derived copy of the
     /// formula is how parsers drift out of alignment.
+    ///
+    /// A first byte of `$E0` or more is a junction, always 3 bytes:
+    /// `LevelLoad` (PRG030 `$98EE`) checks for it before any tileset
+    /// dispatch. Sizing one through the dispatch instead (Ice/Sky list 112 as
+    /// 4-byte) swallows the `$FF` after 6-7's `E7 12 80`, and the powerups
+    /// walk then rerolled the bonus room's song byte as a block.
     pub(crate) fn command_size(&self, b0: u8, b2: u8) -> usize {
+        if b0 >= 0xE0 {
+            return 3; // junction
+        }
         if (b2 & 0xF0) == 0 {
             return 3; // fixed-size generator
         }
@@ -955,10 +964,8 @@ pub(crate) struct LevelEntry {
 /// the real thing only spawns when `OBJ_BONUSCONTROLLER`'s coin/score check
 /// fires.
 ///
-/// Native-only: `testrom` (itself `cfg(not(wasm32))`) is the sole consumer, so
-/// on the WASM build this is dead code and warns. Gated rather than
-/// `allow(dead_code)`d so that a genuinely unused item still gets caught.
-#[cfg(not(target_arch = "wasm32"))]
+/// `level_music` deals the Coin Ship a song through this entry too, which is
+/// why it is no longer native-only.
 pub(crate) const UNLISTED_LEVELS: &[(&str, LevelEntry)] = &[(
     "CoinShip",
     LevelEntry { tileset: 10, obj_lo: 0x04, obj_hi: 0xDA, lay_lo: 0x15, lay_hi: 0xBC },
@@ -975,6 +982,19 @@ pub(crate) struct BetaLevel {
     pub(crate) lay_lo: u8,
     pub(crate) lay_hi: u8,
     pub(crate) name: &'static str,
+}
+
+impl BetaLevel {
+    /// The pointer table entry that loads this level.
+    pub(crate) fn entry(&self) -> LevelEntry {
+        LevelEntry {
+            tileset: self.tileset,
+            obj_lo: self.obj_lo,
+            obj_hi: self.obj_hi,
+            lay_lo: self.lay_lo,
+            lay_hi: self.lay_hi,
+        }
+    }
 }
 
 /// Nine unreferenced beta levels found in the level data banks.

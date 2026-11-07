@@ -13,23 +13,35 @@ use crate::rom::Rom;
 // level shuffle) and that opens the wrong world's room — often a void.
 //
 // Part A — PRG030 (fixed bank): save the entry obj_ptr from $65/$66 to scratch
-//   RAM ($7EB4/$7EB5) at level init, before the W8 code clobbers it to $C033.
+//   RAM ($7EB4/$7EB5) at level init, before the Toad House code clobbers it to
+//   TOADO; and clear `BigQBlock_GotIt`, so a block's "already opened" bit lasts
+//   one visit instead of one world.
 // Part B — PRG026: replace `LDY World_Num` with a JSR to a two-pass lookup that
 //   maps the level to its room. See build_lookup_routine.
 
-// Part A: PRG030 (fixed bank) trampoline for level init.
-const BIG_Q_PRG030_HOOK: usize = 0x3C958; // file offset of CPY #$07
-const BIG_Q_PRG030_JMP: [u8; 4] = [0x4C, 0x2C, 0x9F, 0xEA];
+// Part A: PRG030 (fixed bank) subroutine for level init, `JSR`ed from
+// `STA ClearPattern` in `PRG030_893F`. That code runs once per entry from the
+// map — not on junctions, so piping out of a bonus room and back in still finds
+// the block opened.
+//
+// The clear is the fix for vanilla's per-world bit. `BigQBlock_GotIt` is one
+// bit per room *screen*, cleared only on world entry, death and game over; the
+// vanilla worlds never put two rooms on the same screen, but the room shuffle,
+// lobby shuffle and Deja Vu all can, and the second room's block then spawns
+// already opened.
+const BIG_Q_PRG030_HOOK: usize = 0x3C955; // file offset of STA ClearPattern
+const BIG_Q_PRG030_JSR: [u8; 3] = [0x20, 0x2C, 0x9F];
+/// 20 reserved, 19 used.
 #[rustfmt::skip]
-const BIG_Q_PRG030_ROUTINE: [u8; 20] = [
-    0xA5, 0x65,        // LDA $65        (real obj_lo, before W8 overwrite)
+const BIG_Q_PRG030_ROUTINE: [u8; 19] = [
+    0x8D, 0x39, 0x07,  // STA ClearPattern (displaced)
+    0xA5, 0x65,        // LDA $65        (real obj_lo, before the Toad House overwrite)
     0x8D, 0xB4, 0x7E,  // STA $7EB4
     0xA5, 0x66,        // LDA $66        (real obj_hi)
     0x8D, 0xB5, 0x7E,  // STA $7EB5
-    0xC0, 0x07,        // CPY #$07       (displaced: W8 check)
-    0xD0, 0x03,        // BNE +3         (skip JMP for non-W8)
-    0x4C, 0x4C, 0x89,  // JMP $894C      (W8 path: save + overwrite)
-    0x4C, 0x64, 0x89,  // JMP $8964      (non-W8 path: skip overwrite)
+    0xA9, 0x00,        // LDA #$00
+    0x8D, 0xE2, 0x07,  // STA BigQBlock_GotIt
+    0x60,              // RTS
 ];
 
 // Part B: PRG026 lookup routine.
@@ -147,7 +159,7 @@ const BIG_Q_EXIT_RETURN: u16 = 0xAA8A;
 ///    not the lobby's. That makes the lookup lobby-shuffle-aware **without any
 ///    per-seed table changes**, and it resolves each level (5-2→4, 6-9→5, …)
 ///    correctly on its own.
-/// 2. **Frozen map-entry ptr ($7EB4/$7EB5)** — saved by Part A before the W8
+/// 2. **Frozen map-entry ptr ($7EB4/$7EB5)** — saved by Part A before the Toad House
 ///    code clobbers `Level_ObjPtrOrig` to $C033. Covers 8-1 and any pipe hit in
 ///    an area not itself in the table.
 /// 3. **`LDY $0727` (World_Num) fallback** — vanilla default, last resort.
@@ -261,8 +273,8 @@ fn build_routine_with(rooms: &[u8; 13], arrive: &[(u8, u8); 13], ret: &[(u8, u8)
 /// Patch Big ? Block bonus room selection to use level identity instead of
 /// World_Num, and seed the spawn slots from our own tables.
 pub(crate) fn fix_big_q_block_rooms(rom: &mut Rom) {
-    // Part A: PRG030 save trampoline (saves $65/$66 before W8 overwrite)
-    rom.write_range(BIG_Q_PRG030_HOOK, &BIG_Q_PRG030_JMP);
+    // Part A: PRG030 entry save + BigQBlock_GotIt clear
+    rom.write_range(BIG_Q_PRG030_HOOK, &BIG_Q_PRG030_JSR);
     rom.write_range(BIG_Q_PRG030_OFFSET, &BIG_Q_PRG030_ROUTINE);
     // Part B: PRG026 two-pass lookup routine + hook
     rom.write_range(BIG_Q_HOOK_OFFSET, &jsr_into_bank(26, BIG_Q_ROUTINE_OFFSET));
@@ -303,11 +315,11 @@ mod tests {
     fn test_fix_big_q_block_rooms() {
         let mut rom = make_test_rom();
         rom.write_range(BIG_Q_HOOK_OFFSET, &[0xAC, 0x27, 0x07]);
-        rom.write_range(BIG_Q_PRG030_HOOK, &[0xC0, 0x07, 0xD0, 0x18]);
+        rom.write_range(BIG_Q_PRG030_HOOK, &[0x8D, 0x39, 0x07]);
 
         fix_big_q_block_rooms(&mut rom);
 
-        assert_eq!(rom.read_range(BIG_Q_PRG030_HOOK, 4), &BIG_Q_PRG030_JMP);
+        assert_eq!(rom.read_range(BIG_Q_PRG030_HOOK, 3), &BIG_Q_PRG030_JSR);
         assert_eq!(
             rom.read_range(BIG_Q_PRG030_OFFSET, BIG_Q_PRG030_ROUTINE.len()),
             &BIG_Q_PRG030_ROUTINE
@@ -409,11 +421,11 @@ mod asm_checks {
         let base = prg_bank_file_to_cpu(26, BIG_Q_ROUTINE_OFFSET);
         let routine = build_lookup_routine();
 
-        // Part A: PRG030 save trampoline, reached by `JMP` over `CPY #$07`.
+        // Part A: PRG030 subroutine, `JSR`ed from `STA ClearPattern`.
         asm::check(&BIG_Q_PRG030_ROUTINE)
             .allocation(BIG_Q_PRG030_OFFSET)
             .origin(crate::randomize::rom_data::prg030_file_to_cpu(BIG_Q_PRG030_OFFSET))
-            .hook(&v, BIG_Q_PRG030_HOOK, &BIG_Q_PRG030_JMP)
+            .hook(&v, BIG_Q_PRG030_HOOK, &BIG_Q_PRG030_JSR)
             .assert_ok();
 
         // Part B: the entry hook, replacing `LDY World_Num`.

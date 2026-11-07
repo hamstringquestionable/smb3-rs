@@ -1,4 +1,4 @@
-//! Test-ROM builder: assemble a playtest ROM from orthogonal, composable knobs.
+//! Test-ROM builder: assemble a playtest ROM from orthogonal, omposable knobs.
 //!
 //! This exists because playtesting needs ROMs that the randomizer proper would
 //! never produce: a specific level parked on tile 1, a map with every lock
@@ -14,7 +14,7 @@
 use crate::ips;
 use crate::randomize::cosmetic::map_background::PALSET_MAPS;
 use crate::randomize::levels::big_q_rooms;
-use crate::randomize::overworld::node_catalog::{EntryView, NodeCatalog};
+use crate::randomize::overworld::node_catalog::{EntryView, NodeCatalog, level_name_key};
 use crate::randomize::overworld::world_order::WORLD_INIT_OPERAND;
 use crate::randomize::rom_data::{self, LevelEntry};
 use crate::rom::Rom;
@@ -482,17 +482,6 @@ pub struct TestRom {
     pub report: Vec<String>,
 }
 
-/// Normalize a level name for matching: case-insensitive, dashes optional.
-///
-/// The catalog spells fortresses `6F1` while the CLI and docs have long used
-/// `6-F1`; both must resolve, and neither spelling is worth making canonical.
-fn norm(name: &str) -> String {
-    name.chars()
-        .filter(|c| *c != '-' && *c != '_' && !c.is_whitespace())
-        .flat_map(|c| c.to_lowercase())
-        .collect()
-}
-
 /// Catalog of the vanilla ROM, used to resolve source level names.
 ///
 /// Always built from vanilla even when the base is randomized: `--place 6F1`
@@ -508,13 +497,15 @@ fn source_catalog(vanilla: &[u8], include_beta: bool) -> Result<Vec<EntryView>, 
 /// `UNLISTED_LEVELS` is checked first: those levels have no pointer table entry
 /// for the catalog to have classified, so they can only be resolved by name.
 fn resolve(catalog: &[EntryView], name: &str) -> Result<LevelEntry, String> {
-    let want = norm(name);
-    if let Some((_, entry)) = rom_data::UNLISTED_LEVELS.iter().find(|(n, _)| norm(n) == want) {
+    let want = level_name_key(name);
+    if let Some((_, entry)) =
+        rom_data::UNLISTED_LEVELS.iter().find(|(n, _)| level_name_key(n) == want)
+    {
         return Ok(entry.clone());
     }
     let hit = catalog
         .iter()
-        .find(|e| norm(&e.name) == want)
+        .find(|e| level_name_key(&e.name) == want)
         .ok_or_else(|| format!("unknown level {name:?} (try --list)"))?;
 
     hit.level_entry
@@ -1061,8 +1052,11 @@ pub fn build(vanilla: &[u8], spec: &TestRomSpec) -> Result<TestRom, String> {
             crate::randomize::qol::apply_real_time_clock(&mut rom);
             rom.set_tag("qol/desert_bro_arena");
             crate::randomize::qol::rebuild_desert_bro_arena(&mut rom);
+            rom.set_tag("qol/big_q_blocks");
+            crate::randomize::qol::fix_big_q_block_rooms(&mut rom);
             report.push(
-                "always-on patches: stomp_fairness, real_time_clock, desert_bro_arena".to_string(),
+                "always-on patches: stomp_fairness, real_time_clock, desert_bro_arena, big_q_blocks"
+                    .to_string(),
             );
         } else {
             report.push("always-on patches: already present (randomized base)".to_string());
@@ -1508,9 +1502,9 @@ mod tests {
 
     #[test]
     fn name_normalization_accepts_both_spellings() {
-        assert_eq!(norm("6-F1"), norm("6f1"));
-        assert_eq!(norm("8B"), norm("8b"));
-        assert_eq!(norm("8-Tank"), norm("8tank"));
+        assert_eq!(level_name_key("6-F1"), level_name_key("6f1"));
+        assert_eq!(level_name_key("8B"), level_name_key("8b"));
+        assert_eq!(level_name_key("8-Tank"), level_name_key("8tank"));
     }
 
     #[test]

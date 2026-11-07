@@ -48,6 +48,13 @@ pub(super) struct Resolved {
     shuffle_spade_games: bool,
 }
 
+#[cfg(test)]
+impl Resolved {
+    pub(super) fn piranha_active(&self) -> bool {
+        self.piranha_active
+    }
+}
+
 /// The maze's model-side decisions, handed from [`maze_model`] to [`maze_rom`].
 pub(super) struct MazeModel {
     state: GlobalState,
@@ -571,7 +578,17 @@ pub(super) fn maze_model(
             build,
             &spine,
             wands,
-            &randomize::maze::graph::Knobs::default(),
+            &randomize::maze::graph::Knobs {
+                // Uncapped, every legal site is a candidate partner: it allows
+                // big jumps rather than forcing them, but over a seed they
+                // become the norm. See `Options::uncapped_pad_jumps`.
+                pad_jump_cap: if options.uncapped_pad_jumps {
+                    u32::MAX
+                } else {
+                    randomize::maze::graph::PAD_JUMP_CAP
+                },
+                ..Default::default()
+            },
             // The writer needs one fortress slot it can park a secret-exit
             // level on. The maze re-pairs forts and locks, which invalidates
             // the builder's answer, so it restores the invariant rather than
@@ -767,10 +784,7 @@ pub(super) fn after_the_map(
 ) {
     // Big [?] bonus-room shuffle: every level with a Big [?] pipe draws from a
     // pool of 19 rooms (11 vanilla + 8 in the otherwise-dead "Unused Level 5").
-    // Runs after the overworld builder because the BigQBlock_GotIt "already
-    // opened" bit is per world *and* per screen, so the legal rooms for a host
-    // depend on where its level ended up — and after `write_overworld`, so the
-    // RNG it consumes cannot move the maps.
+    // Runs after `write_overworld`, so the RNG it consumes cannot move the maps.
     // Off by default. `vanilla_assignments` takes no `rng` *by signature* and
     // writes no bytes, so with the option off every module downstream of here
     // sees the stream it would see if this pass did not exist. It just reports
@@ -882,6 +896,8 @@ pub(super) fn bosses_and_quotes(
             one_f_chest,
         },
     );
+    rom.set_tag("princess_thanks");
+    randomize::cosmetic::king_quotes::write_princess_thanks(rom);
 }
 
 /// Stage 14: engine patches — always-on fixes and the option toggles.
@@ -1185,7 +1201,17 @@ pub(super) fn macobra_layer(rom: &mut Rom, options: &Options) {
     }
 }
 
-/// Stage 17: stamp the flag key and seed into the ROM.
+/// Stage 17: cosmetic level music. Last of the level edits, because it traces
+/// each level through the alt pointers the level stages may have rewritten;
+/// its own substream keeps its place in the order out of the seed.
+pub(super) fn level_music(rom: &mut Rom, seed: u64, options: &Options) {
+    if options.level_music {
+        rom.set_tag("cosmetic/level_music");
+        randomize::cosmetic::level_music::randomize(rom, seed);
+    }
+}
+
+/// Stage 18: stamp the flag key and seed into the ROM.
 pub(super) fn stamp(rom: &mut Rom, seed: u64, options: &Options) {
     // Stamp flag key + seed into free space at STAMP_OFFSET (PRG012):
     //   "S3R" magic, a length byte, the flag key bytes, then the seed

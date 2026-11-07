@@ -43,6 +43,7 @@ use rand::Rng;
 use rand::seq::{IndexedRandom, SliceRandom};
 
 use super::super::rom_data::{self, Pos};
+use super::metrics::ShortestBound;
 use super::roles::{PadRole, WorldTerrain, classify};
 use super::{GlobalState, MazeEdge};
 
@@ -76,6 +77,14 @@ pub(crate) struct Knobs {
     /// breaking is the only feedback that says which fort did it), so the
     /// assignment is a bijection and "how many locks" is not a free parameter.
     pub(crate) fort_distance_bias: f64,
+    /// The widest depth gap a pad pair may span before its site falls back to
+    /// the [`PAD_JUMP_KEEP`] roll. [`PAD_JUMP_CAP`] by default; `u32::MAX`
+    /// under the `uncapped_pad_jumps` option, which makes every legal site a
+    /// candidate.
+    pub(crate) pad_jump_cap: u32,
+    /// The anchor pair's span along the airship chain: see [`ANCHOR_SPAN`].
+    /// `None` deals no anchor, which only a census asks for.
+    pub(crate) anchor_span: Option<usize>,
 }
 
 impl Default for Knobs {
@@ -83,7 +92,12 @@ impl Default for Knobs {
     /// that makes it do nothing, so a census with defaults reproduces the
     /// baseline and any movement is attributable to a single dial.
     fn default() -> Self {
-        Knobs { foreign_landing_bias: 7.0 / 8.0, fort_distance_bias: 0.0 }
+        Knobs {
+            foreign_landing_bias: 7.0 / 8.0,
+            fort_distance_bias: 0.0,
+            pad_jump_cap: PAD_JUMP_CAP,
+            anchor_span: Some(ANCHOR_SPAN),
+        }
     }
 }
 
@@ -136,37 +150,10 @@ fn in_valley(world: usize, pos: Pos) -> bool {
     world == rom_data::W8_IDX && pos.1 / 16 == 3
 }
 
-/// May these two sites be paired, given that a pad in the valley is a door
-/// onto the endgame?
-///
-/// **The shortcut is kept, and priced.** A pad that lands on Bowser's bridge is
-/// the best thing the mode can hand a player who went looking for it, and the
-/// worst thing it can hand one who tripped over it on the way past. The
-/// difference is entirely in the *other* end, so that is what this constrains:
-/// the far side must be a site the world's own locks gate ([`PadRole::Shortcut`]
-/// — reachable only once some fortress falls) and it must be in a different
-/// world. Finding the valley then costs a crossing and a fortress.
-///
-/// Symmetric because a pair is two-way: either half may be the valley one, and
-/// a pad whose ends are *both* in the valley is refused outright (neither can
-/// gate the other).
-///
-/// **Why gatedness and not depth.** The honest question is "how late in the run
-/// is the far end", and that is [`super::Spheres`] — which does not exist yet.
-/// Pads are planned before `fill` assigns keys (see `generate`), so the only
-/// reachability facts available here are the ones `roles::classify` derives
-/// from lock *positions*: the walk with every lock shut against the walk with
-/// them open. That split is stable under the fill's swapping, which is what
-/// makes it safe to lean on. Depth would have to be a clause in the deal-accept
-/// predicate instead, paid for in redeals — worth reaching for only if the
-/// census shows these partners clustering early.
-fn valley_earned(a: &Site, b: &Site) -> bool {
-    let ok = |valley: &Site, other: &Site| {
-        !in_valley(valley.world, valley.pos)
-            || (other.granted == PadRole::Shortcut && other.world != valley.world)
-    };
-    ok(a, b) && ok(b, a)
-}
+/// The last valley column a pad tile may take: the level at (5,50) and the
+/// fortress cell at (5,52), the two nodes before the dealt bridge spans. A pad
+/// any further right would skip the spans and land beside Bowser.
+const VALLEY_PAD_LAST_COL: usize = 52;
 
 /// Manhattan span between two cells of the same world's grid.
 fn span(a: Pos, b: Pos) -> usize {
@@ -181,7 +168,7 @@ fn span(a: Pos, b: Pos) -> usize {
 pub(crate) fn plan_pads<R: Rng>(state: &GlobalState, knobs: &Knobs, rng: &mut R) -> Vec<PlacedPad> {
     let terrain = classify_all(state);
     let sites = claim_sites(state, &terrain, rng);
-    pair_up(sites, knobs, rng)
+    pair_up(sites, state, knobs, rng)
 }
 
 /// Sort every world's terrain into the pools the roles draw from.
@@ -209,7 +196,7 @@ fn claim_sites<R: Rng>(state: &GlobalState, terrain: &[WorldTerrain], rng: &mut 
         if out.len() == PAD_BUDGET {
             break;
         }
-        if let Some(site) = claim_one(terrain, wi, PadRole::Hub, &out, None, rng) {
+        if let Some(site) = claim_one(terrain, wi, PadRole::Hub, &out, rng) {
             out.push(site);
         }
     }
@@ -218,7 +205,10 @@ fn claim_sites<R: Rng>(state: &GlobalState, terrain: &[WorldTerrain], rng: &mut 
     order.shuffle(rng);
     let mut want: Vec<usize> = order
         .iter()
-        .map(|&wi| roll_count(rng).saturating_sub(out.iter().filter(|s| s.world == wi).count()))
+        .map(|&wi| {
+            let rolled = roll_count(&PAD_WEIGHTS, rng);
+            rolled.saturating_sub(out.iter().filter(|s| s.world == wi).count())
+        })
         .collect();
     while out.len() < PAD_BUDGET && want.iter().any(|&n| n > 0) {
         let mut spent_this_round = false;
@@ -229,7 +219,7 @@ fn claim_sites<R: Rng>(state: &GlobalState, terrain: &[WorldTerrain], rng: &mut 
             // Shortcut is asked for first and falls back to Free, which is what
             // "a request, not a contract" means in code.
             let role = if rng.random_bool(0.5) { PadRole::Shortcut } else { PadRole::Free };
-            if let Some(site) = claim_one(terrain, wi, role, &out, None, rng) {
+            if let Some(site) = claim_one(terrain, wi, role, &out, rng) {
                 out.push(site);
                 spent_this_round = true;
             }
@@ -243,14 +233,22 @@ fn claim_sites<R: Rng>(state: &GlobalState, terrain: &[WorldTerrain], rng: &mut 
     out
 }
 
-/// Pads per world: 0..=3, biased to 1 (the charter's distribution).
-const PAD_COUNT_WEIGHTS: [u32; 4] = [2, 5, 2, 1];
+/// Pad-tile roll weights for 0..=3 tiles, the same for every world: never
+/// none, otherwise one, two or three at 2:4:4.
+///
+/// One roll serves every world because [`PAD_JUMP_CAP`] decides what a pad
+/// costs the run, not where it stands. Before the cap, density had to be kept
+/// out of the early worlds by hand (lighter rolls for the opening and for W8),
+/// since pads there were the shortcuts that tripped the content floor; with
+/// the cap pairing on depth, this roll alone lands at ~14.7 tiles a deal —
+/// the count the retired post-fill rescue pass used to reach.
+const PAD_WEIGHTS: [u32; 4] = [0, 2, 4, 4];
 
 /// Weighted 0..=3.
-pub(crate) fn roll_count<R: Rng>(rng: &mut R) -> usize {
-    let total: u32 = PAD_COUNT_WEIGHTS.iter().sum();
+fn roll_count<R: Rng>(weights: &[u32; 4], rng: &mut R) -> usize {
+    let total: u32 = weights.iter().sum();
     let mut roll = rng.random_range(..total);
-    for (n, &w) in PAD_COUNT_WEIGHTS.iter().enumerate() {
+    for (n, &w) in weights.iter().enumerate() {
         if roll < w {
             return n;
         }
@@ -263,15 +261,12 @@ pub(crate) fn roll_count<R: Rng>(rng: &mut R) -> usize {
 /// host it.
 ///
 /// Falls back from the role's own pool to any free site, and records which role
-/// the chosen tile actually satisfies. `far_from` is the partner constraint: a
-/// site in the same world as an already-claimed half has to be
-/// [`SAME_WORLD_MIN_SPAN`] away from it.
+/// the chosen tile actually satisfies.
 fn claim_one<R: Rng>(
     terrain: &[WorldTerrain],
     world: usize,
     role: PadRole,
     claimed: &[Site],
-    far_from: Option<Pos>,
     rng: &mut R,
 ) -> Option<Site> {
     if claimed.iter().filter(|s| s.world == world).count() >= PADS_PER_WORLD_MAX {
@@ -283,7 +278,7 @@ fn claim_one<R: Rng>(
             .iter()
             .copied()
             .filter(|&p| !claimed.iter().any(|s| s.world == world && s.pos == p))
-            .filter(|&p| far_from.is_none_or(|q| span(p, q) >= SAME_WORLD_MIN_SPAN))
+            .filter(|&p| !in_valley(world, p) || p.1 <= VALLEY_PAD_LAST_COL)
             .collect()
     };
     let mut pool = free(&t.sites_for(role));
@@ -294,43 +289,186 @@ fn claim_one<R: Rng>(
     Some(Site { world, pos, requested: role, granted: t.role_of_site(pos) })
 }
 
+/// The widest depth gap a pad pair may span, in levels: how much deeper into
+/// the run one end is than the other, by [`ShortestBound::depths`] over the
+/// maze so far (re-read after every pair, since each pad moves what is past
+/// it).
+///
+/// **Why depth.** A pad joining two places at much the same depth saves the
+/// run little; one joining an early place to a deep one is the shortcut that
+/// puts a deal under the content floor. Over 10,000 K=0 deals, pads spanning
+/// 8+ were a fifth of all pads and carried half of every level saved, and no
+/// pad spanning 5 or less saved 6+. Which worlds a pad joins, or its role,
+/// predicted far less.
+///
+/// **Why 9.** Places close in depth are mostly in the same world or the next
+/// one along the airship chain, so a tight cap alone turns pads into
+/// neighbour hops: at 8 with a random pick, 60% of pairs joined adjacent
+/// worlds (uncapped: 24%), which a playtest felt. [`choose_partner`] now
+/// prefers a partner two or more worlds away, and with that the cap could
+/// widen by one. Measured (2,000 seeds, flat [`PAD_WEIGHTS`], vanilla /
+/// generated): neighbour pairs 25% / 22%, K=0 redeals 19% / 25% (uncapped:
+/// 39% / 43%), ~15 tiles a deal. A cycling deck of caps (12/10/8/6) measured
+/// the same and was not worth the machinery.
+pub(crate) const PAD_JUMP_CAP: u32 = 9;
+
+/// The chance, per level past [`PAD_JUMP_CAP`], that a site with nothing in
+/// reach keeps its nearest partner anyway: one past keeps it this often, two
+/// past this squared, and so on. Otherwise the site is dropped.
+///
+/// This is the dial for the occasional big jump. At 0.7 (with a cap of 8)
+/// about one seed in six shipped a pad past the cap, nearly all of them one or
+/// two over; about a fifth of the deals that rolled one were redealt by the
+/// floor, against a tenth overall, so most survive to the player.
+const PAD_JUMP_KEEP: f64 = 0.7;
+
+/// **The anchor pair**: before any other pair, one site in the world at
+/// airship-chain position 1 or 2 (game worlds 2-3) is joined to a site this
+/// many positions further along, past [`PAD_JUMP_CAP`]. The cap then governs
+/// every other pair.
+///
+/// **Why.** What makes a seed linear is how many stages every route must
+/// play, and the pad deal drives that more than anything else in a maze. An
+/// early shortcut into the middle of the run is the pad shape that lowers
+/// it, and a capped pairing deals none on over half of seeds. One guaranteed
+/// one does what uncapping every pad does to the linear tail without
+/// flattening the long seeds. Harness census, K 0/3/4, vanilla / generated
+/// maps, before → after: seeds with 14 or fewer required stages 71 / 69% →
+/// 84 / 82%, with 20+ 9 / 9% → 2 / 3%; route families 4.5 / 4.2 → 5.3 / 4.6;
+/// long *and* varied seeds (content 16+, 5+ families) 4.6% → 7.7%, where
+/// uncapped halves them; content 15.1 / 14.8 → 13.9 / 13.7; K=0-4 redeals
+/// 14 / 18% → 21 / 23%. A pad from the first two worlds into the last rises
+/// 11% → 22% of seeds: the anchor pulls the deep worlds closer, and the cap
+/// then admits more of those. A span of 5 was worse on every figure. See
+/// `docs/world_maze_design.md`, "The anchor pair".
+const ANCHOR_SPAN: usize = 4;
+
 /// Turn claimed sites into pairs, and throw away anything left over.
 ///
 /// Each site is offered the kind of partner [`Knobs::foreign_landing_bias`]
-/// rolled — another world, or its own — and falls back to the other kind rather
-/// than going unpaired, because a crossing is what the budget is for and an
-/// unpaired site is nothing at all.
-fn pair_up<R: Rng>(sites: Vec<Site>, knobs: &Knobs, rng: &mut R) -> Vec<PlacedPad> {
+/// rolled — another world, or its own — and falls back to the other kind
+/// rather than going unpaired. What it will not settle for is a partner much
+/// deeper or shallower than itself: see [`PAD_JUMP_CAP`].
+fn pair_up<R: Rng>(
+    sites: Vec<Site>,
+    state: &GlobalState,
+    knobs: &Knobs,
+    rng: &mut R,
+) -> Vec<PlacedPad> {
+    let spine_pos = spine_positions(state);
+    // Depth is re-read after every pair: a new pad moves everything past it.
+    let mut bound = ShortestBound::new(state);
+    let mut depth = bound.depths();
     let mut pool = sites;
     pool.shuffle(rng);
     let mut out = Vec::new();
+    // The anchor pair is dealt first, so the cap and every preference below
+    // see it in the depths. No early site, or nothing at its span: no anchor.
+    if let Some(span) = knobs.anchor_span {
+        let early: Vec<usize> =
+            (0..pool.len()).filter(|&i| (1..=2).contains(&spine_pos[pool[i].world])).collect();
+        if let Some(&i) = early.choose(rng) {
+            let a = pool.remove(i);
+            let far: Vec<usize> = (0..pool.len())
+                .filter(|&j| spine_pos[pool[j].world] == spine_pos[a.world] + span)
+                .collect();
+            match far.choose(rng) {
+                Some(&j) => {
+                    let b = pool.remove(j);
+                    bound.link((a.world, a.pos), (b.world, b.pos));
+                    depth = bound.depths();
+                    out.push(half(a, b));
+                    out.push(half(b, a));
+                }
+                None => pool.push(a),
+            }
+        }
+    }
     while let Some(a) = pool.pop() {
         let cross = rng.random_bool(knobs.foreign_landing_bias.clamp(0.0, 1.0));
         // No legal partner left: `a` is dropped rather than shipped pointing
         // nowhere.
-        let Some(i) = choose_partner(&pool, &a, cross, rng) else { continue };
+        let depth_of = |s: &Site| depth[bound.cell((s.world, s.pos))];
+        let Some(i) =
+            choose_partner(&pool, &a, cross, knobs.pad_jump_cap, &depth_of, &spine_pos, rng)
+        else {
+            continue;
+        };
         let b = pool.remove(i);
+        bound.link((a.world, a.pos), (b.world, b.pos));
+        depth = bound.depths();
         out.push(half(a, b));
         out.push(half(b, a));
     }
     out
 }
 
-/// Index into `pool` of a site `a` may be paired with, preferring the rolled
-/// kind and settling for the other.
-fn choose_partner<R: Rng>(pool: &[Site], a: &Site, cross: bool, rng: &mut R) -> Option<usize> {
-    // Both `pick`s below take this, the fallback included — deliberately. The
-    // fallback exists to relax the rolled cross/local *preference*, never
-    // legality, and an unearned valley pad is illegal rather than unpreferred.
-    let legal = |b: &Site| {
-        (b.world != a.world || span(a.pos, b.pos) >= SAME_WORLD_MIN_SPAN) && valley_earned(a, b)
-    };
+/// Each world's place on the airship chain, followed from the start world. A
+/// world off the chain gets the chain's length: it is reached only by pad, as
+/// far from anywhere as the graph goes (the fill reads it the same way).
+fn spine_positions(state: &GlobalState) -> [usize; 8] {
+    let mut chain = vec![state.start.0];
+    while let Some(next) = state.edges.iter().find_map(|e| match *e {
+        MazeEdge::Airship { from_world, to_world } if from_world == *chain.last()? => {
+            Some(to_world)
+        }
+        _ => None,
+    }) {
+        if chain.contains(&next) {
+            break;
+        }
+        chain.push(next);
+    }
+    let mut pos = [chain.len(); 8];
+    for (i, &w) in chain.iter().enumerate() {
+        pos[w] = i;
+    }
+    pos
+}
+
+/// Index into `pool` of a site `a` may be paired with: within `cap` (normally
+/// [`PAD_JUMP_CAP`]) of its depth if any is — a world two or more airships away
+/// first, then the rolled kind, then any; failing that, the nearest
+/// depth there is, on a [`PAD_JUMP_KEEP`] roll. `None` drops `a`.
+///
+/// `spine_pos` is each world's place on the airship chain; "two away" is
+/// measured there, not in ROM order.
+fn choose_partner<R: Rng>(
+    pool: &[Site],
+    a: &Site,
+    cross: bool,
+    cap: u32,
+    depth_of: &dyn Fn(&Site) -> u32,
+    spine_pos: &[usize; 8],
+    rng: &mut R,
+) -> Option<usize> {
+    // Every `pick` below takes this, the fallbacks included: they relax the
+    // *preferences* (the rolled cross/local kind, then the jump), never
+    // legality.
+    let legal = |b: &Site| b.world != a.world || span(a.pos, b.pos) >= SAME_WORLD_MIN_SPAN;
+    let short = |b: &Site| depth_of(a).abs_diff(depth_of(b)) <= cap;
+    let kind = |b: &Site| (b.world != a.world) == cross;
+    let far = |b: &Site| spine_pos[a.world].abs_diff(spine_pos[b.world]) >= 2;
     let pick = |f: &dyn Fn(&Site) -> bool, rng: &mut R| -> Option<usize> {
         let candidates: Vec<usize> =
             pool.iter().enumerate().filter(|(_, b)| f(b)).map(|(i, _)| i).collect();
         candidates.choose(rng).copied()
     };
-    pick(&|b: &Site| legal(b) && (b.world != a.world) == cross, rng).or_else(|| pick(&legal, rng))
+    pick(&|b| legal(b) && short(b) && far(b), rng)
+        .or_else(|| pick(&|b| legal(b) && short(b) && kind(b), rng))
+        .or_else(|| pick(&|b| legal(b) && short(b), rng))
+        .or_else(|| {
+            // Nothing within the cap: the nearest depth there is, kept only on
+            // a roll that gets harder the further past the cap it reaches.
+            // Losing the roll drops the site.
+            let jump = |b: &Site| depth_of(a).abs_diff(depth_of(b));
+            let nearest = pool.iter().filter(|b| legal(b)).map(jump).min()?;
+            let over = nearest.saturating_sub(cap).min(64) as i32;
+            if !rng.random_bool(PAD_JUMP_KEEP.powi(over)) {
+                return None;
+            }
+            pick(&|b| legal(b) && jump(b) == nearest, rng)
+        })
 }
 
 /// One half of a pair: the pad standing at `from`, aimed at its partner.
@@ -343,78 +481,23 @@ fn half(from: Site, to: Site) -> PlacedPad {
     }
 }
 
-/// Hub pads for worlds the fill left unable to escape their own start region.
-///
-/// Separate from [`plan_pads`] because it runs after the key assignment, on
-/// whatever budget survived it. A rescue costs **two** ids, not one, because a
-/// pad has to have a partner to be a pad at all — so a world with only one id
-/// left gets nothing, and is reported rather than silently shipped.
-pub(crate) fn rescue_pads<R: Rng>(
-    state: &GlobalState,
-    worlds: &[usize],
-    knobs: &Knobs,
-    rng: &mut R,
-) -> Vec<PlacedPad> {
-    let terrain = classify_all(state);
-    // Everything already standing counts against the budget and the per-world
-    // cap, whichever pass placed it.
-    let mut claimed: Vec<Site> = state
-        .pad_edges()
-        .iter()
-        .map(|&((world, pos), _)| Site {
-            world,
-            pos,
-            requested: PadRole::Free,
-            granted: PadRole::Free,
-        })
-        .collect();
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rand::SeedableRng;
+    use rand_chacha::ChaCha8Rng;
 
-    let mut out = Vec::new();
-    for &wi in worlds {
-        if claimed.len() + 2 > PAD_BUDGET {
-            break;
+    /// The roll lands on exactly the counts its table weights: a zero weight
+    /// is a count a world never rolls, and every other count turns up.
+    #[test]
+    fn pad_roll_follows_its_weights() {
+        let mut rng = ChaCha8Rng::seed_from_u64(9);
+        let mut hist = [0usize; 4];
+        for _ in 0..40_000 {
+            hist[roll_count(&PAD_WEIGHTS, &mut rng)] += 1;
         }
-        let Some(hub) = claim_one(&terrain, wi, PadRole::Hub, &claimed, None, rng) else {
-            continue;
-        };
-        claimed.push(hub);
-        match claim_partner(state, &terrain, &hub, knobs, &claimed, rng) {
-            Some(partner) => {
-                claimed.push(partner);
-                out.push(half(hub, partner));
-                out.push(half(partner, hub));
-            }
-            // Nowhere to point: hand the site back rather than ship a pad that
-            // leads nowhere.
-            None => {
-                claimed.pop();
-            }
+        for (n, (&w, &seen)) in PAD_WEIGHTS.iter().zip(&hist).enumerate() {
+            assert_eq!(w > 0, seen > 0, "count {n} rolled {seen} times");
         }
     }
-    out
-}
-
-/// A partner tile for a rescue hub, in a world chosen the way
-/// [`Knobs::foreign_landing_bias`] asks and falling through to any world that
-/// can host one.
-fn claim_partner<R: Rng>(
-    state: &GlobalState,
-    terrain: &[WorldTerrain],
-    hub: &Site,
-    knobs: &Knobs,
-    claimed: &[Site],
-    rng: &mut R,
-) -> Option<Site> {
-    let cross = rng.random_bool(knobs.foreign_landing_bias.clamp(0.0, 1.0));
-    let mut order: Vec<usize> = (0..state.worlds.len()).filter(|&o| o != hub.world).collect();
-    order.shuffle(rng);
-    if cross {
-        order.push(hub.world);
-    } else {
-        order.insert(0, hub.world);
-    }
-    order.into_iter().find_map(|wi| {
-        let far = (wi == hub.world).then_some(hub.pos);
-        claim_one(terrain, wi, PadRole::Free, claimed, far, rng)
-    })
 }

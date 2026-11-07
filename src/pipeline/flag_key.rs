@@ -284,6 +284,7 @@ pub(super) const NOT_ENCODED: &[&str] = &[
     "remove_flashing",     // cosmetic/accessibility; static patch, no RNG
     "king_quotes",         // cosmetic flavor text; draws its RNG either way
     "fireball_hearts",     // cosmetic; static patch, no RNG
+    "level_music",         // cosmetic; its own RNG substream
     "skip_rom_validation", // operational (CLI/WASM input handling), not randomization
     "generated_worlds",    // testrom's per-world switch; keys carry `generated_overworld`
 ];
@@ -481,10 +482,12 @@ mod payload {
         pub(super) water_stomp: bool,
         /// Generated Overworld. Appended and false by default.
         pub(super) generated_overworld: bool,
+        /// Uncapped maze pad jumps. Appended and false by default.
+        pub(super) uncapped_pad_jumps: bool,
 
         // --- Reserve ---
-        // 128 bits. Adding an option is: declare it immediately above this
-        // block, then take the same number of bits off `B19`. An older key
+        // 127 bits. Adding an option is: declare it immediately above this
+        // block, then take the same number of bits off the reserve. An older key
         // simply has those bits zero, which is "off" for a bool and the default
         // for every enum here, so it stays a correct key for the settings it
         // named — no version bump, and keys already in circulation keep working.
@@ -493,10 +496,8 @@ mod payload {
         // one: the crate reports `OneMod8: TotalSizeIsMultipleOfEightBits is not
         // satisfied` against the struct. It means the widths no longer add up to
         // `bytes * 8`, nothing more.
-        //
-        // Two fields because the crate's widths stop at B128.
         #[skip]
-        __: B128,
+        __: B127,
     }
 }
 
@@ -546,11 +547,12 @@ impl Options {
             bro_battle_timer, deja_vu, deja_vu_forts,
             fire_flower, piranha_shuffle, wild_injections,
             starting_lives, world_count, world_maze, maze_wands, hints, item_gates,
-            mariomon, water_stomp, generated_overworld,
+            mariomon, water_stomp, generated_overworld, uncapped_pad_jumps,
             starting_items,
             // Not encoded — see NOT_ENCODED for the reason on each.
             palettes: _, palette_themed: _, player_color: _,
-            remove_flashing: _, king_quotes: _, fireball_hearts: _, skip_rom_validation: _,
+            remove_flashing: _, king_quotes: _, fireball_hearts: _, level_music: _,
+            skip_rom_validation: _,
             generated_worlds: _,
         } = self;
 
@@ -638,6 +640,7 @@ impl Options {
             .with_mariomon(*mariomon)
             .with_water_stomp(*water_stomp)
             .with_generated_overworld(*generated_overworld)
+            .with_uncapped_pad_jumps(*uncapped_pad_jumps)
             .with_starting_item_0(sanitize_item(item(0)))
             .with_starting_item_1(sanitize_item(item(1)))
             .with_starting_item_2(sanitize_item(item(2)))
@@ -703,6 +706,7 @@ impl Options {
             mariomon: f.mariomon(),
             water_stomp: f.water_stomp(),
             generated_overworld: f.generated_overworld(),
+            uncapped_pad_jumps: f.uncapped_pad_jumps(),
             poison_mushrooms: f.poison_mushrooms(),
             modern_powerups: f.modern_powerups(),
             anchor_visuals: f.anchor_visuals(),
@@ -757,6 +761,7 @@ impl Options {
             remove_flashing: true,
             king_quotes: true,
             fireball_hearts: false,
+            level_music: false,
             skip_rom_validation: false,
             generated_worlds: 0,
         }

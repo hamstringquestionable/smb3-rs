@@ -103,7 +103,12 @@ const fn fs(
 pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
     // PRG030 (fixed bank, always mapped $8000–$9FFF, file 0x3C010)
     fs(0x3DF20, 28, &["world_order"], "routine + tables"),
-    fs(0x3DF3C, 20, &["big_q_blocks"], "big_q_block: save obj_ptr trampoline"),
+    fs(
+        0x3DF3C,
+        20,
+        &["big_q_blocks"],
+        "big_q_block: entry save + GotIt clear (20 reserved, 19 used)",
+    ),
     fs(
         0x3DF70,
         30,
@@ -479,7 +484,7 @@ pub(crate) const FS_WORLD_ORDER: usize = 0x3DF20; // 28 bytes
 /// the $A000 window) does not apply — `prg030_file_to_cpu` is its counterpart.
 pub(crate) const WORLD_ORDER_CPU: u16 = super::prg030_file_to_cpu(FS_WORLD_ORDER);
 
-pub(crate) const FS_BIG_Q_SAVE: usize = 0x3DF3C; // 20 bytes
+pub(crate) const FS_BIG_Q_SAVE: usize = 0x3DF3C; // 20 reserved, 19 used
 
 // The 30-byte run at 0x3DF70 ($9F60-$9F7D) is the "probably unused space"
 // southbird's `prg030.asm` shows between `PRG030_SUB_9F50`'s `RTS` and
