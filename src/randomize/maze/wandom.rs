@@ -4,15 +4,15 @@
 //! # What the player sees
 //!
 //! The map's wand readout ([`crate::randomize::maze::wand_readout`]) reads
-//! `N/?` instead of `N/K`. Somewhere early in the maze one level is drawn as a
+//! `N/×` instead of `N/K`. Somewhere early in the maze one level is drawn as a
 //! **pyramid** (`$69`, the vanilla 2-Pyramid tile) instead of a numbered panel.
-//! Beating it plays the 1-up jingle and the `?` becomes K for the rest of the
+//! Beating it plays the 1-up jingle and the `×` becomes K for the rest of the
 //! game. The oracle king says which world it is in.
 //!
 //! # The three decisions, all made here
 //!
-//! - **K** ([`roll_wands`]): uniform over 1-7, capped by the airships the spine
-//!   offers, from its own substream so nothing else in the seed moves with it.
+//! - **K** ([`roll_wands`]): uniform over 2-6 ([`WANDOM_K`]), capped by the
+//!   airships the spine offers, from its own substream so nothing else in the seed moves with it.
 //! - **Which level** ([`pick_pyramid`]): an *optional* level — the maze is still
 //!   winnable with its cell walled off — in a world near the start, by telepad
 //!   distance. See its docs for the order.
@@ -56,12 +56,20 @@ pub(crate) const TILE_PYRAMID: u8 = 0x69;
 /// Salt for [`roll_wands`]' substream: "WANDOM_1".
 pub(crate) const WANDOM_SALT: u64 = 0x5741_4E44_4F4D_5F31;
 
-/// Roll K: uniform over 1-7, capped at the airships the spine offers. With
-/// `world_count < 7` the spine is shorter and fewer wands exist at all, which
-/// is the same cap `maze_model` puts on a fixed K.
+/// The range K is rolled from. The user's call after the first build (which
+/// rolled 1-7): the ends are left out, so a hidden K is never "none to speak
+/// of" or "every airship".
+pub(crate) const WANDOM_K: std::ops::RangeInclusive<u8> = 2..=6;
+
+/// Roll K: uniform over [`WANDOM_K`], capped at the airships the spine offers.
+/// With `world_count < 7` the spine is shorter and fewer wands exist at all,
+/// which is the same cap `maze_model` puts on a fixed K; a spine too short for
+/// the range's floor rolls whatever it has.
 pub(crate) fn roll_wands<R: Rng>(spine_len: usize, rng: &mut R) -> u8 {
     let airships = spine_len.saturating_sub(1).min(usize::from(MAX_WANDS)) as u8;
-    rng.random_range(1..=airships.max(1))
+    let hi = (*WANDOM_K.end()).min(airships).max(1);
+    let lo = (*WANDOM_K.start()).min(hi);
+    rng.random_range(lo..=hi)
 }
 
 /// The telepad depths searched, in order: 3, then 4, 2, 5, 1, 6, 7, 8.
@@ -195,6 +203,30 @@ fn on_clear_routine(pyramid: MazePos, k: u8) -> [u8; 25] {
 pub(crate) fn apply(rom: &mut Rom, pyramid: MazePos, k: u8) {
     debug_assert!((1..=MAX_WANDS).contains(&k), "Wandom's K is 1-7");
     rom.write_range(FS_ON_CLEAR, &on_clear_routine(pyramid, k));
+}
+
+/// Point an installed hook at another cell, keeping its K: `testrom
+/// --obelisk-at`, so the reveal can be playtested on a level next to the start
+/// instead of a few worlds in. The obelisk tile stays where the seed drew it.
+///
+/// `false`, and nothing written, when the ROM has no hook to move (not a Wandom
+/// seed). Every byte but the two cell keys must match the routine, so the
+/// reclaimed vanilla code under `FS_ON_CLEAR` cannot pass for one.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn retarget(rom: &mut Rom, cell: MazePos) -> bool {
+    let k = rom.read_byte(FS_ON_CLEAR + 13).wrapping_sub(STATUS_GLYPH_DIGIT0);
+    if !(1..=MAX_WANDS).contains(&k) {
+        return false;
+    }
+    let want = on_clear_routine(cell, k);
+    let installed = want
+        .iter()
+        .enumerate()
+        .all(|(i, &b)| i == 3 || i == 9 || rom.read_byte(FS_ON_CLEAR + i) == b);
+    if installed {
+        apply(rom, cell, k);
+    }
+    installed
 }
 
 #[cfg(test)]
@@ -343,6 +375,24 @@ mod asm_checks {
         assert_eq!(rom.read_range(FS_FORTRESS_FX + 12, 3), &[0x4C, lo, hi]);
     }
 
+    /// `testrom --obelisk-at` moves the trigger and keeps K; on a ROM with no
+    /// hook it writes nothing.
+    #[test]
+    fn retarget_moves_the_cell_and_keeps_k() {
+        let Some(mut rom) = vanilla() else {
+            eprintln!("SKIP: requires the ROM");
+            return;
+        };
+        let before = rom.clone();
+        assert!(!retarget(&mut rom, (0, (2, 4))), "vanilla has no hook to move");
+        assert_eq!(rom.read_range(FS_ON_CLEAR, 25), before.read_range(FS_ON_CLEAR, 25));
+
+        apply(&mut rom, (3, (4, 20)), 5);
+        assert!(retarget(&mut rom, (0, (2, 4))));
+        assert_eq!(rom.read_range(FS_ON_CLEAR, 25), &on_clear_routine((0, (2, 4)), 5));
+        assert_eq!(decode_cell(&rom), (0, (2, 4)));
+    }
+
     /// **Instrument, not a gate**: where the pyramid lands, how often no level
     /// qualifies, what K comes out, and what the pick costs.
     ///
@@ -398,11 +448,18 @@ mod asm_checks {
         let mut seen = [false; 8];
         for _ in 0..500 {
             let k = roll_wands(8, &mut rng);
-            assert!((1..=7).contains(&k));
+            assert!(WANDOM_K.contains(&k), "K {k} is outside {WANDOM_K:?}");
             seen[usize::from(k)] = true;
         }
-        assert!(seen[1..=7].iter().all(|&s| s), "every K from 1 to 7 should come up");
-        // A two-world spine has one airship, so one wand at most.
+        assert!(
+            WANDOM_K.clone().all(|k| seen[usize::from(k)]),
+            "every K in {WANDOM_K:?} should come up"
+        );
+        // A two-world spine has one airship, so one wand at most; three worlds
+        // have two, which caps the range at its floor.
         assert_eq!(roll_wands(2, &mut rng), 1);
+        assert_eq!(roll_wands(3, &mut rng), 2);
+        // Four worlds: three airships, so 2 or 3.
+        assert!((0..50).all(|_| (2..=3).contains(&roll_wands(4, &mut rng))));
     }
 }

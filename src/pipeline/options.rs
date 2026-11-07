@@ -509,7 +509,7 @@ pub struct Options {
     #[serde(default)]
     pub world_maze: bool,
     /// Wands the castle demands, 0–7, or [`MAZE_WANDS_WANDOM`] (8) for
-    /// **Wandom**: the seed rolls K from 1–7 and the map's readout shows `N/?`
+    /// **Wandom**: the seed rolls K from 2–6 and the map's readout shows `N/×`
     /// until the player beats the pyramid level that reveals it. Only read
     /// when `world_maze` is on.
     ///

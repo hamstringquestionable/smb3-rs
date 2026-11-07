@@ -6504,7 +6504,7 @@ Rendered from the ROM unless noted:
 | `$70`-`$73` | "WORLD" as four packed tiles |
 | `$74`-`$77` | the `<M>` and `<L>` pairs |
 | `$78`-`$79` | "1UP" art. `$7A`, right after it, is solid colour 0; nothing has checked whether anything draws it, so it is **not** known to be free |
-| `$E9` / `$EA` / **`$EB`** | `.` / `!` / **`?`** — the dialog-box font's punctuation (Wandom's hidden K uses `$EB`) |
+| `$E9` / `$EA` / **`$EB`** | `.` / `!` / **`?`** — the dialog-box font's punctuation (Wandom tried `$EB` and settled on `$FB` `×`, which matches the digits) |
 | `$B0`-`$C9`, `$D0`-`$DF`, `$CA`-`$CF` | **a full dialog-box font**: A-Z, a-p, q-v (w/x/y/z scattered at `$81`/`$88`/`$8C`/`$8F`). `king_quotes::encode_char` is the authoritative map |
 
 **Correction (2026-11-07): there *is* an alphabet in this page.** The earlier

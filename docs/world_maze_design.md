@@ -1528,8 +1528,8 @@ row/column pairing has to be held to it explicitly.
 ### Wandom: a hidden K (2026-11-07)
 
 `maze_wands = 8` (`?` on the web page, `--maze-wands ?` on the CLI) rolls K
-uniformly from 1-7 (capped by the airships the spine offers) and hides it: the
-readout shows `N/?` until the player beats one level drawn as a **pyramid**
+uniformly from 2-6 (capped by the airships the spine offers) and hides it: the
+readout shows `N/×` until the player beats one level drawn as a **pyramid**
 (`$69`). Then a 1-up plays and the readout shows `N/K` for the rest of the game.
 The oracle king always names the pyramid's world on these seeds. The code is
 `maze::wandom`; what follows is the reasoning it rests on.
@@ -1560,9 +1560,12 @@ The oracle king always names the pyramid's world on these seeds. The code is
 - **The writer keeps sprites off it.** The W8 tank and piranha plants blank the
   cell under them to a path node, which would erase the pyramid; both pickers
   skip a pyramid slot.
-- **Not playtested** at the time of writing. `?` is the dialog font's `$EB`,
-  drawn in colour 0, and may need swapping for a glyph that reads better on the
-  bar.
+- **The hidden K is `×` (`$FB`), not `?`.** The dialog font's `?` (`$EB`) was
+  tried first. It is drawn in colour 0 and sits a pixel above the digits, and
+  moving it would take a CHR edit that also moves every `?` in the king's
+  letters. `×` uses the bar's own colours.
+- **Players see an obelisk.** The king, the web tip and the changelog call it
+  an obelisk; the code says pyramid, after the tile.
 
 ## Data model
 

@@ -185,6 +185,12 @@ struct Cli {
     #[arg(long)]
     canoe_gate: bool,
 
+    /// Move a Wandom seed's reveal to the level at W:ROW,COL (1-based world,
+    /// map row and column), e.g. --obelisk-at 1:2,4. Beating that level then
+    /// plays the 1-up and shows K. Needs --flags with Wands To Enter on ?.
+    #[arg(long, value_parser = parse_obelisk_at)]
+    obelisk_at: Option<(u8, (usize, usize))>,
+
     /// Let the Hammer item break fortress lock tiles on the map.
     #[arg(long)]
     hammer_locks: bool,
@@ -393,6 +399,15 @@ fn parse_set_layout(spec: &str) -> Result<LayoutOverride, String> {
     })
 }
 
+/// `--obelisk-at W:ROW,COL`.
+fn parse_obelisk_at(s: &str) -> Result<(u8, (usize, usize)), String> {
+    let bad = || format!("expected W:ROW,COL (e.g. 1:2,4), got {s:?}");
+    let (w, rc) = s.split_once(':').ok_or_else(bad)?;
+    let (r, c) = rc.split_once(',').ok_or_else(bad)?;
+    let n = |x: &str| x.trim().parse().map_err(|_| bad());
+    Ok((w.trim().parse().map_err(|_| bad())?, (n(r)?, n(c)?)))
+}
+
 fn main() {
     let cli = Cli::parse();
 
@@ -578,6 +593,7 @@ fn main() {
         starting_lives: cli.starting_lives,
         bro_battle_timer: cli.bro_battle_timer,
         canoe_gate: cli.canoe_gate,
+        obelisk_at: cli.obelisk_at,
         hammer_breaks_locks: cli.hammer_locks,
         hammer_breaks_bridges: cli.hammer_bridges,
         water_stomp: cli.water_stomp,

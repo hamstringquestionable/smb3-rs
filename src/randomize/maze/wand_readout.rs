@@ -109,8 +109,8 @@ use crate::randomize::maze::wand_gate::MAX_WANDS;
 use crate::randomize::rom_data::{
     FLIP_FILL_SCORE_CALL, FS_WAND_READOUT, FS_WAND_READOUT_FLIP, GRAPHICS_BUFFER, LEVEL_TILESET,
     PRG026_FILE_BASE, STATUS_BAR_FILL_SCORE_CPU, STATUS_BAR_FILL_TIME_CALL,
-    STATUS_BAR_FILL_TIME_CPU, STATUS_BAR_TIME, STATUS_GLYPH_DIGIT0, STATUS_GLYPH_QUESTION,
-    STATUS_GLYPH_SLASH, TEMP_VAR9,
+    STATUS_BAR_FILL_TIME_CPU, STATUS_BAR_TIME, STATUS_GLYPH_DIGIT0, STATUS_GLYPH_SLASH,
+    STATUS_GLYPH_TIMES, TEMP_VAR9,
 };
 
 /// Where [`wand_readout_routine`]'s output is assembled to run. `$B520`.
@@ -168,11 +168,11 @@ fn wand_readout_routine(k: u8) -> [u8; 35] {
 }
 
 /// The Wandom readout: [`wand_readout_routine`] with K drawn from
-/// [`WANDOM_REVEAL`] instead of an immediate, and `?` while that byte is zero.
+/// [`WANDOM_REVEAL`] instead of an immediate, and `×` while that byte is zero.
 ///
 /// The reveal byte holds the digit tile itself (see [`WANDOM_REVEAL`]), so the
 /// only change is the third store's source — `LDA #K` (2 bytes) becomes
-/// `LDA REVEAL / BNE + / LDA #'?'` (7). The tail shifts five bytes and the
+/// `LDA REVEAL / BNE + / LDA #'×'` (7). The tail shifts five bytes and the
 /// level path's `BNE` stretches to match.
 fn wand_readout_hidden_routine() -> [u8; 40] {
     let [tileset_lo, tileset_hi] = LEVEL_TILESET.to_le_bytes();
@@ -198,7 +198,7 @@ fn wand_readout_hidden_routine() -> [u8; 40] {
         0x8D, time1_lo, time1_hi,                // 23: STA StatusBar_Time+1  ($2B52)
         0xAD, reveal_lo, reveal_hi,              // 26: LDA WANDOM_REVEAL   (digit K, or 0)
         0xD0, 0x02,                              // 29: BNE shown    (-> 33)
-        0xA9, STATUS_GLYPH_QUESTION,             // 31: LDA #$EB     ('?')
+        0xA9, STATUS_GLYPH_TIMES,                // 31: LDA #$FB     ('×')
         0x8D, time2_lo, time2_hi,                // 33: STA StatusBar_Time+2  ($2B53) <- shown
         0x60,                                    // 36: RTS
         0x4C, fill_lo, fill_hi,                  // 37: JMP StatusBar_Fill_Time  <- vanilla
@@ -237,7 +237,7 @@ fn flip_carry_routine() -> [u8; 20] {
 
 /// Install the readout. K = 0 writes nothing.
 ///
-/// `hidden` is Wandom: the readout shows `N/?` until the pyramid level writes
+/// `hidden` is Wandom: the readout shows `N/×` until the pyramid level writes
 /// K into [`WANDOM_REVEAL`], and K itself appears nowhere in the readout.
 ///
 /// See the module docs for the ordering rule: this must run after
@@ -339,11 +339,11 @@ mod asm_checks {
         panic!("the readout never returned");
     }
 
-    /// `N/?` until the pyramid writes K's digit, then `N/K`.
+    /// `N/×` until the pyramid writes K's digit, then `N/K`.
     #[test]
     fn the_hidden_readout_shows_a_question_mark_until_revealed() {
         let d = |n: u8| STATUS_GLYPH_DIGIT0 + n;
-        assert_eq!(run_hidden(2, 0), [d(2), STATUS_GLYPH_SLASH, STATUS_GLYPH_QUESTION]);
+        assert_eq!(run_hidden(2, 0), [d(2), STATUS_GLYPH_SLASH, STATUS_GLYPH_TIMES]);
         assert_eq!(run_hidden(2, d(5)), [d(2), STATUS_GLYPH_SLASH, d(5)]);
         assert_eq!(run_hidden(0, d(1)), [d(0), STATUS_GLYPH_SLASH, d(1)]);
     }

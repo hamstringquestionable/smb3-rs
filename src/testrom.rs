@@ -425,6 +425,11 @@ pub struct TestRomSpec {
     /// Pair with `--starting-items anchor` to test the unlock; without it the
     /// wall is what gets tested.
     pub canoe_gate: bool,
+    /// Move a Wandom seed's reveal trigger to this cell, as `(world, (row,
+    /// col))` with a 1-based world: beating the level there reveals K instead
+    /// of the obelisk's. The obelisk tile stays where the seed drew it.
+    /// Needs a `--flags` base with Wands To Enter on `?`.
+    pub obelisk_at: Option<(u8, (usize, usize))>,
     /// Let the Hammer item break fortress lock tiles on the map.
     pub hammer_breaks_locks: bool,
     /// Let the Hammer item break water-gap (bridge) tiles on the map.
@@ -1244,6 +1249,24 @@ pub fn build(vanilla: &[u8], spec: &TestRomSpec) -> Result<TestRom, String> {
         }
     }
 
+    // 5d. Wandom's trigger, moved. Only a seed that installed the hook has one
+    //     to move, so a base without it is an error rather than a silent no-op.
+    if let Some((world, (row, col))) = spec.obelisk_at {
+        let w = usize::from(world)
+            .checked_sub(1)
+            .filter(|&w| w < 8)
+            .ok_or_else(|| format!("--obelisk-at world {world} is out of range (1-8)"))?;
+        if !crate::randomize::maze::wandom::retarget(&mut rom, (w, (row, col))) {
+            return Err(
+                "--obelisk-at needs a Wandom seed: --flags with Wands To Enter on ?".to_string()
+            );
+        }
+        let tile = rom.read_byte(crate::randomize::rom_data::map_tile_offset(w, row, col));
+        report.push(format!(
+            "obelisk trigger: W{world} row {row} col {col} (tile {tile:#04X}) now reveals K"
+        ));
+    }
+
     // 6. Hammer tile-breaking. Applied here rather than via `Options` so it
     //    works on a vanilla base too — testing what a hammer does to a lock
     //    shouldn't require randomizing the map first.
@@ -1450,6 +1473,7 @@ mod tests {
             starting_items: Vec::new(),
             starting_lives: 5,
             canoe_gate: false,
+            obelisk_at: None,
             hammer_breaks_locks: false,
             hammer_breaks_bridges: false,
             water_stomp: false,

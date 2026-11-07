@@ -240,7 +240,7 @@ struct Cli {
     world_maze: bool,
 
     /// Wands Bowser's castle demands in world-maze mode (0-7, default 3), or `?`
-    /// for Wandom: the seed rolls 1-7 and hides it behind a pyramid level
+    /// for Wandom: the seed rolls 2-6 and hides it behind an obelisk level
     #[arg(long, default_value_t = 3, value_parser = parse_maze_wands)]
     maze_wands: u8,
 
@@ -783,7 +783,7 @@ fn print_summary(options: &Options, seed: u64, output_path: &std::path::Path) {
     eprintln!("  World order: {}", if options.world_order { "on" } else { "off" });
     if options.world_maze {
         if options.maze_wands == MAZE_WANDS_WANDOM {
-            eprintln!("  World maze: on (Wandom: 1-7 wands, revealed by the pyramid)");
+            eprintln!("  World maze: on (Wandom: 2-6 wands, revealed by the obelisk)");
         } else {
             eprintln!("  World maze: on ({} wand(s) to open the castle)", options.maze_wands);
         }
