@@ -49,7 +49,7 @@
 //! what `testrom` does.
 
 use crate::randomize::rom_data::{
-    FS_ANCHOR_USE, MAP_OBJ_IDS_MASTER, MAP_OBJ_XHIS_MASTER, MAP_OBJ_XLOS_MASTER,
+    FS_ANCHOR_USE, MAP_OBJ_IDS_MASTER, MAP_OBJ_XHIS_MASTER, MAP_OBJ_XLOS_MASTER, SOUND_QLEVEL1,
     map_obj_slot_offset,
 };
 use crate::rom::Rom;
@@ -77,8 +77,7 @@ const WORLD_MAP_TILE: u8 = 0xE5;
 const TILE_DOCK: u8 = 0x4B;
 /// `qol::canoe_summon`'s routine (PRG010, origin-locked to `$DEA5`).
 const CANOE_SUMMON_CPU: u16 = 0xDEA5;
-/// `Sound_QLevel1` and the "item used" poof vanilla queues into it.
-const SOUND_QLEVEL1: u16 = 0x04F2;
+/// The "item used" poof vanilla queues into [`SOUND_QLEVEL1`].
 const SND_LEVELPOOF: u8 = 0x80;
 /// `Inventory_ForceFlip` — closes the panel and returns to the map.
 const INVENTORY_FORCE_FLIP: u16 = 0xA426;

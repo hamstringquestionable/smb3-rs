@@ -1185,6 +1185,9 @@ pub(crate) struct OracleFacts<'a> {
     /// 1-F's treasure chest, or `None` when the fort deal left that level off
     /// every map this seed.
     pub(crate) one_f_chest: Option<OneFChest>,
+    /// Internal world number of Wandom's pyramid — the level whose clear
+    /// reveals the wand count. `None` on every seed without one.
+    pub(crate) pyramid_world: Option<usize>,
 }
 
 /// The chest in 1-F's sub-area — what is in it, and where the level landed.
@@ -1216,7 +1219,11 @@ fn oracle_remark(facts: &OracleFacts, rng: &mut ChaCha8Rng) -> Lines {
     let mut repertoire = vec![topic_stomp_thresholds(facts)];
     repertoire.extend(topic_next_world(facts));
     repertoire.extend(topic_one_f_chest(facts));
-    repertoire.choose(rng).expect("the stomp topic never declines").clone()
+    let drawn = repertoire.choose(rng).expect("the stomp topic never declines").clone();
+    // Wandom's pyramid overrides the draw rather than joining it: the count is
+    // hidden until it is beaten, so the player has to learn it exists. The draw
+    // above still happens, which keeps the stream where it was.
+    topic_pyramid(facts).unwrap_or(drawn)
 }
 
 /// The eight worlds by name, indexed by internal world number.
@@ -1280,6 +1287,19 @@ fn topic_next_world(facts: &OracleFacts) -> Option<Lines> {
         String::new(),
         format!("{}.", WORLD_NAMES[next]),
         NEXT_WORLD_FLAVOUR[next].into(),
+    ])
+}
+
+/// Where Wandom's pyramid is. Silent on every seed without one.
+fn topic_pyramid(facts: &OracleFacts) -> Option<Lines> {
+    let world = facts.pyramid_world?;
+    Some([
+        "A pyramid in".into(),
+        WORLD_NAMES[world].into(),
+        "knows how many".into(),
+        "wands you need.".into(),
+        String::new(),
+        "Beat it and see.".into(),
     ])
 }
 
@@ -1498,7 +1518,12 @@ mod tests {
 
     /// Facts with nothing in them but a stomp table: the shape most tests want.
     fn facts(koopaling_hits: [u8; 7]) -> OracleFacts<'static> {
-        OracleFacts { koopaling_hits, world_progression: None, one_f_chest: None }
+        OracleFacts {
+            koopaling_hits,
+            world_progression: None,
+            one_f_chest: None,
+            pyramid_world: None,
+        }
     }
 
     #[test]
@@ -1578,6 +1603,7 @@ mod tests {
                 koopaling_hits: VANILLA_KOOPALING_HITS,
                 world_progression: Some(&order),
                 one_f_chest: None,
+                pyramid_world: None,
             };
             let lines = topic_next_world(&f).expect("the first world has a successor here");
             validate_lines("next world", &lines);
@@ -1589,11 +1615,36 @@ mod tests {
                     koopaling_hits: VANILLA_KOOPALING_HITS,
                     world_progression: None,
                     one_f_chest: Some(OneFChest { world, item }),
+                    pyramid_world: None,
                 };
                 if let Some(lines) = topic_one_f_chest(&f) {
                     validate_lines("1-F chest", &lines);
                 }
             }
+        }
+
+        for world in 0..8 {
+            let f = OracleFacts { pyramid_world: Some(world), ..facts(VANILLA_KOOPALING_HITS) };
+            let lines = topic_pyramid(&f).expect("a pyramid always has a world to name");
+            validate_lines("pyramid", &lines);
+        }
+    }
+
+    /// On a Wandom seed the oracle always names the pyramid's world — the
+    /// count is hidden until it is beaten, so the player must hear it exists —
+    /// and the draw still happens, so nothing after it in the stream moves.
+    #[test]
+    fn the_pyramid_overrides_the_draw_without_moving_the_stream() {
+        use rand::{Rng, SeedableRng};
+        let plain = facts(VANILLA_KOOPALING_HITS);
+        let wandom = OracleFacts { pyramid_world: Some(2), ..facts(VANILLA_KOOPALING_HITS) };
+        for seed in 0..20 {
+            let mut a = ChaCha8Rng::seed_from_u64(seed);
+            let mut b = ChaCha8Rng::seed_from_u64(seed);
+            oracle_remark(&plain, &mut a);
+            let said = oracle_remark(&wandom, &mut b);
+            assert_eq!(said[1], WORLD_NAMES[2], "seed {seed}: the oracle did not name the pyramid");
+            assert_eq!(a.random::<u64>(), b.random::<u64>(), "seed {seed}: the stream moved");
         }
     }
 
@@ -1611,6 +1662,7 @@ mod tests {
                 koopaling_hits: VANILLA_KOOPALING_HITS,
                 world_progression: Some(&order),
                 one_f_chest: None,
+                pyramid_world: None,
             };
             assert!(topic_next_world(&f).is_none(), "order {order:?} has no successor to name");
         }
@@ -1624,6 +1676,7 @@ mod tests {
                 koopaling_hits: VANILLA_KOOPALING_HITS,
                 world_progression: None,
                 one_f_chest: Some(OneFChest { world: 0, item }),
+                pyramid_world: None,
             };
             assert!(topic_one_f_chest(&f).is_none(), "item {item:#04X} must not draw a verdict");
         }

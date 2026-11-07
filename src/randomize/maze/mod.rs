@@ -94,6 +94,10 @@ pub(crate) mod player_worlds;
 // counted in. See `docs/world_maze_design.md`, "The wand gate".
 pub(crate) mod wand_gate;
 pub(crate) mod wand_readout;
+// Wandom: K rolled per seed and hidden behind one optional level drawn as a
+// pyramid; beating it reveals the count. The level clear is noticed through
+// the on-clear hook on map operation 8 (`lock_keys::install_on_clear`).
+pub(crate) mod wandom;
 // World-maze persistence: a world you leave is the world you come back to.
 // Applied by `randomize_inner` on both targets whenever `world_maze` is set —
 // it was `testrom`-only while the mode was still a POC.

@@ -17,14 +17,23 @@ const W8_ARMY_SPRITES: &[(usize, bool)] = &[
 const HB_SPRITE_IDS: [u8; 4] = [0x03, 0x04, 0x05, 0x06];
 
 /// Decide where each W8 army sprite goes. Returns (sprite_slot, grid_pos).
+///
+/// The tank never lands on Wandom's pyramid: the cell under a sprite is
+/// blanked to a path node, which would erase the one tile that says "beat me
+/// to learn K". Seeds without a pyramid filter nothing, so their shuffle is
+/// unchanged.
 pub(super) fn pick_w8_sprite_positions<R: Rng>(
     wa_w8: &WorldAssignments,
+    built_w8: &BuiltWorld,
     rng: &mut R,
 ) -> Vec<(usize, (usize, usize))> {
     let mut fort_positions: Vec<(usize, usize)> = wa_w8.fortress.iter().map(|a| a.pos).collect();
     fort_positions.as_mut_slice().shuffle(rng);
 
-    let mut level_positions: Vec<(usize, usize)> = wa_w8.level.iter().map(|a| a.pos).collect();
+    let is_pyramid =
+        |pos: (usize, usize)| built_w8.slots.iter().any(|s| s.pos == pos && s.is_pyramid);
+    let mut level_positions: Vec<(usize, usize)> =
+        wa_w8.level.iter().map(|a| a.pos).filter(|&pos| !is_pyramid(pos)).collect();
     level_positions.as_mut_slice().shuffle(rng);
 
     let mut fort_iter = fort_positions.into_iter();
@@ -48,12 +57,15 @@ pub(super) fn write_w8_sprites(rom: &mut Rom, positions: &[(usize, (usize, usize
 }
 
 /// True when the slot at `pos` carries a special tile (hand trap, live troll
-/// pipe) that a plant sprite must not cover — the plant's auto-enter would
-/// clobber the special entry behavior.
+/// pipe, Wandom's pyramid) that a plant sprite must not cover — the plant's
+/// auto-enter would clobber the special entry behavior, and the cell under a
+/// plant is blanked to a path node, which would erase the pyramid.
 fn is_special_level_slot(built: &BuiltWorld, wa: &WorldAssignments, pos: (usize, usize)) -> bool {
     built.slots.iter().any(|s| {
         s.pos == pos
-            && (s.is_hand_trap || (s.is_troll_pipe && !wa.demoted_troll_pipes.contains(&pos)))
+            && (s.is_hand_trap
+                || s.is_pyramid
+                || (s.is_troll_pipe && !wa.demoted_troll_pipes.contains(&pos)))
     })
 }
 

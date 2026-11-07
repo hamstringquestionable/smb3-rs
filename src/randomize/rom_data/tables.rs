@@ -1353,6 +1353,17 @@ pub(crate) const TEMP_VAR9: u8 = 0x08;
 /// makes an "N of K" readout possible without adding CHR.
 pub(crate) const STATUS_GLYPH_DIGIT0: u8 = 0xF0;
 pub(crate) const STATUS_GLYPH_SLASH: u8 = 0xFA;
+/// `Sound_QLevel1`: the level sound-effect queue. The map plays it too —
+/// vanilla's own level clear queues `SND_LEVELPOOF` here while on the map
+/// (`PRG011_AB9E`), and so does the rewritten fortress effect.
+pub(crate) const SOUND_QLEVEL1: u16 = 0x04F2;
+/// `SND_LEVEL1UP`, the 1-up jingle, on [`SOUND_QLEVEL1`].
+pub(crate) const SND_LEVEL1UP: u8 = 0x40;
+
+/// `?`, from the dialog-box font that shares the page (`.` `$E9`, `!` `$EA`).
+/// Drawn in colour 0 on colour 3 where the digits are colours 1/2 on 3, so it
+/// need not match them on the bar. Wandom's hidden K.
+pub(crate) const STATUS_GLYPH_QUESTION: u8 = 0xEB;
 
 #[cfg(test)]
 mod world_tables_tests {

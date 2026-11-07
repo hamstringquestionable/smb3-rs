@@ -82,6 +82,7 @@ impl Phase for Forts {
                 section: placed, // fort id — pairing only, no order semantics
                 is_hand_trap: false,
                 is_troll_pipe: false,
+                is_pyramid: false,
                 pin: None,
                 lock_hint: LockHint::default(),
             });

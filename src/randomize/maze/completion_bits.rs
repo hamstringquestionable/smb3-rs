@@ -981,7 +981,7 @@ const NEW_GAME_INIT: [u8; 55] = [
     0xCA,                                           // 13: DEX
     0x10, 0xFA,                                     // 14: BPL -6 -> store_loop
 
-    0xA2, (maze_state::MAZE_STATE_LEN - 1) as u8,   // 16: LDX #17
+    0xA2, (maze_state::MAZE_STATE_LEN - 1) as u8,   // 16: LDX #len-1
     0x9D, maze_state::MAZE_STATE_START as u8,
           (maze_state::MAZE_STATE_START >> 8) as u8, // 18: STA MAZE_STATE,X ; maze_loop
     0xCA,                                           // 21: DEX

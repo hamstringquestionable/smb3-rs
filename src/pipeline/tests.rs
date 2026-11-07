@@ -151,7 +151,9 @@ fn audit_options() -> Options {
         world_count: 7,
         swap_start_airship: true,
         world_maze: true,
-        maze_wands: 3,
+        // Wandom, the setting that writes the most: the hidden readout and
+        // the on-clear routine are its own allocations.
+        maze_wands: crate::MAZE_WANDS_WANDOM,
         ..all_on_options()
     }
 }
@@ -1936,6 +1938,30 @@ fn a_maze_player_starts_with_a_permanent_whistle() {
 ///
 /// So this walks the wasm path exactly: JSON in, flag key out, key back to
 /// options, and finally a real ROM to prove the mode actually ran.
+/// Wandom rides on its own flag-key bit: it round-trips, a fixed-K key keeps
+/// its old string, and with the maze off the bit is never written.
+#[test]
+fn flag_key_round_trips_wandom() {
+    let wandom = Options { world_maze: true, maze_wands: MAZE_WANDS_WANDOM, ..Default::default() };
+    let back = Options::from_flag_key(&wandom.to_flag_key()).expect("round trip");
+    assert_eq!(back.maze_wands, MAZE_WANDS_WANDOM, "Wandom did not survive the flag key");
+
+    for k in 0..=7 {
+        let fixed = Options { world_maze: true, maze_wands: k, ..Default::default() };
+        let back = Options::from_flag_key(&fixed.to_flag_key()).expect("round trip");
+        assert_eq!(back.maze_wands, k, "K = {k} did not survive the flag key");
+        assert_ne!(fixed.to_flag_key(), wandom.to_flag_key(), "K = {k} encodes as Wandom");
+    }
+
+    // Maze off: the field is inert, so Wandom must not move the key.
+    let off = Options { maze_wands: MAZE_WANDS_WANDOM, ..Default::default() };
+    assert_eq!(off.to_flag_key(), Options::default().to_flag_key());
+
+    // And it parses from the JSON the web app sends for the "?" pill.
+    let json: Options = serde_json::from_str(r#"{"world_maze":true,"maze_wands":8}"#).unwrap();
+    assert_eq!(json.maze_wands, MAZE_WANDS_WANDOM);
+}
+
 #[test]
 fn the_wasm_json_entry_path_carries_the_maze() {
     // What the JS layer sends when the two controls are set.

@@ -104,12 +104,13 @@
 
 use crate::rom::Rom;
 
-use crate::randomize::maze::maze_state::WANDS_TABLE;
+use crate::randomize::maze::maze_state::{WANDOM_REVEAL, WANDS_TABLE};
 use crate::randomize::maze::wand_gate::MAX_WANDS;
 use crate::randomize::rom_data::{
     FLIP_FILL_SCORE_CALL, FS_WAND_READOUT, FS_WAND_READOUT_FLIP, GRAPHICS_BUFFER, LEVEL_TILESET,
     PRG026_FILE_BASE, STATUS_BAR_FILL_SCORE_CPU, STATUS_BAR_FILL_TIME_CALL,
-    STATUS_BAR_FILL_TIME_CPU, STATUS_BAR_TIME, STATUS_GLYPH_DIGIT0, STATUS_GLYPH_SLASH, TEMP_VAR9,
+    STATUS_BAR_FILL_TIME_CPU, STATUS_BAR_TIME, STATUS_GLYPH_DIGIT0, STATUS_GLYPH_QUESTION,
+    STATUS_GLYPH_SLASH, TEMP_VAR9,
 };
 
 /// Where [`wand_readout_routine`]'s output is assembled to run. `$B520`.
@@ -166,6 +167,45 @@ fn wand_readout_routine(k: u8) -> [u8; 35] {
     code
 }
 
+/// The Wandom readout: [`wand_readout_routine`] with K drawn from
+/// [`WANDOM_REVEAL`] instead of an immediate, and `?` while that byte is zero.
+///
+/// The reveal byte holds the digit tile itself (see [`WANDOM_REVEAL`]), so the
+/// only change is the third store's source — `LDA #K` (2 bytes) becomes
+/// `LDA REVEAL / BNE + / LDA #'?'` (7). The tail shifts five bytes and the
+/// level path's `BNE` stretches to match.
+fn wand_readout_hidden_routine() -> [u8; 40] {
+    let [tileset_lo, tileset_hi] = LEVEL_TILESET.to_le_bytes();
+    let [wands_lo, wands_hi] = WANDS_TABLE.to_le_bytes();
+    let [reveal_lo, reveal_hi] = WANDOM_REVEAL.to_le_bytes();
+    let [time0_lo, time0_hi] = STATUS_BAR_TIME.to_le_bytes();
+    let [time1_lo, time1_hi] = (STATUS_BAR_TIME + 1).to_le_bytes();
+    let [time2_lo, time2_hi] = (STATUS_BAR_TIME + 2).to_le_bytes();
+    let [fill_lo, fill_hi] = STATUS_BAR_FILL_TIME_CPU.to_le_bytes();
+    #[rustfmt::skip]
+    let code = [
+        0xAD, tileset_lo, tileset_hi,            //  0: LDA Level_Tileset
+        0xD0, 0x20,                              //  3: BNE vanilla   (-> 37)
+        0xA0, 0x07,                              //  5: LDY #$07
+        0xA9, 0x00,                              //  7: LDA #$00
+        0x18,                                    //  9: CLC    (sum <= 7, stays clear)
+        0x79, wands_lo, wands_hi,                // 10: ADC WANDS_TABLE,Y   <- loop
+        0x88,                                    // 13: DEY
+        0x10, 0xFA,                              // 14: BPL loop     (-> 10)
+        0x09, STATUS_GLYPH_DIGIT0,               // 16: ORA #$F0     (n -> digit tile)
+        0x8D, time0_lo, time0_hi,                // 18: STA StatusBar_Time+0  ($2B51)
+        0xA9, STATUS_GLYPH_SLASH,                // 21: LDA #$FA
+        0x8D, time1_lo, time1_hi,                // 23: STA StatusBar_Time+1  ($2B52)
+        0xAD, reveal_lo, reveal_hi,              // 26: LDA WANDOM_REVEAL   (digit K, or 0)
+        0xD0, 0x02,                              // 29: BNE shown    (-> 33)
+        0xA9, STATUS_GLYPH_QUESTION,             // 31: LDA #$EB     ('?')
+        0x8D, time2_lo, time2_hi,                // 33: STA StatusBar_Time+2  ($2B53) <- shown
+        0x60,                                    // 36: RTS
+        0x4C, fill_lo, fill_hi,                  // 37: JMP StatusBar_Fill_Time  <- vanilla
+    ];
+    code
+}
+
 /// Carry [`STATUS_BAR_TIME`] through the item-box flip.
 ///
 /// Replaces the flip's `JSR StatusBar_Fill_Score`, replays it, and then copies
@@ -197,15 +237,22 @@ fn flip_carry_routine() -> [u8; 20] {
 
 /// Install the readout. K = 0 writes nothing.
 ///
+/// `hidden` is Wandom: the readout shows `N/?` until the pyramid level writes
+/// K into [`WANDOM_REVEAL`], and K itself appears nowhere in the readout.
+///
 /// See the module docs for the ordering rule: this must run after
 /// [`crate::randomize::maze::wand_gate::apply`], which installs the marker that fills
 /// [`WANDS_TABLE`].
-pub(crate) fn apply(rom: &mut Rom, wands_required: u8) {
+pub(crate) fn apply(rom: &mut Rom, wands_required: u8, hidden: bool) {
     if wands_required == 0 {
         return;
     }
-    let k = wands_required.min(MAX_WANDS);
-    rom.write_range(FS_WAND_READOUT, &wand_readout_routine(k));
+    if hidden {
+        rom.write_range(FS_WAND_READOUT, &wand_readout_hidden_routine());
+    } else {
+        let k = wands_required.min(MAX_WANDS);
+        rom.write_range(FS_WAND_READOUT, &wand_readout_routine(k));
+    }
     rom.write_range(
         STATUS_BAR_FILL_TIME_CALL,
         &[0x20, WAND_READOUT_CPU as u8, (WAND_READOUT_CPU >> 8) as u8],
@@ -244,6 +291,63 @@ mod asm_checks {
         }
     }
 
+    #[test]
+    fn hidden_readout_is_well_formed() {
+        let Some(rom) = vanilla() else { return };
+        asm::check(&wand_readout_hidden_routine())
+            .allocation(FS_WAND_READOUT)
+            .origin(WAND_READOUT_CPU)
+            .hook(
+                &rom.data,
+                STATUS_BAR_FILL_TIME_CALL,
+                &[0x20, WAND_READOUT_CPU as u8, (WAND_READOUT_CPU >> 8) as u8],
+            )
+            .assert_ok();
+        let code = wand_readout_hidden_routine();
+        assert_eq!(
+            &code[37..40],
+            &[0x4C, STATUS_BAR_FILL_TIME_CPU as u8, (STATUS_BAR_FILL_TIME_CPU >> 8) as u8],
+            "the level path no longer reaches the vanilla fill"
+        );
+    }
+
+    /// Run the hidden readout on the map with `held` wands and `reveal` in the
+    /// reveal byte; return the three timer cells.
+    fn run_hidden(held: usize, reveal: u8) -> [u8; 3] {
+        use mos6502::cpu::CPU;
+        use mos6502::instruction::Ricoh2a03;
+        use mos6502::memory::{Bus, Memory};
+        let mut mem = Memory::new();
+        mem.set_bytes(WAND_READOUT_CPU, &wand_readout_hidden_routine());
+        mem.set_byte(LEVEL_TILESET, 0);
+        for w in 0..held {
+            mem.set_byte(WANDS_TABLE + w as u16, 1);
+        }
+        mem.set_byte(WANDOM_REVEAL, reveal);
+        let mut cpu = CPU::new(mem, Ricoh2a03);
+        cpu.registers.stack_pointer = mos6502::registers::StackPointer(0xFD);
+        // A return address on the stack, so the RTS has somewhere to go.
+        cpu.memory.set_byte(0x01FE, 0xFF);
+        cpu.memory.set_byte(0x01FF, 0x7F);
+        cpu.registers.program_counter = WAND_READOUT_CPU;
+        for _ in 0..200 {
+            if cpu.registers.program_counter == 0x8000 {
+                return std::array::from_fn(|i| cpu.memory.get_byte(STATUS_BAR_TIME + i as u16));
+            }
+            cpu.single_step();
+        }
+        panic!("the readout never returned");
+    }
+
+    /// `N/?` until the pyramid writes K's digit, then `N/K`.
+    #[test]
+    fn the_hidden_readout_shows_a_question_mark_until_revealed() {
+        let d = |n: u8| STATUS_GLYPH_DIGIT0 + n;
+        assert_eq!(run_hidden(2, 0), [d(2), STATUS_GLYPH_SLASH, STATUS_GLYPH_QUESTION]);
+        assert_eq!(run_hidden(2, d(5)), [d(2), STATUS_GLYPH_SLASH, d(5)]);
+        assert_eq!(run_hidden(0, d(1)), [d(0), STATUS_GLYPH_SLASH, d(1)]);
+    }
+
     /// The tail must be the call we displaced, aimed at the real routine —
     /// otherwise a level silently loses its timer.
     #[test]
@@ -269,7 +373,7 @@ mod asm_checks {
         let Some(mut rom) = vanilla() else { return };
         let time_call = rom.read_range(STATUS_BAR_FILL_TIME_CALL, 3).to_vec();
         let score_call = rom.read_range(FLIP_FILL_SCORE_CALL, 3).to_vec();
-        apply(&mut rom, 0);
+        apply(&mut rom, 0, false);
         assert_eq!(rom.read_range(STATUS_BAR_FILL_TIME_CALL, 3), &time_call[..]);
         assert_eq!(rom.read_range(FLIP_FILL_SCORE_CALL, 3), &score_call[..]);
     }
@@ -329,7 +433,7 @@ mod asm_checks {
     #[test]
     fn k_clamps_to_the_airships_that_exist() {
         let Some(mut rom) = vanilla() else { return };
-        apply(&mut rom, 200);
+        apply(&mut rom, 200, false);
         assert_eq!(
             rom.read_byte(FS_WAND_READOUT + 27),
             STATUS_GLYPH_DIGIT0 + MAX_WANDS,

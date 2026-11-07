@@ -3517,6 +3517,20 @@ a map effect that busts a lock or builds a bridge, opening progression on the ov
 The entire system lives in PRG010 and uses **17 FX slots** (0x00–0x10), one per
 fortress/ship in the game.
 
+**Op 8 runs after every return to the map alive, not only fortress clears**
+(traced 2026-11-07). Back on the map, `PRG030_90C4` sets `Y = 6` if
+`Map_ReturnStatus` says the player lived (Toad Houses and bonus games included)
+and `Y = 2` if they died, and `PRG030_9128` stores it in `Map_Operation`. Op 6
+(`MO_Wait14Ticks`) waits and increments to 7; op 7 (`MO_DoLevelClear`,
+`prg011.asm:1660`) completes whatever tile the player stands on, and every one
+of its branches (panel flip, poof, map object, pipe) ends at `PRG011_ABBE`,
+which stores 8 — the airship-object branch reaches 8 by `INC`. So a chest
+ending, a secret exit or a level placed twice all pass op 8 with the player
+on the cell they just cleared. The randomizer's rewritten effect
+(`lock_keys::FORTRESS_FX`) leaves at once when no orb armed it, and with an
+on-clear client (`lock_keys::install_on_clear`, first used by Wandom) it hands
+that player cell to a routine of its own instead.
+
 **Mechanism (`MO_DoFortressFX` at Map_Operation 8):**
 
 1. Clearing a fortress sets `Map_DoFortressFX` to a 1-based index (which fortress
@@ -6489,9 +6503,18 @@ Rendered from the ROM unless noted:
 | `$EE` / `$EF` | power-meter arrow, glowing / dark (`StatusBar_Fill_PowerMT`) |
 | `$70`-`$73` | "WORLD" as four packed tiles |
 | `$74`-`$77` | the `<M>` and `<L>` pairs |
+| `$78`-`$79` | "1UP" art. `$7A`, right after it, is solid colour 0; nothing has checked whether anything draws it, so it is **not** known to be free |
+| `$E9` / `$EA` / **`$EB`** | `.` / `!` / **`?`** — the dialog-box font's punctuation (Wandom's hidden K uses `$EB`) |
+| `$B0`-`$C9`, `$D0`-`$DF`, `$CA`-`$CF` | **a full dialog-box font**: A-Z, a-p, q-v (w/x/y/z scattered at `$81`/`$88`/`$8C`/`$8F`). `king_quotes::encode_char` is the authoritative map |
 
-**There is no alphabet** — "WORLD" and M/L are word-glyphs, not a font — so a
-readout here can use digits, a slash and borrowed icons, and cannot spell a word.
+**Correction (2026-11-07): there *is* an alphabet in this page.** The earlier
+claim here ("no alphabet; WORLD and M/L are word-glyphs, not a font") was made
+from the bar's own art and missed that the dialog-box font shares the page —
+rendering all 256 tiles of pages `$5C`-`$5F` shows it plainly. Two caveats
+before spelling words on the bar: the font glyphs are drawn in **colour 0 on
+colour 3**, where the bar's digits are colours 1/2 on 3, so they do not match
+the digits and may be dim against the bar; and the letters are scattered
+(see `encode_char`), so a word costs a lookup per character.
 
 ### Two template copies, and neither owns its cells
 
