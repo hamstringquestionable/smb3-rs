@@ -1294,12 +1294,12 @@ fn topic_next_world(facts: &OracleFacts) -> Option<Lines> {
 fn topic_pyramid(facts: &OracleFacts) -> Option<Lines> {
     let world = facts.pyramid_world?;
     Some([
-        "A pyramid in".into(),
+        "An obelisk in".into(),
         WORLD_NAMES[world].into(),
         "knows how many".into(),
         "wands you need.".into(),
-        String::new(),
-        "Beat it and see.".into(),
+        "Pass its test and".into(),
+        "reveal your fate.".into(),
     ])
 }
 

@@ -13,9 +13,9 @@ deploys.
 
 - World Maze: Wandom. Pick `?` for Wands To Enter and the seed needs a secret
   number of wands, from 1 to 7. The map shows how many you hold over a `?`
-  until you beat the pyramid level, an optional level a few worlds into the
+  until you beat the obelisk level, an optional level a few worlds into the
   maze: then a 1-up chimes and the number appears. The oracle king says which
-  world the pyramid is in.
+  world the obelisk is in.
 
 ## [3.1.0] - 2026-11-07
 

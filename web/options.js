@@ -526,7 +526,7 @@ export const SCHEMA = [
 			.concat([{ value: 8, label: "?" }]),
 		default: 3,
 		label: "Wands To Enter", flavorWhen: { value: 8, text: "Wandom" },
-		tip: "Wands needed before Bowser's castle will open. Fewer is a shorter game; 0 lets you walk straight in if you find a way there. ? picks a secret number from 1 to 7. Beat the pyramid level, somewhere early in the maze, to find out what it is.",
+		tip: "Wands needed before Bowser's castle will open. Fewer is a shorter game; 0 lets you walk straight in if you find a way there. ? picks a secret number from 1 to 7. Beat the obelisk level, somewhere early in the maze, to find out what it is.",
 		icon: WANDS,
 		group: "maze", inFlagKey: true,
 		mode: "maze" },
