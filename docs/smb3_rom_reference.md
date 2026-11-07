@@ -6207,7 +6207,7 @@ runtime state and no tracing of the world-number remap.
 `ORACLE_WORLD` in `king_quotes.rs` relies on exactly this: pinning the world is
 what pins the sprite.
 
-### The letter is level data, and its font has not been located
+### The letter is level data; its font is the status bar's CHR
 
 `TAndK_FadeOutAndGetItem` notes it outright (`prg027.asm:142`):
 
@@ -6222,8 +6222,17 @@ punctuation at `$9A , $E9 . $AB ' $EA ! $EB ?`. **There are no digits**, and the
 scattered tail suggests the set was scavenged from whatever glyphs existed
 rather than read off a proper font block.
 
-Whether digit tiles exist at all is **still open**. Four approaches failed on
-2026-09-13; recording them so they are not repeated:
+**Located 2026-11-04:** the glyphs are in 1 KiB CHR pages `$5E`–`$5F`, the
+pair `StatusBarMTCHR_0800` loads for tiles `$80`–`$FF` (see the status-bar
+section below). A text byte `b` is CHR tile `$5E*64 + (b & $7F)`, at file
+offset `0x40010 + tile*16`. Letter pixels are colour 0 on a colour-3 box. The
+web app's `renderText` (`web/chr.js`) draws the page header from it, and found
+the location by rendering all of CHR to sheets and looking, not by tracing
+banks. `$9F` is a `3`, drawn one pixel lower than the letters. No other digit
+has been checked yet; rendering page `$5E` answers that.
+
+The four approaches that failed on 2026-09-13 stay recorded so they are not
+repeated:
 
 1. *Assume a flat BG pattern table.* Rendering tile `$B0` at `page*4096 + 0xB0*16`
    for every 4 KiB CHR page gives no letterform.
@@ -6239,16 +6248,8 @@ Whether digit tiles exist at all is **still open**. Four approaches failed on
    font-shaped glyphs (2-colour, plausible ink density) finds only a filler `X`
    pattern at CHR offset `0x16940`.
 
-The unexplored lead is (2)'s premise: the letter being level data means its
-glyphs come from a level tileset's banks, so the banks loaded by
-`TAndK_WaitForA` may be superseded before the letter is drawn.
-
-**The cheap way to settle it** is empirical rather than archaeological: write a
-king quote whose bytes sweep `$80..$FF` as raw tile values instead of encoded
-text, build it with `testrom`, and read the letter screen. That renders the
-entire available character set in situ with whatever banks are really live, and
-answers "which digits exist, at which tile numbers" in one screenshot. Fold the
-answer back into this section.
+Approach 3 looked in the wrong banks: the font comes from the status bar's
+pages, not the letter screen's own.
 
 ## World-map tile behavior registries
 
