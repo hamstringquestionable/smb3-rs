@@ -23,6 +23,19 @@ deploys.
   obelisk level, placed the same way as Wandom's. With both options on, the
   oracle king tells you where one of the two obelisks is.
 
+### Changed
+
+- World Maze presets use the new options, and all four now draw Generated
+  Overworld maps. Recommended: Wandom 2-6 and Full hints. Challenging: Wandom
+  4-7, Most hints, world numbers hidden. Max Chaos: Wandom 0-7, Some hints,
+  world numbers hidden.
+- Generated Overworld no longer forces Piranha Shuffle on. Off keeps both
+  piranha plants in World 7, guarding their own levels, as on the original
+  maps; On and Wild work as before.
+- Hammer Bros can use one more map-object slot in each world, and World 8's
+  tank is stored in a slot the game left unused, so worlds have a little more
+  room for map sprites. Seeds roll differently.
+
 ## [3.1.0] - 2026-11-07
 
 ### Added

@@ -294,6 +294,28 @@ pub(crate) fn build<R: Rng>(
     }
 
     let mut worlds: Vec<BuiltWorld> = states.iter().map(|s| s.to_built()).collect();
+    // Every world's sprite slots, from the ROM as the map source left it.
+    // Slot 1 joins the capacity when autoscroll removal retires the airship;
+    // World 7 holds two back for the plants when Piranha Shuffle Off pins
+    // them there on generated maps.
+    for w in &mut worlds {
+        w.sprites = crate::randomize::overworld::sprite_slots::WorldSprites::read(rom, w.world_idx);
+        if flags.airship_slot_free {
+            w.sprites.open_airship_slot();
+        }
+        if flags.reserve_plant_slots && w.world_idx == 6 {
+            w.sprites.reserve_for_plants(2);
+        }
+        // World 8's level tank moves into slot 0 (vanilla parks an unused HELP
+        // there), freeing slot 2 for the Hammer Bros. The writer positions it
+        // there (`writer::sprites::W8_ARMY_SPRITES`).
+        if w.world_idx == 7 {
+            assert!(
+                w.sprites.take_w8_help_slot(2),
+                "World 8's slot 0 is not the parked HELP, or slot 2 is not its tank"
+            );
+        }
+    }
 
     // Toad houses promote first so the smaller, less flexible 22-entry budget
     // lands before spades scramble for the remaining HammerBro slots.
@@ -319,7 +341,7 @@ pub(crate) fn build<R: Rng>(
     // slots it selects from are final (Toad House / spade promotion already
     // consumed any it needed). Decided here; the writer stamps the ROM tables.
     if flags.shuffle_hammer_bros {
-        assign_hb_sprites(rom, data.pickup, &mut worlds, flags.world_maze, rng);
+        assign_hb_sprites(data.pickup, &mut worlds, flags.world_maze, rng);
     }
 
     BuildResult { worlds, fort_counts }

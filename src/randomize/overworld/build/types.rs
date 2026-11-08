@@ -24,6 +24,14 @@ pub(crate) struct BuildFlags {
     /// lock there would be two owners for one tile. Standard mode must not
     /// move, so this is a flag rather than an unconditional rule.
     pub(crate) world_maze: bool,
+    /// Slot 1 is sprite capacity in every world: autoscroll removal retires
+    /// the king scene and the airship, the engine's only writers of it. Off
+    /// with `--keep-autoscroll`, and in tests that build without the option.
+    pub(crate) airship_slot_free: bool,
+    /// Piranha Shuffle Off on generated maps: World 7 holds two sprite slots
+    /// back from the Hammer Bros so both plants always fit beside the levels
+    /// `overworld::piranha_home` pins there.
+    pub(crate) reserve_plant_slots: bool,
 }
 
 /// What kind of node occupies a grid slot.
@@ -183,6 +191,11 @@ pub(crate) struct BuiltWorld {
     /// Redistributed wandering Hammer Bro sprites for this world. Empty when
     /// `shuffle_hammer_bros` is off (the writer keeps the vanilla sprites).
     pub(crate) hb_sprites: Vec<HbSprite>,
+    /// This world's map-object slots: the ledger every sprite goes through
+    /// (`overworld::sprite_slots`). Read from the ROM at the start of the
+    /// build, before the Hammer Bros are dealt into what is left; the writer
+    /// edits a copy and writes it back once.
+    pub(crate) sprites: crate::randomize::overworld::sprite_slots::WorldSprites,
     /// Cells no phase was allowed to place on: the pinned Airship/Bowser (and
     /// Toad House, when unshuffled) tiles, plus every map-object sprite that
     /// keeps its vanilla home — the canoe, the W7 piranha plants,

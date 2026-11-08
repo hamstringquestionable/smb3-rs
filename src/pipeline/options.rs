@@ -785,9 +785,10 @@ pub struct Options {
     #[serde(default)]
     pub antechamber_shuffle: Tri,
     /// Piranha shuffle: release the two W7 piranha plant levels into the
-    /// level pool. `On` = plant sprites follow the levels; `Wild` = plants
-    /// scatter onto ~1 random level slot per world instead (see
-    /// [`PiranhaMode`]).
+    /// level pool. `Off` = they stay in World 7 (on vanilla maps, on their own
+    /// cells; on generated maps, pinned to World 7 slots); `On` = plant sprites
+    /// follow the levels; `Wild` = plants scatter onto ~1 random level slot per
+    /// world instead (see [`PiranhaMode`]).
     #[serde(default)]
     pub piranha_shuffle: PiranhaMode,
     /// Per-world (W1-W7) coin flip: when on, each world independently rolls
@@ -890,7 +891,9 @@ pub struct Options {
     pub skip_rom_validation: bool,
     /// Generated Overworld: every world's map is drawn afresh from one of its
     /// recipes instead of vanilla's layout. Forces Hammer Bro shuffle on (the
-    /// builder must place the bros) and Piranha Shuffle on.
+    /// builder must place the bros). Piranha Shuffle Off pins the two plant
+    /// levels to World 7 instead of leaving them on vanilla cells that no
+    /// longer exist (`overworld::piranha_home`).
     #[serde(default)]
     pub generated_overworld: bool,
     /// Which worlds get a generated map, as a bitmask (bit 0 is World 1), on

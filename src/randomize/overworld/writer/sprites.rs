@@ -1,12 +1,15 @@
-//! W8 army sprites and Hammer-Bro map-sprite writes.
+//! Which map-object sprites go where: World 8's army, piranha plants, and
+//! the Hammer Bros. Decisions are made here; the slots themselves are
+//! `overworld::sprite_slots`, which writes them.
 
 use super::*;
 use crate::randomize::overworld::map_source::WorldMap;
+use crate::randomize::overworld::sprite_slots::{SpriteKind, WorldSprites};
 
 /// W8 army sprite definitions: (map_object_slot, is_fortress).
 /// Tank goes on a level slot, the other 3 go on fortress slots.
 const W8_ARMY_SPRITES: &[(usize, bool)] = &[
-    (2, false), // Tank sprite (ID $0E) → level slot
+    (0, false), // Tank sprite (ID $0E) → level slot; moved into slot 0 by the build
     (3, true),  // Navy/Battleship sprite (ID $0D) → fortress slot
     (4, true),  // Air Force sprite (ID $0F) → fortress slot
     (5, true),  // Super Tank sprite (ID $0E) → fortress slot
@@ -49,10 +52,10 @@ pub(super) fn pick_w8_sprite_positions<R: Rng>(
     result
 }
 
-/// Write W8 army sprite positions to the map object tables.
-pub(super) fn write_w8_sprites(rom: &mut Rom, positions: &[(usize, (usize, usize))]) {
-    for &(sprite_slot, (row, col)) in positions {
-        rom_data::write_map_sprite_position(rom, 7, sprite_slot, row, col);
+/// Move World 8's army sprites to their picked cells.
+pub(super) fn move_w8_sprites(w8: &mut WorldSprites, positions: &[(usize, (usize, usize))]) {
+    for &(sprite_slot, pos) in positions {
+        w8.move_to(sprite_slot, pos);
     }
 }
 
@@ -72,16 +75,9 @@ fn is_special_level_slot(built: &BuiltWorld, wa: &WorldAssignments, pos: (usize,
 /// How many plant sprites this world can still host: empty-able map-object
 /// slots minus the Hammer Bros that will occupy some and the slots kept free
 /// for runtime bonus spawns (white toad house, coin ship).
-fn plant_budget(
-    rom: &Rom,
-    built: &BuiltWorld,
-    map: &WorldMap,
-    wi: usize,
-    shuffle_hammer_bros: bool,
-) -> usize {
-    let eligible = rom_data::eligible_hb_map_slots(rom, wi).len();
+fn plant_budget(built: &BuiltWorld, map: &WorldMap, shuffle_hammer_bros: bool) -> usize {
     let hb_used = if shuffle_hammer_bros { built.hb_sprites.len() } else { map.hb_sprites.len() };
-    eligible.saturating_sub(hb_used + crate::randomize::overworld::build::RESERVED_DYNAMIC_SLOTS)
+    built.sprites.room_for_plants().saturating_sub(hb_used)
 }
 
 /// Decide where piranha plant sprites go (piranha shuffle).
@@ -96,7 +92,6 @@ fn plant_budget(
 /// the slot carries a special tile. Skipped plants simply leave the level as
 /// a normal numbered tile.
 pub(super) fn pick_plant_positions<R: Rng>(
-    rom: &Rom,
     build: &BuildResult,
     data: &OverworldData,
     assignments: &[WorldAssignments],
@@ -111,13 +106,7 @@ pub(super) fn pick_plant_positions<R: Rng>(
 
     let mut budgets: Vec<usize> = (0..8)
         .map(|wi| {
-            plant_budget(
-                rom,
-                &build.worlds[wi],
-                &data.catalog.maps[wi],
-                wi,
-                flags.shuffle_hammer_bros,
-            )
+            plant_budget(&build.worlds[wi], &data.catalog.maps[wi], flags.shuffle_hammer_bros)
         })
         .collect();
 
@@ -172,42 +161,39 @@ pub(super) fn pick_plant_positions<R: Rng>(
     plants
 }
 
-/// Write the piranha plant sprites into map-object slots. Claims the
-/// highest-index empty slot per plant (leaving low slots for the Hammer-Bro
-/// writer, which fills from the bottom) with no reward — the plant levels
-/// reward through their own chest (`piranha_rooms`). Must run before
-/// `write_hb_sprites` so HB slot eligibility sees the claimed slots.
-pub(super) fn write_plant_sprites(rom: &mut Rom, plants: &[(usize, (usize, usize))]) {
-    for &(wi, (row, col)) in plants {
-        let Some(slot) = rom_data::last_empty_map_obj_slot(rom, wi) else {
-            continue; // budget said yes but no slot — should not happen
-        };
-        rom_data::write_map_sprite(
-            rom,
-            wi,
-            slot,
-            row,
-            col,
+/// Put the piranha plant sprites in their worlds' slots: the highest empty slot
+/// per plant (the low slots stay for the Hammer Bros, which fill from the
+/// bottom), with no reward — the plant levels reward through their own chest
+/// (`piranha_rooms`). Before [`deal_hb_sprites`], so the bros see these slots
+/// taken.
+pub(super) fn place_plants(sprites: &mut [WorldSprites], plants: &[(usize, (usize, usize))]) {
+    for &(wi, pos) in plants {
+        // The budget said yes, so a slot exists; skipping is the safe miss.
+        let _ = sprites[wi].place_high(
             crate::randomize::levels::piranha_rooms::PLANT_SPRITE_ID,
+            pos,
+            0,
         );
-        rom.write_byte(rom_data::map_obj_reward_offset(wi, slot), 0);
     }
 }
 
-/// Write the redistributed Hammer Bro sprites decided in the build phase. Clears
-/// every vanilla HB map-object entry first (freeing its slot + reward), then
-/// stamps each world's chosen sprites into eligible map-object slots with a
-/// random type id and the reward picked up from the vanilla encounters.
-pub(super) fn write_hb_sprites<R: Rng>(rom: &mut Rom, build: &BuildResult, rng: &mut R) {
-    for wi in 0..8 {
-        rom_data::clear_hb_sprites(rom, wi);
+/// Deal the Hammer Bros decided in the build phase: every vanilla bro leaves
+/// its slot first, then each world's chosen sprites take its eligible slots
+/// from the bottom, with a random type id and the reward picked up from the
+/// vanilla encounters.
+pub(super) fn deal_hb_sprites<R: Rng>(
+    sprites: &mut [WorldSprites],
+    build: &BuildResult,
+    rng: &mut R,
+) {
+    for world in sprites.iter_mut() {
+        world.clear(SpriteKind::HammerBro);
     }
-    for (wi, built) in build.worlds.iter().enumerate() {
-        let slots = rom_data::eligible_hb_map_slots(rom, wi);
-        for (sprite, &map_slot) in built.hb_sprites.iter().zip(slots.iter()) {
-            let (row, col) = sprite.grid_pos;
+    for (world, built) in sprites.iter_mut().zip(&build.worlds) {
+        let slots = world.hb_eligible();
+        for (sprite, &slot) in built.hb_sprites.iter().zip(slots.iter()) {
             let id = *HB_SPRITE_IDS.choose(rng).unwrap();
-            rom_data::write_hb_sprite(rom, wi, map_slot, row, col, id, sprite.reward);
+            world.set(slot, id, sprite.grid_pos, sprite.reward);
         }
     }
 }

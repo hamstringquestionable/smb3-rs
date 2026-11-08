@@ -30,9 +30,10 @@ use assign::{assign_pool, interleave_hb_by_obj_ptr};
 use grid::write_tile_grid;
 use pointers::{lay_out_rows, write_kept_entry_positions, write_pipe_dests, write_pointer_entries};
 use sprites::{
-    pick_plant_positions, pick_w8_sprite_positions, write_hb_sprites, write_plant_sprites,
-    write_w8_sprites,
+    deal_hb_sprites, move_w8_sprites, pick_plant_positions, pick_w8_sprite_positions, place_plants,
 };
+
+use crate::randomize::overworld::sprite_slots::{SpriteKind, WorldSprites};
 
 use types::{Assignment, HammerBroAssignment, PipeAssignment, UnmetPin, WorldAssignments};
 
@@ -62,7 +63,7 @@ pub(crate) fn write_overworld<R: Rng>(
     // tile pass for the same reason as the army sprites: the level slot under
     // a plant gets a connectivity-aware path node instead of a number tile.
     let plant_positions =
-        pick_plant_positions(rom, build, data, &assignments, &w8_sprite_pos_set, flags, rng);
+        pick_plant_positions(build, data, &assignments, &w8_sprite_pos_set, flags, rng);
 
     // Per-world sprite-covered positions for the tile pass.
     let mut sprite_masks: Vec<HashSet<(usize, usize)>> = vec![HashSet::new(); 8];
@@ -109,10 +110,13 @@ pub(crate) fn write_overworld<R: Rng>(
         // after resort_pointer_table, causing sprites to jump to wrong tiles.
     }
 
-    write_w8_sprites(rom, &w8_sprite_positions);
-    // Plants claim their map-object slots before the HB writer so its slot
-    // eligibility scan sees them as occupied.
-    write_plant_sprites(rom, &plant_positions);
+    // Every map object goes through the sprite ledger, edited in memory and
+    // written once below (`overworld::sprite_slots`).
+    let mut sprites: Vec<WorldSprites> = build.worlds.iter().map(|w| w.sprites.clone()).collect();
+    move_w8_sprites(&mut sprites[7], &w8_sprite_positions);
+    // Plants claim their slots before the Hammer Bros are dealt, so the bros
+    // see them taken.
+    place_plants(&mut sprites, &plant_positions);
     // Keep wandering map objects (Hammer Bros) off plant/army nodes — a bro
     // parked on one would replay the level after it's beaten. Also vetoes
     // hand-trap landings (subsumes the former bros_no_hands patch).
@@ -123,16 +127,21 @@ pub(crate) fn write_overworld<R: Rng>(
     // `plant_positions`: with piranha shuffle off that list is empty, yet
     // vanilla's two W7 plants are still on the map, and a shuffled Hammer
     // Bro beside one walked onto it and replayed it.
-    let plant_sprites: Vec<(usize, (usize, usize))> = (0..8)
-        .flat_map(|wi| {
-            rom_data::read_plant_sprite_positions(rom, wi).into_iter().map(move |pos| (wi, pos))
-        })
+    let plant_sprites: Vec<(usize, (usize, usize))> = sprites
+        .iter()
+        .enumerate()
+        .flat_map(|(wi, s)| s.positions(SpriteKind::Plant).into_iter().map(move |pos| (wi, pos)))
         .collect();
     rom.push_tag("march_veto");
     march_veto::write_march_veto(rom, &w8_sprite_positions, &plant_sprites);
     rom.pop_tag();
     if flags.shuffle_hammer_bros {
-        write_hb_sprites(rom, build, rng);
+        deal_hb_sprites(&mut sprites, build, rng);
+    }
+    // The one write of the map-object tables. Before the start/airship
+    // scaffolding below, which still moves slot 1 on its own.
+    for world in &sprites {
+        world.write(rom);
     }
     // Apply engine-side scaffolding for the per-world start tables: a world
     // swapped by the start ↔ airship swap, or a generated one, which places
@@ -141,7 +150,14 @@ pub(crate) fn write_overworld<R: Rng>(
     if catalog.start_airship_swapped.iter().any(|&b| b)
         || catalog.maps.iter().any(|m| !m.grid.vanilla_layout)
     {
-        crate::randomize::overworld::start_airship_swap::write_engine_scaffolding(rom, catalog);
+        // Slot 1 is the airship's only while the king scene can still spawn
+        // it; once it is sprite capacity the scaffolding must leave it alone.
+        let move_airship = !build.worlds.iter().any(|w| w.sprites.airship_slot_free());
+        crate::randomize::overworld::start_airship_swap::write_engine_scaffolding(
+            rom,
+            catalog,
+            move_airship,
+        );
     }
 
     WrittenOverworld { grids, one_f_world: world_holding_1f(&assignments, data), lock_tiles }

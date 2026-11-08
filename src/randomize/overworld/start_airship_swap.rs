@@ -25,8 +25,9 @@ use rand::Rng;
 use crate::rom::Rom;
 
 use crate::randomize::overworld::node_catalog::{NodeCatalog, NodeKind};
+use crate::randomize::overworld::sprite_slots::WorldSprites;
 use crate::randomize::rom_data::{
-    self, AIRSHIP_OBJ_SLOT, FS_SAS_GAMEOVER_FINALIZE, FS_SAS_SCRH_TABLE, FS_SAS_SCRL_TABLE,
+    AIRSHIP_OBJ_SLOT, FS_SAS_GAMEOVER_FINALIZE, FS_SAS_SCRH_TABLE, FS_SAS_SCRL_TABLE,
     FS_SAS_SEED_HELPER, FS_SAS_X_TABLE, FS_SAS_XHI_TABLE, GAMEOVER_FINALIZE_SITE, Grid,
     MAP_INIT_SCROLL_SITE, MAP_TILE_GRIDS, MAP_Y_STARTS_OFF, W5_IDX,
 };
@@ -151,12 +152,17 @@ fn above_start_override(world_idx: usize) -> Option<u8> {
 ///   * `Map_Init` scroll-store replaced with `JSR seed_helper`
 ///   * `GameOver_TwirlToStart` finalize store replaced with `JSR finalize` so
 ///     the spiral lands on the per-world start instead of vanilla column 2
-///   * Per-swapped-world `Map_Object` slot-1 sprite position move
-pub(crate) fn write_engine_scaffolding(rom: &mut Rom, catalog: &NodeCatalog) {
+///   * Per-swapped-world `Map_Object` slot-1 sprite position move — only when
+///     `move_airship` (`--keep-autoscroll`), when the king scene can still put
+///     the airship in slot 1. With autoscroll removal slot 1 is ordinary sprite
+///     capacity, and moving it would drag whatever was dealt there.
+pub(crate) fn write_engine_scaffolding(rom: &mut Rom, catalog: &NodeCatalog, move_airship: bool) {
     build_position_tables(rom, catalog);
     write_seed_helper(rom);
     write_gameover_finalize(rom);
-    move_airship_sprites(rom, catalog);
+    if move_airship {
+        move_airship_sprites(rom, catalog);
+    }
 }
 
 /// The first map column the camera shows when world `world_idx` starts with
@@ -357,8 +363,8 @@ fn move_airship_sprites(rom: &mut Rom, catalog: &NodeCatalog) {
             continue;
         }
         if let Some(air_entry) = catalog.world(wi).find(|e| matches!(e.kind, NodeKind::Airship)) {
-            let (r, c) = air_entry.grid_pos;
-            rom_data::write_map_sprite_position(rom, wi, AIRSHIP_OBJ_SLOT, r, c);
+            let pos = air_entry.grid_pos;
+            WorldSprites::edit(rom, wi, |w| w.move_to(AIRSHIP_OBJ_SLOT, pos));
         }
     }
 }
