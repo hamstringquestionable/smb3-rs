@@ -23,6 +23,13 @@ deploys.
   obelisk level, placed the same way as Wandom's. With both options on, the
   oracle king tells you where one of the two obelisks is.
 
+### Changed
+
+- World Maze presets use the new options, and all four now draw Generated
+  Overworld maps. Recommended: Wandom 2-6 and Full hints. Challenging: Wandom
+  4-7, Most hints, world numbers hidden. Max Chaos: Wandom 0-7, Some hints,
+  world numbers hidden.
+
 ## [3.1.0] - 2026-11-07
 
 ### Added

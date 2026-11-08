@@ -31,11 +31,14 @@ pub(super) struct Resolved {
     eights_are_wild: bool,
     antechamber_shuffle: bool,
     piranha_active: bool,
-    /// The piranha mode the run uses: the option, except that a run with
-    /// generated worlds never has it off (user, 2026-10-13). Their maps move
-    /// the plant levels, and only a shuffle moves the plants' sprites with
-    /// them, the way Hammer Bro shuffle must be on to place the bros.
+    /// The piranha mode the run uses: the option, except that Off on generated
+    /// worlds is played as On. Their maps have no vanilla plant cells to keep,
+    /// and only a shuffle moves the plants' sprites with their levels.
     piranha: PiranhaMode,
+    /// Off on generated worlds: the plant levels are pinned to World 7 so Off
+    /// still means "the plants stay in World 7" (user, 2026-11-08). See
+    /// `overworld::piranha_home`.
+    piranha_home: bool,
     hints: crate::HintMode,
     /// The worlds whose maps are generated, a bit each (bit 0 is World 1):
     /// all eight with Generated Overworld, else `testrom`'s per-world mask.
@@ -145,6 +148,7 @@ pub(super) fn resolve(seed: u64, options: &Options, rng: &mut ChaCha8Rng) -> Res
         PiranhaMode::Off if generated_worlds != 0 => PiranhaMode::On,
         mode => mode,
     };
+    let piranha_home = options.piranha_shuffle == PiranhaMode::Off && generated_worlds != 0;
 
     Resolved {
         whistles_removed,
@@ -158,6 +162,7 @@ pub(super) fn resolve(seed: u64, options: &Options, rng: &mut ChaCha8Rng) -> Res
         antechamber_shuffle,
         piranha_active: piranha != PiranhaMode::Off,
         piranha,
+        piranha_home,
         hints,
         generated_worlds,
         shuffle_hammer_bros: options.shuffle_hammer_bros || generated_worlds != 0,
@@ -700,6 +705,19 @@ pub(super) fn maze_model(
         }
         MazeModel { state, wands, gated, pyramid, world_obelisk }
     })
+}
+
+/// Stage 8b: Piranha Shuffle Off on generated maps pins the two plant levels
+/// to World 7. After the maze model, which marks the obelisks and may pin
+/// item-gate keys, so the pick sees every slot already spoken for; before the
+/// writer, whose pre-deal honours the pins. Its own substream.
+pub(super) fn home_plants(run: &Resolved, build: &mut BuildResult, seed: u64) {
+    if !run.piranha_home {
+        return;
+    }
+    let mut rng =
+        ChaCha8Rng::seed_from_u64(seed ^ randomize::overworld::piranha_home::PIRANHA_HOME_SALT);
+    randomize::overworld::piranha_home::pin_plants_home(build, &mut rng);
 }
 
 /// Stage 9: write the finished overworld to the ROM in one pass.

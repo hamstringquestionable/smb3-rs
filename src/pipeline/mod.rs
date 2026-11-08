@@ -141,6 +141,7 @@ fn randomize_inner(
     let (pickup, mut build) = stages::overworld_build(rom, options, &run, &catalog, &mut rng);
     let maze =
         stages::maze_model(rom, options, &run, &mut build, progression.as_deref(), seed, &mut rng);
+    stages::home_plants(&run, &mut build, seed);
 
     // --- OVERWORLD CAPTURE POINT ---
     // Hand a clone of the finalized BuildResult (post hands/troll mutations,

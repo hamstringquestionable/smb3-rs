@@ -18,6 +18,7 @@ pub(crate) mod writer;
 
 // --- Passes that edit the build model before the writer ---
 pub(crate) mod hands_levels;
+pub(crate) mod piranha_home;
 pub(crate) mod start_airship_swap;
 pub(crate) mod troll_pipes;
 
