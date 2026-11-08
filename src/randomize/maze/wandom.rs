@@ -16,7 +16,8 @@
 //! - **Which level** ([`pick_pyramid`]): an *optional* level — the maze is still
 //!   winnable with its cell walled off — in a world near the start, by telepad
 //!   distance. See its docs for the order.
-//! - **The ROM side** ([`apply`]): the on-clear routine that notices the clear.
+//! - **The ROM side** ([`trigger`]): one row in the on-clear table
+//!   ([`on_clear`](crate::randomize::maze::on_clear)) that notices the clear.
 //!
 //! # How the clear is noticed
 //!
@@ -24,11 +25,8 @@
 //! exit — anything keyed on the level would have to reason about all of them.
 //! Instead it is keyed on **the map cell**: every return to the map alive passes
 //! map operation 8 with the player standing on what they just cleared, and
-//! [`crate::randomize::overworld::lock_keys::install_on_clear`] sends op 8's
-//! no-orb exit through [`ON_CLEAR_CPU`](crate::randomize::overworld::lock_keys::ON_CLEAR_CPU) with that cell already built into
-//! `T1`/`T2`. The routine here compares them against the pyramid's
-//! [`cell_key`], and on a match stores K's digit tile in [`WANDOM_REVEAL`] and
-//! queues the 1-up sound.
+//! [`on_clear`](crate::randomize::maze::on_clear) scans a table of cells after every such return. The pyramid's
+//! row stores K's digit tile in [`WANDOM_REVEAL`] and queues the 1-up sound.
 //!
 //! Beaten, the pyramid poofs and becomes an M/L panel like any level (`$69` is
 //! inside page 1's completable window), so it cannot be cleared twice.
@@ -39,12 +37,11 @@ use rand::Rng;
 use rand::seq::SliceRandom;
 
 use crate::randomize::maze::maze_state::WANDOM_REVEAL;
+use crate::randomize::maze::on_clear::Trigger;
 use crate::randomize::maze::wand_gate::MAX_WANDS;
 use crate::randomize::maze::{GlobalState, MazeEdge, MazePos};
 use crate::randomize::overworld::build::{BuildResult, SlotKind};
-use crate::randomize::overworld::lock_keys::{ADVANCE_CPU, cell_key};
-use crate::randomize::rom_data::{FS_ON_CLEAR, SND_LEVEL1UP, SOUND_QLEVEL1, STATUS_GLYPH_DIGIT0};
-use crate::rom::Rom;
+use crate::randomize::rom_data::STATUS_GLYPH_DIGIT0;
 
 /// The pyramid: vanilla's 2-Pyramid map tile. It sits in page 1's completable
 /// window (`$67`-`$69`), so the level-clear effect poofs it to an M/L panel
@@ -121,10 +118,19 @@ fn world_depths(state: &GlobalState) -> [Option<u32>; 8] {
 ///   That is the counterfactual the required-level count asks, so a pyramid
 ///   can never be the only way to a lock, a key or the castle.
 ///
+/// `taken` holds obelisks already placed — the hidden-worlds obelisk passes
+/// Wandom's. A taken cell is never picked, and it stays walled off while the
+/// next one is tested, so every obelisk is optional *together* and not merely
+/// one at a time.
+///
 /// Shuffle-then-first is a uniform pick among a tier's qualifying levels that
 /// usually stops after one or two solvability checks rather than running one
 /// per level.
-pub(crate) fn pick_pyramid<R: Rng>(state: &GlobalState, rng: &mut R) -> Option<MazePos> {
+pub(crate) fn pick_pyramid<R: Rng>(
+    state: &GlobalState,
+    rng: &mut R,
+    taken: &[MazePos],
+) -> Option<MazePos> {
     let depths = world_depths(state);
     let reached: HashSet<MazePos> =
         state.spheres().spheres.iter().flat_map(|s| s.reached.iter().copied()).collect();
@@ -143,10 +149,11 @@ pub(crate) fn pick_pyramid<R: Rng>(state: &GlobalState, rng: &mut R) -> Option<M
             .collect();
         tier.shuffle(rng);
         for cell in tier {
-            if !reached.contains(&cell) {
+            if !reached.contains(&cell) || taken.contains(&cell) {
                 continue;
             }
-            if state.spheres_with_blocked(&HashSet::from([cell])).solvable {
+            let blocked: HashSet<MazePos> = taken.iter().copied().chain([cell]).collect();
+            if state.spheres_with_blocked(&blocked).solvable {
                 return Some(cell);
             }
         }
@@ -165,131 +172,38 @@ pub(crate) fn mark_pyramid(build: &mut BuildResult, cell: MazePos) {
     slot.is_pyramid = true;
 }
 
-/// The on-clear routine with one client: the pyramid.
-///
-/// Entered from map operation 8's no-orb exit with the player's cell in
-/// `T1`/`T2` (`$00`/`$01`) in [`cell_key`]'s encoding. Ends `JMP` back to the
-/// effect's own `advance`, so a clear anywhere else costs four compares.
-///
-/// A second client is one more compare block before `done`: its branches are
-/// relative and its exit is the shared `JMP`, so adding one moves nothing the
-/// effect points at.
-///
-/// 41 reserved, 25 used.
-fn on_clear_routine(pyramid: MazePos, k: u8) -> [u8; 25] {
-    let [key0, key1] = cell_key(pyramid.0, pyramid.1);
-    let [reveal_lo, reveal_hi] = WANDOM_REVEAL.to_le_bytes();
-    let [snd_lo, snd_hi] = SOUND_QLEVEL1.to_le_bytes();
-    let [adv_lo, adv_hi] = ADVANCE_CPU.to_le_bytes();
-    #[rustfmt::skip]
-    let code = [
-        0xA5, 0x00,                              //  0: LDA <T1       ; key0 of the cell just cleared
-        0xC9, key0,                              //  2: CMP #pyramid key0
-        0xD0, 0x10,                              //  4: BNE done      (-> 22)
-        0xA5, 0x01,                              //  6: LDA <T2       ; key1
-        0xC9, key1,                              //  8: CMP #pyramid key1
-        0xD0, 0x0A,                              // 10: BNE done      (-> 22)
-        0xA9, STATUS_GLYPH_DIGIT0 + k,           // 12: LDA #digit K
-        0x8D, reveal_lo, reveal_hi,              // 14: STA WANDOM_REVEAL   ; the readout draws this
-        0xA9, SND_LEVEL1UP,                      // 17: LDA #SND_LEVEL1UP
-        0x8D, snd_lo, snd_hi,                    // 19: STA Sound_QLevel1
-        0x4C, adv_lo, adv_hi,                    // 22: JMP advance   <- done
-    ];
-    code
-}
-
-/// Write the on-clear routine. `install_on_clear` (in the lock stage, after the
-/// effect itself is written) is what makes op 8 reach it.
-pub(crate) fn apply(rom: &mut Rom, pyramid: MazePos, k: u8) {
+/// The pyramid's on-clear row: beating its cell puts K's digit tile in
+/// [`WANDOM_REVEAL`], which the readout draws from. The byte starts at zero, so
+/// the dispatcher's `ORA` leaves exactly the digit there.
+pub(crate) fn trigger(pyramid: MazePos, k: u8) -> Trigger {
     debug_assert!((1..=MAX_WANDS).contains(&k), "Wandom's K is 1-7");
-    rom.write_range(FS_ON_CLEAR, &on_clear_routine(pyramid, k));
+    Trigger { cell: pyramid, flag: WANDOM_REVEAL, value: STATUS_GLYPH_DIGIT0 + k }
 }
 
-/// Point an installed hook at another cell, keeping its K: `testrom
+/// Point the pyramid's row at another cell, keeping its K: `testrom
 /// --obelisk-at`, so the reveal can be playtested on a level next to the start
 /// instead of a few worlds in. The obelisk tile stays where the seed drew it.
 ///
-/// `false`, and nothing written, when the ROM has no hook to move (not a Wandom
-/// seed). Every byte but the two cell keys must match the routine, so the
-/// reclaimed vanilla code under `FS_ON_CLEAR` cannot pass for one.
+/// `false`, and nothing written, when the ROM has no pyramid row to move (not
+/// a Wandom seed).
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn retarget(rom: &mut Rom, cell: MazePos) -> bool {
-    let k = rom.read_byte(FS_ON_CLEAR + 13).wrapping_sub(STATUS_GLYPH_DIGIT0);
-    if !(1..=MAX_WANDS).contains(&k) {
-        return false;
-    }
-    let want = on_clear_routine(cell, k);
-    let installed = want
-        .iter()
-        .enumerate()
-        .all(|(i, &b)| i == 3 || i == 9 || rom.read_byte(FS_ON_CLEAR + i) == b);
-    if installed {
-        apply(rom, cell, k);
-    }
-    installed
+pub(crate) fn retarget(rom: &mut crate::rom::Rom, cell: MazePos) -> bool {
+    crate::randomize::maze::on_clear::retarget(rom, WANDOM_REVEAL, cell)
 }
 
 #[cfg(test)]
-mod asm_checks {
+mod tests {
     use super::*;
-    use crate::randomize::overworld::lock_keys::ON_CLEAR_CPU;
-    use crate::randomize::rom_data::{NMI_SAFE_MAX, asm};
-    use mos6502::cpu::CPU;
-    use mos6502::instruction::Ricoh2a03;
-    use mos6502::memory::{Bus, Memory};
+    use crate::randomize::maze::on_clear::{self, installed};
+    use crate::rom::Rom;
 
+    /// The row carries K's digit tile into the reveal byte.
     #[test]
-    fn on_clear_is_well_formed() {
+    fn the_row_reveals_k_as_a_digit() {
         for k in 1..=MAX_WANDS {
-            asm::check(&on_clear_routine((2, (4, 20)), k))
-                .allocation(FS_ON_CLEAR)
-                .origin(ON_CLEAR_CPU)
-                .zero_page(NMI_SAFE_MAX, &[])
-                .assert_ok();
+            let t = trigger((2, (4, 20)), k);
+            assert_eq!((t.flag, t.value), (WANDOM_REVEAL, STATUS_GLYPH_DIGIT0 + k));
         }
-    }
-
-    /// Run the routine on an emulated 2A03 with the player on `at`, and return
-    /// what it left in the reveal byte and the sound queue.
-    fn run(pyramid: MazePos, at: MazePos, k: u8) -> (u8, u8) {
-        let code = on_clear_routine(pyramid, k);
-        let mut mem = Memory::new();
-        mem.set_bytes(ON_CLEAR_CPU, &code);
-        let [k0, k1] = cell_key(at.0, at.1);
-        mem.set_byte(0x0000, k0);
-        mem.set_byte(0x0001, k1);
-        let mut cpu = CPU::new(mem, Ricoh2a03);
-        cpu.registers.program_counter = ON_CLEAR_CPU;
-        for _ in 0..100 {
-            if cpu.registers.program_counter == ADVANCE_CPU {
-                return (cpu.memory.get_byte(WANDOM_REVEAL), cpu.memory.get_byte(SOUND_QLEVEL1));
-            }
-            cpu.single_step();
-        }
-        panic!("the on-clear routine never reached advance");
-    }
-
-    /// The pyramid's own cell reveals K; every other cell — same world, same
-    /// row, same column, another world — falls straight through.
-    #[test]
-    fn only_the_pyramid_cell_reveals() {
-        let pyramid = (2, (4, 20));
-        for k in 1..=MAX_WANDS {
-            assert_eq!(run(pyramid, pyramid, k), (STATUS_GLYPH_DIGIT0 + k, SND_LEVEL1UP));
-        }
-        for other in [(2, (4, 21)), (2, (5, 20)), (3, (4, 20)), (2, (4, 4)), (2, (6, 36))] {
-            assert_eq!(run(pyramid, other, 5), (0, 0), "{other:?} revealed K");
-        }
-    }
-
-    /// The routine's exit is the effect's `advance`, and that address has to
-    /// still be `INC Map_Operation` — the one thing the prologue swap promises
-    /// never to move.
-    #[test]
-    fn the_exit_is_advance() {
-        let code = on_clear_routine((0, (0, 0)), 3);
-        let [lo, hi] = ADVANCE_CPU.to_le_bytes();
-        assert_eq!(&code[22..25], &[0x4C, lo, hi]);
     }
 
     fn vanilla() -> Option<Rom> {
@@ -306,24 +220,20 @@ mod asm_checks {
         }
     }
 
-    /// Read the pyramid's cell back out of the on-clear routine's two compares.
-    fn decode_cell(rom: &Rom) -> MazePos {
-        let key0 = rom.read_byte(FS_ON_CLEAR + 3);
-        let key1 = rom.read_byte(FS_ON_CLEAR + 9);
-        let world = usize::from(key0 & 0x0F);
-        let row = usize::from(key0 >> 4) - 2;
-        let col = usize::from(key1 >> 4) + 16 * usize::from(key1 & 0x0F);
-        (world, (row, col))
+    /// The pyramid's row in a finished ROM's trigger table.
+    fn pyramid_row(rom: &Rom) -> Option<Trigger> {
+        installed(rom)?.into_iter().find(|t| t.flag == WANDOM_REVEAL)
     }
 
     /// **The whole feature on finished ROMs.** For each seed: op 8's no-orb
-    /// exit goes to the on-clear routine; that routine is keyed on a cell that
-    /// really carries the pyramid tile; the digit it reveals is the K the
-    /// maze was built for; the readout is the hidden one; and the level is
-    /// reachable and optional in the maze that shipped.
+    /// exit goes to the on-clear trampoline; the pyramid's row is keyed on a
+    /// cell that really carries the pyramid tile; the digit it reveals is the K
+    /// the maze was built for; and the level is reachable and optional in the
+    /// maze that shipped.
     #[test]
     fn wandom_hides_k_behind_a_real_optional_pyramid() {
         use crate::randomize::maze::LAST_MAZE;
+        use crate::randomize::overworld::lock_keys::ON_CLEAR_CPU;
         use crate::randomize::rom_data::{FS_FORTRESS_FX, map_tile_offset};
         let Some(base) = vanilla() else {
             eprintln!("SKIP: requires the ROM");
@@ -340,30 +250,35 @@ mod asm_checks {
                 &[0x4C, oc_lo, oc_hi],
                 "seed {seed}: op 8's no-orb exit is not hooked"
             );
-            let cell = decode_cell(&rom);
-            let (world, (row, col)) = cell;
+            let row = pyramid_row(&rom).expect("a Wandom seed has a pyramid row");
+            let (world, (r, c)) = row.cell;
             assert_eq!(
-                rom.read_byte(map_tile_offset(world, row, col)),
+                rom.read_byte(map_tile_offset(world, r, c)),
                 TILE_PYRAMID,
-                "seed {seed}: the on-clear key names {cell:?}, which is not a pyramid"
+                "seed {seed}: the pyramid row names {:?}, which is not a pyramid",
+                row.cell
             );
-            let k = rom.read_byte(FS_ON_CLEAR + 13) - STATUS_GLYPH_DIGIT0;
+            let k = row.value - STATUS_GLYPH_DIGIT0;
             assert_eq!(k, state.wands_required, "seed {seed}: the reveal is not the gate's K");
             assert!((1..=MAX_WANDS).contains(&k));
             assert!(
-                state.spheres().spheres.iter().any(|s| s.reached.contains(&cell)),
-                "seed {seed}: the pyramid at {cell:?} cannot be reached"
+                state.spheres().spheres.iter().any(|s| s.reached.contains(&row.cell)),
+                "seed {seed}: the pyramid at {:?} cannot be reached",
+                row.cell
             );
             assert!(
-                state.spheres_with_blocked(&HashSet::from([cell])).solvable,
-                "seed {seed}: the pyramid at {cell:?} is required"
+                state.spheres_with_blocked(&HashSet::from([row.cell])).solvable,
+                "seed {seed}: the pyramid at {:?} is required",
+                row.cell
             );
         }
     }
 
-    /// A fixed-K maze seed leaves op 8's prologue exactly as it was.
+    /// A fixed-K maze seed has no triggers, so op 8's prologue is exactly as it
+    /// was and no dispatcher is written.
     #[test]
     fn a_fixed_k_maze_is_not_hooked() {
+        use crate::randomize::overworld::lock_keys::ADVANCE_CPU;
         use crate::randomize::rom_data::FS_FORTRESS_FX;
         let Some(mut rom) = vanilla() else {
             eprintln!("SKIP: requires the ROM");
@@ -373,10 +288,11 @@ mod asm_checks {
         crate::pipeline::randomize(&mut rom, 1, &options);
         let [lo, hi] = ADVANCE_CPU.to_le_bytes();
         assert_eq!(rom.read_range(FS_FORTRESS_FX + 12, 3), &[0x4C, lo, hi]);
+        assert_eq!(installed(&rom), None);
     }
 
     /// `testrom --obelisk-at` moves the trigger and keeps K; on a ROM with no
-    /// hook it writes nothing.
+    /// dispatcher it writes nothing.
     #[test]
     fn retarget_moves_the_cell_and_keeps_k() {
         let Some(mut rom) = vanilla() else {
@@ -384,15 +300,13 @@ mod asm_checks {
             return;
         };
         let before = rom.clone();
-        assert!(!retarget(&mut rom, (0, (2, 4))), "vanilla has no hook to move");
-        assert_eq!(rom.read_range(FS_ON_CLEAR, 25), before.read_range(FS_ON_CLEAR, 25));
+        assert!(!retarget(&mut rom, (0, (2, 4))), "vanilla has no row to move");
+        assert_eq!(rom.read_range(0, 0x60010), before.read_range(0, 0x60010));
 
-        apply(&mut rom, (3, (4, 20)), 5);
+        on_clear::apply(&mut rom, &[trigger((3, (4, 20)), 5)]);
         assert!(retarget(&mut rom, (0, (2, 4))));
-        assert_eq!(rom.read_range(FS_ON_CLEAR, 25), &on_clear_routine((0, (2, 4)), 5));
-        assert_eq!(decode_cell(&rom), (0, (2, 4)));
+        assert_eq!(pyramid_row(&rom), Some(trigger((0, (2, 4)), 5)));
     }
-
     /// **Instrument, not a gate**: where the pyramid lands, how often no level
     /// qualifies, what K comes out, and what the pick costs.
     ///
@@ -421,7 +335,7 @@ mod asm_checks {
             // Re-run the pick on the shipped maze to time it in isolation.
             let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(seed);
             let t = std::time::Instant::now();
-            let cell = pick_pyramid(&state, &mut rng);
+            let cell = pick_pyramid(&state, &mut rng, &[]);
             pick_time += t.elapsed();
             match cell {
                 Some((w, _)) => {

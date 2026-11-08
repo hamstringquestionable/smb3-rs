@@ -191,6 +191,13 @@ struct Cli {
     #[arg(long, value_parser = parse_obelisk_at)]
     obelisk_at: Option<(u8, (usize, usize))>,
 
+    /// Move a hidden-worlds seed's world-number obelisk to the level at
+    /// W:ROW,COL, as --obelisk-at does for Wandom's. Beating that level then
+    /// plays the 1-up and shows every world number. Needs --flags with Hidden
+    /// World Numbers on.
+    #[arg(long, value_parser = parse_obelisk_at)]
+    world_obelisk_at: Option<(u8, (usize, usize))>,
+
     /// Let the Hammer item break fortress lock tiles on the map.
     #[arg(long)]
     hammer_locks: bool,
@@ -594,6 +601,7 @@ fn main() {
         bro_battle_timer: cli.bro_battle_timer,
         canoe_gate: cli.canoe_gate,
         obelisk_at: cli.obelisk_at,
+        world_obelisk_at: cli.world_obelisk_at,
         hammer_breaks_locks: cli.hammer_locks,
         hammer_breaks_bridges: cli.hammer_bridges,
         water_stomp: cli.water_stomp,

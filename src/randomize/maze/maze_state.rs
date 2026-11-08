@@ -122,9 +122,16 @@ pub(crate) const HANDOVER: u16 = PLAYER_WORLD + PLAYER_WORLD_LEN as u16;
 /// is nothing to hide from one player that the other has learned.
 pub(crate) const WANDOM_REVEAL: u16 = HANDOVER + 1;
 
+/// Hidden world numbers: `$00` until the world-number obelisk is beaten, then
+/// non-zero, and every "WORLD n" the game draws shows its digit instead of `×`.
+/// See [`crate::randomize::maze::hidden_worlds`].
+///
+/// One byte for both players, like [`WANDOM_REVEAL`]: they share one screen.
+pub(crate) const WORLDS_REVEAL: u16 = WANDOM_REVEAL + 1;
+
 /// First byte after everything allocated above — where the next allocation
 /// starts.
-pub(crate) const MAZE_STATE_NEXT: u16 = WANDOM_REVEAL + 1;
+pub(crate) const MAZE_STATE_NEXT: u16 = WORLDS_REVEAL + 1;
 
 /// Every byte the maze owns, as one contiguous run.
 ///
@@ -161,4 +168,5 @@ const _: () = {
         "the per-player world bytes overlap the hand-over flag"
     );
     assert!(HANDOVER < WANDOM_REVEAL, "the Wandom reveal overlaps the hand-over flag");
+    assert!(WANDOM_REVEAL < WORLDS_REVEAL, "the world reveal overlaps the Wandom reveal");
 };

@@ -553,6 +553,16 @@ pub struct Options {
     /// **Only read when `world_maze` is on.**
     #[serde(default)]
     pub uncapped_pad_jumps: bool,
+    /// **Hidden world numbers.** Every "WORLD n" — the world-intro banner and
+    /// both status bars — reads `×` until the player beats a second obelisk
+    /// level, placed by Wandom's rule (optional, a few worlds in). The number
+    /// tells a maze player which world's airship leads on toward World 8, and
+    /// which world a Full-hints lock digit means; only World 8's own map is
+    /// fixed enough to recognise without it.
+    ///
+    /// **Only read when `world_maze` is on.** See `maze::hidden_worlds`.
+    #[serde(default)]
+    pub hidden_worlds: bool,
     #[serde(default)]
     pub big_q_blocks: bool,
     /// Shuffle airship levels across worlds 1-7.
@@ -891,6 +901,7 @@ impl Default for Options {
             maze_wands: default_maze_wands(),
             item_gates: false,
             uncapped_pad_jumps: false,
+            hidden_worlds: false,
             big_q_blocks: false,
             shuffle_airships: true,
             shuffle_hammer_bros: true,

@@ -490,9 +490,12 @@ mod payload {
         /// key writes `maze_wands` as 0 and this bit set, and decodes back to
         /// [`MAZE_WANDS_WANDOM`].
         pub(super) maze_wandom: bool,
+        /// Hidden world numbers. Appended and false by default. Encoded as set,
+        /// like `item_gates`; the maze is the only reader.
+        pub(super) hidden_worlds: bool,
 
         // --- Reserve ---
-        // 126 bits. Adding an option is: declare it immediately above this
+        // 125 bits. Adding an option is: declare it immediately above this
         // block, then take the same number of bits off the reserve. An older key
         // simply has those bits zero, which is "off" for a bool and the default
         // for every enum here, so it stays a correct key for the settings it
@@ -503,7 +506,7 @@ mod payload {
         // satisfied` against the struct. It means the widths no longer add up to
         // `bytes * 8`, nothing more.
         #[skip]
-        __: B126,
+        __: B125,
     }
 }
 
@@ -554,6 +557,7 @@ impl Options {
             fire_flower, piranha_shuffle, wild_injections,
             starting_lives, world_count, world_maze, maze_wands, hints, item_gates,
             mariomon, water_stomp, generated_overworld, uncapped_pad_jumps,
+            hidden_worlds,
             starting_items,
             // Not encoded — see NOT_ENCODED for the reason on each.
             palettes: _, palette_themed: _, player_color: _,
@@ -645,6 +649,7 @@ impl Options {
             // that never picks it is byte-for-byte what it was before it existed.
             .with_maze_wands(if *world_maze && !wandom { (*maze_wands).min(7) } else { 0 })
             .with_maze_wandom(wandom)
+            .with_hidden_worlds(*hidden_worlds)
             .with_hints(if *world_maze { *hints } else { HintMode::default() })
             .with_item_gates(*item_gates)
             .with_mariomon(*mariomon)
@@ -760,6 +765,7 @@ impl Options {
                 HintMode::default()
             },
             item_gates: f.item_gates(),
+            hidden_worlds: f.hidden_worlds(),
             // Every pattern is a value now, 0 included — it is "start in Dark
             // Land", not "unset". A key minted before that meaning existed
             // cannot carry 0 (the encoder clamped to 1–7), so nothing older is

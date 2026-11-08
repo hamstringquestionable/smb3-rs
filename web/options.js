@@ -342,6 +342,13 @@ const NOTE_BLOCK = { tiles: [6200, 6202, 6201, 6203], cols: 2, palette: [0x0F, 0
 const SPADE = { tiles: [1448, 1448, 1449, 1449], cols: 2, palette: [0x0F, 0x20, 0x20, 0x1D], flipRight: true }; // $16
 const N_CARD = { tiles: [2064, 2064, 2065, 2065], cols: 2, palette: [0x0F, 0x20, 0x20, 0x1D], flipRight: true }; // $20
 
+// The "WORLD n" digits 1-8 as the arrival banner draws them: map BG tiles
+// $F1-$F8, CHR page $16 (1408 + $71..$78). Colour 3 is the card behind the
+// digit, cleared so the numeral stands alone; colour 1 is its outline.
+const WORLD_DIGITS = [1, 2, 3, 4, 5, 6, 7, 8].map((n) => ({
+	tiles: [1520 + n], cols: 1, clear: 3, palette: [0x0F, 0x0F, 0x30, 0x0F],
+}));
+
 // Water enemies, page $1A. Boss Bass is 24x32 — his two halves aren't adjacent
 // in CHR, so they're picked separately and stacked here into one grid.
 const BLOOPER = { tiles: [1712, 1712, 1713, 1713], cols: 2, palette: [0x0F, 0x1E, 0x37, 0x03], flipRight: true };
@@ -545,6 +552,12 @@ export const SCHEMA = [
 		label: "Telepad Reach", pills: ["Standard", "Uncapped"],
 		tip: "Standard telepads only warp you so far through the game. Uncapped telepads have no limit, which can make for shorter runs that skip more of the game.",
 		icon: TELEPAD,
+		group: "maze", inFlagKey: true,
+		mode: "maze" },
+	{ id: "hidden_worlds", type: "bool", default: false,
+		label: "Hidden World Numbers",
+		tip: "Every world number shows × instead, on the map, in levels, and on the card when you arrive, until you beat the obelisk level that reveals them.",
+		icon: WORLD_DIGITS,
 		group: "maze", inFlagKey: true,
 		mode: "maze" },
 

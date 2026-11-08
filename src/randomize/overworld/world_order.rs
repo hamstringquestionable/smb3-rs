@@ -51,15 +51,15 @@ const TABLE_CPU: u16 = WORLD_ORDER_CPU + 12;
 /// world the *player* sees, not the internal index, and world order makes those
 /// two different facts.
 pub(crate) const DISPLAY_TABLE_OFFSET: usize = FS_WORLD_ORDER + 20; // 12 routine + 8 next-world
-const DISPLAY_TABLE_CPU: u16 = TABLE_CPU + 8; // $9F24
+pub(crate) const DISPLAY_TABLE_CPU: u16 = TABLE_CPU + 8; // $9F24
 
 /// Map screen "WORLD X" display site (PRG010).
 /// Original: LDY $0727; INY; TYA; ORA #$F0; STA $0304 (10 bytes at 0x14372).
-const MAP_DISPLAY_OFFSET: usize = 0x14372;
+pub(crate) const MAP_DISPLAY_OFFSET: usize = 0x14372;
 
 /// Status bar "WORLD X" display site (PRG026).
 /// Original: LDX $0727; INX; TXA; ORA #$F0; STA $0304,Y (10 bytes at 0x350D7).
-const STATUS_DISPLAY_OFFSET: usize = 0x350D7;
+pub(crate) const STATUS_DISPLAY_OFFSET: usize = 0x350D7;
 
 /// The two vanilla sites this module overwrites, and what must still be there.
 ///

@@ -202,6 +202,18 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
         "world-maze: use an Anchor on a dock to summon the boat (40 reserved, 23 used)",
     ),
     fs(
+        0x35745,
+        192,
+        &["on_clear"],
+        "on-clear dispatcher + trigger table, 32 rows (192 reserved, 50 + 4 per row used)",
+    ),
+    fs(
+        0x35805,
+        16,
+        &["hidden_worlds"],
+        "world-maze: status-bar world digit, × until revealed (16 reserved, 14 used)",
+    ),
+    fs(
         0x355BD,
         224,
         &["big_q_blocks"],
@@ -238,9 +250,15 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
     ),
     fs(
         0x149BD,
-        41,
-        &["wandom"],
-        "on-clear hook: map op 8 after a clear with no orb (41 reserved, 25 used)",
+        16,
+        &["on_clear"],
+        "on-clear hook: map op 8 after a clear with no orb, into PRG026 (16 reserved, 14 used)",
+    ),
+    fs(
+        0x149CD,
+        16,
+        &["hidden_worlds"],
+        "world-maze: world-intro banner digit, × until revealed (16 reserved, 14 used)",
     ),
     fs(0x15554, 112, &["lock_keys"], "position-keyed lock table: 28 entries of (fortress, lock)"),
     fs(
@@ -762,16 +780,27 @@ pub(crate) const FS_LOCK_ENTRIES: usize = 0x15554; // 112 reserved, 4 per lock
 // Together they are one 537-byte contiguous run, by far the largest in the map
 // bank. The routine takes the first 496 (484 used, 12 headroom) — the mirror
 // lives in PRG011 so this one can grow without anything moving — and
-// FS_ON_CLEAR takes the last 41.
+// FS_ON_CLEAR takes the next 16, FS_WORLD_DIGIT_MAP the 16 after that, and
+// the last 9 are unclaimed.
 pub(crate) const FS_FORTRESS_FX: usize = 0x147CD; // 496 reserved, 484 used
 
 // The tail of the same retired run: the routine FORTRESS_FX's unarmed exit
-// jumps to (`lock_keys::install_on_clear`), so a "beat this level, do that"
-// feature never edits the origin-locked effect again. Its first client is
-// Wandom's pyramid (`maze::wandom`). It ends `JMP advance` back into
-// FS_FORTRESS_FX, at an offset the prologue swap never moves. Mapped at
-// $C000 for the whole map, which is the only time op 8 runs.
-pub(crate) const FS_ON_CLEAR: usize = 0x149BD; // 41 reserved, 25 used (CPU $C9AD)
+// jumps to (`lock_keys::install_on_clear`). It is a fixed trampoline into
+// FS_ON_CLEAR_DISPATCH (`maze::on_clear`), so a "beat this level, do that"
+// feature adds a table row and never edits map-bank code again. It ends
+// `JMP advance` back into FS_FORTRESS_FX, at an offset the prologue swap never
+// moves. Mapped at $C000 for the whole map, which is the only time op 8 runs.
+//
+// Was 41 bytes holding Wandom's routine inline; the 25 it gave back went to
+// FS_WORLD_DIGIT_MAP (16) and 9 unclaimed bytes (0x149DD-0x149E5, CPU
+// $C9CD-$C9D5) -- reclaimed vanilla code, so `--free-space` cannot see them.
+pub(crate) const FS_ON_CLEAR: usize = 0x149BD; // 16 reserved, 14 used (CPU $C9AD)
+
+// Hidden world numbers (`maze::hidden_worlds`): the "WORLD n" digit for the
+// world-intro banner, `×` until the world-number obelisk is beaten. The banner
+// (`Map_ConfigWorldIntro`) runs in PRG010 on the map, so its copy lives here,
+// in the tail of the retired fortress-FX run FS_ON_CLEAR shrank out of.
+pub(crate) const FS_WORLD_DIGIT_MAP: usize = 0x149CD; // 16 reserved, 14 used (CPU $C9BD)
 
 // World-maze POC. Sits in the tail of the same $FF run as
 // FS_LOCK_ENTRIES, which reserves 112 from 0x15554 and leaves the run
@@ -920,6 +949,20 @@ pub(crate) const FS_MYSTERY_ANCHOR: usize = 0x35572; // 13 reserved, 10 used
 // fails the audit, and registering it early would have traded that failure for
 // a stranded seed.
 pub(crate) const FS_ANCHOR_USE: usize = 0x3571D; // 40 reserved, 23 used (CPU $B70D)
+
+// PRG026 - the on-clear dispatcher and its trigger table (`maze::on_clear`):
+// every "beat this cell, set this flag" row, scanned after each ordinary level
+// clear. FS_ON_CLEAR maps this bank in for it. Next after FS_ANCHOR_USE in the
+// same dead tail (prg026.asm ends at PRG026_B51F, "Rest of ROM bank was
+// empty"), so it is unreferenced filler. Sized for 32 rows: the bank has room,
+// and a trigger should never have to relocate the table to be added.
+pub(crate) const FS_ON_CLEAR_DISPATCH: usize = 0x35745; // 192 reserved, 50 code + 4 per row (CPU $B735)
+
+// PRG026 - the same digit routine as FS_WORLD_DIGIT_MAP, for
+// `StatusBar_Fill_World`, which is in this bank and so runs with it mapped
+// (map and level status bars both). Next after FS_ON_CLEAR_DISPATCH in the
+// bank's dead tail.
+pub(crate) const FS_WORLD_DIGIT_BAR: usize = 0x35805; // 16 reserved, 14 used (CPU $B7F5)
 
 /// The shared "do you already hold an Anchor" test, and the three hook bodies
 /// that call it.
@@ -1543,6 +1586,9 @@ mod free_space_tests {
             (FS_BIG_Q_LOOKUP, "FS_BIG_Q_LOOKUP"),
             (FS_WAND_READOUT, "FS_WAND_READOUT"),
             (FS_ON_CLEAR, "FS_ON_CLEAR"),
+            (FS_ON_CLEAR_DISPATCH, "FS_ON_CLEAR_DISPATCH"),
+            (FS_WORLD_DIGIT_MAP, "FS_WORLD_DIGIT_MAP"),
+            (FS_WORLD_DIGIT_BAR, "FS_WORLD_DIGIT_BAR"),
             (FS_WAND_READOUT_FLIP, "FS_WAND_READOUT_FLIP"),
             (FS_MYSTERY_ANCHOR, "FS_MYSTERY_ANCHOR"),
             (FS_HAMMER_LOCKS, "FS_HAMMER_LOCKS"),
