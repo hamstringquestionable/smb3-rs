@@ -36,6 +36,11 @@ deploys.
   tank is stored in a slot the game left unused, so worlds have a little more
   room for map sprites. Seeds roll differently.
 
+### Fixed
+
+- The oracle king's hint is no longer replaced by the suit joke when you
+  meet him as Frog, Tanooki or Hammer Mario.
+
 ## [3.1.0] - 2026-11-07
 
 ### Added
