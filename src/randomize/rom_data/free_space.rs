@@ -762,7 +762,7 @@ pub(crate) const HELP_OBJ_SLOT: usize = 0;
 pub(crate) const FS_BIG_Q_LOOKUP: usize = 0x355BD; // 224 reserved, 199 used (CPU $B5AD)
 
 // PRG027
-pub(crate) const FS_KING_QUOTES: usize = 0x379D9; // 894 bytes
+pub(crate) const FS_KING_QUOTES: usize = 0x379D9; // 894 reserved, 891 used (7 x 120 quotes + 51-byte hook)
 
 // PRG010
 // The position-keyed lock table (`lock_keys`). It inherited the run Fred's
