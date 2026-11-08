@@ -1569,6 +1569,33 @@ The oracle king always names the pyramid's world on these seeds. The code is
 - **Players see an obelisk.** The king, the web tip and the changelog call it
   an obelisk; the code says pyramid, after the tile.
 
+### Hidden world numbers: a second obelisk (2026-11-08)
+
+`Options::hidden_worlds`, maze only, independent of Wandom. Every "WORLD n"
+reads `×` until a second obelisk is beaten (`maze::hidden_worlds`).
+
+- **Why.** The maze lets a player work forward from wherever a telepad drops
+  them, and the world number says where they are in the run — which world's
+  airship leads into World 8, and which world a Full-hints lock digit means.
+  Worlds 1-7 are shuffled, so their maps do not give the number away; World
+  8's map is the same every seed, so it is the one world a player can always
+  name.
+- **Placement is Wandom's rule**, through `wandom::pick_pyramid` with a
+  `taken` list: never Wandom's cell, and Wandom's stays walled off while this
+  one is tested, so both obelisks are optional *together*. Its own substream
+  (`HIDDEN_WORLDS_SALT`), so turning it on moves nothing else. Same tile.
+- **The trigger is an `on_clear` row** setting `maze_state::WORLDS_REVEAL`
+  (`$7ADE`). After it, **one** maze SRAM byte is left (`$7ADF`).
+- **Two draw sites, three screens.** `world_order` already rewrote both
+  "WORLD n" draws to read its display table: `Map_ConfigWorldIntro` (PRG010,
+  the arrival banner) and `StatusBar_Fill_World` (PRG026, map *and* level
+  status bars). Each now `JSR`s a 14-byte copy of the same routine in its own
+  bank (`FS_WORLD_DIGIT_MAP`, `FS_WORLD_DIGIT_BAR`) rather than one copy in
+  always-mapped PRG030, which neither caller needs. `$FB` is `×` in the map's
+  CHR (page `$16`) as well as the bar's (`$5E`).
+- **The oracle.** With only this obelisk on he names its world; with both on
+  he names one of the two at random — one extra draw, on those seeds only.
+
 ## Data model
 
 Sketch, not a signature list — the point is that the maze's state is a thin

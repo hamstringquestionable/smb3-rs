@@ -430,6 +430,9 @@ pub struct TestRomSpec {
     /// of the obelisk's. The obelisk tile stays where the seed drew it.
     /// Needs a `--flags` base with Wands To Enter on `?`.
     pub obelisk_at: Option<(u8, (usize, usize))>,
+    /// The same for the world-number obelisk: beating the level at this cell
+    /// reveals the world numbers. Needs a `--flags` base with hidden worlds on.
+    pub world_obelisk_at: Option<(u8, (usize, usize))>,
     /// Let the Hammer item break fortress lock tiles on the map.
     pub hammer_breaks_locks: bool,
     /// Let the Hammer item break water-gap (bridge) tiles on the map.
@@ -1266,6 +1269,22 @@ pub fn build(vanilla: &[u8], spec: &TestRomSpec) -> Result<TestRom, String> {
             "obelisk trigger: W{world} row {row} col {col} (tile {tile:#04X}) now reveals K"
         ));
     }
+    if let Some((world, (row, col))) = spec.world_obelisk_at {
+        let w = usize::from(world)
+            .checked_sub(1)
+            .filter(|&w| w < 8)
+            .ok_or_else(|| format!("--world-obelisk-at world {world} is out of range (1-8)"))?;
+        if !crate::randomize::maze::hidden_worlds::retarget(&mut rom, (w, (row, col))) {
+            return Err("--world-obelisk-at needs a hidden-worlds seed: --flags with \
+                        Hidden World Numbers on"
+                .to_string());
+        }
+        let tile = rom.read_byte(crate::randomize::rom_data::map_tile_offset(w, row, col));
+        report.push(format!(
+            "world-number obelisk: W{world} row {row} col {col} (tile {tile:#04X}) now reveals \
+             the world numbers"
+        ));
+    }
 
     // 6. Hammer tile-breaking. Applied here rather than via `Options` so it
     //    works on a vanilla base too — testing what a hammer does to a lock
@@ -1474,6 +1493,7 @@ mod tests {
             starting_lives: 5,
             canoe_gate: false,
             obelisk_at: None,
+            world_obelisk_at: None,
             hammer_breaks_locks: false,
             hammer_breaks_bridges: false,
             water_stomp: false,

@@ -149,7 +149,7 @@ is the one to read:
 | PRG011 | `$A000–$BFFF`, map | 46 | 14 |
 | PRG025 | `$C000–$DFFF`, title screen | 2707 | 2695 |
 | PRG012 | `$A000–$BFFF`, map reload | 620 | 240 |
-| PRG026 | `$A000–$BFFF`, map/inventory | 2077 | 2059 |
+| PRG026 | `$A000–$BFFF`, map/inventory | 2061 | 2043 |
 | PRG027 | `$A000–$BFFF`, letter cutscene | 657 | 657 |
 | PRG029 | `$C000–$DFFF`, Toad House | 2548 | 1528 |
 
@@ -221,7 +221,8 @@ registry rows are the record instead: `FS_FORTRESS_FX` claims the first 496
 (484 used) and `FS_ON_CLEAR` the next 16 (14 used) — the fixed trampoline into
 the on-clear trigger table in PRG026 (`maze::on_clear`), which a "beat this
 level, do that" feature adds a row to rather than editing map-bank code. The
-**last 25 bytes (`$C9BD..$C9D5`) are unclaimed**. Those slack bytes are **not visible to the
+next 16 (`FS_WORLD_DIGIT_MAP`) hold the hidden-worlds banner digit, and the
+**last 9 (`$C9CD..$C9D5`) are unclaimed**. Those slack bytes are **not visible to the
 per-bank table above**. The same is true of every allocation sited on retired vanilla
 code — check `FREE_SPACE_ALLOCATIONS` alongside the scan, not instead of it.
 

@@ -118,10 +118,19 @@ fn world_depths(state: &GlobalState) -> [Option<u32>; 8] {
 ///   That is the counterfactual the required-level count asks, so a pyramid
 ///   can never be the only way to a lock, a key or the castle.
 ///
+/// `taken` holds obelisks already placed — the hidden-worlds obelisk passes
+/// Wandom's. A taken cell is never picked, and it stays walled off while the
+/// next one is tested, so every obelisk is optional *together* and not merely
+/// one at a time.
+///
 /// Shuffle-then-first is a uniform pick among a tier's qualifying levels that
 /// usually stops after one or two solvability checks rather than running one
 /// per level.
-pub(crate) fn pick_pyramid<R: Rng>(state: &GlobalState, rng: &mut R) -> Option<MazePos> {
+pub(crate) fn pick_pyramid<R: Rng>(
+    state: &GlobalState,
+    rng: &mut R,
+    taken: &[MazePos],
+) -> Option<MazePos> {
     let depths = world_depths(state);
     let reached: HashSet<MazePos> =
         state.spheres().spheres.iter().flat_map(|s| s.reached.iter().copied()).collect();
@@ -140,10 +149,11 @@ pub(crate) fn pick_pyramid<R: Rng>(state: &GlobalState, rng: &mut R) -> Option<M
             .collect();
         tier.shuffle(rng);
         for cell in tier {
-            if !reached.contains(&cell) {
+            if !reached.contains(&cell) || taken.contains(&cell) {
                 continue;
             }
-            if state.spheres_with_blocked(&HashSet::from([cell])).solvable {
+            let blocked: HashSet<MazePos> = taken.iter().copied().chain([cell]).collect();
+            if state.spheres_with_blocked(&blocked).solvable {
                 return Some(cell);
             }
         }
@@ -325,7 +335,7 @@ mod tests {
             // Re-run the pick on the shipped maze to time it in isolation.
             let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(seed);
             let t = std::time::Instant::now();
-            let cell = pick_pyramid(&state, &mut rng);
+            let cell = pick_pyramid(&state, &mut rng, &[]);
             pick_time += t.elapsed();
             match cell {
                 Some((w, _)) => {

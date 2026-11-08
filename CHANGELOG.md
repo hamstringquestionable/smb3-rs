@@ -16,6 +16,10 @@ deploys.
   until you beat the obelisk level, an optional level a few worlds into the
   maze: then a 1-up chimes and the number appears. The oracle king says which
   world the obelisk is in.
+- World Maze: Hidden World Numbers option. Every world number shows `×` — on
+  the card when you arrive, on the map and in levels — until you beat a second
+  obelisk level, placed the same way as Wandom's. With both options on, the
+  oracle king tells you where one of the two obelisks is.
 
 ## [3.1.0] - 2026-11-07
 

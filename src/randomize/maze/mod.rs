@@ -101,6 +101,9 @@ pub(crate) mod on_clear;
 // Wandom: K rolled per seed and hidden behind one optional level drawn as a
 // pyramid; beating it reveals the count — an `on_clear` row.
 pub(crate) mod wandom;
+// Hidden world numbers: every "WORLD n" reads `×` until a second obelisk is
+// beaten — another `on_clear` row, placed by Wandom's rule.
+pub(crate) mod hidden_worlds;
 // World-maze persistence: a world you leave is the world you come back to.
 // Applied by `randomize_inner` on both targets whenever `world_maze` is set —
 // it was `testrom`-only while the mode was still a POC.

@@ -53,7 +53,7 @@ use crate::randomize::maze::MazePos;
 use crate::randomize::overworld::lock_keys::{ADVANCE_CPU, cell_key};
 use crate::randomize::rom_data::{
     FS_ON_CLEAR, FS_ON_CLEAR_DISPATCH, PAGE_A000, PRGROM_CHANGE_A000, SND_LEVEL1UP, SOUND_QLEVEL1,
-    prg_bank_file_to_cpu,
+    STATUS_BAR_FILL_WORLD, prg_bank_file_to_cpu,
 };
 use crate::rom::Rom;
 
@@ -81,7 +81,7 @@ const _: () = assert!((MAX_TRIGGERS - 1) * ROW_LEN < 0x80);
 const ROW_LEN: usize = 4;
 
 /// Bytes of the dispatcher before its table.
-const CODE_LEN: usize = 47;
+const CODE_LEN: usize = 50;
 
 /// Bytes [`FS_ON_CLEAR_DISPATCH`] reserves; the table must fit behind the code.
 const DISPATCH_RESERVED: usize = 192;
@@ -116,6 +116,14 @@ fn trampoline() -> [u8; 14] {
 ///
 /// Walks the table from the last row down to row 0 (`X` = row offset), so
 /// the loop's exit test is the `BPL` that `DEX` already set up — no compare.
+///
+/// On the way out it calls [`STATUS_BAR_FILL_WORLD`], after every clear and
+/// not only on a match. A flag can change what the status bar shows, and the
+/// world digit is the one cell vanilla never redraws per frame (the wand
+/// readout's cells are), so without this a revealed world number stays `×` on
+/// the map until the next level rebuilds the bar. Redrawing an unchanged digit
+/// is harmless, and doing it after the loop rather than per match keeps the
+/// loop's `X` out of a routine that clobbers it.
 #[rustfmt::skip]
 fn dispatcher(rows: usize) -> [u8; CODE_LEN] {
     assert!((1..=MAX_TRIGGERS).contains(&rows), "the dispatcher needs 1-{MAX_TRIGGERS} rows");
@@ -126,6 +134,7 @@ fn dispatcher(rows: usize) -> [u8; CODE_LEN] {
     let [va_lo, va_hi] = (TABLE_CPU + 3).to_le_bytes();
     let [snd_lo, snd_hi] = SOUND_QLEVEL1.to_le_bytes();
     let [page_lo, page_hi] = PAGE_A000.to_le_bytes();
+    let [fw_lo, fw_hi] = STATUS_BAR_FILL_WORLD.to_le_bytes();
     let [chg_lo, chg_hi] = PRGROM_CHANGE_A000.to_le_bytes();
     [
         0xA2, last,                    //  0: LDX #last row's offset
@@ -146,9 +155,10 @@ fn dispatcher(rows: usize) -> [u8; CODE_LEN] {
         0xCA,                          // 35: DEX
         0xCA,                          // 36: DEX
         0x10, 0xDB,                    // 37: BPL loop       (-> 2)
-        0xA9, PAGE_MAP,                // 39: LDA #11
-        0x8D, page_lo, page_hi,        // 41: STA PAGE_A000
-        0x4C, chg_lo, chg_hi,          // 44: JMP PRGROM_Change_A000   ; tail call: its RTS
+        0x20, fw_lo, fw_hi,            // 39: JSR StatusBar_Fill_World ; redraw the bar's digit
+        0xA9, PAGE_MAP,                // 42: LDA #11
+        0x8D, page_lo, page_hi,        // 44: STA PAGE_A000
+        0x4C, chg_lo, chg_hi,          // 47: JMP PRGROM_Change_A000   ; tail call: its RTS
                                        //     returns to the trampoline
     ]
 }
@@ -270,6 +280,9 @@ mod asm_checks {
         let table: Vec<u8> = triggers.iter().flat_map(row).collect();
         mem.set_bytes(TABLE_CPU, &table);
         mem.set_byte(PRGROM_CHANGE_A000, 0x60);
+        // StatusBar_Fill_World, stubbed to count its calls: INC FILL_CALLS / RTS.
+        let [c_lo, c_hi] = FILL_CALLS.to_le_bytes();
+        mem.set_bytes(STATUS_BAR_FILL_WORLD, &[0xEE, c_lo, c_hi, 0x60]);
         let [k0, k1] = cell_key(at.0, at.1);
         mem.set_byte(0x0000, k0);
         mem.set_byte(0x0001, k1);
@@ -284,11 +297,32 @@ mod asm_checks {
             if cpu.registers.program_counter == ADVANCE_CPU {
                 assert_eq!(cpu.registers.stack_pointer, sp, "the stack is unbalanced");
                 assert_eq!(cpu.memory.get_byte(PAGE_A000), PAGE_MAP, "PRG011 not latched back");
+                assert_eq!(
+                    cpu.memory.get_byte(FILL_CALLS),
+                    1,
+                    "the world digit was not redrawn once"
+                );
                 return cpu.memory;
             }
             cpu.single_step();
         }
         panic!("the on-clear trampoline never reached advance");
+    }
+
+    /// Scratch byte the `StatusBar_Fill_World` stub counts its calls in.
+    const FILL_CALLS: u16 = 0x0400;
+
+    /// `$B0C4` is `StatusBar_Fill_World`: `LDY Graphics_BufCnt / LDX World_Num`
+    /// in vanilla. The dispatcher calls it blind, so the address is checked.
+    #[test]
+    fn fill_world_is_where_the_dispatcher_calls() {
+        let Ok(bytes) = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes") else {
+            eprintln!("SKIP: requires the ROM");
+            return;
+        };
+        let rom = Rom::from_bytes(&bytes).unwrap();
+        let file = 0x34010 + usize::from(STATUS_BAR_FILL_WORLD - 0xA000);
+        assert_eq!(rom.read_range(file, 6), &[0xAC, 0x00, 0x03, 0xAE, 0x27, 0x07]);
     }
 
     const A: MazePos = (2, (4, 20));

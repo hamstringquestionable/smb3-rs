@@ -39,6 +39,19 @@ pub(crate) const PAGE_A000: u16 = 0x0720;
 /// whoever called the swapped-out code.
 pub(crate) const PRGROM_CHANGE_A000: u16 = 0xFFC2;
 
+/// `StatusBar_Fill_World` (PRG026 `$B0C4`, file `0x350D4`): queue the status
+/// bar's "WORLD n" digit into `Graphics_Buffer`. Callable only with PRG026 at
+/// `$A000`. Clobbers `A`, `X` and `Y`.
+///
+/// It picks the VRAM row from `Level_7Vertical` (`$03EF`) and `Level_Tileset`,
+/// and both read as "the map" there: every return from a level passes
+/// `PRG030_8FCA`, whose `Clear_RAM_thru_ZeroPage` zeroes `$0000-$06FF`.
+///
+/// Vanilla calls it only where a bar is built, plus one frame of the item-box
+/// flip — never per frame — so a change to the digit stays off screen until
+/// something calls it again.
+pub(crate) const STATUS_BAR_FILL_WORLD: u16 = 0xB0C4;
+
 /// The highest zero-page byte a patch may park state in: `Temp_Var3` (`$02`).
 ///
 /// The NMI pushes and pulls exactly `Temp_Var1`, `Temp_Var2` and `Temp_Var3`

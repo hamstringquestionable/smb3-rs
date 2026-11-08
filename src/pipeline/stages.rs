@@ -63,6 +63,9 @@ pub(super) struct MazeModel {
     gated: [bool; 8],
     /// Wandom's pyramid, `(world, cell)`: `Some` exactly when K is hidden.
     pyramid: Option<(usize, (usize, usize))>,
+    /// The world-number obelisk, `(world, cell)`: `Some` exactly when the
+    /// world numbers are hidden.
+    world_obelisk: Option<(usize, (usize, usize))>,
 }
 
 /// What [`maze_rom`] hands on to the stages after it.
@@ -72,6 +75,8 @@ pub(super) struct MazeRomOut {
     pub(super) canoe_gated: Option<[bool; 8]>,
     /// Wandom's pyramid, `(world, cell)`. The oracle names its world.
     pub(super) pyramid: Option<(usize, (usize, usize))>,
+    /// The world-number obelisk, `(world, cell)`. The oracle may name its world.
+    pub(super) world_obelisk: Option<(usize, (usize, usize))>,
     /// Whether any on-clear trigger was written — and so whether [`locks`]
     /// must send op 8's no-orb exit to the dispatcher.
     pub(super) on_clear: bool,
@@ -667,14 +672,28 @@ pub(super) fn maze_model(
         // pads, relocated forts and any item gates. No eligible level anywhere
         // leaves K shown from the start rather than hidden for good.
         let pyramid = if wandom {
-            randomize::maze::wandom::pick_pyramid(&state, &mut wandom_rng)
+            randomize::maze::wandom::pick_pyramid(&state, &mut wandom_rng, &[])
         } else {
             None
         };
         if let Some(cell) = pyramid {
             randomize::maze::wandom::mark_pyramid(build, cell);
         }
-        MazeModel { state, wands, gated, pyramid }
+        // The world-number obelisk, after Wandom's so it can avoid it, by the
+        // same rule and from a substream of its own: turning it on moves
+        // nothing else in the seed. No eligible level shows the numbers.
+        let world_obelisk = if options.hidden_worlds {
+            let mut rng = ChaCha8Rng::seed_from_u64(
+                seed ^ randomize::maze::hidden_worlds::HIDDEN_WORLDS_SALT,
+            );
+            randomize::maze::hidden_worlds::pick_obelisk(&state, &mut rng, pyramid)
+        } else {
+            None
+        };
+        if let Some(cell) = world_obelisk {
+            randomize::maze::wandom::mark_pyramid(build, cell);
+        }
+        MazeModel { state, wands, gated, pyramid, world_obelisk }
     })
 }
 
@@ -728,6 +747,7 @@ pub(super) fn maze_rom(
     let canoe_gated: Option<[bool; 8]> =
         maze.as_ref().map(|m| m.gated).filter(|g| g.iter().any(|&g| g));
     let pyramid = maze.as_ref().and_then(|m| m.pyramid);
+    let world_obelisk = maze.as_ref().and_then(|m| m.world_obelisk);
     let mut on_clear = false;
 
     if let Some(MazeModel { state, wands, .. }) = maze {
@@ -743,8 +763,11 @@ pub(super) fn maze_rom(
         randomize::maze::wand_readout::apply(rom, wands, pyramid.is_some());
         // Every "beat this cell, set this flag" row, in one table. [`locks`]
         // points op 8 at it once the effect it hangs off has been written.
-        let triggers: Vec<_> =
-            pyramid.map(|cell| randomize::maze::wandom::trigger(cell, wands)).into_iter().collect();
+        let triggers: Vec<_> = pyramid
+            .map(|cell| randomize::maze::wandom::trigger(cell, wands))
+            .into_iter()
+            .chain(world_obelisk.map(randomize::maze::hidden_worlds::trigger))
+            .collect();
         if !triggers.is_empty() {
             rom.set_tag("on_clear");
             randomize::maze::on_clear::apply(rom, &triggers);
@@ -772,8 +795,14 @@ pub(super) fn maze_rom(
             written.grids(rom),
             credits_progression.expect("world_maze forces world_order on"),
         );
+        // Hidden only with an obelisk to reveal them. After `world_order`
+        // (stage 3), whose display lookup at both draw sites this hooks.
+        if world_obelisk.is_some() {
+            rom.set_tag("hidden_worlds");
+            randomize::maze::hidden_worlds::apply(rom);
+        }
     }
-    MazeRomOut { canoe_gated, pyramid, on_clear }
+    MazeRomOut { canoe_gated, pyramid, world_obelisk, on_clear }
 }
 
 /// Stage 11: every lock in the game, and the 2-player Vs retirement.
@@ -906,6 +935,7 @@ pub(super) fn bosses_and_quotes(
     written: &WrittenOverworld,
     credits_progression: Option<&[u8]>,
     pyramid_world: Option<usize>,
+    world_obelisk_world: Option<usize>,
     rng: &mut ChaCha8Rng,
 ) {
     // The stomp-count randomizers sit here, immediately above `king_quotes`,
@@ -952,6 +982,7 @@ pub(super) fn bosses_and_quotes(
             world_progression: credits_progression,
             one_f_chest,
             pyramid_world,
+            world_obelisk_world,
         },
     );
     rom.set_tag("princess_thanks");

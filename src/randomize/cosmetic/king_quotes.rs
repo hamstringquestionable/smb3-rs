@@ -1188,6 +1188,9 @@ pub(crate) struct OracleFacts<'a> {
     /// Internal world number of Wandom's pyramid — the level whose clear
     /// reveals the wand count. `None` on every seed without one.
     pub(crate) pyramid_world: Option<usize>,
+    /// Internal world number of the world-number obelisk — the level whose
+    /// clear reveals the world numbers. `None` on every seed without one.
+    pub(crate) world_obelisk_world: Option<usize>,
 }
 
 /// The chest in 1-F's sub-area — what is in it, and where the level landed.
@@ -1220,10 +1223,18 @@ fn oracle_remark(facts: &OracleFacts, rng: &mut ChaCha8Rng) -> Lines {
     repertoire.extend(topic_next_world(facts));
     repertoire.extend(topic_one_f_chest(facts));
     let drawn = repertoire.choose(rng).expect("the stomp topic never declines").clone();
-    // Wandom's pyramid overrides the draw rather than joining it: the count is
+    // An obelisk overrides the draw rather than joining it: what it reveals is
     // hidden until it is beaten, so the player has to learn it exists. The draw
-    // above still happens, which keeps the stream where it was.
-    topic_pyramid(facts).unwrap_or(drawn)
+    // above still happens, which keeps the stream where it was. With both
+    // obelisks on, he names one of them, at random — one more draw, on those
+    // seeds only.
+    let obelisk = match (topic_pyramid(facts), topic_world_obelisk(facts)) {
+        (Some(wands), Some(worlds)) => {
+            Some(if rand::Rng::random_bool(rng, 0.5) { wands } else { worlds })
+        }
+        (wands, worlds) => wands.or(worlds),
+    };
+    obelisk.unwrap_or(drawn)
 }
 
 /// The eight worlds by name, indexed by internal world number.
@@ -1300,6 +1311,22 @@ fn topic_pyramid(facts: &OracleFacts) -> Option<Lines> {
         "wands you need.".into(),
         "Pass its test and".into(),
         "reveal your fate.".into(),
+    ])
+}
+
+/// Where the world-number obelisk is. Silent on every seed without one.
+///
+/// Named by world *name*, which is the point: the number is exactly what the
+/// player cannot read yet, while "Ice Land" is the same place in every mode.
+fn topic_world_obelisk(facts: &OracleFacts) -> Option<Lines> {
+    let world = facts.world_obelisk_world?;
+    Some([
+        "An obelisk in".into(),
+        WORLD_NAMES[world].into(),
+        "knows every".into(),
+        "world's number.".into(),
+        "Pass its test and".into(),
+        "know where you are.".into(),
     ])
 }
 
@@ -1523,6 +1550,7 @@ mod tests {
             world_progression: None,
             one_f_chest: None,
             pyramid_world: None,
+            world_obelisk_world: None,
         }
     }
 
@@ -1604,6 +1632,7 @@ mod tests {
                 world_progression: Some(&order),
                 one_f_chest: None,
                 pyramid_world: None,
+                world_obelisk_world: None,
             };
             let lines = topic_next_world(&f).expect("the first world has a successor here");
             validate_lines("next world", &lines);
@@ -1616,6 +1645,7 @@ mod tests {
                     world_progression: None,
                     one_f_chest: Some(OneFChest { world, item }),
                     pyramid_world: None,
+                    world_obelisk_world: None,
                 };
                 if let Some(lines) = topic_one_f_chest(&f) {
                     validate_lines("1-F chest", &lines);
@@ -1627,6 +1657,10 @@ mod tests {
             let f = OracleFacts { pyramid_world: Some(world), ..facts(VANILLA_KOOPALING_HITS) };
             let lines = topic_pyramid(&f).expect("a pyramid always has a world to name");
             validate_lines("pyramid", &lines);
+            let f =
+                OracleFacts { world_obelisk_world: Some(world), ..facts(VANILLA_KOOPALING_HITS) };
+            let lines = topic_world_obelisk(&f).expect("an obelisk always has a world to name");
+            validate_lines("world obelisk", &lines);
         }
     }
 
@@ -1648,6 +1682,34 @@ mod tests {
         }
     }
 
+    /// Hidden worlds alone: he names that obelisk, and the stream does not
+    /// move. Both on: he names one or the other, and over many seeds both.
+    #[test]
+    fn the_world_obelisk_is_named_and_shares_with_wandom() {
+        use rand::{Rng, SeedableRng};
+        let plain = facts(VANILLA_KOOPALING_HITS);
+        let worlds = OracleFacts { world_obelisk_world: Some(5), ..facts(VANILLA_KOOPALING_HITS) };
+        let both = OracleFacts { pyramid_world: Some(2), ..worlds };
+        let (mut saw_wands, mut saw_worlds) = (false, false);
+        for seed in 0..40 {
+            let mut a = ChaCha8Rng::seed_from_u64(seed);
+            let mut b = ChaCha8Rng::seed_from_u64(seed);
+            oracle_remark(&plain, &mut a);
+            let said = oracle_remark(&worlds, &mut b);
+            assert_eq!(said[1], WORLD_NAMES[5], "seed {seed}: the obelisk was not named");
+            assert_eq!(said[3], "world's number.");
+            assert_eq!(a.random::<u64>(), b.random::<u64>(), "seed {seed}: the stream moved");
+
+            let said = oracle_remark(&both, &mut ChaCha8Rng::seed_from_u64(seed));
+            match said[1].as_str() {
+                s if s == WORLD_NAMES[2] => saw_wands = true,
+                s if s == WORLD_NAMES[5] => saw_worlds = true,
+                other => panic!("seed {seed}: named {other}, neither obelisk"),
+            }
+        }
+        assert!(saw_wands && saw_worlds, "both obelisks should come up");
+    }
+
     /// The oracle declines what he cannot know, rather than guessing.
     #[test]
     fn the_oracle_declines_what_it_cannot_know() {
@@ -1663,6 +1725,7 @@ mod tests {
                 world_progression: Some(&order),
                 one_f_chest: None,
                 pyramid_world: None,
+                world_obelisk_world: None,
             };
             assert!(topic_next_world(&f).is_none(), "order {order:?} has no successor to name");
         }
@@ -1677,6 +1740,7 @@ mod tests {
                 world_progression: None,
                 one_f_chest: Some(OneFChest { world: 0, item }),
                 pyramid_world: None,
+                world_obelisk_world: None,
             };
             assert!(topic_one_f_chest(&f).is_none(), "item {item:#04X} must not draw a verdict");
         }

@@ -161,12 +161,14 @@ fn randomize_inner(
 
     // 13-18. Bosses and quotes, engine patches, title screen, music, stamp.
     let pyramid_world = maze_out.pyramid.map(|(world, _)| world);
+    let world_obelisk_world = maze_out.world_obelisk.map(|(world, _)| world);
     stages::bosses_and_quotes(
         rom,
         options,
         &written,
         progression.as_deref(),
         pyramid_world,
+        world_obelisk_world,
         &mut rng,
     );
     stages::engine_patches(rom, options, &run, &written, maze_out.canoe_gated, &mut rng);

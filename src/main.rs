@@ -257,6 +257,12 @@ struct Cli {
     #[arg(long)]
     uncapped_pad_jumps: bool,
 
+    /// Hide the world number — the banner on entering a world and both status
+    /// bars show × — until the player beats a second obelisk level. Requires
+    /// --world-maze.
+    #[arg(long)]
+    hidden_worlds: bool,
+
     /// Enable Big ? Block randomization
     #[arg(long)]
     big_q_blocks: bool,
@@ -668,6 +674,7 @@ fn build_options(cli: &Cli) -> Options {
             maze_wands: cli.maze_wands,
             item_gates: cli.item_gates,
             uncapped_pad_jumps: cli.uncapped_pad_jumps,
+            hidden_worlds: cli.hidden_worlds,
             big_q_blocks: cli.big_q_blocks,
             shuffle_airships: !cli.no_shuffle_airships,
             shuffle_hammer_bros: !cli.no_shuffle_hammer_bros,
@@ -795,6 +802,9 @@ fn print_summary(options: &Options, seed: u64, output_path: &std::path::Path) {
         );
         if options.uncapped_pad_jumps {
             eprintln!("  Pad jumps: uncapped");
+        }
+        if options.hidden_worlds {
+            eprintln!("  World numbers: hidden until the obelisk");
         }
     }
     // Silent under --world-maze: the mode pins the spine to all eight worlds, so
