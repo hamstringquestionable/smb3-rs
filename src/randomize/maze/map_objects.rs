@@ -911,7 +911,7 @@ mod tests {
     /// A slot above the eight `Map_Init` reloads is still stored and still
     /// restored. Slot 8 is the one a byte-per-world layout would have had to
     /// drop, and the randomizer places Hammer Bros there
-    /// (`eligible_hb_map_slots` runs to 9).
+    /// (`sprite_slots::WorldSprites::hb_eligible` runs to 9).
     #[test]
     fn the_ninth_slot_is_stored_too() {
         let Some(rom) = vanilla() else {

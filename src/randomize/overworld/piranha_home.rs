@@ -72,7 +72,7 @@ mod tests {
     /// the one way a pinned plant level goes without its plant.
     #[test]
     fn off_on_generated_maps_keeps_the_plants_in_world_7() {
-        use crate::randomize::rom_data::read_plant_sprite_positions;
+        use crate::randomize::overworld::sprite_slots::{SpriteKind, WorldSprites};
         use std::collections::HashSet;
         let Some(base) = vanilla() else {
             eprintln!("SKIP: requires the ROM");
@@ -106,7 +106,7 @@ mod tests {
                     .collect();
                 assert_eq!(pins.len(), 2, "seed {seed} maze {maze}: plants not pinned into W7");
                 for wi in 0..8 {
-                    for pos in read_plant_sprite_positions(&rom, wi) {
+                    for pos in WorldSprites::read(&rom, wi).positions(SpriteKind::Plant) {
                         assert_eq!(
                             wi,
                             HOME_WORLD,

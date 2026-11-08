@@ -25,8 +25,9 @@ use rand::Rng;
 use crate::rom::Rom;
 
 use crate::randomize::overworld::node_catalog::{NodeCatalog, NodeKind};
+use crate::randomize::overworld::sprite_slots::WorldSprites;
 use crate::randomize::rom_data::{
-    self, AIRSHIP_OBJ_SLOT, FS_SAS_GAMEOVER_FINALIZE, FS_SAS_SCRH_TABLE, FS_SAS_SCRL_TABLE,
+    AIRSHIP_OBJ_SLOT, FS_SAS_GAMEOVER_FINALIZE, FS_SAS_SCRH_TABLE, FS_SAS_SCRL_TABLE,
     FS_SAS_SEED_HELPER, FS_SAS_X_TABLE, FS_SAS_XHI_TABLE, GAMEOVER_FINALIZE_SITE, Grid,
     MAP_INIT_SCROLL_SITE, MAP_TILE_GRIDS, MAP_Y_STARTS_OFF, W5_IDX,
 };
@@ -357,8 +358,8 @@ fn move_airship_sprites(rom: &mut Rom, catalog: &NodeCatalog) {
             continue;
         }
         if let Some(air_entry) = catalog.world(wi).find(|e| matches!(e.kind, NodeKind::Airship)) {
-            let (r, c) = air_entry.grid_pos;
-            rom_data::write_map_sprite_position(rom, wi, AIRSHIP_OBJ_SLOT, r, c);
+            let pos = air_entry.grid_pos;
+            WorldSprites::edit(rom, wi, |w| w.move_to(AIRSHIP_OBJ_SLOT, pos));
         }
     }
 }

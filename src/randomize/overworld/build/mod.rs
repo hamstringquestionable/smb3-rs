@@ -294,6 +294,10 @@ pub(crate) fn build<R: Rng>(
     }
 
     let mut worlds: Vec<BuiltWorld> = states.iter().map(|s| s.to_built()).collect();
+    // Every world's sprite slots, from the ROM as the map source left it.
+    for w in &mut worlds {
+        w.sprites = crate::randomize::overworld::sprite_slots::WorldSprites::read(rom, w.world_idx);
+    }
 
     // Toad houses promote first so the smaller, less flexible 22-entry budget
     // lands before spades scramble for the remaining HammerBro slots.
@@ -319,7 +323,7 @@ pub(crate) fn build<R: Rng>(
     // slots it selects from are final (Toad House / spade promotion already
     // consumed any it needed). Decided here; the writer stamps the ROM tables.
     if flags.shuffle_hammer_bros {
-        assign_hb_sprites(rom, data.pickup, &mut worlds, flags.world_maze, rng);
+        assign_hb_sprites(data.pickup, &mut worlds, flags.world_maze, rng);
     }
 
     BuildResult { worlds, fort_counts }

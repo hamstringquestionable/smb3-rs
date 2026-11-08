@@ -14,6 +14,7 @@ use crate::randomize::maze::GlobalState;
 use crate::randomize::overworld::build::BuildResult;
 use crate::randomize::overworld::node_catalog::NodeCatalog;
 use crate::randomize::overworld::pickup::PickupResult;
+use crate::randomize::overworld::sprite_slots::WorldSprites;
 use crate::randomize::overworld::writer::WrittenOverworld;
 
 /// Everything settled from the seed and options before the first ROM write.
@@ -390,26 +391,16 @@ pub(super) fn overworld_catalog(
             {
                 if let Some(canoe) = generated.canoe {
                     rom.set_tag("overworld/generated_canoe");
-                    let placed = randomize::rom_data::place_canoe(rom, wi, canoe);
+                    let placed = WorldSprites::edit(rom, wi, |w| w.place_canoe(canoe));
                     assert!(placed, "W{} has no map-object slot for its canoe", wi + 1);
                 }
                 if let Some((castle, help)) = generated.castle {
                     use randomize::rom_data::{AIRSHIP_OBJ_SLOT, HELP_OBJ_SLOT};
                     rom.set_tag("overworld/generated_castle_sprites");
-                    randomize::rom_data::write_map_sprite_position(
-                        rom,
-                        wi,
-                        AIRSHIP_OBJ_SLOT,
-                        castle.0,
-                        castle.1,
-                    );
-                    randomize::rom_data::write_map_sprite_position(
-                        rom,
-                        wi,
-                        HELP_OBJ_SLOT,
-                        help.0,
-                        help.1,
-                    );
+                    WorldSprites::edit(rom, wi, |w| {
+                        w.move_to(AIRSHIP_OBJ_SLOT, castle);
+                        w.move_to(HELP_OBJ_SLOT, help);
+                    });
                 }
                 if let Some(limit) = generated.pan_limit {
                     rom.set_tag("overworld/generated_pan_limit");

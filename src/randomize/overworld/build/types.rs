@@ -183,6 +183,11 @@ pub(crate) struct BuiltWorld {
     /// Redistributed wandering Hammer Bro sprites for this world. Empty when
     /// `shuffle_hammer_bros` is off (the writer keeps the vanilla sprites).
     pub(crate) hb_sprites: Vec<HbSprite>,
+    /// This world's map-object slots: the ledger every sprite goes through
+    /// (`overworld::sprite_slots`). Read from the ROM at the start of the
+    /// build, before the Hammer Bros are dealt into what is left; the writer
+    /// edits a copy and writes it back once.
+    pub(crate) sprites: crate::randomize::overworld::sprite_slots::WorldSprites,
     /// Cells no phase was allowed to place on: the pinned Airship/Bowser (and
     /// Toad House, when unshuffled) tiles, plus every map-object sprite that
     /// keeps its vanilla home — the canoe, the W7 piranha plants,

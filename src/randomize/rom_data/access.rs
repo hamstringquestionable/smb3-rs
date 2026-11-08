@@ -316,62 +316,6 @@ pub(crate) fn map_obj_slot_offset(
     prg_bank_cpu_to_file(11, cpu) + slot
 }
 
-/// Write a map object sprite's position to the map object tables.
-///
-/// Converts a grid position to pixel coordinates and writes to the Y/XHi/XLo
-/// tables for the given world and slot.
-pub(crate) fn write_map_sprite_position(
-    rom: &mut Rom,
-    world_idx: usize,
-    slot: usize,
-    grid_row: usize,
-    grid_col: usize,
-) {
-    let y = ((grid_row + 2) * 16) as u8;
-    let xhi = (grid_col / 16) as u8;
-    let xlo = ((grid_col % 16) * 16) as u8;
-
-    let y_off = map_obj_slot_offset(rom, MAP_OBJ_YS_MASTER, world_idx, slot);
-    let xhi_off = map_obj_slot_offset(rom, MAP_OBJ_XHIS_MASTER, world_idx, slot);
-    let xlo_off = map_obj_slot_offset(rom, MAP_OBJ_XLOS_MASTER, world_idx, slot);
-
-    rom.write_byte(y_off, y);
-    rom.write_byte(xhi_off, xhi);
-    rom.write_byte(xlo_off, xlo);
-}
-
-/// Place a map-object sprite: write its position (Y/XHi/XLo) and its type ID.
-/// Used to add new sprites (e.g. the W8 canoe at an otherwise-empty slot).
-pub(crate) fn write_map_sprite(
-    rom: &mut Rom,
-    world_idx: usize,
-    slot: usize,
-    grid_row: usize,
-    grid_col: usize,
-    id: u8,
-) {
-    write_map_sprite_position(rom, world_idx, slot, grid_row, grid_col);
-    let id_off = map_obj_slot_offset(rom, MAP_OBJ_IDS_MASTER, world_idx, slot);
-    rom.write_byte(id_off, id);
-}
-
-/// Put `world_idx`'s canoe (map object `$10`, `MAPOBJ_CANOE`) on a grid
-/// cell. The engine finds one canoe per map, so the first slot holding one is
-/// the canoe; a world with none (a generated W7 lagoon) takes the highest
-/// empty slot, as the piranha plants do, so the Hammer Bro and plant budgets
-/// that read slot eligibility see it. `false` if no slot is free.
-pub(crate) fn place_canoe(rom: &mut Rom, world_idx: usize, (row, col): (usize, usize)) -> bool {
-    let canoe = (0..MAP_OBJ_SLOTS).find(|&slot| {
-        rom.read_byte(map_obj_slot_offset(rom, MAP_OBJ_IDS_MASTER, world_idx, slot)) == 0x10
-    });
-    let Some(slot) = canoe.or_else(|| last_empty_map_obj_slot(rom, world_idx)) else {
-        return false;
-    };
-    write_map_sprite(rom, world_idx, slot, row, col, 0x10);
-    rom.write_byte(map_obj_reward_offset(world_idx, slot), 0);
-    true
-}
-
 /// True if a map-object slot id is a Hammer Bro sprite (0x03–0x06).
 fn is_hb_sprite_id(id: u8) -> bool {
     (0x03..=0x06).contains(&id)
@@ -440,16 +384,6 @@ pub(crate) fn read_hb_sprite_positions(rom: &Rom, world_idx: usize) -> Vec<(usiz
     read_sprite_positions(rom, world_idx, is_hb_sprite_id)
 }
 
-/// Read grid positions of piranha plant sprites only (`MAPOBJ_W7PLANT`, $07).
-///
-/// Whatever the ROM holds: vanilla's two W7 plants when piranha shuffle is
-/// off, the shuffled ones once `write_plant_sprites` has run.
-pub(crate) fn read_plant_sprite_positions(rom: &Rom, world_idx: usize) -> Vec<(usize, usize)> {
-    read_sprite_positions(rom, world_idx, |id| {
-        id == crate::randomize::levels::piranha_rooms::PLANT_SPRITE_ID
-    })
-}
-
 /// Map-object reward item table (Global Item IDs). A flat 9-bytes-per-world
 /// block laid out parallel to the map-object slot tables: `reward[world*9 +
 /// slot]` is the item awarded for clearing the encounter at that slot. The
@@ -460,28 +394,6 @@ pub(crate) const MAP_OBJ_REWARDS: usize = 0x16190;
 /// File offset of the reward byte for map-object `slot` in `world_idx`.
 pub(crate) fn map_obj_reward_offset(world_idx: usize, slot: usize) -> usize {
     MAP_OBJ_REWARDS + world_idx * MAP_OBJ_SLOTS + slot
-}
-
-/// First map-object slot usable for sprite placement in a world. Slot 0
-/// always holds a fixed non-HB marker (`id 0x01`) and is reserved; slot 1
-/// (the airship sprite slot) is reserved in W1-W7 but usable in W8, which has
-/// no airship.
-fn first_usable_map_obj_slot(world_idx: usize) -> usize {
-    if world_idx == W8_IDX { 1 } else { 2 }
-}
-
-/// Map-object slot indices that can host a redistributed Hammer Bro sprite in
-/// this world (see [`first_usable_map_obj_slot`] for the reserved low slots).
-/// A slot qualifies if it is empty (`0x00`) or currently holds a Hammer Bro
-/// (`0x03-0x06`, which redistribution clears) — so the result is identical
-/// before and after [`clear_hb_sprites`].
-pub(crate) fn eligible_hb_map_slots(rom: &Rom, world_idx: usize) -> Vec<usize> {
-    (first_usable_map_obj_slot(world_idx)..MAP_OBJ_SLOTS)
-        .filter(|&slot| {
-            let id = rom.read_byte(map_obj_slot_offset(rom, MAP_OBJ_IDS_MASTER, world_idx, slot));
-            id == 0x00 || is_hb_sprite_id(id)
-        })
-        .collect()
 }
 
 /// Collect the reward byte of every Hammer-Bro map-object sprite (id
@@ -498,53 +410,6 @@ pub(crate) fn collect_hb_sprite_rewards(rom: &Rom) -> Vec<u8> {
         }
     }
     rewards
-}
-
-/// Clear every Hammer-Bro map-object sprite (id `0x03-0x06`) in a world: the
-/// slot's id, position, and reward byte are zeroed so the tile is freed and the
-/// sprite no longer spawns. Used before writing redistributed Hammer Bros.
-pub(crate) fn clear_hb_sprites(rom: &mut Rom, world_idx: usize) {
-    for slot in 0..MAP_OBJ_SLOTS {
-        let id_off = map_obj_slot_offset(rom, MAP_OBJ_IDS_MASTER, world_idx, slot);
-        if is_hb_sprite_id(rom.read_byte(id_off)) {
-            clear_map_sprite(rom, world_idx, slot);
-        }
-    }
-}
-
-/// Highest-index empty map-object slot usable for a stationary sprite,
-/// scanning from the top so the low slots stay free for the Hammer-Bro
-/// writer (which fills eligible slots from the bottom) and the reserved
-/// dynamic-spawn buffer.
-pub(crate) fn last_empty_map_obj_slot(rom: &Rom, world_idx: usize) -> Option<usize> {
-    (first_usable_map_obj_slot(world_idx)..MAP_OBJ_SLOTS).rev().find(|&slot| {
-        rom.read_byte(map_obj_slot_offset(rom, MAP_OBJ_IDS_MASTER, world_idx, slot)) == 0x00
-    })
-}
-
-/// Clear a single map-object slot: id, position, and reward byte zeroed so
-/// the sprite no longer spawns and the slot reads as empty (`0x00`).
-pub(crate) fn clear_map_sprite(rom: &mut Rom, world_idx: usize, slot: usize) {
-    rom.write_byte(map_obj_slot_offset(rom, MAP_OBJ_IDS_MASTER, world_idx, slot), 0);
-    rom.write_byte(map_obj_slot_offset(rom, MAP_OBJ_YS_MASTER, world_idx, slot), 0);
-    rom.write_byte(map_obj_slot_offset(rom, MAP_OBJ_XHIS_MASTER, world_idx, slot), 0);
-    rom.write_byte(map_obj_slot_offset(rom, MAP_OBJ_XLOS_MASTER, world_idx, slot), 0);
-    rom.write_byte(map_obj_reward_offset(world_idx, slot), 0);
-}
-
-/// Write a redistributed Hammer-Bro sprite into a specific map-object slot:
-/// its type id, grid position, and reward byte.
-pub(crate) fn write_hb_sprite(
-    rom: &mut Rom,
-    world_idx: usize,
-    slot: usize,
-    grid_row: usize,
-    grid_col: usize,
-    id: u8,
-    reward: u8,
-) {
-    write_map_sprite(rom, world_idx, slot, grid_row, grid_col, id);
-    rom.write_byte(map_obj_reward_offset(world_idx, slot), reward);
 }
 
 /// Read the parked sprites that are not Hammer Bros (canoe, piranhas, …; see

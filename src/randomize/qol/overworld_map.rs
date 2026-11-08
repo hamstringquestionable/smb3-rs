@@ -3,7 +3,7 @@
 //! edits themselves live with the vanilla map source,
 //! `overworld::map_source::vanilla`.
 
-use crate::randomize::rom_data::write_map_sprite;
+use crate::randomize::overworld::sprite_slots::{ID_CANOE, WorldSprites};
 use crate::rom::Rom;
 
 // Toggle code: LDA $07BB; EOR #$01; STA $07BB (8 bytes at 0x14A68)
@@ -50,7 +50,7 @@ pub(crate) fn canoe_under_bridges(rom: &mut Rom) {
 ///
 /// Must run before the map source reads sprite positions.
 pub(crate) fn place_w8_canoe(rom: &mut Rom) {
-    write_map_sprite(rom, 7, 6, 5, 7, 0x10);
+    WorldSprites::edit(rom, 7, |w| w.put(6, ID_CANOE, (5, 7)));
 }
 
 /// Remove N-card (N-Spade) panels from the overworld map.

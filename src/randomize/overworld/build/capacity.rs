@@ -613,7 +613,6 @@ fn distribute_hb_sprites<R: Rng>(caps: &[usize; 8], total: usize, rng: &mut R) -
 /// encounters. Stores the result in `worlds[wi].hb_sprites`; the writer stamps
 /// the ROM tables.
 pub(super) fn assign_hb_sprites<R: Rng>(
-    rom: &Rom,
     pickup: &PickupResult,
     worlds: &mut [BuiltWorld],
     world_maze: bool,
@@ -633,9 +632,8 @@ pub(super) fn assign_hb_sprites<R: Rng>(
             .filter(|s| s.kind == SlotKind::HammerBro)
             .map(|s| s.pos)
             .collect();
-        // Leave RESERVED_DYNAMIC_SLOTS empty for runtime bonus spawns.
-        let map_slots =
-            rom_data::eligible_hb_map_slots(rom, wi).len().saturating_sub(RESERVED_DYNAMIC_SLOTS);
+        // The world's free sprite slots, less the runtime-spawn reserve.
+        let map_slots = worlds[wi].sprites.room();
         let world_max = match (wi == 7, world_maze) {
             (true, true) => W8_HB_CAP_MAZE,
             (true, false) => W8_HB_CAP,
