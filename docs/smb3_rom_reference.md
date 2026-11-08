@@ -3528,8 +3528,19 @@ which stores 8 — the airship-object branch reaches 8 by `INC`. So a chest
 ending, a secret exit or a level placed twice all pass op 8 with the player
 on the cell they just cleared. The randomizer's rewritten effect
 (`lock_keys::FORTRESS_FX`) leaves at once when no orb armed it, and with an
-on-clear client (`lock_keys::install_on_clear`, first used by Wandom) it hands
-that player cell to a routine of its own instead.
+on-clear trigger (`lock_keys::install_on_clear`, first used by Wandom) it hands
+that player cell to `maze::on_clear`'s table instead.
+
+**Map-side code can borrow PRG026, and that is how the table fits.** The map
+loop itself swaps `$A000` between page 11 and page 26 every frame
+(`prg030.asm`, `PRG030_86F9` / `PRG030_8715`: 26 for the inventory and
+`StatusBar_UpdateValues`, 11 for `Map_DoMap`), so the map running with PRG026
+mapped — NMI included — is vanilla's normal state. A routine reached from map
+code may therefore `LDA #26 / STA PAGE_A000 / JSR PRGROM_Change_A000` and call
+into PRG026's ~2 KB tail. It must put page 11 back before returning into
+anything in PRG011; code in `$A000` can do that itself by tail-calling
+`PRGROM_Change_A000` (`$FFC2`, clobbers `A` only), whose `RTS` then returns to
+its caller's caller.
 
 **Mechanism (`MO_DoFortressFX` at Map_Operation 8):**
 

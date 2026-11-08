@@ -25,6 +25,20 @@ pub(crate) const PLAYER_CURRENT: u16 = 0x0726;
 /// `World_Num`, 0-based: World 8 is 7.
 pub(crate) const WORLD_NUM: u16 = 0x0727;
 
+/// `PAGE_A000` — the MMC3 page latched into `$A000` by the next
+/// [`PRGROM_CHANGE_A000`]. Store the page here rather than writing the mapper
+/// directly, so anything that re-latches from the variable agrees with you.
+pub(crate) const PAGE_A000: u16 = 0x0720;
+
+/// `PRGROM_Change_A000` (`$FFC2`, the always-mapped PRG031): map page
+/// [`PAGE_A000`] into `$A000`. Clobbers `A` only.
+///
+/// Code running in `$A000` can swap itself out by **tail-calling** this —
+/// `LDA #page / STA PAGE_A000 / JMP PRGROM_Change_A000`. The `JMP` is fetched
+/// before the swap, the routine runs from PRG031, and its `RTS` returns to
+/// whoever called the swapped-out code.
+pub(crate) const PRGROM_CHANGE_A000: u16 = 0xFFC2;
+
 /// The highest zero-page byte a patch may park state in: `Temp_Var3` (`$02`).
 ///
 /// The NMI pushes and pulls exactly `Temp_Var1`, `Temp_Var2` and `Temp_Var3`

@@ -1550,9 +1550,11 @@ The oracle king always names the pyramid's world on these seeds. The code is
   `FS_ON_CLEAR` instead of advancing. Nothing at or past offset 35 moves.
   Keying on the cell is what makes Deja Vu, chest endings and secret exits all
   correct for free: none of them changes which cell the player stands on.
-- **The on-clear hook is general.** Wandom is its first client; a later "beat
-  this level, do that" feature adds a compare block to the same routine and
-  never touches the effect again. 41 bytes reserved, 25 used.
+- **The on-clear hook is general.** `FS_ON_CLEAR` is a 14-byte trampoline that
+  maps PRG026 in and runs `maze::on_clear`'s dispatcher over a table of
+  4-byte rows — cell key, flag address, value to `ORA` in. Wandom is its first
+  row; a later "beat this level, do that" feature adds a row and never touches
+  map-bank code. 32 rows reserved.
 - **The reveal byte is the digit.** `maze_state::WANDOM_REVEAL` (`$7ADD`; two
   free maze bytes remain after it) holds `$00` or `$F0 + K`, so the readout draws it
   directly and holds no K of its own. Shared by both players: one screen, one

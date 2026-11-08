@@ -70,9 +70,11 @@ pub(super) struct MazeRomOut {
     /// Which worlds' canoes the item gate must beach, for [`engine_patches`];
     /// `None` when no gate was installed.
     pub(super) canoe_gated: Option<[bool; 8]>,
-    /// Wandom's pyramid, `(world, cell)`. Its on-clear routine is written;
-    /// [`locks`] must send op 8 there, and the oracle names its world.
+    /// Wandom's pyramid, `(world, cell)`. The oracle names its world.
     pub(super) pyramid: Option<(usize, (usize, usize))>,
+    /// Whether any on-clear trigger was written — and so whether [`locks`]
+    /// must send op 8's no-orb exit to the dispatcher.
+    pub(super) on_clear: bool,
 }
 
 /// Stage 0: resolve random starting items and the tri-state flags.
@@ -726,6 +728,7 @@ pub(super) fn maze_rom(
     let canoe_gated: Option<[bool; 8]> =
         maze.as_ref().map(|m| m.gated).filter(|g| g.iter().any(|&g| g));
     let pyramid = maze.as_ref().and_then(|m| m.pyramid);
+    let mut on_clear = false;
 
     if let Some(MazeModel { state, wands, .. }) = maze {
         rom.set_tag("world_maze");
@@ -738,11 +741,14 @@ pub(super) fn maze_rom(
         // Hidden only with a pyramid to reveal it: a Wandom seed that found no
         // eligible level shows its rolled K from the start.
         randomize::maze::wand_readout::apply(rom, wands, pyramid.is_some());
-        if let Some(cell) = pyramid {
-            // The on-clear routine. [`locks`] points op 8 at it once the effect
-            // it hangs off has been written.
-            rom.set_tag("wandom");
-            randomize::maze::wandom::apply(rom, cell, wands);
+        // Every "beat this cell, set this flag" row, in one table. [`locks`]
+        // points op 8 at it once the effect it hangs off has been written.
+        let triggers: Vec<_> =
+            pyramid.map(|cell| randomize::maze::wandom::trigger(cell, wands)).into_iter().collect();
+        if !triggers.is_empty() {
+            rom.set_tag("on_clear");
+            randomize::maze::on_clear::apply(rom, &triggers);
+            on_clear = true;
         }
         rom.set_tag("world_persist");
         randomize::maze::world_persist::apply(
@@ -767,7 +773,7 @@ pub(super) fn maze_rom(
             credits_progression.expect("world_maze forces world_order on"),
         );
     }
-    MazeRomOut { canoe_gated, pyramid }
+    MazeRomOut { canoe_gated, pyramid, on_clear }
 }
 
 /// Stage 11: every lock in the game, and the 2-player Vs retirement.
@@ -805,7 +811,7 @@ pub(super) fn locks(
         written.lock_tiles(),
     );
     // Send an ordinary clear through the on-clear routine, when something
-    // (today only Wandom's pyramid) wrote one. After `apply`, which writes the
+    // (today only Wandom's pyramid) wrote a trigger. After `apply`, which writes the
     // effect this rearranges; without a routine the effect stays as it was.
     if on_clear {
         randomize::overworld::lock_keys::install_on_clear(rom);
