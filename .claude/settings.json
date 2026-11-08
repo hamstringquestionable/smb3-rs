@@ -10,8 +10,7 @@
 			"Bash(wc*)",
 			"Bash(diff*)",
 			"Bash(head*)",
-			"Bash(tail*)",
-			"Bash(nix-shell -p* python3 --run*\"*)"
+			"Bash(tail*)"
 		]
 	}
 }
