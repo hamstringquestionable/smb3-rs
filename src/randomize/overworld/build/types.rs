@@ -24,6 +24,14 @@ pub(crate) struct BuildFlags {
     /// lock there would be two owners for one tile. Standard mode must not
     /// move, so this is a flag rather than an unconditional rule.
     pub(crate) world_maze: bool,
+    /// Slot 1 is sprite capacity in every world: autoscroll removal retires
+    /// the king scene and the airship, the engine's only writers of it. Off
+    /// with `--keep-autoscroll`, and in tests that build without the option.
+    pub(crate) airship_slot_free: bool,
+    /// Piranha Shuffle Off on generated maps: World 7 holds two sprite slots
+    /// back from the Hammer Bros so both plants always fit beside the levels
+    /// `overworld::piranha_home` pins there.
+    pub(crate) reserve_plant_slots: bool,
 }
 
 /// What kind of node occupies a grid slot.

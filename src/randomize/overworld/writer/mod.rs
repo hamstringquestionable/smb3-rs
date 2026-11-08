@@ -150,7 +150,14 @@ pub(crate) fn write_overworld<R: Rng>(
     if catalog.start_airship_swapped.iter().any(|&b| b)
         || catalog.maps.iter().any(|m| !m.grid.vanilla_layout)
     {
-        crate::randomize::overworld::start_airship_swap::write_engine_scaffolding(rom, catalog);
+        // Slot 1 is the airship's only while the king scene can still spawn
+        // it; once it is sprite capacity the scaffolding must leave it alone.
+        let move_airship = !build.worlds.iter().any(|w| w.sprites.airship_slot_free());
+        crate::randomize::overworld::start_airship_swap::write_engine_scaffolding(
+            rom,
+            catalog,
+            move_airship,
+        );
     }
 
     WrittenOverworld { grids, one_f_world: world_holding_1f(&assignments, data), lock_tiles }

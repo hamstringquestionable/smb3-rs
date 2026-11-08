@@ -536,6 +536,8 @@ pub(super) fn overworld_build(
             eights_are_wild: run.eights_are_wild,
             shuffle_hammer_bros: run.shuffle_hammer_bros,
             world_maze: options.world_maze,
+            airship_slot_free: options.disable_autoscroll,
+            reserve_plant_slots: run.piranha_home,
         },
     );
     if options.hands_levels {

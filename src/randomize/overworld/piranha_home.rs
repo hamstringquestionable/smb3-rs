@@ -69,7 +69,8 @@ mod tests {
     /// Off: both plant levels are pinned into World 7, and every plant sprite
     /// the ROM carries stands in World 7 on a pinned cell — none anywhere
     /// else. Also reports how often World 7 ran out of sprite slots, which is
-    /// the one way a pinned plant level goes without its plant.
+    /// a pinned plant level going without its plant — which the World 7 sprite
+    /// reservation now rules out.
     #[test]
     fn off_on_generated_maps_keeps_the_plants_in_world_7() {
         use crate::randomize::overworld::sprite_slots::{SpriteKind, WorldSprites};
@@ -124,7 +125,10 @@ mod tests {
             }
         }
         eprintln!("plant sprites placed: {sprites} of {} pinned levels", 2 * seeds);
-        assert!(sprites > seeds, "most pinned plant levels should get their sprite");
+        // World 7 holds two slots back from the Hammer Bros for exactly these
+        // (`sprite_slots::WorldSprites::reserve_for_plants`), so every pinned
+        // plant level gets its plant.
+        assert_eq!(sprites, 2 * seeds, "a pinned plant level went without its sprite");
     }
 
     /// Off on vanilla maps is untouched: the run does not pin anything.

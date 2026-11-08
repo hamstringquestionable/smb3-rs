@@ -34,6 +34,29 @@ hashes they describe are gone; the reasoning is not.
 
 ## Entries
 
+### 2026-11-08 — sprite slots, phase B (feature/sprite-budget)
+
+**Intended: the map-object slot each sprite occupies moves; nothing a player
+walks does.** `overworld::sprite_slots` (phase A, byte-identical, the commit
+before) became the only writer of the map-object tables; phase B changes what
+it deals: slot 1 is sprite capacity with autoscroll removal, so Hammer Bros —
+which fill from the bottom — start at slot 1 instead of slot 2; and World 8's
+level tank moves from slot 2 into slot 0, where vanilla parks an unused HELP.
+(The World 7 plant reservation, also phase B, applies only to generated maps
+with Piranha Off, which the baseline's default options do not use.)
+
+**What moved.** All 20 seeds.
+
+**How that was established.** Each seed's patched ROM under the baseline's own
+options, phase A against phase B, byte for byte: **every** differing byte is
+inside the map-object tables (file `0x16010`-`0x161D7`) — 90 to 101 per seed —
+and **none** is anywhere else. So no RNG draw moved: under the default options
+the Hammer Bro caps never bind, so the extra slot changes no world's Bro count,
+only the indices they are written to. No census run: the route censuses build
+with `BuildFlags::default()`, which leaves slot 1 closed, and Hammer Bros are
+dealt after routes are shaped. `map_object_slot_budget` (30 seeds) is
+unchanged, and `all_world_targets_reachable` was re-run at 500 seeds.
+
 ### 2026-11-03 — powerups reads its blocks from the level index (feature/random-music)
 
 **Intended: no overworld change; a powerups rewrite that shifts the shared

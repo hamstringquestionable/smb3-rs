@@ -9,7 +9,7 @@ use crate::randomize::overworld::sprite_slots::{SpriteKind, WorldSprites};
 /// W8 army sprite definitions: (map_object_slot, is_fortress).
 /// Tank goes on a level slot, the other 3 go on fortress slots.
 const W8_ARMY_SPRITES: &[(usize, bool)] = &[
-    (2, false), // Tank sprite (ID $0E) → level slot
+    (0, false), // Tank sprite (ID $0E) → level slot; moved into slot 0 by the build
     (3, true),  // Navy/Battleship sprite (ID $0D) → fortress slot
     (4, true),  // Air Force sprite (ID $0F) → fortress slot
     (5, true),  // Super Tank sprite (ID $0E) → fortress slot
@@ -77,7 +77,7 @@ fn is_special_level_slot(built: &BuiltWorld, wa: &WorldAssignments, pos: (usize,
 /// for runtime bonus spawns (white toad house, coin ship).
 fn plant_budget(built: &BuiltWorld, map: &WorldMap, shuffle_hammer_bros: bool) -> usize {
     let hb_used = if shuffle_hammer_bros { built.hb_sprites.len() } else { map.hb_sprites.len() };
-    built.sprites.room().saturating_sub(hb_used)
+    built.sprites.room_for_plants().saturating_sub(hb_used)
 }
 
 /// Decide where piranha plant sprites go (piranha shuffle).

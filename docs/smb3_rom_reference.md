@@ -3183,6 +3183,26 @@ ends meet land:
 | Vertical | `$B0` `TILE_VERTPATHW` | `$AA` `…WLU` | `$AB` `…WLL` | `$BA` `…WLB` |
 | Horizontal | `$AC` `TILE_HORZPATHW` | `$B7` `…WLL` | `$B8` `…WLR` | `$B9` `…WLB` |
 
+### Which map-object slots the engine treats specially (2026-11-08)
+
+Verified against the disassembly for the sprite-slot ledger
+(`overworld::sprite_slots`, `docs/sprite_slots_design.md`). Every loop over
+the nine slots covers all of them — drawing, marching, entering, completion
+(`prg011:1974`, `DEY/BPL`), `Map_Init` — except these:
+
+| Slot | Special case | Where | Consequence |
+|---|---|---|---|
+| 0 | skipped by the died-on-an-object check | `prg011:1161`, `DEY/BNE`, "Ignores the HELP bubble" | only acts on the airship (scurry away) and a coin ship (reverts to a Hammer Bro), so a coin ship in slot 0 would not revert |
+| 0 | skipped by the canoe search | `prg010:3490`, `DEX/BNE` | a canoe in slot 0 is never found |
+| 0 | never hidden while a beaten object poofs | `MapObject_DrawSleepEnter`, `CPX #$00` (0 is `Map_HideObj`'s "none") | a beaten object there stays drawn until the poof empties the slot; **playtested 2026-11-08 with a World 8 tank: cosmetic only** — no re-entry, normal death, stays cleared |
+| 1 | the airship's: `Map_Object_Airship` (op 4 travel), the "on top of the airship" scurry, `Map_Anchored` | `prg011:1191`, `2890-3260` | all dispatched by object **id**, so dead with autoscroll removal, which retires the only writer of the airship id (`TAndK_WaitPlayerButtonA`, `prg024:306`) |
+| 1 | the death-skid wait ORs slot 1's march counter | `prg011:1409` | harmless for any object: march counters are zero at that point |
+
+**World 8's slot 0** holds HELP (`$01`) parked off the map (y=`$10`, screen 5
+of a 4-screen map), on generated maps too. Nothing reads it — no king, no wand,
+and the maze's slot-0 clear is keyed on `WANDS_TABLE[7]`, never set — so the
+randomizer moves World 8's level tank there.
+
 ### World-Map Object March Validation (PRG011)
 
 How wandering map objects (Hammer Bros, N-Spade, white toad house, coin ship)

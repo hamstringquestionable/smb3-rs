@@ -1,10 +1,10 @@
 # Sprite slots — one ledger for every map object
 
-**Status: phase A built (2026-11-08, `feature/sprite-budget`); phase B is
-design.** Phase A is the byte-identical refactor: `overworld::sprite_slots` is
-the only code that writes the map-object tables, proved byte-identical over 80
-runs across every mode that touches a sprite. Phase B carries the behaviour
-changes.
+**Status: built (2026-11-08, `feature/sprite-budget`).** Phase A is the
+byte-identical refactor: `overworld::sprite_slots` is the only code that writes
+the map-object tables, proved byte-identical over 80 runs across every mode that
+touches a sprite. Phase B carries the behaviour changes and is built too; see
+"What phase B built" below.
 
 ## The problem
 
@@ -157,6 +157,30 @@ Proved by byte-comparing against `beta/next` with `--no-palettes` across modes
 Then a before/after `map_object_slot_budget` census; most seeds move, because
 slot 1 raises every world's Hammer Bro cap.
 
+### What phase B built
+
+- **Slot 1** is opened by `BuildFlags::airship_slot_free` (=
+  `disable_autoscroll`) through `WorldSprites::open_airship_slot`. Every seed
+  moves: Hammer Bros fill from the bottom, and the bottom is now slot 1. The
+  slot census did not move (it already counted slots 0-1 free, and the Bro
+  caps rarely bind) — the change is which index each Bro sits in, plus one
+  slot of headroom per world.
+- **`move_airship_sprites`** runs only when slot 1 is still the airship's
+  (`write_engine_scaffolding`'s `move_airship`).
+- **World 7's plant reservation** — `BuildFlags::reserve_plant_slots`
+  (= `Resolved::piranha_home`) → `reserve_for_plants(2)`, which comes off the
+  Hammer Bros' `room()` and not the plants' `room_for_plants()`. Generated maps
+  with Piranha Off: 48/48 pinned plant levels get their sprite (44/48 before).
+- **World 8's level tank in slot 0** (`take_w8_help_slot`), freeing slot 2.
+  Slot 0 has a third engine special case — it is never hidden while a beaten
+  object poofs — so this was playtested before shipping: the tank stays
+  visible during its poof, and that is all. No re-entry, dying in it behaves
+  normally, the cleared cell stays cleared.
+- With `--keep-autoscroll` the output is phase A's except where the World 7
+  reservation applies (generated maps, Piranha Off).
+- The engine facts are in `docs/smb3_rom_reference.md`, "Which map-object
+  slots the engine treats specially".
+
 ## Open questions
 
 - **The "fake tank" in World 8.** Players report telling the tank without a
@@ -165,4 +189,6 @@ slot 1 raises every world's Hammer Bro cap.
   sprite that gets no fortress/level position keeps its vanilla position, which
   on a randomized map can be a cell with no level; (b) the NES's 8-sprites-per-
   scanline limit, where which sprite drops out follows draw order and so slot
-  order. Investigate before phase B moves a unit into slot 0.
+  order. Not investigated (user, 2026-11-08: "don't worry about the
+  tank"); note that phase B moved the level tank into slot 0, which changes
+  World 8's draw order if (b) is the cause.

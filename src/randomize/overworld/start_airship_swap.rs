@@ -152,12 +152,17 @@ fn above_start_override(world_idx: usize) -> Option<u8> {
 ///   * `Map_Init` scroll-store replaced with `JSR seed_helper`
 ///   * `GameOver_TwirlToStart` finalize store replaced with `JSR finalize` so
 ///     the spiral lands on the per-world start instead of vanilla column 2
-///   * Per-swapped-world `Map_Object` slot-1 sprite position move
-pub(crate) fn write_engine_scaffolding(rom: &mut Rom, catalog: &NodeCatalog) {
+///   * Per-swapped-world `Map_Object` slot-1 sprite position move — only when
+///     `move_airship` (`--keep-autoscroll`), when the king scene can still put
+///     the airship in slot 1. With autoscroll removal slot 1 is ordinary sprite
+///     capacity, and moving it would drag whatever was dealt there.
+pub(crate) fn write_engine_scaffolding(rom: &mut Rom, catalog: &NodeCatalog, move_airship: bool) {
     build_position_tables(rom, catalog);
     write_seed_helper(rom);
     write_gameover_finalize(rom);
-    move_airship_sprites(rom, catalog);
+    if move_airship {
+        move_airship_sprites(rom, catalog);
+    }
 }
 
 /// The first map column the camera shows when world `world_idx` starts with

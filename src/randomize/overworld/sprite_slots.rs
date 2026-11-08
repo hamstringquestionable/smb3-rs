@@ -96,6 +96,12 @@ pub(crate) struct WorldSprites {
     world: usize,
     read_as: [SlotEntry; MAP_OBJ_SLOTS],
     pub(crate) entries: [SlotEntry; MAP_OBJ_SLOTS],
+    /// Slot 1 is capacity: autoscroll removal retires the king scene, so the
+    /// engine never puts the airship there ([`Self::open_airship_slot`]).
+    airship_slot_free: bool,
+    /// Slots held back from the Hammer Bros for the piranha plants
+    /// ([`Self::reserve_for_plants`]).
+    plant_reserve: usize,
 }
 
 impl WorldSprites {
@@ -103,7 +109,55 @@ impl WorldSprites {
     /// reads every world before anything asks it a question.
     pub(crate) fn unread(world: usize) -> WorldSprites {
         let e = SlotEntry { id: ID_EMPTY, y: 0, xhi: 0, xlo: 0, reward: 0 };
-        WorldSprites { world, read_as: [e; MAP_OBJ_SLOTS], entries: [e; MAP_OBJ_SLOTS] }
+        WorldSprites {
+            world,
+            read_as: [e; MAP_OBJ_SLOTS],
+            entries: [e; MAP_OBJ_SLOTS],
+            airship_slot_free: false,
+            plant_reserve: 0,
+        }
+    }
+
+    /// Make slot 1 usable in W1-W7 (World 8's always is). Only with autoscroll
+    /// removal on: the engine's one writer of slot 1 is the king scene and the
+    /// airship's own handler, and removal retires both.
+    pub(crate) fn open_airship_slot(&mut self) {
+        self.airship_slot_free = true;
+    }
+
+    /// World 8 only: move the sprite in `from` (the level tank) into slot 0,
+    /// over the HELP bubble vanilla parks off the map there, and free `from`.
+    /// Nothing reads World 8's slot 0 — no king, no wand, and the maze's
+    /// slot-0 clear is keyed on `WANDS_TABLE[7]`, never set. Returns `false`,
+    /// changing nothing, unless slot 0 is that HELP and `from` is military.
+    ///
+    /// **Playtested (2026-11-08):** the engine never hides slot 0 while a
+    /// beaten object poofs (`MapObject_DrawSleepEnter`, `CPX #$00` — 0 is
+    /// `Map_HideObj`'s "none"), so a beaten tank here stays drawn until the
+    /// poof empties the slot. That is the only difference: it cannot be
+    /// re-entered during the poof, dying in it behaves normally, and the
+    /// cleared cell stays cleared.
+    pub(crate) fn take_w8_help_slot(&mut self, from: usize) -> bool {
+        let ok = self.world == W8_IDX
+            && self.entries[0].kind() == SpriteKind::Help
+            && self.entries[from].kind() == SpriteKind::Military;
+        if ok {
+            self.entries[0] = self.entries[from];
+            self.clear_slot(from);
+        }
+        ok
+    }
+
+    /// Whether slot 1 is sprite capacity rather than the airship's.
+    pub(crate) fn airship_slot_free(&self) -> bool {
+        self.airship_slot_free
+    }
+
+    /// Hold `n` slots back from the Hammer Bros so the piranha plants always
+    /// fit — Piranha Shuffle Off on generated maps, where both plant levels
+    /// are pinned to World 7 (`overworld::piranha_home`).
+    pub(crate) fn reserve_for_plants(&mut self, n: usize) {
+        self.plant_reserve += n;
     }
 
     /// Snapshot world `world`'s slots from the ROM.
@@ -118,7 +172,7 @@ impl WorldSprites {
             xlo: byte(MAP_OBJ_XLOS_MASTER, slot),
             reward: rom.read_byte(map_obj_reward_offset(world, slot)),
         });
-        WorldSprites { world, read_as: entries, entries }
+        WorldSprites { read_as: entries, entries, ..WorldSprites::unread(world) }
     }
 
     /// Write back every byte that differs from the snapshot, and nothing else.
@@ -141,10 +195,10 @@ impl WorldSprites {
     }
 
     /// The first slot a randomizer-placed sprite may take: slot 0 is the HELP
-    /// bubble everywhere, and slot 1 is the airship's in W1-W7. **Phase A
-    /// keeps today's capacity**; the design doc's phase B opens slot 1.
+    /// bubble, and slot 1 the airship's in W1-W7 unless
+    /// [`Self::open_airship_slot`] freed it.
     fn first_usable(&self) -> usize {
-        if self.world == W8_IDX { 1 } else { 2 }
+        if self.world == W8_IDX || self.airship_slot_free { 1 } else { 2 }
     }
 
     /// Slots a Hammer Bro may take: from [`Self::first_usable`] up, empty or
@@ -157,9 +211,16 @@ impl WorldSprites {
             .collect()
     }
 
-    /// How many sprites the builder may deal this world beyond what it already
-    /// holds: the Hammer-Bro-eligible slots less the runtime-spawn reserve.
+    /// How many Hammer Bros the builder may deal this world: the eligible slots
+    /// less the runtime-spawn reserve and any slots held for the plants.
     pub(crate) fn room(&self) -> usize {
+        self.room_for_plants().saturating_sub(self.plant_reserve)
+    }
+
+    /// How many slots the plants may use, the reservation included: the
+    /// eligible slots less the runtime-spawn reserve. The writer subtracts the
+    /// Hammer Bros it dealt.
+    pub(crate) fn room_for_plants(&self) -> usize {
         self.hb_eligible().len().saturating_sub(RESERVED_DYNAMIC_SLOTS)
     }
 
@@ -318,6 +379,67 @@ mod tests {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod phase_b {
+    use super::*;
+
+    fn vanilla() -> Option<Rom> {
+        let bytes = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes").ok()?;
+        Rom::from_bytes(&bytes).ok()
+    }
+
+    /// Opening the airship slot makes slot 1 a Hammer Bro slot in W1-W7 and
+    /// adds exactly one to the room; World 8 had it already.
+    #[test]
+    fn the_airship_slot_adds_one_slot_in_worlds_1_to_7() {
+        let Some(rom) = vanilla() else {
+            eprintln!("SKIP: requires the ROM");
+            return;
+        };
+        for wi in 0..8 {
+            let closed = WorldSprites::read(&rom, wi);
+            let mut open = closed.clone();
+            open.open_airship_slot();
+            let gain = usize::from(wi != W8_IDX);
+            assert_eq!(open.room(), closed.room() + gain, "W{}", wi + 1);
+            assert_eq!(open.hb_eligible().first(), Some(&1), "W{}: slot 1 not eligible", wi + 1);
+        }
+    }
+
+    /// The plant reservation comes off the Hammer Bros' room and not the
+    /// plants'.
+    #[test]
+    fn the_plant_reservation_is_the_plants() {
+        let Some(rom) = vanilla() else {
+            eprintln!("SKIP: requires the ROM");
+            return;
+        };
+        let mut w7 = WorldSprites::read(&rom, 6);
+        let (room, plants) = (w7.room(), w7.room_for_plants());
+        w7.reserve_for_plants(2);
+        assert_eq!(w7.room(), room - 2);
+        assert_eq!(w7.room_for_plants(), plants);
+    }
+
+    /// World 8's level tank takes the parked HELP's slot 0 and frees its own;
+    /// any other world, or a second call, changes nothing.
+    #[test]
+    fn the_w8_tank_takes_slot_0() {
+        let Some(rom) = vanilla() else {
+            eprintln!("SKIP: requires the ROM");
+            return;
+        };
+        let mut w8 = WorldSprites::read(&rom, W8_IDX);
+        let tank = w8.entries[2];
+        assert!(w8.take_w8_help_slot(2));
+        assert_eq!(w8.entries[0], tank);
+        assert_eq!(w8.entries[2].kind(), SpriteKind::Empty);
+        assert!(!w8.take_w8_help_slot(2), "a second call must not move anything");
+        let mut w1 = WorldSprites::read(&rom, 0);
+        assert!(!w1.take_w8_help_slot(2), "only World 8's HELP is free");
     }
 }
 
