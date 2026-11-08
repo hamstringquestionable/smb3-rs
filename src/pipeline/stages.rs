@@ -600,7 +600,12 @@ pub(super) fn maze_model(
         let wandom = options.maze_wands == crate::MAZE_WANDS_WANDOM;
         let mut wandom_rng = ChaCha8Rng::seed_from_u64(seed ^ randomize::maze::wandom::WANDOM_SALT);
         let wands = if wandom {
-            randomize::maze::wandom::roll_wands(spine.len(), &mut wandom_rng)
+            randomize::maze::wandom::roll_wands(
+                spine.len(),
+                options.maze_wands_min,
+                options.maze_wands_max,
+                &mut wandom_rng,
+            )
         } else {
             options.maze_wands.min(spine.len().saturating_sub(1) as u8)
         };

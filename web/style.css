@@ -463,6 +463,17 @@ input[type="radio"] {
     color: var(--pill-active-text, #fff);
 }
 
+/* Wandom's range on Wands To Enter: while "?" is lit, the two ends wear the
+   lit accent and the numbers between them a light wash of it. */
+.pill-group label.range-end {
+    background: var(--pill-active, #4a8a4f);
+    color: var(--pill-active-text, #fff);
+}
+.pill-group label.range-mid {
+    background: color-mix(in srgb, var(--pill-active, #4a8a4f) 35%, #1c1c38);
+    color: #e0e0e0;
+}
+
 /* A pill that toggles independently of the exclusive choice beside it (Deja
    Vu's "Forts"). The heavier left edge is the only thing saying "this one is
    not part of the pick-one group" — without it a lit Forts reads as a fourth

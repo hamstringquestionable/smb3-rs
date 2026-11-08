@@ -533,8 +533,19 @@ export const SCHEMA = [
 			.concat([{ value: 8, label: "?" }]),
 		default: 3,
 		label: "Wands To Enter", flavorWhen: { value: 8, text: "Wandom" },
-		tip: "Wands needed before Bowser's castle will open. Fewer is a shorter game; 0 lets you walk straight in if you find a way there. ? picks a secret number from 2 to 6. Beat the obelisk level, somewhere early in the maze, to find out what it is.",
+		tip: "Wands needed before Bowser's castle will open. Fewer is a shorter game; 0 lets you walk straight in if you find a way there. ? picks a secret number, from 2 to 6 unless you change it: with ? lit, click a number to set the lowest it can be, then another to set the highest. Picking the same number twice makes it a fixed count instead. Beat the obelisk level, somewhere early in the maze, to find out what it is.",
 		icon: WANDS,
+		group: "maze", inFlagKey: true,
+		mode: "maze" },
+	// Wandom's range. No row of their own: each is a hidden input on Wands To
+	// Enter, which `wireRange` drives while its "?" (`activeWhen`) is lit, and
+	// both are inert otherwise.
+	{ id: "maze_wands_min", type: "range", rangeOf: "maze_wands", activeWhen: 8, default: 2,
+		label: "Wandom Fewest Wands",
+		group: "maze", inFlagKey: true,
+		mode: "maze" },
+	{ id: "maze_wands_max", type: "range", rangeOf: "maze_wands", activeWhen: 8, default: 6,
+		label: "Wandom Most Wands",
 		group: "maze", inFlagKey: true,
 		mode: "maze" },
 	{ id: "hints", type: "tri", options: HINT_LEVELS, default: "some",
@@ -1282,9 +1293,16 @@ function currentMode() {
 	return entry && readValue(entry) ? "maze" : "standard";
 }
 
-// True when the option describes nothing in the mode the form is currently in.
+// True when the option describes nothing in the mode the form is currently in —
+// or, for a range (Wandom's ends), while its host is not on the value that
+// gives it meaning.
 function isInert(entry, mode) {
-	return !!entry.mode && entry.mode !== mode;
+	if (entry.mode && entry.mode !== mode) return true;
+	if (entry.rangeOf) {
+		const host = SCHEMA.find(s => s.id === entry.rangeOf);
+		return !host || readValue(host) !== entry.activeWhen;
+	}
+	return false;
 }
 
 // Options that, while on, pin others to a value: each names the schema key an
@@ -1391,7 +1409,9 @@ export function applyModeStates() {
 			setBadge(entry, forced ? modeBadgeText(entry) : null);
 			continue;
 		}
-		if (!entry.mode) continue;
+		// A range has no row of its own: its host's mode greys the row it sits
+		// in, and greying it here would grey that row whenever "?" is unlit.
+		if (!entry.mode || entry.rangeOf) continue;
 		const inert = isInert(entry, mode);
 		// Inert always greys. Re-enabling belongs to `applyEnabledWhen` when the
 		// entry has a host to answer to (World Count still rides on World Order),
@@ -1597,8 +1617,85 @@ function renderTri(entry) {
 			el("label", { for: domId(flag.id), class: "pill-flag", title: flag.tip }, flag.label),
 		);
 	}
+	const range = rangeEntriesFor(entry);
+	if (range) {
+		for (const r of range) {
+			group.appendChild(el("input", { type: "hidden", id: domId(r.id), value: r.default }));
+		}
+		wireRange(entry, group, range);
+	}
 	wrap.appendChild(group);
 	return wrap;
+}
+
+// An entry's `range` children (`rangeOf`), as [low end, high end], or null.
+function rangeEntriesFor(entry) {
+	const ends = SCHEMA.filter(e => e.rangeOf === entry.id);
+	return ends.length === 2 ? ends : null;
+}
+
+// Wandom's range on Wands To Enter. While the host's `activeWhen` pill ("?") is
+// lit, a number pill no longer picks a fixed count: clicks set the low end, then
+// the high end, alternately, swapping if the second lands below the first.
+// Equal ends mean one number, so that number becomes the fixed count and the
+// range is reset; clicking the lit "?" again does the same with the host's
+// default. Keyboard arrows still move the radio as usual.
+function wireRange(entry, group, [low, high]) {
+	let next = "low";
+	const pick = (value) => {
+		writeValue(low, low.default);
+		writeValue(high, high.default);
+		const radio = document.getElementById(`${domId(entry.id)}-${value}`);
+		radio.checked = true;
+		radio.dispatchEvent(new Event("change"));
+	};
+	group.addEventListener("click", (ev) => {
+		const label = ev.target.closest("label");
+		const input = label && document.getElementById(label.htmlFor);
+		if (!input || input.name !== radioName(entry.id)) return;
+		const value = Number(input.value);
+		if (readValue(entry) !== low.activeWhen) {
+			// Not in range mode: an ordinary pick, and lighting "?" starts the
+			// alternation over at the low end.
+			if (value === low.activeWhen) next = "low";
+			return;
+		}
+		ev.preventDefault();
+		if (value === low.activeWhen) {
+			pick(entry.default);
+			return;
+		}
+		let lo = readValue(low), hi = readValue(high);
+		if (next === "low") lo = value; else hi = value;
+		next = next === "low" ? "high" : "low";
+		if (lo > hi) [lo, hi] = [hi, lo];
+		if (lo === hi) {
+			pick(lo);
+			return;
+		}
+		writeValue(low, lo);
+		writeValue(high, hi);
+		document.getElementById(domId(low.id)).dispatchEvent(new Event("change"));
+	});
+}
+
+// Paint the range onto its host's pills: both ends lit, the numbers between
+// them a light wash, and nothing while the host is off its `activeWhen` value.
+function applyRangeHighlight() {
+	for (const entry of SCHEMA) {
+		const range = rangeEntriesFor(entry);
+		if (!range) continue;
+		const [low, high] = range;
+		const on = readValue(entry) === low.activeWhen;
+		const lo = readValue(low), hi = readValue(high);
+		for (const opt of entry.options) {
+			const label = document.querySelector(`label[for="${domId(entry.id)}-${opt.value}"]`);
+			if (!label) continue;
+			const inRange = on && opt.value !== low.activeWhen;
+			label.classList.toggle("range-end", inRange && (opt.value === lo || opt.value === hi));
+			label.classList.toggle("range-mid", inRange && opt.value > lo && opt.value < hi);
+		}
+	}
 }
 
 // A `bool` entry with `pillOf: "<other id>"` is not a row of its own: its
@@ -1839,7 +1936,7 @@ export function renderOptions(rootEl, hosts = {}) {
 			fieldset.appendChild(el("p", { class: "note group-note" },
 				el("a", { href: group.link.href }, group.link.label)));
 		}
-		const entries = SCHEMA.filter(s => s.group === group.id && !s.host && !s.pillOf);
+		const entries = SCHEMA.filter(s => s.group === group.id && !s.host && !s.pillOf && !s.rangeOf);
 		const runs = group.subgroups
 			? group.subgroups.map(sub => [sub.label, entries.filter(e => e.subgroup === sub.id)])
 			: [[null, entries]];
@@ -1864,6 +1961,10 @@ export function renderOptions(rootEl, hosts = {}) {
 
 export function readValue(entry) {
 	switch (entry.type) {
+		case "range": {
+			const node = document.getElementById(domId(entry.id));
+			return node ? Number(node.value) : entry.default;
+		}
 		case "bool": {
 			if (entry.pillOf) {
 				const node = document.getElementById(domId(entry.id));
@@ -1908,6 +2009,11 @@ export function readValue(entry) {
 export function writeValue(entry, value) {
 	if (value === undefined) return;
 	switch (entry.type) {
+		case "range": {
+			const node = document.getElementById(domId(entry.id));
+			if (node) node.value = String(value);
+			break;
+		}
 		case "bool": {
 			if (entry.pillOf) {
 				const node = document.getElementById(domId(entry.id));
@@ -2074,6 +2180,7 @@ export function applyEnabledWhen() {
 // those re-skins is picked. The visual-patch radio is app.js's, so app.js calls
 // this when it changes.
 export function applyPillFlavors() {
+	applyRangeHighlight();
 	const visualPatch = document.querySelector('input[name="visual-patch"]:checked')?.value ?? "";
 	for (const entry of SCHEMA) {
 		if (entry.flavorWhen) {
@@ -2126,6 +2233,7 @@ function applyEntryEnabled(entry, enabled) {
 
 function entryDomIds(entry) {
 	switch (entry.type) {
+		case "range":
 		case "select":
 			return [domId(entry.id)];
 		case "bool":

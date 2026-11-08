@@ -240,9 +240,18 @@ struct Cli {
     world_maze: bool,
 
     /// Wands Bowser's castle demands in world-maze mode (0-7, default 3), or `?`
-    /// for Wandom: the seed rolls 2-6 and hides it behind an obelisk level
+    /// for Wandom: the seed rolls a number from --wandom-min to --wandom-max
+    /// (default 2-6) and hides it behind an obelisk level
     #[arg(long, default_value_t = 3, value_parser = parse_maze_wands)]
     maze_wands: u8,
+
+    /// Wandom's lowest possible wand count (0-7). Only read with --maze-wands ?
+    #[arg(long, default_value_t = 2, value_parser = clap::value_parser!(u8).range(0..=7))]
+    wandom_min: u8,
+
+    /// Wandom's highest possible wand count (0-7). Only read with --maze-wands ?
+    #[arg(long, default_value_t = 6, value_parser = clap::value_parser!(u8).range(0..=7))]
+    wandom_max: u8,
 
     /// Lock ways forward behind the item that opens them, with the item placed
     /// where it can be reached without it. Today that is the boats: canoes park
@@ -672,6 +681,8 @@ fn build_options(cli: &Cli) -> Options {
             world_count: cli.world_count,
             world_maze: cli.world_maze,
             maze_wands: cli.maze_wands,
+            maze_wands_min: cli.wandom_min,
+            maze_wands_max: cli.wandom_max,
             item_gates: cli.item_gates,
             uncapped_pad_jumps: cli.uncapped_pad_jumps,
             hidden_worlds: cli.hidden_worlds,
@@ -790,7 +801,11 @@ fn print_summary(options: &Options, seed: u64, output_path: &std::path::Path) {
     eprintln!("  World order: {}", if options.world_order { "on" } else { "off" });
     if options.world_maze {
         if options.maze_wands == MAZE_WANDS_WANDOM {
-            eprintln!("  World maze: on (Wandom: 2-6 wands, revealed by the obelisk)");
+            let (lo, hi) = (
+                options.maze_wands_min.min(options.maze_wands_max),
+                options.maze_wands_min.max(options.maze_wands_max),
+            );
+            eprintln!("  World maze: on (Wandom: {lo}-{hi} wands, revealed by the obelisk)");
         } else {
             eprintln!("  World maze: on ({} wand(s) to open the castle)", options.maze_wands);
         }
