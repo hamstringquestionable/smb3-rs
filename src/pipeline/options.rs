@@ -106,6 +106,15 @@ pub(super) fn default_maze_wands() -> u8 {
     crate::randomize::maze::DEFAULT_WANDS_REQUIRED
 }
 
+/// Wandom's default range, 2-6: the ends left out, so a hidden K is never
+/// "none" or "all of them" unless the player asks for it.
+pub(super) fn default_wandom_min() -> u8 {
+    *crate::randomize::maze::wandom::WANDOM_K.start()
+}
+pub(super) fn default_wandom_max() -> u8 {
+    *crate::randomize::maze::wandom::WANDOM_K.end()
+}
+
 /// Per-class enemy randomization mode.
 ///
 /// The `Specifier` derive gives this a 2-bit flag-key encoding in declaration
@@ -519,6 +528,18 @@ pub struct Options {
     /// only starts costing the median at 6–7.
     #[serde(default = "default_maze_wands")]
     pub maze_wands: u8,
+    /// **Wandom's range**, low end: K is rolled uniformly from
+    /// `maze_wands_min..=maze_wands_max`, each 0-7, and a range given backwards
+    /// is read the other way round. Default 2-6. The web app never sends equal
+    /// ends with Wandom on — picking the same number twice turns Wandom off and
+    /// makes that number the fixed K — but Rust accepts it (a hidden fixed K).
+    ///
+    /// **Only read when `maze_wands` is [`MAZE_WANDS_WANDOM`].**
+    #[serde(default = "default_wandom_min")]
+    pub maze_wands_min: u8,
+    /// Wandom's range, high end. See [`Options::maze_wands_min`].
+    #[serde(default = "default_wandom_max")]
+    pub maze_wands_max: u8,
     /// **Item gates.** A way forward can be shut until the player holds the item
     /// that opens it, and the placement pass guarantees that item sits somewhere
     /// they can reach without it. One switch for the whole class rather than one
@@ -899,6 +920,8 @@ impl Default for Options {
             world_count: default_world_count(),
             world_maze: false,
             maze_wands: default_maze_wands(),
+            maze_wands_min: default_wandom_min(),
+            maze_wands_max: default_wandom_max(),
             item_gates: false,
             uncapped_pad_jumps: false,
             hidden_worlds: false,

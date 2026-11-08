@@ -1152,6 +1152,8 @@ fn all_off_options() -> Options {
         world_count: 7,
         world_maze: false,
         maze_wands: 3,
+        maze_wands_min: 2,
+        maze_wands_max: 6,
         item_gates: false,
         uncapped_pad_jumps: false,
         hidden_worlds: false,
@@ -1239,6 +1241,8 @@ fn all_on_options() -> Options {
         world_count: 3,
         world_maze: true,
         maze_wands: 5,
+        maze_wands_min: 2,
+        maze_wands_max: 6,
         item_gates: true,
         uncapped_pad_jumps: true,
         hidden_worlds: true,
@@ -1962,6 +1966,46 @@ fn flag_key_round_trips_wandom() {
     // And it parses from the JSON the web app sends for the "?" pill.
     let json: Options = serde_json::from_str(r#"{"world_maze":true,"maze_wands":8}"#).unwrap();
     assert_eq!(json.maze_wands, MAZE_WANDS_WANDOM);
+    assert_eq!((json.maze_wands_min, json.maze_wands_max), (2, 6), "range defaults from JSON");
+}
+
+/// Wandom's range survives the key for every pair of ends, and moves the key
+/// only on Wandom seeds.
+#[test]
+fn flag_key_round_trips_the_wandom_range() {
+    for min in 0..=7 {
+        for max in 0..=7 {
+            let opts = Options {
+                world_maze: true,
+                maze_wands: MAZE_WANDS_WANDOM,
+                maze_wands_min: min,
+                maze_wands_max: max,
+                ..Default::default()
+            };
+            let back = Options::from_flag_key(&opts.to_flag_key()).expect("round trip");
+            assert_eq!((back.maze_wands, back.maze_wands_min, back.maze_wands_max), (8, min, max));
+        }
+    }
+    // Off Wandom the range is inert, so it must not move the key.
+    let fixed = Options { world_maze: true, maze_wands: 4, ..Default::default() };
+    let odd = Options { maze_wands_min: 0, maze_wands_max: 7, ..fixed.clone() };
+    assert_eq!(fixed.to_flag_key(), odd.to_flag_key());
+}
+
+/// A Wandom key minted before the range existed (seed 1's, from the CLI at
+/// 51597cb) still decodes to Wandom 2-6 — the XOR-with-default encoding is
+/// what makes those zero bits mean the old range.
+#[test]
+fn a_pre_range_wandom_key_decodes_to_two_through_six() {
+    let back = Options::from_flag_key("SMB3R-3Q9FQHRF000525AG00X000200010").expect("old key");
+    assert!(back.world_maze);
+    assert_eq!((back.maze_wands, back.maze_wands_min, back.maze_wands_max), (8, 2, 6));
+    let default_range = Options {
+        world_maze: true,
+        maze_wands: MAZE_WANDS_WANDOM,
+        ..Options::from_flag_key("SMB3R-3Q9FQHRF000525AG00X000200010").unwrap()
+    };
+    assert_eq!(default_range.to_flag_key(), "SMB3R-3Q9FQHRF000525AG00X000200010");
 }
 
 #[test]

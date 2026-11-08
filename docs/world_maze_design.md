@@ -1528,7 +1528,8 @@ row/column pairing has to be held to it explicitly.
 ### Wandom: a hidden K (2026-11-07)
 
 `maze_wands = 8` (`?` on the web page, `--maze-wands ?` on the CLI) rolls K
-uniformly from 2-6 (capped by the airships the spine offers) and hides it: the
+uniformly from the player's range — `maze_wands_min..=maze_wands_max`, default
+2-6, any ends 0-7 — capped by the airships the spine offers, and hides it: the
 readout shows `N/×` until the player beats one level drawn as a **pyramid**
 (`$69`). Then a 1-up plays and the readout shows `N/K` for the rest of the game.
 The oracle king always names the pyramid's world on these seeds. The code is
@@ -1568,6 +1569,14 @@ The oracle king always names the pyramid's world on these seeds. The code is
   letters. `×` uses the bar's own colours.
 - **Players see an obelisk.** The king, the web tip and the changelog call it
   an obelisk; the code says pyramid, after the tile.
+- **The range (2026-11-08).** The player picks K's ends on the web page: with
+  `?` lit, number clicks alternate low end / high end, a high end below the low
+  one swaps them, and equal ends turn Wandom off and make that number the
+  fixed K. Clicking the lit `?` turns it off too. The flag key carries the low
+  end in `maze_wands` (which a Wandom key otherwise leaves free) and the high
+  end in a new 3-bit field, **both XOR their defaults**, so every key minted
+  before the range existed still reads as 2-6. The default range draws exactly
+  what the fixed 2-6 did, so those seeds are unchanged.
 
 ### Hidden world numbers: a second obelisk (2026-11-08)
 

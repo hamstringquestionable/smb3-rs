@@ -11,7 +11,7 @@
 //!
 //! # The three decisions, all made here
 //!
-//! - **K** ([`roll_wands`]): uniform over 2-6 ([`WANDOM_K`]), capped by the
+//! - **K** ([`roll_wands`]): uniform over the player's range (default 2-6, [`WANDOM_K`]), capped by the
 //!   airships the spine offers, from its own substream so nothing else in the seed moves with it.
 //! - **Which level** ([`pick_pyramid`]): an *optional* level — the maze is still
 //!   winnable with its cell walled off — in a world near the start, by telepad
@@ -58,14 +58,19 @@ pub(crate) const WANDOM_SALT: u64 = 0x5741_4E44_4F4D_5F31;
 /// of" or "every airship".
 pub(crate) const WANDOM_K: std::ops::RangeInclusive<u8> = 2..=6;
 
-/// Roll K: uniform over [`WANDOM_K`], capped at the airships the spine offers.
-/// With `world_count < 7` the spine is shorter and fewer wands exist at all,
-/// which is the same cap `maze_model` puts on a fixed K; a spine too short for
-/// the range's floor rolls whatever it has.
-pub(crate) fn roll_wands<R: Rng>(spine_len: usize, rng: &mut R) -> u8 {
+/// Roll K: uniform over the player's range (default [`WANDOM_K`]), capped at
+/// the airships the spine offers. With `world_count < 7` the spine is shorter
+/// and fewer wands exist at all, which is the same cap `maze_model` puts on a
+/// fixed K; a spine too short for the range's floor rolls whatever it has. A
+/// range given backwards is read the other way round.
+///
+/// The default range draws exactly what the fixed 2-6 did, so a Wandom seed
+/// that never touched the range is unchanged.
+pub(crate) fn roll_wands<R: Rng>(spine_len: usize, min: u8, max: u8, rng: &mut R) -> u8 {
+    let (min, max) = (min.min(max), min.max(max));
     let airships = spine_len.saturating_sub(1).min(usize::from(MAX_WANDS)) as u8;
-    let hi = (*WANDOM_K.end()).min(airships).max(1);
-    let lo = (*WANDOM_K.start()).min(hi);
+    let hi = max.min(airships);
+    let lo = min.min(hi);
     rng.random_range(lo..=hi)
 }
 
@@ -176,7 +181,7 @@ pub(crate) fn mark_pyramid(build: &mut BuildResult, cell: MazePos) {
 /// [`WANDOM_REVEAL`], which the readout draws from. The byte starts at zero, so
 /// the dispatcher's `ORA` leaves exactly the digit there.
 pub(crate) fn trigger(pyramid: MazePos, k: u8) -> Trigger {
-    debug_assert!((1..=MAX_WANDS).contains(&k), "Wandom's K is 1-7");
+    debug_assert!(k <= MAX_WANDS, "Wandom's K is 0-7");
     Trigger { cell: pyramid, flag: WANDOM_REVEAL, value: STATUS_GLYPH_DIGIT0 + k }
 }
 
@@ -355,13 +360,43 @@ mod tests {
         println!("pick cost: {:.2} ms/seed", pick_time.as_secs_f64() * 1000.0 / n as f64);
     }
 
+    /// A player's range is honoured end to end, 0 and 7 included; a backwards
+    /// range is read the other way round; equal ends are a fixed K.
+    #[test]
+    fn a_custom_range_is_honoured() {
+        use rand::SeedableRng;
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(7);
+        for (min, max) in [(0, 7), (0, 1), (5, 7), (7, 3), (4, 4)] {
+            let (lo, hi) = (min.min(max), min.max(max));
+            let mut seen = [false; 8];
+            for _ in 0..400 {
+                let k = roll_wands(8, min, max, &mut rng);
+                assert!((lo..=hi).contains(&k), "{min}-{max} rolled {k}");
+                seen[usize::from(k)] = true;
+            }
+            assert!((lo..=hi).all(|k| seen[usize::from(k)]), "{min}-{max} missed a value");
+        }
+    }
+
+    /// The default range draws exactly what the old fixed 2-6 did.
+    #[test]
+    fn the_default_range_matches_the_old_roll() {
+        use rand::{Rng, SeedableRng};
+        for seed in 0..200 {
+            let mut a = rand_chacha::ChaCha8Rng::seed_from_u64(seed);
+            let mut b = rand_chacha::ChaCha8Rng::seed_from_u64(seed);
+            let old: u8 = a.random_range(2..=6);
+            assert_eq!(roll_wands(8, 2, 6, &mut b), old, "seed {seed}");
+        }
+    }
+
     #[test]
     fn rolls_stay_in_range_and_cover_it() {
         use rand::SeedableRng;
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(1);
         let mut seen = [false; 8];
         for _ in 0..500 {
-            let k = roll_wands(8, &mut rng);
+            let k = roll_wands(8, 2, 6, &mut rng);
             assert!(WANDOM_K.contains(&k), "K {k} is outside {WANDOM_K:?}");
             seen[usize::from(k)] = true;
         }
@@ -371,9 +406,9 @@ mod tests {
         );
         // A two-world spine has one airship, so one wand at most; three worlds
         // have two, which caps the range at its floor.
-        assert_eq!(roll_wands(2, &mut rng), 1);
-        assert_eq!(roll_wands(3, &mut rng), 2);
+        assert_eq!(roll_wands(2, 2, 6, &mut rng), 1);
+        assert_eq!(roll_wands(3, 2, 6, &mut rng), 2);
         // Four worlds: three airships, so 2 or 3.
-        assert!((0..50).all(|_| (2..=3).contains(&roll_wands(4, &mut rng))));
+        assert!((0..50).all(|_| (2..=3).contains(&roll_wands(4, 2, 6, &mut rng))));
     }
 }
