@@ -40,6 +40,8 @@ deploys.
 
 - The oracle king's hint is no longer replaced by the suit joke when you
   meet him as Frog, Tanooki or Hammer Mario.
+- Beta stage β6 (the vertical underwater pipe level): Frog Mario can no
+  longer get stuck in the narrow gap below the exit pipe.
 
 ## [3.1.0] - 2026-11-07
 

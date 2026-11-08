@@ -1122,7 +1122,7 @@ pub(crate) const BETA_PATCHES: &[(usize, u8)] = &[
     (0x22F0B, 0x1A),
     (0x22F0F, 0x9F),
     (0x23004, 0x04),
-    // β6 (ts8 $AF18) — 20 patches (header: alt_layout/alt_objects/alt_tileset + commands)
+    // β6 (ts8 $AF18) — 22 patches (header: alt_layout/alt_objects/alt_tileset + commands)
     (0x24F28, 0x32),
     (0x24F29, 0xB3),
     (0x24F2A, 0xD8),
@@ -1132,7 +1132,15 @@ pub(crate) const BETA_PATCHES: &[(usize, u8)] = &[
     (0x25029, 0x41),
     (0x2502B, 0x00),
     (0x2502C, 0x41),
-    (0x2502D, 0x23),
+    // The pipe drops a row (0x25063 below), so vanilla's wood strip under it
+    // at row 2 (`22 0D 42`) is spent: re-aimed as one block at row 5 col 15
+    // (`25 0F 40`). Without it the right wall has a one-tile-tall slot at
+    // row 5 between the shelf (rows 3-4) and the row-6 block, and a Frog
+    // swims into it and cannot get out. Only col 15 is filled: cols 13-14
+    // stay open, as that is the way out to the exit pipe.
+    (0x2502D, 0x25),
+    (0x2502E, 0x0F),
+    (0x2502F, 0x40),
     (0x25031, 0x00),
     (0x25032, 0x41),
     (0x2503A, 0x00),

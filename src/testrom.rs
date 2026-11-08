@@ -1127,6 +1127,13 @@ pub fn build(vanilla: &[u8], spec: &TestRomSpec) -> Result<TestRom, String> {
         return Err(format!("starting world index {world_idx} out of range"));
     }
 
+    // Beta stages are only playable with their layout fixes, which the
+    // pipeline applies whenever it can place them; do the same here.
+    if spec.include_beta {
+        crate::randomize::qol::fix_beta_stages(&mut rom);
+        report.push("beta layout fixes applied".to_string());
+    }
+
     // 3. Level placement.
     if spec.place_all.is_some() || !spec.placements.is_empty() {
         let catalog = source_catalog(vanilla, spec.include_beta)?;
