@@ -161,9 +161,9 @@ pub(crate) fn enemy_ptr_to_file_offset(ep: u16) -> usize {
 /// Each level's enemy set is a sequence of segments separated by 0xFF.
 /// Each segment starts with a 1-byte page flag, then zero or more 3-byte
 /// entries [object_id, x_pos, y_pos], terminated by 0xFF.
-pub const ENEMY_DATA_START: usize = 0x0BFD8;
+pub(crate) const ENEMY_DATA_START: usize = 0x0BFD8;
 
-pub const ENEMY_DATA_END: usize = 0x0E00D;
+pub(crate) const ENEMY_DATA_END: usize = 0x0E00D;
 
 /// `OBJ_TREASUREBOXAPPEAR`. A segment containing this is a `Level_Event = 7`
 /// room: its exit only appears once the room is cleared. See

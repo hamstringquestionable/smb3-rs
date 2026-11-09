@@ -1,9 +1,9 @@
 //! Sprite CHR-bank model: which graphics page each enemy needs, and the
 //! slot-commitment bookkeeping that keeps on-screen swaps from garbling tiles.
 
-pub struct SpriteBank {
-    pub chr_page: u8, // CHR ROM page number
-    pub slot: u8,     // 4 or 5 (PatTable_BankSel index)
+pub(crate) struct SpriteBank {
+    pub(crate) chr_page: u8, // CHR ROM page number
+    pub(crate) slot: u8,     // 4 or 5 (PatTable_BankSel index)
 }
 
 /// Look up the CHR sprite bank requirement for any object ID.
@@ -13,7 +13,7 @@ pub struct SpriteBank {
 /// objects (platforms, rotodiscs, bosses, fire jets, etc.), plus the cannon
 /// fire family 0xBC–0xD0 whose requirements come from in-routine bank writes
 /// and spawned children rather than a PatTableSel entry (see the cfire arm).
-pub fn sprite_bank(id: u8) -> Option<SpriteBank> {
+pub(crate) fn sprite_bank(id: u8) -> Option<SpriteBank> {
     match id {
         // === Group 1: PRG001 (IDs 0x00–0x23) ===
         // Boss fireball

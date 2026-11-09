@@ -27,22 +27,51 @@ fn rom_with_segment(seg: &[u8]) -> Rom {
 }
 
 /// The streams in a synthetic fixture. These ROMs have no pointer tables for
-/// the level index to follow, so the streams are found by walking the block.
+/// the level index to follow, so the streams are found by walking the block:
+/// each run of `[page byte][id,x,y]...` ending on `$FF` with at least one
+/// entry, as an offset into the block.
 fn fixture_streams(rom: &Rom) -> Vec<usize> {
     let data = rom.read_range(ENEMY_DATA_START, ENEMY_DATA_END - ENEMY_DATA_START);
-    segment_writer::walk_segments(data, 0, data.len(), &[]).iter().map(|b| b.file_offset).collect()
+    let mut starts = Vec::new();
+    let mut i = 0;
+    while i < data.len() {
+        if data[i] == 0xFF {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        i += 1;
+        while i + 3 <= data.len() && data[i] != 0xFF {
+            i += 3;
+        }
+        if i == data.len() || data[i] != 0xFF {
+            break; // unterminated tail (zeros past a fixture's last stream)
+        }
+        if i > start + 1 {
+            starts.push(start);
+        }
+    }
+    starts
 }
 
 /// [`randomize`] over a synthetic fixture's streams.
 fn randomize_fixture<R: Rng>(rom: &mut Rom, rng: &mut R, opts: &Options) {
     let starts = fixture_streams(rom);
-    randomize_object_data(rom, rng, false, opts, &starts);
+    randomize_object_data(rom, rng, opts, &starts);
 }
 
 /// [`randomize_big_q_blocks`] over a synthetic fixture's streams.
 fn randomize_big_q_fixture<R: Rng>(rom: &mut Rom, rng: &mut R) {
-    let starts = fixture_streams(rom);
-    randomize_object_data(rom, rng, true, &big_q_only_options(), &starts);
+    let data = rom.read_range(ENEMY_DATA_START, ENEMY_DATA_END - ENEMY_DATA_START).to_vec();
+    let mut ids = Vec::new();
+    for start in fixture_streams(rom) {
+        let mut i = start + 1;
+        while data[i] != 0xFF {
+            ids.push(ENEMY_DATA_START + i);
+            i += 3;
+        }
+    }
+    reroll_big_q_blocks(rom, rng, ids);
 }
 
 fn make_test_rom() -> Rom {
@@ -480,7 +509,7 @@ fn piranhas_excluded_from_global_wild_pool() {
     ] {
         *m = EnemyMode::Wild;
     }
-    let pool = wild_pool_for(&opts);
+    let pool = ClassModes::from_options(&opts).build_wild_pool();
     for id in PIRANHAS.iter().chain(PIRANHASC).chain(std::iter::once(&ROCKY_WRENCH)) {
         assert!(!pool.contains(id), "piranha-kind 0x{id:02X} leaked into global wild pool");
     }
@@ -960,6 +989,38 @@ fn load_reference_rom() -> Option<Rom> {
     Rom::from_bytes(&data).ok()
 }
 
+/// The enemy pass's input: the enemy data block, plus every object list the
+/// level index reaches in it as (offset into the block of the page byte,
+/// entry count), in block order.
+struct EnemyInput {
+    bytes: Vec<u8>,
+    rooms: Vec<(usize, usize)>,
+}
+
+impl EnemyInput {
+    fn of(rom: &Rom) -> Self {
+        let bytes = rom.read_range(ENEMY_DATA_START, ENEMY_DATA_END - ENEMY_DATA_START).to_vec();
+        let rooms = index_rooms(rom)
+            .into_iter()
+            .map(|(start, ids)| (start - ENEMY_DATA_START, ids.len()))
+            .collect();
+        EnemyInput { bytes, rooms }
+    }
+}
+
+/// Every object list the level index reaches on `rom`: (file offset of the
+/// page byte, file offset of each entry's ID byte), in block order.
+fn index_rooms(rom: &Rom) -> Vec<(usize, Vec<usize>)> {
+    let mut rooms = std::collections::BTreeMap::new();
+    for area in level_index::every_level(rom).iter().flatten() {
+        if let Some(objects) = level_index::read_objects(rom, area.objects_ptr, area.tileset) {
+            let start = enemy_ptr_to_file_offset(area.objects_ptr);
+            rooms.insert(start, objects.iter().map(|o| o.offset).collect());
+        }
+    }
+    rooms.into_iter().collect()
+}
+
 /// "Recommended" preset — only the fields the enemy pass actually reads.
 /// (thwomps -> Off, bros -> Shuffle come from Options::default(), matching
 /// the web preset which leaves them unset.)
@@ -1080,7 +1141,7 @@ fn injectable_offsets(
 /// the HB wild pool (batch path), everything else uses the normal class
 /// pools — plus the Boom-Boom self-swap and wild injection side channels.
 fn check_invariants(
-    vanilla: &[u8],
+    input: &EnemyInput,
     randomized: &[u8],
     opts: &Options,
     injectable: &std::collections::HashSet<usize>,
@@ -1088,21 +1149,14 @@ fn check_invariants(
     stats: &mut PlacementStats,
     out: &mut Vec<String>,
 ) {
+    let EnemyInput { bytes: vanilla, rooms } = input;
     let normal_modes = ClassModes::from_options(opts);
     let normal_wild = normal_modes.build_wild_pool();
     let hb_modes = hb_class_modes(opts.hb_encounters);
     let hb_wild = hb_modes.build_wild_pool();
-    // Same spoiled-range skips the randomizer uses, so segment boundaries
-    // (and per-segment bertha counts) line up exactly.
-    let skip_ranges: Vec<core::ops::Range<usize>> =
-        crate::randomize::levels::autoscroll::SPOILED_SEGMENT_RANGES
-            .iter()
-            .map(|r| (r.start - ENEMY_DATA_START)..(r.end - ENEMY_DATA_START))
-            .collect();
-    let bounds = segment_writer::walk_segments(randomized, 0, randomized.len(), &skip_ranges);
 
-    for b in bounds {
-        let seg_rule = walker_segment_rule_at(ENEMY_DATA_START + b.file_offset);
+    for &(seg, count) in rooms {
+        let seg_rule = walker_segment_rule_at(ENEMY_DATA_START + seg);
         let is_hb = seg_rule == WalkerSegmentRule::HammerBro;
         // HB segments with hb==Wild are batch-assigned from the HB wild pool
         // (randomize_hb_wild_segment), bypassing per-entry class pools and
@@ -1116,8 +1170,8 @@ fn check_invariants(
 
         let mut bertha_in_seg = 0u8;
         let mut hazards_added_in_seg = 0u8;
-        for i in 0..b.entry_count {
-            let off = b.file_offset + 1 + i * 3; // +1 skips the page flag
+        for i in 0..count {
+            let off = seg + 1 + i * 3; // +1 skips the page flag
             let orig = vanilla[off];
             let new = randomized[off];
             let fo = ENEMY_DATA_START + off;
@@ -1248,15 +1302,14 @@ fn check_invariants(
         // the member that makes this load-bearing rather than cosmetic — it
         // is stompable but revives, so nothing else in the room clears it.
         if hb_batch {
-            let ids: Vec<u8> =
-                (0..b.entry_count).map(|i| randomized[b.file_offset + 1 + i * 3]).collect();
+            let ids: Vec<u8> = (0..count).map(|i| randomized[seg + 1 + i * 3]).collect();
             let needs_shell: Vec<u8> =
                 ids.iter().copied().filter(|id| HB_NEEDS_SHELL_ENEMIES.contains(id)).collect();
             if !needs_shell.is_empty() && !ids.iter().any(|id| SHELL_ENEMIES.contains(id)) {
                 out.push(format!(
                     "seed {seed} @ seg {:#07X}: {:02X?} needs a shell and the room has none \
                          (ids {:02X?})",
-                    ENEMY_DATA_START + b.file_offset,
+                    ENEMY_DATA_START + seg,
                     needs_shell,
                     ids,
                 ));
@@ -1272,7 +1325,7 @@ fn check_invariants(
             stats.hazard_cap_exceeded += 1;
             out.push(format!(
                 "seed {seed} @ seg {:#07X}: {hazards_added_in_seg} added hazards, cap is {}",
-                ENEMY_DATA_START + b.file_offset,
+                ENEMY_DATA_START + seg,
                 MAX_ADDED_HAZARDS_PER_SEGMENT,
             ));
         }
@@ -1285,7 +1338,7 @@ fn check_invariants(
             stats.bertha_cap_exceeded += 1;
             out.push(format!(
                     "seed {seed} @ seg {:#07X}: {bertha_in_seg} berthas, cap is {} (rule={seg_rule:?}, hb_batch={hb_batch})",
-                    ENEMY_DATA_START + b.file_offset,
+                    ENEMY_DATA_START + seg,
                     MAX_BERTHA_PER_SEGMENT,
                 ));
         }
@@ -1293,7 +1346,14 @@ fn check_invariants(
     stats.seeds += 1;
 }
 
-fn run_preset(label: &str, opts: &Options, seeds: u64, base: &Rom, vanilla: &[u8]) -> Vec<String> {
+fn run_preset(
+    label: &str,
+    opts: &Options,
+    seeds: u64,
+    base: &Rom,
+    input: &EnemyInput,
+) -> Vec<String> {
+    let vanilla = input.bytes.as_slice();
     let mut stats = PlacementStats::default();
     let mut violations = Vec::new();
     let modes = ClassModes::from_options(opts);
@@ -1307,15 +1367,7 @@ fn run_preset(label: &str, opts: &Options, seeds: u64, base: &Rom, vanilla: &[u8
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
         randomize(&mut rom, &mut rng, opts);
         let randomized = rom.read_range(ENEMY_DATA_START, vanilla.len()).to_vec();
-        check_invariants(
-            vanilla,
-            &randomized,
-            opts,
-            &injectable,
-            seed,
-            &mut stats,
-            &mut violations,
-        );
+        check_invariants(input, &randomized, opts, &injectable, seed, &mut stats, &mut violations);
     }
 
     eprintln!("\n=== {label}: {} seeds ===", stats.seeds);
@@ -1352,7 +1404,7 @@ fn enemy_invariant_baseline() {
         eprintln!("reference ROM not present — skipping enemy_invariant_baseline");
         return;
     };
-    let vanilla = base.read_range(ENEMY_DATA_START, ENEMY_DATA_END - ENEMY_DATA_START).to_vec();
+    let vanilla = EnemyInput::of(&base);
 
     let mut violations = Vec::new();
     violations.extend(run_preset("Recommended", &preset_recommended(), 250, &base, &vanilla));
@@ -1397,10 +1449,10 @@ fn enemy_invariant_baseline() {
 /// box never appears and the player is stranded (see
 /// `rewrites_hammer_bro`).
 ///
-/// Scans every `$FF` segment rather than fixed offsets, so a room nobody
-/// has thought about yet is covered too, and sweeps the two enemy modes
-/// that reach the different code paths (HB-Wild is batch-assigned; the rest
-/// go through the walker).
+/// Checks every object list the level index reaches rather than fixed
+/// offsets, so a room nobody has thought about yet is covered too, and sweeps
+/// the two enemy modes that reach the different code paths (HB-Wild is
+/// batch-assigned; the rest go through the walker).
 #[test]
 fn treasure_box_rooms_never_get_a_hammer_bro() {
     let Some(base) = load_reference_rom() else {
@@ -1408,31 +1460,8 @@ fn treasure_box_rooms_never_get_a_hammer_bro() {
         return;
     };
 
-    // Segment starts, parsed the way the walker does: page byte, 3-byte
-    // entries, 0xFF terminator.
-    let segments = |rom: &Rom| -> Vec<(usize, Vec<usize>)> {
-        let data = rom.read_range(ENEMY_DATA_START, ENEMY_DATA_END - ENEMY_DATA_START).to_vec();
-        let mut out = Vec::new();
-        let mut i = 0;
-        while i < data.len() {
-            if data[i] == 0xFF {
-                i += 1;
-                continue;
-            }
-            let start = ENEMY_DATA_START + i;
-            i += 1;
-            let mut ids = Vec::new();
-            while i + 2 < data.len() && data[i] != 0xFF {
-                ids.push(ENEMY_DATA_START + i);
-                i += 3;
-            }
-            out.push((start, ids));
-        }
-        out
-    };
-
     // Rooms to police, decided from vanilla so a swap can't hide one.
-    let at_risk: Vec<(usize, Vec<usize>)> = segments(&base)
+    let at_risk: Vec<(usize, Vec<usize>)> = index_rooms(&base)
         .into_iter()
         .filter(|(start, ids)| {
             let has_box = ids.iter().any(|&o| base.read_range(o, 1)[0] == TREASURE_BOX_APPEAR);
@@ -1548,26 +1577,13 @@ fn closed_bro_rooms_raise_the_floor_ignoring_flyer() {
 
     // Vanilla (segment start, entry id-byte offsets) for every closed bro
     // room: an HB-ruled segment whose enemy data holds the treasure box.
-    let mut rooms: Vec<(usize, Vec<usize>)> = Vec::new();
-    let data = base.read_range(ENEMY_DATA_START, ENEMY_DATA_END - ENEMY_DATA_START).to_vec();
-    let mut i = 0;
-    while i < data.len() {
-        if data[i] == 0xFF {
-            i += 1;
-            continue;
-        }
-        let start = ENEMY_DATA_START + i;
-        i += 1;
-        let mut ids = Vec::new();
-        while i + 2 < data.len() && data[i] != 0xFF {
-            ids.push(ENEMY_DATA_START + i);
-            i += 3;
-        }
-        let closed = ids.iter().any(|&o| base.read_range(o, 1)[0] == TREASURE_BOX_APPEAR);
-        if closed && walker_segment_rule_at(start) == WalkerSegmentRule::HammerBro {
-            rooms.push((start, ids));
-        }
-    }
+    let rooms: Vec<(usize, Vec<usize>)> = index_rooms(&base)
+        .into_iter()
+        .filter(|(start, ids)| {
+            let closed = ids.iter().any(|&o| base.read_range(o, 1)[0] == TREASURE_BOX_APPEAR);
+            closed && walker_segment_rule_at(*start) == WalkerSegmentRule::HammerBro
+        })
+        .collect();
     assert!(rooms.len() >= 7, "expected the vanilla bro rooms, got {}", rooms.len());
 
     // The raise must not compound with the tall-enemy nudge `swap_enemy`

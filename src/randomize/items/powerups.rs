@@ -131,7 +131,6 @@ fn shape_pool(block: &PowerBlock, no_airship_stars: bool) -> Option<&'static [u8
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::randomize::rom_data::LEVEL_DATA_REGIONS;
     use rand::SeedableRng;
     use rand_chacha::ChaCha8Rng;
 
@@ -258,28 +257,5 @@ mod tests {
         // A normal block (not in either special list) can still roll a star.
         assert_eq!(qblock_pool(0x12345, false), QBLOCK_SHAPES);
         assert_eq!(qblock_pool(0x12345, true), QBLOCK_SHAPES);
-    }
-
-    #[test]
-    fn test_regions_stay_within_one_prg_bank() {
-        // Level data is addressed CPU $A000-$BFFF within a single switched
-        // PRG bank, so no region may cross a 8KB bank boundary. A region
-        // whose `end` overruns its bank walks into the next bank's metatile
-        // quadrant table and the randomizer corrupts metatile definitions
-        // (stray tiles in desert levels and HB battle scenes — issue #34).
-        const INES_HEADER: usize = 0x10;
-        const BANK_SIZE: usize = 0x2000;
-        for region in LEVEL_DATA_REGIONS {
-            let start_bank = (region.start - INES_HEADER) / BANK_SIZE;
-            let end_bank = (region.end - 1 - INES_HEADER) / BANK_SIZE;
-            assert_eq!(
-                start_bank,
-                end_bank,
-                "region 0x{:05X}-0x{:05X} crosses PRG bank boundary 0x{:05X}",
-                region.start,
-                region.end,
-                (start_bank + 1) * BANK_SIZE + INES_HEADER
-            );
-        }
     }
 }

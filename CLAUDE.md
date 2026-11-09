@@ -589,14 +589,18 @@ vanilla quirks it has to respect are pinned by its tests (`level_index/tests.rs`
 inside 7-3's last command (a garbled arena; `HB_EXCLUDE_ENTRIES` keeps it unused),
 and 3-9 and 3HB18 end on alt pointers naming tileset 0.
 
-Modules that read through it: `items::powerups` (`every_power_block`) and
-`cosmetic::level_music` (`every_level`). The region walk powerups used before
-rerolled every real block but also 15 header-shaped bytes no level loads, and
-misread junctions after an Ice/Sky `E7` (fixed in the shared
-`LevelDataRegion::command_size`, which still sizes every command).
+Modules that read through it: `items::powerups` (`every_power_block`),
+`cosmetic::level_music` (`every_level`), and the enemy pass, Big ? pass and
+5-F2/Bowser composers (`every_level` / `read_objects`). The region walk
+powerups used before rerolled every real block but also 15 header-shaped bytes
+no level loads, and misread junctions after an Ice/Sky `E7` (fixed in the
+shared `LevelDataRegion::command_size`, which still sizes every command).
 `items::chest_item_offsets` stays a hand-kept list; a pipeline test checks it
-against every `$D6` chest the index finds on finished ROMs. The enemy modules
-have not been compared with the index yet and are due a review of their own.
+against every `$D6` chest the index finds on finished ROMs. Enemy protections
+name their level and area, and a test checks each against the index. A stream
+no level loads is not randomized;
+`every_loaded_object_stream_was_visible_to_the_enemy_pass` checks, across a
+flag matrix, that no flag makes one live later.
 
 ## ROM Map
 

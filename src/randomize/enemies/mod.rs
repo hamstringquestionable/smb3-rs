@@ -18,8 +18,8 @@ use crate::randomize::enemies::protections::{
 };
 use crate::randomize::levels::segment_writer::{self, SegmentEntry as WriterEntry, SortMode};
 use crate::randomize::rom_data::{
-    ENEMY_DATA_END, ENEMY_DATA_START, HAMMER_BRO_ID, HB_NEEDS_SHELL_ENEMIES, LEVEL_DATA_REGIONS,
-    STOMPABLE_ENEMIES, TREASURE_BOX_APPEAR, enemy_ptr_to_file_offset, level_index,
+    ENEMY_DATA_END, ENEMY_DATA_START, HAMMER_BRO_ID, HB_NEEDS_SHELL_ENEMIES, STOMPABLE_ENEMIES,
+    TREASURE_BOX_APPEAR, enemy_ptr_to_file_offset, level_index,
 };
 use crate::rom::Rom;
 
@@ -45,11 +45,8 @@ use segments::*;
 use sprite_bank::*;
 use tables::*;
 
-// Public API consumed by the randomizer and the chr_stats integration test.
-pub use class_modes::wild_pool_for;
-pub use injection::enemy_entry_points;
-pub use sprite_bank::{SpriteBank, sprite_bank};
-
+#[cfg(test)]
+mod chr_stats;
 #[cfg(test)]
 mod tests;
 
@@ -59,7 +56,7 @@ mod tests;
 /// autoscroll triggers, cannons, etc.) are never modified.
 pub(crate) fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R, opts: &Options) {
     let starts = stream_starts(rom);
-    randomize_object_data(rom, rng, false, opts, &starts);
+    randomize_object_data(rom, rng, opts, &starts);
 }
 
 /// Randomize Big ? Blocks by swapping their IDs among the set of Big ? Block
@@ -69,26 +66,21 @@ pub(crate) fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R, opts: &Options) {
 /// per seed by `big_q_rooms`, which runs after this and forces *that* room's
 /// block — so the guarantee does not depend on any offset being skipped here.
 pub(crate) fn randomize_big_q_blocks<R: Rng>(rom: &mut Rom, rng: &mut R) {
-    let starts = stream_starts(rom);
-    randomize_object_data(rom, rng, true, &big_q_only_options(), &starts);
+    let mut rooms = std::collections::BTreeMap::new();
+    for area in level_index::every_level(rom).iter().flatten() {
+        if let Some(objects) = level_index::read_objects(rom, area.objects_ptr, area.tileset) {
+            rooms.insert(area.objects_ptr, objects);
+        }
+    }
+    reroll_big_q_blocks(rom, rng, rooms.values().flatten().map(|o| o.offset));
 }
 
-/// All enemy classes off, so the walker swaps Big ? Blocks and nothing else.
-fn big_q_only_options() -> Options {
-    Options {
-        ground: EnemyMode::Off,
-        shell: EnemyMode::Off,
-        flying: EnemyMode::Off,
-        piranhas: EnemyMode::Off,
-        ghosts: EnemyMode::Off,
-        thwomps: EnemyMode::Off,
-        rotodiscs: EnemyMode::Off,
-        cannons: EnemyMode::Off,
-        water: EnemyMode::Off,
-        bros: EnemyMode::Off,
-        hb_encounters: EnemyMode::Off,
-        wild_injections: Vec::new(),
-        ..Options::default()
+/// Reroll every Big ? Block among the ID-byte offsets `ids`, in order.
+fn reroll_big_q_blocks<R: Rng>(rom: &mut Rom, rng: &mut R, ids: impl IntoIterator<Item = usize>) {
+    for offset in ids {
+        if BIG_Q_BLOCKS.contains(&rom.read_byte(offset)) {
+            rom.write_byte(offset, *BIG_Q_BLOCKS.choose(rng).unwrap());
+        }
     }
 }
 
@@ -112,13 +104,7 @@ fn stream_starts(rom: &Rom) -> Vec<usize> {
 
 /// The swap pass over the object streams starting at `starts` (indices into
 /// the enemy-data block, as [`stream_starts`] returns them).
-fn randomize_object_data<R: Rng>(
-    rom: &mut Rom,
-    rng: &mut R,
-    big_q_only: bool,
-    opts: &Options,
-    starts: &[usize],
-) {
+fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, opts: &Options, starts: &[usize]) {
     let len = ENEMY_DATA_END - ENEMY_DATA_START;
     let mut data = rom.read_range(ENEMY_DATA_START, len).to_vec();
 
@@ -133,7 +119,7 @@ fn randomize_object_data<R: Rng>(
     // pass on either side of it can only re-derive that. All it needs up front
     // is where each level's first enemy lives (header-pointed enemy_ptr values,
     // via node_catalog), which no shuffle can move.
-    let injection_sites = if !opts.wild_injections.is_empty() && !big_q_only {
+    let injection_sites = if !opts.wild_injections.is_empty() {
         collect_injection_sites(rom, &data, opts)
     } else {
         InjectionSites::new()
@@ -174,7 +160,7 @@ fn randomize_object_data<R: Rng>(
         let no_hammer_bro = rewrites_hammer_bro(seg_file_offset, closed_room);
 
         // HB Wild: batch-assign enemies with stompability constraints.
-        if is_hb_segment && opts.hb_encounters == EnemyMode::Wild && !big_q_only {
+        if is_hb_segment && opts.hb_encounters == EnemyMode::Wild {
             // `hazard_cap_full: false` on purpose — `limit_hazards` is a
             // levels-only filter. An HB room draws from its own curated pools
             // (STOMPABLE_ENEMIES / HB_NEEDS_SHELL_ENEMIES), already chosen so
@@ -230,11 +216,7 @@ fn randomize_object_data<R: Rng>(
         //    (pinned now, or picked as we go); it seeds every group's local
         //    slots so ordinary picks stay compatible with a chaser that will
         //    follow the player to them.
-        let seg = if big_q_only {
-            SegmentPins::none()
-        } else {
-            segment_pins(&entries, modes, &injected, None)
-        };
+        let seg = segment_pins(&entries, modes, &injected, None);
         let (mut seg_all4, mut seg_all5) = seg.all;
         let (mut seg_chaser4, mut seg_chaser5) = seg.chaser;
 
@@ -246,12 +228,10 @@ fn randomize_object_data<R: Rng>(
             let mut committed_slot4 = seg_chaser4;
             let mut committed_slot5 = seg_chaser5;
 
-            if !big_q_only {
-                for &idx in group {
-                    let entry = &entries[idx];
-                    if is_fixed(entry, modes, &injected) {
-                        commit_chr_page(entry.obj_id, &mut committed_slot4, &mut committed_slot5);
-                    }
+            for &idx in group {
+                let entry = &entries[idx];
+                if is_fixed(entry, modes, &injected) {
+                    commit_chr_page(entry.obj_id, &mut committed_slot4, &mut committed_slot5);
                 }
             }
 
@@ -264,14 +244,8 @@ fn randomize_object_data<R: Rng>(
                 let file_offset = ENEMY_DATA_START + entry.data_index;
                 let protection = entry_protection_at(file_offset);
 
-                // Big ? blocks and Boom-Booms swap among their own kind and skip
-                // the class machinery entirely.
-                if big_q_only {
-                    if BIG_Q_BLOCKS.contains(&entry.obj_id) {
-                        data[entry.data_index] = *BIG_Q_BLOCKS.choose(rng).unwrap();
-                    }
-                    continue;
-                }
+                // Boom-Booms swap among their own kind and skip the class
+                // machinery entirely.
                 if BOOMBOOM_SWAP.contains(&data[entry.data_index]) {
                     data[entry.data_index] = *BOOMBOOM_SWAP.choose(rng).unwrap();
                     continue;

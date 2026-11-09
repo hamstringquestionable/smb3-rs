@@ -100,7 +100,6 @@ pub(crate) fn active_canoe_edges(world_idx: usize, eights_are_wild: bool) -> Vec
 /// or equivalent are 4-byte.
 pub(crate) struct LevelDataRegion {
     pub(crate) start: usize,
-    pub(crate) end: usize,
     extra_byte_dispatches: &'static [u8],
     /// Whether group 2 fixed-size shapes 1-6 are note/wood powerups in this
     /// tileset. In most tilesets they are, but in TS2 (Dungeon) shapes 1-2 map
@@ -112,9 +111,8 @@ pub(crate) struct LevelDataRegion {
 impl LevelDataRegion {
     /// Size in bytes of the generator command whose first and third stream
     /// bytes are `b0`/`b2`: 3 normally, 4 when the tileset's variable-size
-    /// dispatch reads an extra byte. Every level-stream walker (powerups,
-    /// enemy entry points) must step with this — a re-derived copy of the
-    /// formula is how parsers drift out of alignment.
+    /// dispatch reads an extra byte. The level index steps with this; a
+    /// re-derived copy of the formula is how parsers drift out of alignment.
     ///
     /// A first byte of `$E0` or more is a junction, always 3 bytes:
     /// `LevelLoad` (PRG030 `$98EE`) checks for it before any tileset
@@ -133,12 +131,12 @@ impl LevelDataRegion {
     }
 }
 
-/// Level data regions by tileset (file offset ranges + extra-byte dispatch info).
+/// Level data regions by tileset: where each bank's level data starts (the
+/// level index uses it to name the bank) and its extra-byte dispatch info.
 pub(crate) const LEVEL_DATA_REGIONS: &[LevelDataRegion] = &[
     LevelDataRegion {
         // Underground (TS14) — same dispatch table as TS3
         start: 0x1A587,
-        end: 0x1C005,
         extra_byte_dispatches: &[
             35, 36, 37, 38, 39, 40, 41, 42, // TopDecoBlocks
             60, 61, 62, // BGOrWater
@@ -150,7 +148,6 @@ pub(crate) const LEVEL_DATA_REGIONS: &[LevelDataRegion] = &[
     LevelDataRegion {
         // Plains (TS1)
         start: 0x1E512,
-        end: 0x20005,
         extra_byte_dispatches: &[
             11, 12, // GroundRun
             35, 36, 37, 38, 39, 40, 41, 42, // TopDecoBlocks
@@ -160,7 +157,6 @@ pub(crate) const LEVEL_DATA_REGIONS: &[LevelDataRegion] = &[
     LevelDataRegion {
         // Hilly (TS3)
         start: 0x20587,
-        end: 0x22005,
         extra_byte_dispatches: &[
             35, 36, 37, 38, 39, 40, 41, 42, // TopDecoBlocks
             60, 61, 62, // BGOrWater
@@ -172,7 +168,6 @@ pub(crate) const LEVEL_DATA_REGIONS: &[LevelDataRegion] = &[
     LevelDataRegion {
         // Ice / Sky (TS4/12)
         start: 0x227E0,
-        end: 0x24005,
         extra_byte_dispatches: &[
             0, // LongWoodBlock
             35, 36, 37, 38, 39, 40, 41, 42,  // TopDecoBlocks
@@ -185,7 +180,6 @@ pub(crate) const LEVEL_DATA_REGIONS: &[LevelDataRegion] = &[
     LevelDataRegion {
         // Pipe / Water (TS7)
         start: 0x24BA7,
-        end: 0x26005,
         extra_byte_dispatches: &[
             35, 36, 37, 38, 39, 40, 41, 42, // TopDecoBlocks
             49, // OrangeBlock
@@ -203,7 +197,6 @@ pub(crate) const LEVEL_DATA_REGIONS: &[LevelDataRegion] = &[
         // levels and HB battle scenes). Real data ends with an empty stub
         // level at 0x28000-0x28009; 0x2800A is one past its terminator.
         start: 0x26A6F,
-        end: 0x2800A,
         extra_byte_dispatches: &[
             13, // DoubleCloud
             35, 36, 37, 38, 39, 40, 41, 42, // TopDecoBlocks
@@ -217,7 +210,6 @@ pub(crate) const LEVEL_DATA_REGIONS: &[LevelDataRegion] = &[
     LevelDataRegion {
         // Desert (TS9)
         start: 0x28F36,
-        end: 0x2A005,
         extra_byte_dispatches: &[
             10, 11, 12, 13, // DiagRect variants
             35, 36, 37, 38, 39, 40, 41, 42, // TopDecoBlocks
@@ -227,7 +219,6 @@ pub(crate) const LEVEL_DATA_REGIONS: &[LevelDataRegion] = &[
     LevelDataRegion {
         // Dungeon (TS2)
         start: 0x2A7F7,
-        end: 0x2C005,
         extra_byte_dispatches: &[
             13, 14, // SolidBrick, BrightDiamondLong (LL21_InitLongRun)
             35, 36, 37, 38, 39, 40, 41, 42, // TopDecoBlocks
@@ -241,7 +232,6 @@ pub(crate) const LEVEL_DATA_REGIONS: &[LevelDataRegion] = &[
     LevelDataRegion {
         // Ship (TS10)
         start: 0x2EC07,
-        end: 0x30005,
         extra_byte_dispatches: &[
             1, 2, // WoodBodyLong
             35, 36, 37, 38, 39, 40, 41, 42, // TopDecoBlocks

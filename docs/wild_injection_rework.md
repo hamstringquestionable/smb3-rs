@@ -114,7 +114,7 @@ inherited height and `LAKITU_ALT_Y` (`0x12`, the common vanilla Lakitu height):
 half stay low, half lift up. X is always inherited.
 
 ## Retained / removed
-- `enemy_entry_points` retained (used by the `chr_stats` integration test).
+- `enemy_entry_points` retained (used by the `chr_stats` integration test); removed 2026-11, when `chr_stats` moved onto the level index.
 - Removed: the old `inject_at_entry_points`, the per-segment `0x4B/0x4C` Boom-Boom
   scan, and `is_injection_blocked` (its only consumer was the old pass).
 

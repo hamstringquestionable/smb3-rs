@@ -15,14 +15,6 @@ pub(super) struct ClassModes {
     bros: EnemyMode,
 }
 
-/// Return the wild swap pool that would be in effect for the given Options
-/// (union of class pools where the class is in Wild mode). Exposed `pub`
-/// so integration tests / analyzers can enumerate the pool to compute
-/// per-pool distribution metrics.
-pub fn wild_pool_for(opts: &Options) -> Vec<u8> {
-    ClassModes::from_options(opts).build_wild_pool()
-}
-
 impl ClassModes {
     pub(super) fn from_options(opts: &Options) -> Self {
         Self {

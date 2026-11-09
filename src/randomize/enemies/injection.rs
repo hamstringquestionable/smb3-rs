@@ -33,43 +33,11 @@ use crate::randomize::rom_data::{enemy_ptr_to_file_offset, has_enemy_id};
 
 use super::*;
 
-/// Collect every `enemy_ptr` value (bytes 2-3 of every 9-byte level
-/// header) from every region in [`LEVEL_DATA_REGIONS`]. Retained for the
-/// `chr_stats` integration test's distribution analysis; the injection pass
-/// itself no longer drives off this (it uses the node catalog).
-///
-/// Returned values are unique and in first-seen order.
-pub fn enemy_entry_points(rom: &Rom) -> Vec<u16> {
-    const LEVEL_HEADER_SIZE: usize = 9;
-    let mut pts: Vec<u16> = Vec::new();
-    let mut seen: std::collections::HashSet<u16> = std::collections::HashSet::new();
-    for region in LEVEL_DATA_REGIONS {
-        let len = region.end - region.start;
-        let data = rom.read_range(region.start, len);
-        let mut i = 0usize;
-        while i + LEVEL_HEADER_SIZE < data.len() {
-            let ep = (data[i + 2] as u16) | ((data[i + 3] as u16) << 8);
-            if seen.insert(ep) {
-                pts.push(ep);
-            }
-            i += LEVEL_HEADER_SIZE;
-            while i + 2 < data.len() {
-                if data[i] == 0xFF {
-                    i += 1;
-                    break;
-                }
-                i += region.command_size(data[i], data[i + 2]);
-            }
-        }
-    }
-    pts
-}
-
 /// Where a level's first enemy sits in the `data` buffer, mapped to the level's
 /// `obj_ptr`. The walker consults this by entry index to learn "this byte is
-/// some level's first enemy, and here is the level it belongs to" — which it
-/// cannot work out itself, because one `$FF` segment routinely spans several
-/// levels' enemy pointers.
+/// some level's first enemy, and here is the level it belongs to". Keyed by
+/// index because the candidates come from the node catalog (real action
+/// levels only), not from the streams the walker visits.
 pub(super) type InjectionSites = std::collections::HashMap<usize, u16>;
 
 /// Build the injectable-level map from the node catalog: real action levels
