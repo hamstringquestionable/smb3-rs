@@ -192,6 +192,23 @@ const PIPE_SQUISH_FIX_BYTES: [u8; 9] = [
     0xEA,             // NOP
 ];
 
+// Faster arrow lifts — a nod to MaCobra52's 2x arrow-platform speedup, and
+// one notch past it on purpose. The lifts are tileset-8 tiles ($54-$5C) that
+// PRG007 turns into OBJ_ARROWONE/OBJ_ARROWANY on contact (7-6's vertical
+// sub-area is where players meet them); their speed is these two 4-entry
+// tables in PRG005 at CPU $AF29 / $AF2D, indexed by direction
+// (up, left, up, right):
+//
+//     ArrowPlat_XVel: 00 F8 00 08   ->  00 EF 00 11
+//     ArrowPlat_YVel: F8 00 F8 00   ->  EF 00 EF 00
+//
+// Velocity is 4.4 fixed point (1/16 px per frame), so vanilla $08 is 0.5
+// px/frame, MaCobra's $10 is 1.0, and $11 is 1.0625. The lift's lifetime
+// (Var5) counts time, not distance, so a faster lift also travels further
+// before it vanishes. Data-only, in place: claims no free space.
+const ARROW_LIFT_VEL_OFFSET: usize = 0x0AF39;
+const ARROW_LIFT_VEL_BYTES: [u8; 8] = [0x00, 0xEF, 0x00, 0x11, 0xEF, 0x00, 0xEF, 0x00];
+
 // ---------------------------------------------------------------------------
 // MaCobra patches — opt-in features
 // Each apply_* below is gated by an individual option in pipeline/stages.rs;
@@ -691,6 +708,9 @@ pub(crate) fn apply_macobra_patches(rom: &mut Rom) {
     // left edge" death check, so scrolling inside a pipe cannot fake a crush.
     rom.write_range(PIPE_SQUISH_FIX_OFFSET, &PIPE_SQUISH_FIX_BYTES);
 
+    // Arrow lifts (7-6) move a touch faster than MaCobra's famous 2x.
+    rom.write_range(ARROW_LIFT_VEL_OFFSET, &ARROW_LIFT_VEL_BYTES);
+
     // NOTE: MaCobra's "Bros don't stop on hands" (issue #14) used to live
     // here; it is subsumed by the overworld writer's march-veto trampoline
     // (overworld/writer/march_veto.rs), which rejects hand-trap landings
@@ -832,6 +852,33 @@ mod tests {
             rom.read_range(PIPE_SQUISH_FIX_OFFSET, PIPE_SQUISH_FIX_BYTES.len()),
             &PIPE_SQUISH_FIX_BYTES
         );
+    }
+
+    #[test]
+    fn test_macobra_arrow_lift_speed_writes() {
+        let mut rom = make_test_rom();
+        apply_macobra_patches(&mut rom);
+        assert_eq!(rom.read_range(ARROW_LIFT_VEL_OFFSET, 8), &ARROW_LIFT_VEL_BYTES);
+    }
+
+    /// Each new speed is the vanilla one scaled the same way in every
+    /// direction: zeros stay zero, and left/up stays the exact negative of
+    /// right. Needs the real ROM for the vanilla side, so it skips where the
+    /// ROM is absent.
+    #[test]
+    fn arrow_lift_speed_overwrites_vanilla_tables() {
+        const ARROW_LIFT_VEL_VANILLA: [u8; 8] = [0x00, 0xF8, 0x00, 0x08, 0xF8, 0x00, 0xF8, 0x00];
+        for (&new, &old) in ARROW_LIFT_VEL_BYTES.iter().zip(&ARROW_LIFT_VEL_VANILLA) {
+            assert_eq!(new == 0, old == 0);
+            assert_eq!((new as i8).signum(), (old as i8).signum());
+        }
+        assert_eq!(ARROW_LIFT_VEL_BYTES[1] as i8, -(ARROW_LIFT_VEL_BYTES[3] as i8));
+
+        let Ok(bytes) = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes") else {
+            return;
+        };
+        let rom = Rom::from_bytes(&bytes).expect("vanilla ROM parses");
+        assert_eq!(rom.read_range(ARROW_LIFT_VEL_OFFSET, 8), &ARROW_LIFT_VEL_VANILLA);
     }
 
     /// The splice starts at CPU $A466 and its `BNE` must reach $A472 (the
