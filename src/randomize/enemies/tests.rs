@@ -938,44 +938,6 @@ fn test_chr_groups_single() {
     assert_eq!(groups[0].len(), 3);
 }
 
-/// Regression: at the exact ROM offsets where `disable_autoscroll`
-/// inserts a mid-segment $FF (here `$0CFE3`), a block-wide walker
-/// would treat the clobbered bytes as a "ghost" segment that
-/// swallows the page byte + first entry of the next real segment.
-/// The writeback's stable sort would then scramble those bytes —
-/// in the wild, that corrupted the W5 spiral castle's
-/// PIPEWAYCONTROLLER and broke its exit teleport on seed
-/// 1642218906354586 (beta.3).
-///
-/// With `autoscroll::SPOILED_SEGMENT_RANGES` honored by the
-/// walker, the clobbered region is skipped and the trailing real
-/// segment survives byte-for-byte.
-#[test]
-fn ghost_segment_does_not_corrupt_trailing_segment() {
-    let mut data = blank_rom_image();
-    data[ENEMY_DATA_START..ENEMY_DATA_END].fill(0xFF);
-
-    // Place the bug pattern at the real $0CFE2 (covered by a
-    // SPOILED_SEGMENT_RANGES entry). The "autoscroll" segment is
-    // clobbered exactly as disable_autoscroll leaves it; the
-    // trailing real segment carries a PIPEWAYCONTROLLER.
-    const PWC_SEG_START: usize = 0x0CFE7;
-    data[0x0CFE2..0x0CFE7].copy_from_slice(&[0x01, 0xFF, 0x00, 0x10, 0xFF]);
-    data[PWC_SEG_START..PWC_SEG_START + 5].copy_from_slice(&[0x01, 0x25, 0x00, 0x80, 0xFF]);
-    let pwc_before = data[PWC_SEG_START..PWC_SEG_START + 5].to_vec();
-
-    let mut rom = Rom::from_bytes_lax(&data, true).unwrap();
-    let mut rng = ChaCha8Rng::seed_from_u64(42);
-    randomize_fixture(&mut rom, &mut rng, &enemy_opts());
-
-    let pwc_after = rom.read_range(PWC_SEG_START, 5).to_vec();
-    assert_eq!(
-        pwc_after, pwc_before,
-        "PIPEWAYCONTROLLER segment was corrupted by ghost-segment sort.\n  before: {:02X?}\n  after:  {:02X?}",
-        pwc_before, pwc_after,
-    );
-}
-
 // ===================================================================
 // Enemy-placement invariant harness
 //

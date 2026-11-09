@@ -16,10 +16,11 @@ use crate::rom::Rom;
 /// first entry of the *next* real segment, and emit a "ghost" segment
 /// that scrambles adjacent real data when written back sorted.
 ///
-/// Block-wide walkers (currently `enemies.rs`'s randomization pass) must
-/// pass these ranges to [`super::segment_writer::walk_segments`] so the walker
-/// jumps past the spoiled bytes and resumes parsing at the next real
-/// segment.
+/// No randomizer pass walks the block any more (the enemy pass follows the
+/// level index), so only the test instruments that still do — the enemy
+/// invariant harness and `tests/chr_stats.rs` — read these ranges, to jump past
+/// the spoiled bytes and resume at the next real segment. They are due to move
+/// onto the index too, and this table goes with them.
 ///
 /// A range starts at the page byte of the first spoiled stream, and its
 /// **exclusive end is the page byte of the next real stream** — the byte

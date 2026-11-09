@@ -96,26 +96,16 @@ fn big_q_only_options() -> Options {
 /// index into the enemy-data buffer `data`, in file order.
 ///
 /// The streams are the ones [`level_index::every_level`] reaches: every level
-/// a flag can make the game load. A stream nothing loads is not visited.
-///
-/// TEMPORARY (step 2 of the index migration): the segments a block-wide walk
-/// finds that no level loads are visited too, so this change can be proven
-/// byte-identical. The next step drops them.
+/// a flag can make the game load. A stream nothing loads (unreferenced data,
+/// or an airship stream that autoscroll removal repointed away from) is not
+/// visited — `every_loaded_object_stream_was_visible_to_the_enemy_pass` checks
+/// that no flag makes one live later.
 fn stream_starts(rom: &Rom) -> Vec<usize> {
-    let data = rom.read_range(ENEMY_DATA_START, ENEMY_DATA_END - ENEMY_DATA_START);
     let mut starts = std::collections::BTreeSet::new();
     for area in level_index::every_level(rom).iter().flatten() {
         if level_index::read_objects(rom, area.objects_ptr, area.tileset).is_some() {
             starts.insert(enemy_ptr_to_file_offset(area.objects_ptr) - ENEMY_DATA_START);
         }
-    }
-    let spoiled: Vec<core::ops::Range<usize>> =
-        crate::randomize::levels::autoscroll::SPOILED_SEGMENT_RANGES
-            .iter()
-            .map(|r| (r.start - ENEMY_DATA_START)..(r.end - ENEMY_DATA_START))
-            .collect();
-    for b in segment_writer::walk_segments(data, 0, data.len(), &spoiled) {
-        starts.insert(b.file_offset);
     }
     starts.into_iter().collect()
 }

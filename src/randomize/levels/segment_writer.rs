@@ -71,6 +71,7 @@ pub(crate) struct SegmentSpec<'a> {
 /// Bounds of one segment in the enemy data block. `file_offset` points at
 /// the page/header byte; `entry_count` is the number of 3-byte entries
 /// before the terminating `0xFF`. Returned by [`walk_segments`].
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct SegmentBounds {
     pub(crate) file_offset: usize,
@@ -167,10 +168,10 @@ pub(crate) fn write_segment(rom: &mut Rom, spec: &SegmentSpec) -> Result<(), Wri
 /// without a skip range would create a "ghost" segment swallowing the
 /// next real segment's page byte. Pass `&[]` for no skipping.
 ///
-/// The caller passes a byte slice rather than a `Rom` so this function
-/// can be used both against in-memory edit buffers (e.g. inside
-/// `enemies.rs` which composes changes in a local `Vec<u8>` before
-/// committing) and against ROM bytes.
+/// Test-only: no randomizer pass walks the block any more. The enemy pass
+/// finds its streams through `level_index`; this survives for synthetic
+/// fixtures, which have no pointer tables to follow.
+#[cfg(test)]
 pub(crate) fn walk_segments(
     data: &[u8],
     start: usize,
