@@ -22,6 +22,10 @@ deploys.
   the card when you arrive, on the map and in levels — until you beat a second
   obelisk level, placed the same way as Wandom's. With both options on, the
   oracle king tells you where one of the two obelisks is.
+- World Maze tracker: drag a world by its number onto another slot and the
+  two swap, keeping everything logged in them — for when hidden world numbers
+  are revealed. Each world also has an Obelisks row, for marking what an
+  obelisk turned out to reveal.
 
 ### Changed
 
