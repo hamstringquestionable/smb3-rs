@@ -39,6 +39,8 @@ deploys.
 - Hammer Bros can use one more map-object slot in each world, and World 8's
   tank is stored in a slot the game left unused, so worlds have a little more
   room for map sprites. Seeds roll differently.
+- The arrow lifts in 7-6 move faster: a little more than twice their
+  original speed.
 
 ### Fixed
 

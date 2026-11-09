@@ -138,7 +138,7 @@ struct Cli {
     #[arg(long)]
     keep_gaps: bool,
 
-    /// Apply the always-on gameplay patches (stomp fairness, real-time clock) to a
+    /// Apply the always-on gameplay patches (stomp fairness, real-time clock, MaCobra bundle) to a
     /// vanilla base. Use when playtesting one of them — a plain vanilla base
     /// does not contain them, so the test silently exercises vanilla instead.
     /// Ignored on a --randomize base, which already has them.

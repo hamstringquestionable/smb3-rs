@@ -1062,8 +1062,10 @@ pub fn build(vanilla: &[u8], spec: &TestRomSpec) -> Result<TestRom, String> {
             crate::randomize::qol::rebuild_desert_bro_arena(&mut rom);
             rom.set_tag("qol/big_q_blocks");
             crate::randomize::qol::fix_big_q_block_rooms(&mut rom);
+            rom.set_tag("qol/macobra");
+            crate::randomize::qol::apply_macobra_patches(&mut rom);
             report.push(
-                "always-on patches: stomp_fairness, real_time_clock, desert_bro_arena, big_q_blocks"
+                "always-on patches: stomp_fairness, real_time_clock, desert_bro_arena, big_q_blocks, macobra"
                     .to_string(),
             );
         } else {
