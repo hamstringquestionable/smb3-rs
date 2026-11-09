@@ -41,6 +41,10 @@ deploys.
   room for map sprites. Seeds roll differently.
 - The arrow lifts in 7-6 move faster: a little more than twice their
   original speed.
+- Q-block randomization now reaches the brick in 5-2's Big [?] room, which
+  holds a flower or a leaf so small Mario can get big for the Big [?] Block.
+  8-F's first brick flower can now be a leaf as well. Random level music now
+  covers the Big [?] rooms too.
 
 ### Fixed
 
@@ -50,6 +54,8 @@ deploys.
   longer get stuck in the narrow gap below the exit pipe.
 - With beta stages on and Q-block randomization off, 3-5's first Q-block
   gives its vanilla fire flower again instead of a leaf.
+- 8-F's sub-area Q-block always gives a flower or a leaf, so small Mario can
+  get big there; it could roll a star.
 
 ## [3.1.0] - 2026-11-07
 

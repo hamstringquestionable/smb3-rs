@@ -18,6 +18,9 @@ const QBLOCK_SHAPES_NO_STAR: &[u8] = &[0x00, 0x01];
 /// Brick powerup shapes (flower=6, leaf=7, star=8, 1-up=11).
 const BRICK_SHAPES: &[u8] = &[0x06, 0x07, 0x08, 0x0B];
 
+/// Brick powerup shapes that make small Mario big (flower=6, leaf=7).
+const BRICK_SHAPES_FLOWER_OR_LEAF: &[u8] = &[0x06, 0x07];
+
 /// Note block powerup shapes (flower=1, leaf=2, star=3).
 const NOTE_SHAPES: &[u8] = &[0x01, 0x02, 0x03];
 
@@ -37,17 +40,26 @@ pub(crate) const PROTECTED_OFFSETS: &[usize] = &[
     0x23DB0, // 7-7 Q-star byte2 (screen 2)
     0x23E1F, // 7-7 Q-star byte2 (screen 5)
     0x23EA0, // 7-7 Q-star byte2 (screen 8)
-    0x2B900, // 8-F brick-flower (sub-area 2) — player must be big to break a block later
 ];
 
-/// ? block byte2 offsets that randomize between flower and leaf only — never a
-/// star — regardless of the airship no-star option. Both flower and leaf power
-/// small Mario up so he can break bricks, but a star would leave him small.
+/// ? block and brick byte2 offsets that randomize between flower and leaf only —
+/// never a star or a 1-up — regardless of the airship no-star option. Both
+/// flower and leaf make small Mario big, which these spots require; a star or a
+/// 1-up would leave him small.
 ///
-/// 7-F1: the Q-block gating the Tanooki area. Small Mario must break bricks to
-/// reach it, so the block has to grant a persistent power-up (flower or leaf).
-pub(crate) const FLOWER_OR_LEAF_QBLOCK_OFFSETS: &[usize] = &[
-    0x2B39E, // 7-F1 Q-block — flower/leaf so small Mario can break bricks for Tanooki area
+/// 7-F1: the ? block gating the Tanooki area. Small Mario must break bricks to
+/// reach it.
+///
+/// 5-2's Big [?] room (BigQ5): the brick flower in front of the Big [?] Block,
+/// which only big Mario can open.
+///
+/// 8-F: the main area's screen-2 brick flower and the sub-area's screen-2 ?
+/// block flower. Each is where a small Mario gets big for what follows.
+pub(crate) const FLOWER_OR_LEAF_OFFSETS: &[usize] = &[
+    0x2B39E, // 7-F1 ? block — flower/leaf so small Mario can break bricks for Tanooki area
+    0x1B440, // BigQ5 brick — flower/leaf so small Mario can open the Big [?] Block
+    0x2B900, // 8-F brick (main area, screen 2) — flower/leaf so Mario is big to break a block later
+    0x2BB18, // 8-F ? block (sub-area, screen 2) — flower/leaf so small Mario gets big
 ];
 
 /// Airship Q-block byte2 offsets (all 9 powerup blocks across W1-W7 airships).
@@ -66,11 +78,11 @@ pub(crate) const AIRSHIP_QBLOCK_OFFSETS: &[usize] = &[
 ];
 
 /// Pick the shape pool for a ? block at `file_offset`. Blocks that gate
-/// progression on breaking bricks (`FLOWER_OR_LEAF_QBLOCK_OFFSETS`) always
+/// progression on being big (`FLOWER_OR_LEAF_OFFSETS`) always
 /// exclude the star; airship blocks exclude it only when `no_airship_stars`
 /// is set. Everything else may become flower, leaf, or star.
 fn qblock_pool(file_offset: usize, no_airship_stars: bool) -> &'static [u8] {
-    let exclude_star = FLOWER_OR_LEAF_QBLOCK_OFFSETS.contains(&file_offset)
+    let exclude_star = FLOWER_OR_LEAF_OFFSETS.contains(&file_offset)
         || (no_airship_stars && AIRSHIP_QBLOCK_OFFSETS.contains(&file_offset));
     if exclude_star { QBLOCK_SHAPES_NO_STAR } else { QBLOCK_SHAPES }
 }
@@ -105,7 +117,11 @@ fn shape_pool(block: &PowerBlock, no_airship_stars: bool) -> Option<&'static [u8
     } else if QBLOCK_SHAPES.contains(&shape) {
         qblock_pool(block.shape_offset(), no_airship_stars)
     } else if BRICK_SHAPES.contains(&shape) {
-        BRICK_SHAPES
+        if FLOWER_OR_LEAF_OFFSETS.contains(&block.shape_offset()) {
+            BRICK_SHAPES_FLOWER_OR_LEAF
+        } else {
+            BRICK_SHAPES
+        }
     } else {
         return None;
     };
@@ -152,14 +168,16 @@ mod tests {
     }
 
     /// The vanilla block count, so a change in what the index finds is seen.
+    /// 232 includes 5-2's Big [?] room, whose brick flower the index has reached
+    /// since it learned the Big [?] slots.
     #[test]
-    fn vanilla_has_231_rerollable_blocks() {
+    fn vanilla_has_232_rerollable_blocks() {
         let Some(rom) = load_rom() else { return };
         let n = level_index::every_power_block(&rom)
             .iter()
             .filter(|b| shape_pool(b, false).is_some())
             .count();
-        assert_eq!(n, 231);
+        assert_eq!(n, 232);
     }
 
     #[test]
@@ -181,8 +199,27 @@ mod tests {
         for seed in 0..50 {
             let mut rom = vanilla.clone();
             randomize(&mut rom, &mut ChaCha8Rng::seed_from_u64(seed), true);
-            for &o in AIRSHIP_QBLOCK_OFFSETS.iter().chain(FLOWER_OR_LEAF_QBLOCK_OFFSETS) {
+            for &o in AIRSHIP_QBLOCK_OFFSETS {
                 assert_ne!(rom.read_byte(o), 0x02, "seed {seed}: star at 0x{o:05X}");
+            }
+        }
+    }
+
+    /// The blocks that must make Mario big only ever hold a flower or a leaf:
+    /// ? block shapes 0/1, brick shapes 6/7.
+    #[test]
+    fn flower_or_leaf_blocks_only_roll_flower_or_leaf() {
+        let Some(vanilla) = load_rom() else { return };
+        for seed in 0..50 {
+            let mut rom = vanilla.clone();
+            randomize(&mut rom, &mut ChaCha8Rng::seed_from_u64(seed), false);
+            for &o in FLOWER_OR_LEAF_OFFSETS {
+                let shape = rom.read_byte(o);
+                assert!(
+                    QBLOCK_SHAPES_NO_STAR.contains(&shape)
+                        || BRICK_SHAPES_FLOWER_OR_LEAF.contains(&shape),
+                    "seed {seed}: shape {shape:02X} at 0x{o:05X}"
+                );
             }
         }
     }

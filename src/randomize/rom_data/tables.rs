@@ -964,12 +964,29 @@ pub(crate) struct LevelEntry {
 /// the real thing only spawns when `OBJ_BONUSCONTROLLER`'s coin/score check
 /// fires.
 ///
-/// `level_music` deals the Coin Ship a song through this entry too, which is
-/// why it is no longer native-only.
-pub(crate) const UNLISTED_LEVELS: &[(&str, LevelEntry)] = &[(
-    "CoinShip",
-    LevelEntry { tileset: 10, obj_lo: 0x04, obj_hi: 0xDA, lay_lo: 0x15, lay_hi: 0xBC },
-)];
+/// "Unused Level 5" is the other: nothing in vanilla reaches it, but the Big [?]
+/// room shuffle (`levels::big_q_rooms`) repoints Big [?] slot 0 at it. It is
+/// listed here rather than read from that slot because the shuffle runs after
+/// the level-data passes, which must already treat it as a level.
+///
+/// `level_music` deals these a song through this list too, which is why it is
+/// no longer native-only.
+pub(crate) const UNLISTED_LEVELS: &[(&str, LevelEntry)] = &[
+    (
+        "CoinShip",
+        LevelEntry { tileset: 10, obj_lo: 0x04, obj_hi: 0xDA, lay_lo: 0x15, lay_hi: 0xBC },
+    ),
+    (
+        "Unused5",
+        LevelEntry {
+            tileset: UNUSED5_TILESET,
+            obj_lo: UNUSED5_OBJECT_PTR as u8,
+            obj_hi: (UNUSED5_OBJECT_PTR >> 8) as u8,
+            lay_lo: UNUSED5_LAYOUT_PTR as u8,
+            lay_hi: (UNUSED5_LAYOUT_PTR >> 8) as u8,
+        },
+    ),
+];
 
 /// A beta (unreferenced) level — layout data exists in the ROM but no vanilla
 /// pointer table entry references it. Injected into the shuffle pool when
@@ -1172,7 +1189,6 @@ pub(crate) const BETA_PATCHES: &[(usize, u8)] = &[
 pub(crate) const BIG_Q_AREA_LAYOUTS: usize = 0x3491B;
 pub(crate) const BIG_Q_AREA_OBJECTS: usize = 0x3492B;
 pub(crate) const BIG_Q_AREA_TILESETS: usize = 0x3493B;
-#[cfg(not(target_arch = "wasm32"))] // only testrom iterates all eight areas
 pub(crate) const BIG_Q_AREA_COUNT: usize = 8;
 
 /// 5-2's Big [?] Block junction command — slot 4 of its entry area, the screen
