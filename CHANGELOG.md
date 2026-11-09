@@ -42,6 +42,8 @@ deploys.
   meet him as Frog, Tanooki or Hammer Mario.
 - Beta stage β6 (the vertical underwater pipe level): Frog Mario can no
   longer get stuck in the narrow gap below the exit pipe.
+- With beta stages on and Q-block randomization off, 3-5's first Q-block
+  gives its vanilla fire flower again instead of a leaf.
 
 ## [3.1.0] - 2026-11-07
 

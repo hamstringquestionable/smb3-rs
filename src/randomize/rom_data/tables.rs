@@ -1122,7 +1122,7 @@ pub(crate) const BETA_PATCHES: &[(usize, u8)] = &[
     (0x22F0B, 0x1A),
     (0x22F0F, 0x9F),
     (0x23004, 0x04),
-    // β6 (ts8 $AF18) — 22 patches (header: alt_layout/alt_objects/alt_tileset + commands)
+    // β6 (ts8 $AF18) — 21 patches (header: alt_layout/alt_objects/alt_tileset + commands)
     (0x24F28, 0x32),
     (0x24F29, 0xB3),
     (0x24F2A, 0xD8),
@@ -1150,7 +1150,6 @@ pub(crate) const BETA_PATCHES: &[(usize, u8)] = &[
     (0x25063, 0x21),
     (0x25067, 0x53),
     (0x25068, 0x32),
-    (0x250D2, 0x01),
     // β9 (ts13 $ACA9) — 2 patches
     (0x26DB8, 0x63),
     (0x26DB9, 0x20),
