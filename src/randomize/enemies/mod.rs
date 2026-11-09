@@ -19,7 +19,7 @@ use crate::randomize::enemies::protections::{
 use crate::randomize::levels::segment_writer::{self, SegmentEntry as WriterEntry, SortMode};
 use crate::randomize::rom_data::{
     ENEMY_DATA_END, ENEMY_DATA_START, HAMMER_BRO_ID, HB_NEEDS_SHELL_ENEMIES, LEVEL_DATA_REGIONS,
-    STOMPABLE_ENEMIES, TREASURE_BOX_APPEAR,
+    STOMPABLE_ENEMIES, TREASURE_BOX_APPEAR, enemy_ptr_to_file_offset, level_index,
 };
 use crate::rom::Rom;
 
@@ -58,7 +58,8 @@ mod tests;
 /// special objects (end-level cards, pipes, platforms, bosses, powerups,
 /// autoscroll triggers, cannons, etc.) are never modified.
 pub(crate) fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R, opts: &Options) {
-    randomize_object_data(rom, rng, false, opts);
+    let starts = stream_starts(rom);
+    randomize_object_data(rom, rng, false, opts, &starts);
 }
 
 /// Randomize Big ? Blocks by swapping their IDs among the set of Big ? Block
@@ -68,8 +69,13 @@ pub(crate) fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R, opts: &Options) {
 /// per seed by `big_q_rooms`, which runs after this and forces *that* room's
 /// block — so the guarantee does not depend on any offset being skipped here.
 pub(crate) fn randomize_big_q_blocks<R: Rng>(rom: &mut Rom, rng: &mut R) {
-    // All enemy classes off — only Big ? Blocks get randomized
-    let no_flags = Options {
+    let starts = stream_starts(rom);
+    randomize_object_data(rom, rng, true, &big_q_only_options(), &starts);
+}
+
+/// All enemy classes off, so the walker swaps Big ? Blocks and nothing else.
+fn big_q_only_options() -> Options {
+    Options {
         ground: EnemyMode::Off,
         shell: EnemyMode::Off,
         flying: EnemyMode::Off,
@@ -83,29 +89,48 @@ pub(crate) fn randomize_big_q_blocks<R: Rng>(rom: &mut Rom, rng: &mut R) {
         hb_encounters: EnemyMode::Off,
         wild_injections: Vec::new(),
         ..Options::default()
-    };
-    randomize_object_data(rom, rng, true, &no_flags);
+    }
 }
 
-fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, opts: &Options) {
-    let len = ENEMY_DATA_END - ENEMY_DATA_START;
-    let mut data = rom.read_range(ENEMY_DATA_START, len).to_vec();
-
-    // Spoiled segments left by upstream passes (e.g. disable_autoscroll
-    // inserts $FF mid-segment to neutralize an autoscroll entry — the
-    // level loader for that obj_ptr stops at the early $FF and is happy,
-    // but a block-wide greedy walker mis-parses the orphaned bytes as a
-    // "ghost" segment that swallows the next real segment's page byte +
-    // first entry). Translated from ROM file offsets to local-buffer
-    // indices so the walker can jump past them.
-    let skip_ranges: Vec<core::ops::Range<usize>> =
+/// Where each object stream the pass visits starts (its page byte), as an
+/// index into the enemy-data buffer `data`, in file order.
+///
+/// The streams are the ones [`level_index::every_level`] reaches: every level
+/// a flag can make the game load. A stream nothing loads is not visited.
+///
+/// TEMPORARY (step 2 of the index migration): the segments a block-wide walk
+/// finds that no level loads are visited too, so this change can be proven
+/// byte-identical. The next step drops them.
+fn stream_starts(rom: &Rom) -> Vec<usize> {
+    let data = rom.read_range(ENEMY_DATA_START, ENEMY_DATA_END - ENEMY_DATA_START);
+    let mut starts = std::collections::BTreeSet::new();
+    for area in level_index::every_level(rom).iter().flatten() {
+        if level_index::read_objects(rom, area.objects_ptr, area.tileset).is_some() {
+            starts.insert(enemy_ptr_to_file_offset(area.objects_ptr) - ENEMY_DATA_START);
+        }
+    }
+    let spoiled: Vec<core::ops::Range<usize>> =
         crate::randomize::levels::autoscroll::SPOILED_SEGMENT_RANGES
             .iter()
             .map(|r| (r.start - ENEMY_DATA_START)..(r.end - ENEMY_DATA_START))
             .collect();
-    let in_skip_range = |idx: usize| -> Option<usize> {
-        skip_ranges.iter().find(|r| r.contains(&idx)).map(|r| r.end)
-    };
+    for b in segment_writer::walk_segments(data, 0, data.len(), &spoiled) {
+        starts.insert(b.file_offset);
+    }
+    starts.into_iter().collect()
+}
+
+/// The swap pass over the object streams starting at `starts` (indices into
+/// the enemy-data block, as [`stream_starts`] returns them).
+fn randomize_object_data<R: Rng>(
+    rom: &mut Rom,
+    rng: &mut R,
+    big_q_only: bool,
+    opts: &Options,
+    starts: &[usize],
+) {
+    let len = ENEMY_DATA_END - ENEMY_DATA_START;
+    let mut data = rom.read_range(ENEMY_DATA_START, len).to_vec();
 
     // Build class modes and wild pools
     let normal_modes = ClassModes::from_options(opts);
@@ -124,31 +149,14 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
         InjectionSites::new()
     };
 
-    let mut i = 0;
-    while i < data.len() {
-        // Jump past spoiled byte ranges (see skip_ranges comment above).
-        if let Some(end) = in_skip_range(i) {
-            i = end;
-            continue;
-        }
-        // 0xFF = segment boundary
-        if data[i] == 0xFF {
-            i += 1;
-            continue;
-        }
-
-        // First non-FF byte after a terminator is the page/flag byte
-        let seg_start = i;
+    for &seg_start in starts {
+        // The page/flag byte; the entries follow it.
         let seg_file_offset = ENEMY_DATA_START + seg_start;
-        i += 1;
+        let mut i = seg_start + 1;
 
         let segment_rule = walker_segment_rule_at(seg_file_offset);
 
-        // Skip entire segment if it's protected
         if segment_rule == WalkerSegmentRule::Skip {
-            while i + 2 < data.len() && data[i] != 0xFF {
-                i += 3;
-            }
             continue;
         }
 
@@ -344,34 +352,27 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
         }
     }
 
-    // Route the final write through segment_writer per segment using
-    // SortMode::Preserve. Sorting would be wrong here: walker segments
-    // often span multiple logical levels (different enemy_ptrs pointing
-    // at different positions in the same $FF-bounded run), each with its
-    // own X sequence. A segment-wide X-sort can move entries across
-    // logical-level boundaries the walker can't see, displacing wild
-    // injections off their target ep and reordering vanilla bytes the
-    // class-swap pass didn't touch. Preserve mode writes byte-for-byte
-    // from the local `data` buffer, which already holds the desired
-    // post-injection + post-class-swap state.
-    //
-    // Spoiled-segment skip ranges are honored so the walker doesn't
-    // mis-parse autoscroll-clobbered bytes as ghost segments and
-    // scramble adjacent real data.
-    let bounds = segment_writer::walk_segments(&data, 0, data.len(), &skip_ranges);
-    for b in bounds {
-        let entries: Vec<WriterEntry> = (0..b.entry_count)
-            .map(|i| {
-                let off = b.file_offset + 1 + i * 3;
+    // Write each visited stream back through segment_writer with
+    // SortMode::Preserve: only IDs (and a tall enemy's Y) changed, and vanilla
+    // streams are not always in X order (6-6's sub-area spikes), so sorting
+    // would move entries the pass never touched.
+    for &seg_start in starts {
+        let count = (0..)
+            .map(|k| seg_start + 1 + k * 3)
+            .take_while(|&e| e + 2 < data.len() && data[e] != 0xFF)
+            .count();
+        let entries: Vec<WriterEntry> = (0..count)
+            .map(|k| {
+                let off = seg_start + 1 + k * 3;
                 WriterEntry { obj_id: data[off], x: data[off + 1], y: data[off + 2] }
             })
             .collect();
-        let rom_offset = ENEMY_DATA_START + b.file_offset;
+        let rom_offset = ENEMY_DATA_START + seg_start;
         segment_writer::write_segment(
             rom,
             &segment_writer::SegmentSpec {
                 file_offset: rom_offset,
-                original_count: b.entry_count,
+                original_count: count,
                 entries: &entries,
                 label: None,
                 sort_mode: SortMode::Preserve,

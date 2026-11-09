@@ -26,6 +26,25 @@ fn rom_with_segment(seg: &[u8]) -> Rom {
     Rom::from_bytes_lax(&data, true).unwrap()
 }
 
+/// The streams in a synthetic fixture. These ROMs have no pointer tables for
+/// the level index to follow, so the streams are found by walking the block.
+fn fixture_streams(rom: &Rom) -> Vec<usize> {
+    let data = rom.read_range(ENEMY_DATA_START, ENEMY_DATA_END - ENEMY_DATA_START);
+    segment_writer::walk_segments(data, 0, data.len(), &[]).iter().map(|b| b.file_offset).collect()
+}
+
+/// [`randomize`] over a synthetic fixture's streams.
+fn randomize_fixture<R: Rng>(rom: &mut Rom, rng: &mut R, opts: &Options) {
+    let starts = fixture_streams(rom);
+    randomize_object_data(rom, rng, false, opts, &starts);
+}
+
+/// [`randomize_big_q_blocks`] over a synthetic fixture's streams.
+fn randomize_big_q_fixture<R: Rng>(rom: &mut Rom, rng: &mut R) {
+    let starts = fixture_streams(rom);
+    randomize_object_data(rom, rng, true, &big_q_only_options(), &starts);
+}
+
 fn make_test_rom() -> Rom {
     // A realistic enemy data segment: FF terminator, then a segment with
     // page flag + entries + FF. Entries MUST be sorted by ascending X
@@ -46,7 +65,7 @@ fn make_test_rom() -> Rom {
 fn test_enemies_stay_in_class() {
     let mut rom = make_test_rom();
     let mut rng = ChaCha8Rng::seed_from_u64(42);
-    randomize(&mut rom, &mut rng, &enemy_opts());
+    randomize_fixture(&mut rom, &mut rng, &enemy_opts());
 
     // Read back the segment (skip FF + page flag = offset 2)
     let base = ENEMY_DATA_START + 2;
@@ -100,8 +119,8 @@ fn test_deterministic() {
     let mut rng1 = ChaCha8Rng::seed_from_u64(77);
     let mut rng2 = ChaCha8Rng::seed_from_u64(77);
 
-    randomize(&mut rom1, &mut rng1, &enemy_opts());
-    randomize(&mut rom2, &mut rng2, &enemy_opts());
+    randomize_fixture(&mut rom1, &mut rng1, &enemy_opts());
+    randomize_fixture(&mut rom2, &mut rng2, &enemy_opts());
 
     let len = ENEMY_DATA_END - ENEMY_DATA_START;
     assert_eq!(rom1.read_range(ENEMY_DATA_START, len), rom2.read_range(ENEMY_DATA_START, len),);
@@ -133,7 +152,7 @@ fn make_bigq_test_rom() -> Rom {
 fn test_big_q_blocks_randomized() {
     let mut rom = make_bigq_test_rom();
     let mut rng = ChaCha8Rng::seed_from_u64(42);
-    randomize_big_q_blocks(&mut rom, &mut rng);
+    randomize_big_q_fixture(&mut rom, &mut rng);
 
     // Regular Big ? Blocks should be randomized to some Big ? Block ID
     let base = ENEMY_DATA_START + 2; // skip FF + page
@@ -170,7 +189,7 @@ fn test_chr_compatibility_enforced() {
     for seed in 0..200u64 {
         let mut rom_copy = rom.clone();
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
-        randomize(&mut rom_copy, &mut rng, &enemy_opts());
+        randomize_fixture(&mut rom_copy, &mut rng, &enemy_opts());
 
         let base = ENEMY_DATA_START + 2;
         let result = rom_copy.read_range(base, 12);
@@ -243,7 +262,7 @@ fn test_chr_resets_across_segments() {
     for seed in 0..200u64 {
         let mut rom_copy = rom.clone();
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
-        randomize(&mut rom_copy, &mut rng, &enemy_opts());
+        randomize_fixture(&mut rom_copy, &mut rng, &enemy_opts());
 
         // Second segment's enemy is at offset: FF(1) + page(1) + entry(3) + FF(1) + page(1) = 7
         let enemy2 = rom_copy.read_byte(ENEMY_DATA_START + 7);
@@ -277,7 +296,7 @@ fn test_ghost_enemies_stay_in_class() {
     for seed in 0..100u64 {
         let mut rom_copy = rom.clone();
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
-        randomize(&mut rom_copy, &mut rng, &enemy_opts());
+        randomize_fixture(&mut rom_copy, &mut rng, &enemy_opts());
 
         let base = ENEMY_DATA_START + 2;
         let result = rom_copy.read_range(base, 6);
@@ -301,7 +320,7 @@ fn test_big_enemies_in_regular_classes() {
     for seed in 0..100u64 {
         let mut rom_copy = rom.clone();
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
-        randomize(&mut rom_copy, &mut rng, &enemy_opts());
+        randomize_fixture(&mut rom_copy, &mut rng, &enemy_opts());
 
         let base = ENEMY_DATA_START + 2;
         let result = rom_copy.read_range(base, 9);
@@ -476,7 +495,7 @@ fn giant_red_never_replaces_non_giant_red() {
         for seed in 0..300u64 {
             let mut rom = giant_red_test_rom();
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
-            randomize(&mut rom, &mut rng, &opts);
+            randomize_fixture(&mut rom, &mut rng, &opts);
             let result = rom.read_range(ENEMY_DATA_START + 2, 6);
             assert_ne!(
                 result[0], GIANT_RED_PIRANHA,
@@ -503,7 +522,7 @@ fn test_two_pass_precommit() {
     for seed in 0..500u64 {
         let mut rom_copy = rom.clone();
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
-        randomize(&mut rom_copy, &mut rng, &enemy_opts());
+        randomize_fixture(&mut rom_copy, &mut rng, &enemy_opts());
 
         let base = ENEMY_DATA_START + 2;
         let result = rom_copy.read_range(base, 6);
@@ -543,7 +562,7 @@ fn test_uniform_class_precommit() {
     for seed in 0..500u64 {
         let mut rom_copy = rom.clone();
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
-        randomize(&mut rom_copy, &mut rng, &enemy_opts());
+        randomize_fixture(&mut rom_copy, &mut rng, &enemy_opts());
 
         let base = ENEMY_DATA_START + 2;
         let result = rom_copy.read_range(base, 6);
@@ -582,7 +601,7 @@ fn test_conflicted_slot_blocks_all() {
     for seed in 0..100u64 {
         let mut rom_copy = rom.clone();
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
-        randomize(&mut rom_copy, &mut rng, &enemy_opts());
+        randomize_fixture(&mut rom_copy, &mut rng, &enemy_opts());
 
         let base = ENEMY_DATA_START + 2;
         let result = rom_copy.read_range(base, 9);
@@ -656,7 +675,7 @@ fn test_wild_pool_merges_classes() {
     for seed in 0..500u64 {
         let mut rom_copy = rom.clone();
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
-        randomize(&mut rom_copy, &mut rng, &flags);
+        randomize_fixture(&mut rom_copy, &mut rng, &flags);
         let result_id = rom_copy.read_byte(ENEMY_DATA_START + 2);
         assert!(wild_pool.contains(&result_id), "seed {seed}: 0x{result_id:02X} not in wild pool");
         if SHELL_ENEMIES.contains(&result_id) {
@@ -680,7 +699,7 @@ fn test_off_mode_leaves_untouched() {
     for seed in 0..100u64 {
         let mut rom_copy = rom.clone();
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
-        randomize(&mut rom_copy, &mut rng, &flags);
+        randomize_fixture(&mut rom_copy, &mut rng, &flags);
         // Ground enemy stays vanilla (Off mode)
         assert_eq!(
             rom_copy.read_byte(ENEMY_DATA_START + 2),
@@ -736,7 +755,7 @@ fn test_chaser_pins_distant_groups() {
     for seed in 0..200u64 {
         let mut rom_copy = rom.clone();
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
-        randomize(&mut rom_copy, &mut rng, &flags);
+        randomize_fixture(&mut rom_copy, &mut rng, &flags);
         assert_eq!(
             rom_copy.read_byte(ENEMY_DATA_START + 2),
             0x83,
@@ -770,7 +789,7 @@ fn test_chaser_pick_respects_distant_pins() {
     for seed in 0..300u64 {
         let mut rom_copy = rom.clone();
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
-        randomize(&mut rom_copy, &mut rng, &flags);
+        randomize_fixture(&mut rom_copy, &mut rng, &flags);
         assert_eq!(rom_copy.read_byte(ENEMY_DATA_START + 2), 0x8A);
         let id = rom_copy.read_byte(ENEMY_DATA_START + 5);
         assert!(
@@ -800,7 +819,7 @@ fn test_boomboom_does_not_block_shell_picks() {
     for seed in 0..200u64 {
         let mut rom_copy = rom.clone();
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
-        randomize(&mut rom_copy, &mut rng, &flags);
+        randomize_fixture(&mut rom_copy, &mut rng, &flags);
         let boom = rom_copy.read_byte(ENEMY_DATA_START + 5);
         assert!(BOOMBOOM_SWAP.contains(&boom), "seed {seed}: Boom-Boom became 0x{boom:02X}");
         // Green/Red Troopa are $4F/+5 — CHR-conflicting with the
@@ -836,7 +855,7 @@ fn test_chr_groups_split_distant_enemies() {
     for seed in 0..500u64 {
         let mut rom_copy = rom.clone();
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
-        randomize(&mut rom_copy, &mut rng, &enemy_opts());
+        randomize_fixture(&mut rom_copy, &mut rng, &enemy_opts());
 
         let ghost = rom_copy.read_byte(ENEMY_DATA_START + 2);
         let ground = rom_copy.read_byte(ENEMY_DATA_START + 5);
@@ -874,7 +893,7 @@ fn test_chr_groups_keep_close_together() {
     for seed in 0..500u64 {
         let mut rom_copy = rom.clone();
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
-        randomize(&mut rom_copy, &mut rng, &enemy_opts());
+        randomize_fixture(&mut rom_copy, &mut rng, &enemy_opts());
 
         let ground = rom_copy.read_byte(ENEMY_DATA_START + 5);
         assert!(GROUND_ENEMIES.contains(&ground), "seed {seed}: ground 0x{ground:02X}");
@@ -947,7 +966,7 @@ fn ghost_segment_does_not_corrupt_trailing_segment() {
 
     let mut rom = Rom::from_bytes_lax(&data, true).unwrap();
     let mut rng = ChaCha8Rng::seed_from_u64(42);
-    randomize(&mut rom, &mut rng, &enemy_opts());
+    randomize_fixture(&mut rom, &mut rng, &enemy_opts());
 
     let pwc_after = rom.read_range(PWC_SEG_START, 5).to_vec();
     assert_eq!(
@@ -1675,7 +1694,7 @@ fn test_cannon_pins_distant_groups() {
     for seed in 0..200u64 {
         let mut rom_copy = rom.clone();
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
-        randomize(&mut rom_copy, &mut rng, &flags);
+        randomize_fixture(&mut rom_copy, &mut rng, &flags);
         assert_eq!(
             rom_copy.read_byte(ENEMY_DATA_START + 2),
             0xC8,
@@ -1710,7 +1729,7 @@ fn test_cannons_wild_respects_slot5_pin() {
     for seed in 0..300u64 {
         let mut rom_copy = rom.clone();
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
-        randomize(&mut rom_copy, &mut rng, &flags);
+        randomize_fixture(&mut rom_copy, &mut rng, &flags);
         let id = rom_copy.read_byte(ENEMY_DATA_START + 2);
         assert!(
             (0xC2..=0xCF).contains(&id),
