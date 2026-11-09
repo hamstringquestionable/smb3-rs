@@ -1281,6 +1281,9 @@ Vanilla uses `(0x40, 0x15)` and `(0xA3, 0x16)`. The other 7 are
 there but no `CFIRE_LASER` entry points at it. SMB3-RS's `bowser_castle`
 composer picks any 2 of the 9 and writes them at the two laser entry
 slots, coordinating fireball placement so the segment stays X-sorted.
+It reads the room after the enemy pass and keeps every other entry as
+that pass left it, so the two Dry Bones randomize (before 2026-11 a
+hard-coded table put them back).
 
 Fireball X spread in fred's data spans the whole segment
 (`0x18..0xEF`). Y values cluster in `0x11..0x17` (7-row band).
@@ -1306,9 +1309,14 @@ up, not the way in.)
 #### 5-F2 Sub-Area 1 (file offset `0xD2C9`, 26 entries)
 
 Podoboo gauntlet — 16 Podoboo (0x9E) + 6 Ceiling Podoboo (0x53) + 2
-DryBones (0x3F) + 2 Boos (0x2F) — the randomizer's composer
-substitutes upward water jets (0x65) there on purpose; see
-`podoboo_gauntlet.rs`. Y high nibble = vertical page (page
+DryBones (0x3F) + 2 Boos (0x2F). The randomizer's composer
+(`podoboo_gauntlet.rs`) runs after the enemy pass and moves only the
+podoboos; the Boos and Dry Bones keep what that pass rolled. (Before
+2026-11 it rebuilt the room from a hard-coded table, which undid those
+rolls and put upward water jets, 0x65, on the Boo spots.) Vanilla lists
+the Dry Bones at 0x28 after the podoboos at 0x2C/0x2E and the Boo at
+0x6F before the podoboo at 0x6A, so the stream is not X-sorted as
+shipped. Y high nibble = vertical page (page
 0 for ceiling podoboos, page 1 for regular). The composer preserves
 the high nibble so a ceiling podoboo can't fall to a regular page or
 vice versa.

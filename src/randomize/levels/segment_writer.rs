@@ -9,17 +9,17 @@
 //! This module is the single throat for segment edits. Two use cases:
 //!
 //! * **Composers** ([`bowser_castle`](super::bowser_castle), [`podoboo_gauntlet`](super::podoboo_gauntlet), [`hand_rooms`](super::hand_rooms)):
-//!   assemble a fresh entry list for one specific segment whose
-//!   `enemy_ptr` is known. These supply [`SortMode::SortByX`] so the
-//!   writer sorts before writing.
+//!   build the entry list for one specific segment whose `enemy_ptr` is
+//!   known (the 5-F2 and 8-Bowser composers start from the room as the
+//!   enemy pass left it and move only their own hazards). These supply
+//!   [`SortMode::SortByX`] so the writer sorts before writing.
 //!
-//! * **In-place mutators** ([`enemies`](crate::randomize::enemies)): walk the whole enemy data block
-//!   and mutate individual obj_ids without changing X/Y or count. A
-//!   walker-segment in the block-wide view often spans multiple logical
-//!   levels (different `enemy_ptr`s pointing at different positions),
-//!   each with its own X sequence — so a segment-wide X-sort is not just
-//!   wasted work, it can move entries across logical-level boundaries.
-//!   These supply [`SortMode::Preserve`] to keep vanilla byte order.
+//! * **In-place mutators** ([`enemies`](crate::randomize::enemies)): visit every object list the
+//!   level index reaches and mutate individual obj_ids without changing
+//!   count, or X/Y beyond a row nudge. Vanilla lists are not always
+//!   X-sorted (5-F2's gauntlet, 6-6's sub-area spikes), and an in-place
+//!   pass has no reason to reorder them. These supply
+//!   [`SortMode::Preserve`] to keep vanilla byte order.
 //!
 //! Callers pass an entry list, a count, and a [`SortMode`]; the writer
 //! validates count and writes back. It does NOT grow or shrink segments,

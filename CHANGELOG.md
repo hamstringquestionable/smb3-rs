@@ -45,6 +45,10 @@ deploys.
   holds a flower or a leaf so small Mario can get big for the Big [?] Block.
   8-F's first brick flower can now be a leaf as well. Random level music now
   covers the Big [?] rooms too.
+- Enemy randomization now reaches the Boos and Dry Bones in 5-F2's podoboo
+  corridor and the Dry Bones in Bowser's castle; they used to be put back
+  after every roll. The two upward water jets 5-F2's corridor had in place of
+  its Boos are gone: with enemies off they are Boos again, as in the original.
 
 ### Fixed
 
