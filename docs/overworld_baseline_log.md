@@ -34,6 +34,28 @@ hashes they describe are gone; the reasoning is not.
 
 ## Entries
 
+### 2026-11-10 — W8's tank cell is an ordinary blank (fix/w8-tank-cell-water, 3.1.1)
+
+**Intended: an overworld change on the seeds that had the bug, and only
+those.** W8 (5,8), the vanilla tank, was a `BLANK_TILE_OVERRIDES` row forcing
+open water `$8D`. That is right only when `8s are Wild` has drawn the canoe
+lake there; the row predates the flag (`ff54c74`, gated by `23c7405`) and was
+never gated with it. Pickup keeps the cell's own `$AF` (an island blank), but
+when a builder rung puts a node on the cell and later moves it off,
+`blank_tile_for` restored water, cutting the start off from the pipe at (3,8).
+Player report: 3.1.0 seed 3290458290178928 could not reach World 8's castle.
+The row is gone: the cell is chosen like any other blank, and the one general
+rule added is that pickup keeps water the map source drew (which is how the
+canoe lake survives with the flag on).
+
+**What moved.** 2 of the 20 seeds: 9 and 11. Over seeds 1-1000 at the
+defaults (`--no-palettes`, so the comparison is exact), 82 ROMs differ from
+3.1.0, and all 82 are seeds where 3.1.0 wrote `$8D` to the cell (file
+0x18E89). The other 918 are byte-identical. With `8s are Wild` on, all 1000
+are byte-identical. On an affected seed the rest of the ROM moves too, because
+the builder's walks see different terrain and draw a different RNG stream from
+that point on.
+
 ### 2026-11-03 — powerups reads its blocks from the level index (feature/random-music)
 
 **Intended: no overworld change; a powerups rewrite that shifts the shared
