@@ -9,6 +9,8 @@ deploys.
 
 ## [Unreleased]
 
+## [3.1.1] - 2026-11-10
+
 ### Fixed
 
 - World 8: with 8s are Wild off, about 1 seed in 12 drew water where the tank
