@@ -66,14 +66,13 @@ fn sweep_is_deterministic() {
 /// dated entry to `docs/overworld_baseline_log.md` in the same commit saying
 /// what moved and how you established it — never to make a red test green.
 ///
-/// Recaptured 2026-11-08 for the sprite-slot ledger's phase B (Hammer Bros
-/// fill from slot 1, World 8's tank in slot 0 — map-object tables only, all 20
-/// seeds) — see `docs/overworld_baseline_log.md`.
+/// Recaptured 2026-11-10 for the 3.1.1 fix to W8's tank cell (seeds 9 and 11),
+/// merged in from `main` — see `docs/overworld_baseline_log.md`.
 #[rustfmt::skip]
 const BASELINE: [u64; SEEDS as usize] = [
     0x66DD79DA48E339FA, 0xB3BB70D529AA86ED, 0x0D55D984BDDA34D8, 0x4EE7C46B64B1D4E6,
     0xDE40AE41331AA4C1, 0xD53838D2CFF0424D, 0xA17AC8A46E4DB9DC, 0xA18B541B9DA16F36,
-    0x9DBF416A35463A8A, 0x908D21F248035BE1, 0x584A4945F0726467, 0x3AC41831051A8C90,
+    0x874AC170195EA167, 0x908D21F248035BE1, 0xB0155D04C8F7FE8F, 0x3AC41831051A8C90,
     0x90576F14D09EFE4C, 0x814331EE03E74C4E, 0x7EEDA21C00FC94B9, 0xC4DA57BE74D56E86,
     0xDFCCA3BC326B74C2, 0x068ACA9BCA14EB15, 0x24D938C0E98364A8, 0x44D298D677D94A63,
 ];

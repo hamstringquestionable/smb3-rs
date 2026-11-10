@@ -279,12 +279,25 @@ const ISLAND_BELOW: &[u8] = &[0xAA, 0xAC, 0xB0];
 /// right continues the strip. See [`ISLAND_BELOW`].
 const ISLAND_RIGHT: &[u8] = &[0xAC, 0xB0, 0xB7];
 
+/// The 40-tile shoreline kit `$82`-`$A9`: every one is water in its centre
+/// (`docs/smb3_rom_reference.md`, "Water tiles").
+fn is_water(tile: u8) -> bool {
+    (0x82..=0xA9).contains(&tile)
+}
+
 /// Pick the right blank node tile based on neighboring path directions and
 /// the world/screen visual theme. If the tile is already a valid blank, it
 /// is returned unchanged to preserve the vanilla path connectivity.
 pub(super) fn blank_tile_for(grid: &Grid, world_idx: usize, row: usize, col: usize) -> u8 {
     let current = grid.get(row, col);
     if VALID_BLANK_TILES.contains(&current) {
+        return current;
+    }
+    // Terrain belongs to the map source. A cell it drew as water stays water
+    // and stops being a node: the builder only places on blank tiles, so
+    // nothing lands there again. No vanilla entry sits on water, so this fires
+    // only where a map edit put it (the `8s are Wild` canoe lake over W8's tank).
+    if is_water(current) {
         return current;
     }
 
@@ -711,22 +724,41 @@ mod tests {
         );
     }
 
-    /// The vanilla tile fixes apply to vanilla layouts only. W8 (5,8), the
-    /// battleship cell, is forced to navy water `$8D` on vanilla; a generated
-    /// layout gets the neighbour rule's answer instead. (W3 (8,6) no longer
-    /// shows the difference: since breakable rocks count as connections, the
-    /// rule gives its `$47` on its own.)
+    /// W8's tank cell (5,8) is chosen like any other blank. Its own `$AF` is
+    /// one, so pickup keeps it; a node moved off it gets the neighbour rule,
+    /// which must be land: it is the only link from the start to the pipe above
+    /// (3.1.0 seed 3290458290178928 drew water there and could not reach
+    /// screen 1). The canoe lake, when the map source draws it, stays water.
     #[test]
-    fn blank_overrides_apply_to_vanilla_layouts_only() {
+    fn w8_tank_cell_is_an_ordinary_blank() {
         let Some(rom) = load_rom() else { return };
         let mut grid = rom_data::read_tile_grid(&rom, 7);
-        assert!(grid.vanilla_layout, "a grid read from the ROM is a vanilla layout");
-        // A level tile there, as pickup sees it before blanking the cell (an
-        // existing blank is kept unchanged and never reaches the overrides).
+        assert_eq!(blank_tile_for(&grid, 7, 5, 8), 0xAF, "vanilla's own blank is kept");
         grid.set(5, 8, 0x03);
-        assert_eq!(blank_tile_for(&grid, 7, 5, 8), 0x8D);
-        grid.vanilla_layout = false;
-        assert_ne!(blank_tile_for(&grid, 7, 5, 8), 0x8D);
+        assert!(!is_water(blank_tile_for(&grid, 7, 5, 8)), "a node moved off it leaves land");
+        grid.set(5, 8, 0x8D);
+        assert_eq!(blank_tile_for(&grid, 7, 5, 8), 0x8D, "the canoe lake stays water");
+    }
+
+    /// The water rule only ever keeps a map edit: no vanilla entry sits on a
+    /// water tile, in any world.
+    #[test]
+    fn no_vanilla_entry_sits_on_water() {
+        let Some(rom) = load_rom() else { return };
+        let catalog = NodeCatalog::build(&rom, false);
+        for e in &catalog.entries {
+            let grid = rom_data::read_tile_grid(&rom, e.world_idx);
+            let (r, c) = e.grid_pos;
+            if r < grid.rows() && c < grid.cols {
+                let t = grid.get(r, c);
+                assert!(
+                    !is_water(t),
+                    "W{} {:?} sits on water ${t:02X}",
+                    e.world_idx + 1,
+                    e.grid_pos
+                );
+            }
+        }
     }
 
     #[test]
@@ -845,8 +877,7 @@ mod tests {
                     if !rom_data::VALID_BLANK_TILES.contains(&vanilla) {
                         continue;
                     }
-                    // Overrides are deliberate exceptions to the theme rule
-                    // (W8 (5,8) is navy water, not a themed blank at all).
+                    // Overrides are deliberate exceptions to the theme rule.
                     if BLANK_TILE_OVERRIDES.iter().any(|&(w, r2, c2, _)| (w, r2, c2) == (wi, r, c))
                     {
                         continue;
@@ -865,7 +896,7 @@ mod tests {
                 }
             }
         }
-        assert_eq!(checked, 155, "vanilla blank-tile count changed");
+        assert_eq!(checked, 156, "vanilla blank-tile count changed");
     }
 
     #[test]
