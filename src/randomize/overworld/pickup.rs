@@ -13,7 +13,9 @@ use std::collections::HashSet;
 
 use crate::rom::Rom;
 
-use crate::randomize::overworld::map_source::vanilla::{BLANK_TILE_OVERRIDES, ISLAND_POSITIONS};
+use crate::randomize::overworld::map_source::vanilla::{
+    BLANK_TILE_OVERRIDES, ISLAND_POSITIONS, OPEN_WATER, W8_CANOE_WATER_CELL,
+};
 use crate::randomize::overworld::node_catalog::{CatalogEntry, NodeCatalog, NodeKind};
 use crate::randomize::rom_data::{
     self, Grid, Pos, ROCK_BREAK_H, ROCK_BREAK_V, VALID_BLANK_TILES, VALID_HORZ, VALID_VERT,
@@ -294,6 +296,17 @@ pub(super) fn blank_tile_for(grid: &Grid, world_idx: usize, row: usize, col: usi
             .find(|&&(w, r, c, _)| w == world_idx && r == row && c == col)
     {
         return tile;
+    }
+
+    // The canoe lake's water, when `8s are Wild` drew it. Pickup runs before
+    // any grid carries the flag, so there the lake shows as the water the map
+    // source already left in the cell; the builder's grids carry the flag.
+    if grid.vanilla_layout
+        && world_idx == rom_data::W8_IDX
+        && (row, col) == W8_CANOE_WATER_CELL
+        && (grid.eights_are_wild || current == OPEN_WATER)
+    {
+        return OPEN_WATER;
     }
 
     blank_tile_from_neighbors(grid, world_idx, row, col)
@@ -711,22 +724,28 @@ mod tests {
         );
     }
 
-    /// The vanilla tile fixes apply to vanilla layouts only. W8 (5,8), the
-    /// battleship cell, is forced to navy water `$8D` on vanilla; a generated
-    /// layout gets the neighbour rule's answer instead. (W3 (8,6) no longer
-    /// shows the difference: since breakable rocks count as connections, the
-    /// rule gives its `$47` on its own.)
+    /// W8's tank cell (5,8) is canoe water only when `8s are Wild` drew the
+    /// lake, and only on a vanilla layout. With the flag off it is the land link
+    /// from the start to the pipe above it: seed 3290458290178928 (3.1.0) put a
+    /// node there, moved it off, got water back, and could not reach screen 1.
     #[test]
-    fn blank_overrides_apply_to_vanilla_layouts_only() {
+    fn w8_canoe_water_needs_the_canoe_layout() {
         let Some(rom) = load_rom() else { return };
+        let (r, c) = W8_CANOE_WATER_CELL;
         let mut grid = rom_data::read_tile_grid(&rom, 7);
         assert!(grid.vanilla_layout, "a grid read from the ROM is a vanilla layout");
-        // A level tile there, as pickup sees it before blanking the cell (an
-        // existing blank is kept unchanged and never reaches the overrides).
-        grid.set(5, 8, 0x03);
-        assert_eq!(blank_tile_for(&grid, 7, 5, 8), 0x8D);
+        // A node on the cell, as a builder rung sees it before moving it off
+        // (an existing blank is kept unchanged and never reaches this rule).
+        grid.set(r, c, 0x03);
+        assert_ne!(blank_tile_for(&grid, 7, r, c), OPEN_WATER, "no canoe: land, not water");
+        grid.eights_are_wild = true;
+        assert_eq!(blank_tile_for(&grid, 7, r, c), OPEN_WATER, "canoe: the lake's water");
         grid.vanilla_layout = false;
-        assert_ne!(blank_tile_for(&grid, 7, 5, 8), 0x8D);
+        assert_ne!(blank_tile_for(&grid, 7, r, c), OPEN_WATER, "generated layout: neighbours");
+        // Pickup, before any grid carries the flag: the map source's water stays.
+        let mut grid = rom_data::read_tile_grid(&rom, 7);
+        grid.set(r, c, OPEN_WATER);
+        assert_eq!(blank_tile_for(&grid, 7, r, c), OPEN_WATER);
     }
 
     #[test]
@@ -845,8 +864,7 @@ mod tests {
                     if !rom_data::VALID_BLANK_TILES.contains(&vanilla) {
                         continue;
                     }
-                    // Overrides are deliberate exceptions to the theme rule
-                    // (W8 (5,8) is navy water, not a themed blank at all).
+                    // Overrides are deliberate exceptions to the theme rule.
                     if BLANK_TILE_OVERRIDES.iter().any(|&(w, r2, c2, _)| (w, r2, c2) == (wi, r, c))
                     {
                         continue;
@@ -865,7 +883,7 @@ mod tests {
                 }
             }
         }
-        assert_eq!(checked, 155, "vanilla blank-tile count changed");
+        assert_eq!(checked, 156, "vanilla blank-tile count changed");
     }
 
     #[test]
