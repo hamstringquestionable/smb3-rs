@@ -13,9 +13,7 @@ use std::collections::HashSet;
 
 use crate::rom::Rom;
 
-use crate::randomize::overworld::map_source::vanilla::{
-    BLANK_TILE_OVERRIDES, ISLAND_POSITIONS, OPEN_WATER, W8_CANOE_WATER_CELL,
-};
+use crate::randomize::overworld::map_source::vanilla::{BLANK_TILE_OVERRIDES, ISLAND_POSITIONS};
 use crate::randomize::overworld::node_catalog::{CatalogEntry, NodeCatalog, NodeKind};
 use crate::randomize::rom_data::{
     self, Grid, Pos, ROCK_BREAK_H, ROCK_BREAK_V, VALID_BLANK_TILES, VALID_HORZ, VALID_VERT,
@@ -281,12 +279,25 @@ const ISLAND_BELOW: &[u8] = &[0xAA, 0xAC, 0xB0];
 /// right continues the strip. See [`ISLAND_BELOW`].
 const ISLAND_RIGHT: &[u8] = &[0xAC, 0xB0, 0xB7];
 
+/// The 40-tile shoreline kit `$82`-`$A9`: every one is water in its centre
+/// (`docs/smb3_rom_reference.md`, "Water tiles").
+fn is_water(tile: u8) -> bool {
+    (0x82..=0xA9).contains(&tile)
+}
+
 /// Pick the right blank node tile based on neighboring path directions and
 /// the world/screen visual theme. If the tile is already a valid blank, it
 /// is returned unchanged to preserve the vanilla path connectivity.
 pub(super) fn blank_tile_for(grid: &Grid, world_idx: usize, row: usize, col: usize) -> u8 {
     let current = grid.get(row, col);
     if VALID_BLANK_TILES.contains(&current) {
+        return current;
+    }
+    // Terrain belongs to the map source. A cell it drew as water stays water
+    // and stops being a node: the builder only places on blank tiles, so
+    // nothing lands there again. No vanilla entry sits on water, so this fires
+    // only where a map edit put it (the `8s are Wild` canoe lake over W8's tank).
+    if is_water(current) {
         return current;
     }
 
@@ -296,17 +307,6 @@ pub(super) fn blank_tile_for(grid: &Grid, world_idx: usize, row: usize, col: usi
             .find(|&&(w, r, c, _)| w == world_idx && r == row && c == col)
     {
         return tile;
-    }
-
-    // The canoe lake's water, when `8s are Wild` drew it. Pickup runs before
-    // any grid carries the flag, so there the lake shows as the water the map
-    // source already left in the cell; the builder's grids carry the flag.
-    if grid.vanilla_layout
-        && world_idx == rom_data::W8_IDX
-        && (row, col) == W8_CANOE_WATER_CELL
-        && (grid.eights_are_wild || current == OPEN_WATER)
-    {
-        return OPEN_WATER;
     }
 
     blank_tile_from_neighbors(grid, world_idx, row, col)
@@ -724,28 +724,41 @@ mod tests {
         );
     }
 
-    /// W8's tank cell (5,8) is canoe water only when `8s are Wild` drew the
-    /// lake, and only on a vanilla layout. With the flag off it is the land link
-    /// from the start to the pipe above it: seed 3290458290178928 (3.1.0) put a
-    /// node there, moved it off, got water back, and could not reach screen 1.
+    /// W8's tank cell (5,8) is chosen like any other blank. Its own `$AF` is
+    /// one, so pickup keeps it; a node moved off it gets the neighbour rule,
+    /// which must be land: it is the only link from the start to the pipe above
+    /// (3.1.0 seed 3290458290178928 drew water there and could not reach
+    /// screen 1). The canoe lake, when the map source draws it, stays water.
     #[test]
-    fn w8_canoe_water_needs_the_canoe_layout() {
+    fn w8_tank_cell_is_an_ordinary_blank() {
         let Some(rom) = load_rom() else { return };
-        let (r, c) = W8_CANOE_WATER_CELL;
         let mut grid = rom_data::read_tile_grid(&rom, 7);
-        assert!(grid.vanilla_layout, "a grid read from the ROM is a vanilla layout");
-        // A node on the cell, as a builder rung sees it before moving it off
-        // (an existing blank is kept unchanged and never reaches this rule).
-        grid.set(r, c, 0x03);
-        assert_ne!(blank_tile_for(&grid, 7, r, c), OPEN_WATER, "no canoe: land, not water");
-        grid.eights_are_wild = true;
-        assert_eq!(blank_tile_for(&grid, 7, r, c), OPEN_WATER, "canoe: the lake's water");
-        grid.vanilla_layout = false;
-        assert_ne!(blank_tile_for(&grid, 7, r, c), OPEN_WATER, "generated layout: neighbours");
-        // Pickup, before any grid carries the flag: the map source's water stays.
-        let mut grid = rom_data::read_tile_grid(&rom, 7);
-        grid.set(r, c, OPEN_WATER);
-        assert_eq!(blank_tile_for(&grid, 7, r, c), OPEN_WATER);
+        assert_eq!(blank_tile_for(&grid, 7, 5, 8), 0xAF, "vanilla's own blank is kept");
+        grid.set(5, 8, 0x03);
+        assert!(!is_water(blank_tile_for(&grid, 7, 5, 8)), "a node moved off it leaves land");
+        grid.set(5, 8, 0x8D);
+        assert_eq!(blank_tile_for(&grid, 7, 5, 8), 0x8D, "the canoe lake stays water");
+    }
+
+    /// The water rule only ever keeps a map edit: no vanilla entry sits on a
+    /// water tile, in any world.
+    #[test]
+    fn no_vanilla_entry_sits_on_water() {
+        let Some(rom) = load_rom() else { return };
+        let catalog = NodeCatalog::build(&rom, false);
+        for e in &catalog.entries {
+            let grid = rom_data::read_tile_grid(&rom, e.world_idx);
+            let (r, c) = e.grid_pos;
+            if r < grid.rows() && c < grid.cols {
+                let t = grid.get(r, c);
+                assert!(
+                    !is_water(t),
+                    "W{} {:?} sits on water ${t:02X}",
+                    e.world_idx + 1,
+                    e.grid_pos
+                );
+            }
+        }
     }
 
     #[test]

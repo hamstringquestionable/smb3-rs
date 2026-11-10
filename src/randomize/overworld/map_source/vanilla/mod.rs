@@ -31,17 +31,6 @@ pub(crate) const BLANK_TILE_OVERRIDES: &[(usize, usize, usize, u8)] = &[
     (2, 8, 6, 0x47), // W3 spade near start — heuristic picks 0x44 (no neighbors), needs 0x47 for BFS
 ];
 
-/// W8's tank cell, which the `8s are Wild` canoe layout turns into open water
-/// (`fixes::W8_CANOE_PATH_EDITS`). Its blank is that water **only while the
-/// layout is drawn**: with the flag off the cell is the land link between the
-/// start and the pipe above it, and water there cuts W8 in half. It used to be
-/// an unconditional [`BLANK_TILE_OVERRIDES`] row, which stranded seeds where the
-/// builder put a node on the cell and later moved it off.
-pub(crate) const W8_CANOE_WATER_CELL: Pos = (5, 8);
-
-/// Open water, the tile the canoe layout draws at [`W8_CANOE_WATER_CELL`].
-pub(crate) const OPEN_WATER: u8 = 0x8D;
-
 /// Positions that should use island-themed blank tiles (0xAE/0xAF/0xB5/0xB6)
 /// even though the theme sniff would read them as standard land. Only W3
 /// (2,4) genuinely needs the override — its connecting path is the standard

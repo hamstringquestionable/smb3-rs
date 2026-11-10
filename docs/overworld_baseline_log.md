@@ -34,7 +34,7 @@ hashes they describe are gone; the reasoning is not.
 
 ## Entries
 
-### 2026-11-10 — W8's tank cell is canoe water only with the canoe (fix/w8-tank-cell-water, 3.1.1)
+### 2026-11-10 — W8's tank cell is an ordinary blank (fix/w8-tank-cell-water, 3.1.1)
 
 **Intended: an overworld change on the seeds that had the bug, and only
 those.** W8 (5,8), the vanilla tank, was a `BLANK_TILE_OVERRIDES` row forcing
@@ -44,8 +44,9 @@ never gated with it. Pickup keeps the cell's own `$AF` (an island blank), but
 when a builder rung puts a node on the cell and later moves it off,
 `blank_tile_for` restored water, cutting the start off from the pipe at (3,8).
 Player report: 3.1.0 seed 3290458290178928 could not reach World 8's castle.
-The cell is now water only when the grid carries the flag, or when the map
-source already drew it.
+The row is gone: the cell is chosen like any other blank, and the one general
+rule added is that pickup keeps water the map source drew (which is how the
+canoe lake survives with the flag on).
 
 **What moved.** 2 of the 20 seeds: 9 and 11. Over seeds 1-1000 at the
 defaults (`--no-palettes`, so the comparison is exact), 82 ROMs differ from
