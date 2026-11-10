@@ -79,8 +79,11 @@ open water `$8D`. That is right only when `8s are Wild` has drawn the canoe
 lake there; the row predates the flag (`ff54c74`, gated by `23c7405`) and was
 never gated with it. Pickup keeps the cell's own `$AF` (an island blank), but
 when a builder rung puts a node on the cell and later moves it off,
-`blank_tile_for` restored water, cutting the start off from the pipe at (3,8).
-Player report: 3.1.0 seed 3290458290178928 could not reach World 8's castle.
+`blank_tile_for` restored water. 3.1.0 seed 3290458290178928 was passed on as
+unbeatable (second-hand, not seen first-hand), and the cell looks like it cuts
+the start off from the pipe at (3,8). It does not: `Map_CheckDoMove` checks
+only the path tile between two nodes, never the landing tile, and a playtest of
+that ROM walked across the water into the pipe. So the bug was what the map showed, not what it allowed.
 The row is gone: the cell is chosen like any other blank, and the one general
 rule added is that pickup keeps water the map source drew (which is how the
 canoe lake survives with the flag on).

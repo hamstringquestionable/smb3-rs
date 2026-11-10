@@ -203,13 +203,11 @@ pub(super) fn write_tile_grid<R: Rng>(
         grid.set(lock.pos.0, lock.pos.1, tile);
     }
 
-    // Overwrite sprite-covered positions with connectivity-aware path nodes.
-    // W8 army sprites float on top of the grid; the underlying tile must be
-    // a plain path node, not a fortress/level tile. Skip BLANK_TILE_OVERRIDES
-    // since sprite positions are dynamic (not the vanilla fixed positions).
+    // W8 army sprites float on top of the grid; the tile under one must be a
+    // plain blank node, not a fortress/level tile. It is chosen the way every
+    // other blank is.
     for &pos in sprite_mask {
-        let tile =
-            crate::randomize::overworld::pickup::blank_tile_from_neighbors(&grid, wi, pos.0, pos.1);
+        let tile = crate::randomize::overworld::pickup::blank_tile_for(&grid, wi, pos.0, pos.1);
         grid.set(pos.0, pos.1, tile);
     }
 
