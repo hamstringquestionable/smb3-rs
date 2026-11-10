@@ -61,6 +61,16 @@ deploys.
 - 8-F's sub-area Q-block always gives a flower or a leaf, so small Mario can
   get big there; it could roll a star.
 
+## [3.1.1] - 2026-11-10
+
+### Fixed
+
+- World 8: with 8s are Wild off, about 1 seed in 12 drew water where the tank
+  sits on the first screen. That cell is the only way from the start to the
+  pipe above it, so on some of those seeds the rest of World 8 and Bowser could
+  not be reached. It is land again. Seeds that had the water play differently
+  now; every other seed is unchanged.
+
 ## [3.1.0] - 2026-11-07
 
 ### Added

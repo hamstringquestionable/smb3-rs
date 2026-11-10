@@ -67,13 +67,13 @@ fn sweep_is_deterministic() {
 /// what moved and how you established it — never to make a red test green.
 ///
 /// Recaptured 2026-11-09 for the enemy pass moving onto the level index (an RNG
-/// shift upstream of the builder, all 20 seeds) — see
-/// `docs/overworld_baseline_log.md`.
+/// shift upstream of the builder, all 20 seeds), and again 2026-11-10 with the
+/// 3.1.1 W8 tank-cell fix merged in — see `docs/overworld_baseline_log.md`.
 #[rustfmt::skip]
 const BASELINE: [u64; SEEDS as usize] = [
     0x9A2EB0989BE5A2B1, 0xD19479996EB36196, 0x646AE649864B1901, 0x5A1C68EEC3094209,
     0xD6BC58FAE4073DF1, 0x79336C2E95BBC8A3, 0x887AEF1C6371A11D, 0xA9F8A84F89BE6430,
-    0x820C99B660C680E8, 0xA63E09EA871BDC4D, 0xC6D87A2D94AAE123, 0x6A2EB9F84310BE09,
+    0x820C99B660C680E8, 0xA63E09EA871BDC4D, 0xCEC1F38B2F3A13F2, 0x6A2EB9F84310BE09,
     0xD66AB29F26993583, 0xB37ECE49673CEF93, 0x6E2BEFB0D66E60F1, 0xF0CF823928423DB7,
     0xF4B56BED3684D1C8, 0xEA336419454974B6, 0x2B63F7A0BC81ECF3, 0xDFED700DEFBD90E9,
 ];
