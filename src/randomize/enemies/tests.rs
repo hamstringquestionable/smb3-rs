@@ -2120,7 +2120,7 @@ fn sprite_bank_matches_the_rom_pattable_tables() {
         }
         let (group, rel) = (id as usize / 36, id as u16 % 36);
         let b = rom.read_byte(prg_bank_cpu_to_file(group + 1, PAT_TABLE_SEL + rel));
-        let rom_bank = (b != 0).then(|| (b & 0x7F, if b & 0x80 == 0 { 4 } else { 5 }));
+        let rom_bank = (b != 0).then_some((b & 0x7F, if b & 0x80 == 0 { 4 } else { 5 }));
         let ours = sprite_bank(id).map(|s| (s.chr_page, s.slot));
         if rom_bank != ours {
             mismatches.push(format!("0x{id:02X}: ROM {rom_bank:02X?}, sprite_bank {ours:02X?}"));
