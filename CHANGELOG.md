@@ -60,6 +60,10 @@ deploys.
   gives its vanilla fire flower again instead of a leaf.
 - 8-F's sub-area Q-block always gives a flower or a leaf, so small Mario can
   get big there; it could roll a star.
+- Far fewer enemies drawn with the wrong graphics (garbled sprites), most
+  noticeably piranha plants and fire jets with Wild enemy classes. Two
+  enemies close enough to be loaded together now get graphics that can share
+  the screen, including when one of them could not be randomized.
 
 ## [3.1.1] - 2026-11-10
 

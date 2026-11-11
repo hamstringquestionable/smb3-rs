@@ -34,6 +34,30 @@ hashes they describe are gone; the reasoning is not.
 
 ## Entries
 
+### 2026-11-10 — enemy CHR groups: re-roll and a 20-tile gap (feature/chr-group-reroll)
+
+**Intended: no overworld change; an RNG shift from the enemy pass, which runs
+upstream of the builder.** Two changes to how the pass picks enemies within a
+CHR proximity group:
+
+1. When an enemy that could not be replaced clashed with an earlier pick, the
+   group is picked again with that enemy's page committed first
+   (`MAX_CHR_REROLLS`). On its own this moved no baseline seed: at the default
+   flags no group inside the 16-tile gap ever needed a retry.
+2. `CHR_GROUP_GAP` went from 16 to 20, because two stationary objects up to
+   ~20 tiles apart are both live and both rewrite their page every frame.
+   Groups change shape, so the picks, their candidate counts and now the
+   default-flag retries change too, and the main stream diverges from there.
+   16 of the 20 seeds moved (all but 1, 3, 4 and 16).
+
+**How that was established.** No builder, catalog or writer code changed; the
+diff is `enemies/` only. `enemy_invariant_baseline` passes, and the new
+`enemy_pass_adds_no_chr_clash_within_a_group` holds over 50 seeds at the
+defaults and at all-Wild. `chr_clash_stats` (200 seeds) and `chr_page_stats`
+measured the enemy side: rooms with a new clash went 3.2 → 0 per seed at the
+defaults and 17.7 → 2.1 at all-Wild, with all 58 wild-pool IDs still placed.
+No census run, by the reasoning of the 2026-10-29 entry.
+
 ### 2026-11-09 — enemy pass on the level index (feature/enemies-level-index)
 
 **Intended: no overworld change; an RNG shift from two passes upstream of the

@@ -207,7 +207,7 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, opts: &Options, sta
 
         // Level-wide chaser bookkeeping (see CHASER_IDS): Lakitu, the Angry
         // Sun, and the Big Berthas follow the player across proximity groups,
-        // so the one-screen assumption behind chr_groups doesn't hold for them.
+        // so the proximity assumption behind chr_groups doesn't hold for them.
         //  - seg_all accumulates every commitment in the segment: pinned pages
         //    from all groups up front, then every pick as it's made. A chaser
         //    candidate must be compatible with all of it (checked in
@@ -221,97 +221,144 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, opts: &Options, sta
         let (mut seg_chaser4, mut seg_chaser5) = seg.chaser;
 
         for group in &groups {
-            // Two-pass approach per CHR group:
-            // Pass 1: pre-commit CHR pages from pinned entries (non-swappable
-            // objects, uniform-CHR classes, SkipSwap protections), seeded with
-            // the pages of any level-wide chasers in the segment.
-            let mut committed_slot4 = seg_chaser4;
-            let mut committed_slot5 = seg_chaser5;
-
-            for &idx in group {
-                let entry = &entries[idx];
-                if is_fixed(entry, modes, &injected) {
-                    commit_chr_page(entry.obj_id, &mut committed_slot4, &mut committed_slot5);
-                }
-            }
-
-            // Pass 2: pick a replacement for each swappable entry. The
-            // per-entry decision (pool choice, primary pick, placement
-            // constraints) lives in `pick_replacement`; this loop handles the
-            // special-cased swaps and the segment-level bookkeeping.
-            for &idx in group {
-                let entry = &entries[idx];
-                let file_offset = ENEMY_DATA_START + entry.data_index;
-                let protection = entry_protection_at(file_offset);
-
-                // Boom-Booms swap among their own kind and skip the class
-                // machinery entirely.
-                if BOOMBOOM_SWAP.contains(&data[entry.data_index]) {
-                    data[entry.data_index] = *BOOMBOOM_SWAP.choose(rng).unwrap();
-                    continue;
-                }
-                // SkipSwap keeps its enemy; its CHR page was already pinned
-                // in Pass 1 (is_pinned covers SkipSwap protections).
-                if protection == Some(EntryProtection::SkipSwap) {
-                    continue;
-                }
-                // A wild injection settled this entry. Not covered by the
-                // SkipSwap check above, and not covered by is_pinned either:
-                // `should_precommit` is false for anything in a Wild pool, so
-                // without this an injected Boss Bass would be swapped straight
-                // back out whenever water is Wild.
-                if injected.contains(&entry.data_index) {
-                    continue;
-                }
-
-                let was_bertha = BERTHA_IDS.contains(&data[entry.data_index]);
-                let limits = SegmentLimits {
-                    cap_full: bertha_count.saturating_sub(was_bertha as u8)
-                        >= MAX_BERTHA_PER_SEGMENT,
-                    no_hammer_bro,
-                    hazard_cap_full: match opts.limit_hazards {
-                        HazardLimit::Off => false,
-                        HazardLimit::Sparse => added_hazards >= MAX_ADDED_HAZARDS_PER_SEGMENT,
-                        HazardLimit::All => true,
-                    },
-                };
-                let chr = ChrCtx {
-                    local: (committed_slot4, committed_slot5),
-                    segment: (seg_all4, seg_all5),
-                };
-                let Some(chosen) =
-                    pick_replacement(entry, protection, modes, wild_pool, chr, limits, rng)
-                else {
-                    // No swap (protection mode off, unknown class, or no
-                    // compatible candidate) — the vanilla enemy stays, so its
-                    // page is a real on-screen commitment like any pick.
-                    // (Redundant for pass-1-pinned entries; it matters when a
-                    // swappable entry found no compatible replacement.)
-                    commit_chr_page(entry.obj_id, &mut committed_slot4, &mut committed_slot5);
-                    commit_chr_page(entry.obj_id, &mut seg_all4, &mut seg_all5);
-                    if CHASER_IDS.contains(&entry.obj_id) {
-                        commit_chr_page(entry.obj_id, &mut seg_chaser4, &mut seg_chaser5);
+            // A group is picked, and if keeping a vanilla enemy clashed with
+            // an earlier pick (no candidate fit, so the vanilla page went in
+            // on top), it is picked again with that enemy fixed from the
+            // start, so the other picks route around its page. Up to
+            // MAX_CHR_REROLLS retries; after that the last attempt stands.
+            // Each retry starts from the state the group started with.
+            let saved_bytes: Vec<(u8, u8)> = group
+                .iter()
+                .map(|&i| (data[entries[i].data_index], data[entries[i].data_index + 2]))
+                .collect();
+            let saved_state =
+                (bertha_count, added_hazards, seg_all4, seg_all5, seg_chaser4, seg_chaser5);
+            let mut kept: Vec<usize> = Vec::new();
+            for attempt in 0..=MAX_CHR_REROLLS {
+                if attempt > 0 {
+                    for (&i, &(id, y)) in group.iter().zip(&saved_bytes) {
+                        data[entries[i].data_index] = id;
+                        data[entries[i].data_index + 2] = y;
                     }
-                    continue;
-                };
+                    (bertha_count, added_hazards, seg_all4, seg_all5, seg_chaser4, seg_chaser5) =
+                        saved_state;
+                }
 
-                let chosen_is_bertha = BERTHA_IDS.contains(&chosen);
-                if was_bertha && !chosen_is_bertha {
-                    bertha_count = bertha_count.saturating_sub(1);
-                } else if !was_bertha && chosen_is_bertha {
-                    bertha_count = bertha_count.saturating_add(1);
+                // Pass 1: pre-commit CHR pages from pinned entries (non-swappable
+                // objects, uniform-CHR classes, SkipSwap protections, enemies a
+                // previous attempt had to keep), seeded with the pages of any
+                // level-wide chasers in the segment.
+                let mut committed_slot4 = seg_chaser4;
+                let mut committed_slot5 = seg_chaser5;
+
+                for &idx in group {
+                    let entry = &entries[idx];
+                    if kept.contains(&idx) {
+                        commit_chr_page(entry.obj_id, &mut committed_slot4, &mut committed_slot5);
+                        commit_chr_page(entry.obj_id, &mut seg_all4, &mut seg_all5);
+                        if CHASER_IDS.contains(&entry.obj_id) {
+                            commit_chr_page(entry.obj_id, &mut seg_chaser4, &mut seg_chaser5);
+                        }
+                    } else if is_fixed(entry, modes, &injected) {
+                        commit_chr_page(entry.obj_id, &mut committed_slot4, &mut committed_slot5);
+                    }
                 }
-                // Same predicate `keep` blocks on, so under All this never
-                // fires and under Sparse it spends the segment's one budget.
-                if HAZARDS.excludes(chosen, entry.obj_id) {
-                    added_hazards = added_hazards.saturating_add(1);
+
+                // Enemies this attempt kept although their page clashed.
+                let mut clashed: Vec<usize> = Vec::new();
+
+                // Pass 2: pick a replacement for each swappable entry. The
+                // per-entry decision (pool choice, primary pick, placement
+                // constraints) lives in `pick_replacement`; this loop handles the
+                // special-cased swaps and the segment-level bookkeeping.
+                for &idx in group {
+                    let entry = &entries[idx];
+                    let file_offset = ENEMY_DATA_START + entry.data_index;
+                    let protection = entry_protection_at(file_offset);
+
+                    // Boom-Booms swap among their own kind and skip the class
+                    // machinery entirely.
+                    if BOOMBOOM_SWAP.contains(&data[entry.data_index]) {
+                        data[entry.data_index] = *BOOMBOOM_SWAP.choose(rng).unwrap();
+                        continue;
+                    }
+                    // SkipSwap keeps its enemy; its CHR page was already pinned
+                    // in Pass 1 (is_pinned covers SkipSwap protections). So was
+                    // an enemy a previous attempt had to keep.
+                    if protection == Some(EntryProtection::SkipSwap) || kept.contains(&idx) {
+                        continue;
+                    }
+                    // A wild injection settled this entry. Not covered by the
+                    // SkipSwap check above, and not covered by is_pinned either:
+                    // `should_precommit` is false for anything in a Wild pool, so
+                    // without this an injected Boss Bass would be swapped straight
+                    // back out whenever water is Wild.
+                    if injected.contains(&entry.data_index) {
+                        continue;
+                    }
+
+                    let was_bertha = BERTHA_IDS.contains(&data[entry.data_index]);
+                    let limits = SegmentLimits {
+                        cap_full: bertha_count.saturating_sub(was_bertha as u8)
+                            >= MAX_BERTHA_PER_SEGMENT,
+                        no_hammer_bro,
+                        hazard_cap_full: match opts.limit_hazards {
+                            HazardLimit::Off => false,
+                            HazardLimit::Sparse => added_hazards >= MAX_ADDED_HAZARDS_PER_SEGMENT,
+                            HazardLimit::All => true,
+                        },
+                    };
+                    let chr = ChrCtx {
+                        local: (committed_slot4, committed_slot5),
+                        segment: (seg_all4, seg_all5),
+                    };
+                    let Some(chosen) =
+                        pick_replacement(entry, protection, modes, wild_pool, chr, limits, rng)
+                    else {
+                        // No swap (protection mode off, unknown class, or no
+                        // compatible candidate) — the vanilla enemy stays, so its
+                        // page is a real on-screen commitment like any pick.
+                        // (Redundant for pass-1-pinned entries; it matters when a
+                        // swappable entry found no compatible replacement, and
+                        // then a clash sends the group round again.)
+                        let fits =
+                            is_chr_compatible(entry.obj_id, committed_slot4, committed_slot5)
+                                && (!CHASER_IDS.contains(&entry.obj_id)
+                                    || is_chr_compatible(entry.obj_id, seg_all4, seg_all5));
+                        if !fits {
+                            clashed.push(idx);
+                        }
+                        commit_chr_page(entry.obj_id, &mut committed_slot4, &mut committed_slot5);
+                        commit_chr_page(entry.obj_id, &mut seg_all4, &mut seg_all5);
+                        if CHASER_IDS.contains(&entry.obj_id) {
+                            commit_chr_page(entry.obj_id, &mut seg_chaser4, &mut seg_chaser5);
+                        }
+                        continue;
+                    };
+
+                    let chosen_is_bertha = BERTHA_IDS.contains(&chosen);
+                    if was_bertha && !chosen_is_bertha {
+                        bertha_count = bertha_count.saturating_sub(1);
+                    } else if !was_bertha && chosen_is_bertha {
+                        bertha_count = bertha_count.saturating_add(1);
+                    }
+                    // Same predicate `keep` blocks on, so under All this never
+                    // fires and under Sparse it spends the segment's one budget.
+                    if HAZARDS.excludes(chosen, entry.obj_id) {
+                        added_hazards = added_hazards.saturating_add(1);
+                    }
+                    swap_enemy(&mut data, entry.data_index, chosen);
+                    commit_chr_page(chosen, &mut committed_slot4, &mut committed_slot5);
+                    commit_chr_page(chosen, &mut seg_all4, &mut seg_all5);
+                    if CHASER_IDS.contains(&chosen) {
+                        commit_chr_page(chosen, &mut seg_chaser4, &mut seg_chaser5);
+                    }
                 }
-                swap_enemy(&mut data, entry.data_index, chosen);
-                commit_chr_page(chosen, &mut committed_slot4, &mut committed_slot5);
-                commit_chr_page(chosen, &mut seg_all4, &mut seg_all5);
-                if CHASER_IDS.contains(&chosen) {
-                    commit_chr_page(chosen, &mut seg_chaser4, &mut seg_chaser5);
+
+                if clashed.is_empty() {
+                    break;
                 }
+                kept.extend(clashed);
             }
         }
     }

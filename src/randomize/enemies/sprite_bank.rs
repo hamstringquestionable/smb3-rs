@@ -193,7 +193,7 @@ pub(super) fn is_uniform_chr_class(class: &[u8]) -> bool {
 }
 
 /// CHR commitments a pick consults. `local` is the proximity group's slots —
-/// what can share the screen with the entry under the one-screen model.
+/// what can share the screen with the entry under the proximity model.
 /// `segment` is every commitment anywhere in the segment (pinned pages from
 /// all groups, plus every pick made so far): the bar a level-wide chaser must
 /// clear, since it follows the player into every group (see `CHASER_IDS`).
