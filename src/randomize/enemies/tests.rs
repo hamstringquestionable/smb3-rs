@@ -2109,9 +2109,10 @@ fn sprite_bank_matches_the_rom_pattable_tables() {
     // Deliberate departures from the ROM table, each with its reason.
     const MODELLED: &[(u8, &str)] = &[(
         0x77,
-        "Green Cheep requests no page and draws from whatever slot 5 holds; \
-         modelled as $4F, the page its sibling cheeps request, so picks keep \
-         slot 5 compatible with it",
+        "Green Cheep's table byte is OPTS_NOCHANGE, but it runs \
+         ObjNorm_SpikeCheep, which writes slot 5 = $4F itself every frame \
+         (PRG004_B0E5); measured in Mesen on vanilla 3-5, slot 5 goes from \
+         the map's $23 to $4F when it spawns",
     )];
     let mut mismatches = Vec::new();
     for id in 0x00..=0xB3u8 {
