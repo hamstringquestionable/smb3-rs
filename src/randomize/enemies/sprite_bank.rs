@@ -93,7 +93,9 @@ pub(crate) fn sprite_bank(id: u8) -> Option<SpriteBank> {
         0x6B => Some(SpriteBank { chr_page: 0x4F, slot: 5 }),
 
         // === Group 4: PRG004 (IDs 0x6C–0x8F) ===
-        // Koopas, Paratroopas, Goomba, Paragoomba, FlyingParatroopa, Cheeps
+        // Koopas, Paratroopas, Goomba, Paragoomba, FlyingParatroopa, Cheeps.
+        // Green Cheep 0x77 asks the table for no page, but its routine
+        // (ObjNorm_SpikeCheep) writes $4F to slot 5 itself, so $4F/5 is real.
         0x6C | 0x6D | 0x6E | 0x6F | 0x72 | 0x73 | 0x74 | 0x76 | 0x77 | 0x78 | 0x79 | 0x80
         | 0x88 => Some(SpriteBank { chr_page: 0x4F, slot: 5 }),
         // Buzzy Beetle, Spiny, Lakitu, Spiny Egg
