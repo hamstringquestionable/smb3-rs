@@ -30,6 +30,13 @@ RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --document-private-items  # doc l
 cargo test                   # must pass
 ```
 
+**The Rust version is pinned in `rust-toolchain.toml`**, and rustup uses it
+for every cargo command in this checkout, locally and in CI. Without the pin,
+CI floated on the newest stable while local stayed wherever it was last
+updated, so a new clippy lint could pass locally and fail CI. Bumping the
+version is a deliberate change: edit `channel`, run the gates below, and fix
+what they report in the same PR.
+
 The wasm pass is not redundant: native clippy never evaluates code behind
 `cfg(target_arch = "wasm32")`, so a warning that only exists there is invisible
 until CI fails. Note also that `cargo fmt --check` runs *before* both clippy

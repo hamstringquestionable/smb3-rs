@@ -1,0 +1,10 @@
+# The Rust release every build uses, locally and in CI. CI's
+# `dtolnay/rust-toolchain@stable` step installs the latest stable, but cargo
+# runs inside this checkout pick this file up instead, so new clippy lints only
+# arrive when someone bumps the version here on purpose. To move up:
+# change `channel`, run the lint gates in CLAUDE.md, and fix what they report
+# in the same PR.
+[toolchain]
+channel = "1.99.1"
+components = ["clippy", "rustfmt"]
+targets = ["wasm32-unknown-unknown"]
