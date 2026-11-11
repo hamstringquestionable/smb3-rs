@@ -10,7 +10,7 @@
 //! for losing the autoscroll-as-risk gating on the chest. Removed in
 //! favour of making the coin heaven reachable only from 3-7.
 
-use crate::randomize::levels::segment_writer::{self, SegmentSpec, SortMode};
+use crate::randomize::levels::segment_writer::{self, SegmentSpec};
 use crate::randomize::rom_data::FS_HAND_ROOMS;
 use crate::rom::Rom;
 
@@ -58,7 +58,6 @@ pub(crate) fn patch_clone_hand_rooms(rom: &mut Rom) {
                 original_count: 3,
                 entries: &src_entries,
                 label: Some(label),
-                sort_mode: SortMode::SortByX,
             },
         )
         .expect("hand_rooms: clone write failed");

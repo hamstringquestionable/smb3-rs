@@ -13,13 +13,36 @@ pub(super) struct SegmentEntry {
     pub(super) x_pos: u8,
 }
 
-/// CHR pages a segment has already spoken for before any pick is made.
-/// `all` is every fixed entry; `chaser` is the subset that follows the player
-/// across proximity groups (see `CHASER_IDS`).
+/// The walker's running state for one segment. A CHR group that is picked
+/// again restores it whole, so a new field here is restored too.
 #[derive(Clone, Copy)]
-pub(super) struct SegmentPins {
-    pub(super) all: (ChrSlot, ChrSlot),
-    pub(super) chaser: (ChrSlot, ChrSlot),
+pub(super) struct SegmentState {
+    /// Big Berthas in the segment, for `MAX_BERTHA_PER_SEGMENT`.
+    pub(super) berthas: u8,
+    /// Hazards this pass has added, for `HazardLimit::Sparse`. Starts at zero
+    /// rather than counting what's already here: the rule is additive-only, so
+    /// a segment Nintendo filled with nippers keeps them and still has its
+    /// budget for one more. Monotonic — replacing an added hazard with a
+    /// non-hazard doesn't refund it.
+    pub(super) added_hazards: u8,
+    /// Every CHR commitment anywhere in the segment: fixed entries up front,
+    /// then every pick as it's made. A chaser must fit all of it.
+    pub(super) all: Pages,
+    /// The pages of the level-wide chasers in the segment (see `CHASER_IDS`).
+    /// They seed every group's local slots, since a chaser follows the player
+    /// into each group.
+    pub(super) chaser: Pages,
+}
+
+impl SegmentState {
+    /// Commit `id`'s page to the group's `local` slots and to the segment.
+    pub(super) fn commit(&mut self, id: u8, local: &mut Pages) {
+        local.commit(id);
+        self.all.commit(id);
+        if CHASER_IDS.contains(&id) {
+            self.chaser.commit(id);
+        }
+    }
 }
 
 /// Placement limits that hold for every entry in one segment, whatever pool
@@ -32,7 +55,7 @@ pub(super) struct SegmentPins {
 #[derive(Clone, Copy)]
 pub(super) struct SegmentLimits {
     /// The Big Bertha cap is already reached — no new bertha here.
-    pub(super) cap_full: bool,
+    pub(super) bertha_cap_full: bool,
     /// No `$81` here: this room rewrites one into an unkillable object. See
     /// `crate::randomize::enemies::protections::rewrites_hammer_bro`.
     pub(super) no_hammer_bro: bool,
@@ -56,7 +79,8 @@ pub(super) fn is_fixed(entry: &SegmentEntry, modes: &ClassModes, injected: &[usi
         || is_pinned(entry.obj_id, ENEMY_DATA_START + entry.data_index, modes)
 }
 
-/// Accumulate the segment's fixed CHR pages. `skip` drops one entry from the
+/// The segment's fixed CHR pages, as `(all, chaser)` — see [`SegmentState`].
+/// `skip` drops one entry from the
 /// tally — the wild-injection decision uses it to ignore the enemy it is about
 /// to replace, whose page is on its way out.
 ///
@@ -67,19 +91,18 @@ pub(super) fn segment_pins(
     modes: &ClassModes,
     injected: &[usize],
     skip: Option<usize>,
-) -> SegmentPins {
-    let mut pins =
-        SegmentPins { all: (ChrSlot::Free, ChrSlot::Free), chaser: (ChrSlot::Free, ChrSlot::Free) };
+) -> (Pages, Pages) {
+    let (mut all, mut chaser) = (Pages::FREE, Pages::FREE);
     for entry in entries {
         if Some(entry.data_index) == skip || !is_fixed(entry, modes, injected) {
             continue;
         }
-        commit_chr_page(entry.obj_id, &mut pins.all.0, &mut pins.all.1);
+        all.commit(entry.obj_id);
         if CHASER_IDS.contains(&entry.obj_id) {
-            commit_chr_page(entry.obj_id, &mut pins.chaser.0, &mut pins.chaser.1);
+            chaser.commit(entry.obj_id);
         }
     }
-    pins
+    (all, chaser)
 }
 
 /// Split entries into proximity groups based on X-position gaps.

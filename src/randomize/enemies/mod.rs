@@ -17,7 +17,6 @@ use crate::randomize::enemies::protections::{
     EntryProtection, WalkerSegmentRule, entry_protection_at, rewrites_hammer_bro,
     walker_segment_rule_at,
 };
-use crate::randomize::levels::segment_writer::{self, SegmentEntry as WriterEntry, SortMode};
 use crate::randomize::rom_data::{
     ENEMY_DATA_END, ENEMY_DATA_START, HAMMER_BRO_ID, HB_NEEDS_SHELL_ENEMIES, STOMPABLE_ENEMIES,
     TREASURE_BOX_APPEAR, enemy_ptr_to_file_offset, level_index,
@@ -121,7 +120,7 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, opts: &Options, sta
     // is where each level's first enemy lives (header-pointed enemy_ptr values,
     // via node_catalog), which no shuffle can move.
     let injection_sites = if !opts.wild_injections.is_empty() {
-        collect_injection_sites(rom, &data, opts)
+        collect_injection_sites(rom, opts)
     } else {
         InjectionSites::new()
     };
@@ -168,7 +167,8 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, opts: &Options, sta
             // the player can clear a closed room, and it has no vanilla enemy
             // to measure "introduced" against since the room is composed from
             // scratch.
-            let limits = SegmentLimits { cap_full: false, no_hammer_bro, hazard_cap_full: false };
+            let limits =
+                SegmentLimits { bertha_cap_full: false, no_hammer_bro, hazard_cap_full: false };
             randomize_hb_wild_segment(&mut data, &entries, &hb_modes, limits, closed_room, rng);
             continue;
         }
@@ -179,47 +179,28 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, opts: &Options, sta
         // the Bertha tally counts it, the pin scan commits its page, and the
         // picks route around it. HB segments are excluded; their enemies are
         // the overworld mini-battle, not a level's.
-        let injected = if injection_sites.is_empty() || is_hb_segment {
-            Vec::new()
+        let injected: Vec<usize> = if injection_sites.contains(&seg_start) && !is_hb_segment {
+            inject_first_enemy(&mut data, &mut entries, modes, opts, rng).into_iter().collect()
         } else {
-            inject_segment_chasers(&mut data, rom, &mut entries, &injection_sites, modes, opts, rng)
+            Vec::new()
         };
-
-        // Track Boss Bass count for this segment so the per-segment cap is
-        // enforced during class swaps. An injected Bertha is already reflected
-        // here — `entries` was updated in step with `data` above.
-        let mut bertha_count: u8 =
-            entries.iter().filter(|e| BERTHA_IDS.contains(&e.obj_id)).count() as u8;
-
-        // Hazards this pass has *added* to this segment, for HazardLimit::Sparse.
-        // Starts at zero rather than counting what's already here: the rule is
-        // additive-only, so a segment Nintendo filled with nippers keeps them and
-        // still has its full budget for one more. Monotonic — a pick that
-        // replaces an added hazard with a non-hazard doesn't refund it, which
-        // keeps the budget a ceiling on introductions rather than on the
-        // final count.
-        let mut added_hazards: u8 = 0;
 
         // Split entries into proximity groups by X-position. Each group gets
         // independent CHR slot tracking — enemies more than CHR_GROUP_GAP tiles
-        // apart can never be on-screen together, so they don't need compatible
-        // CHR pages.
+        // apart are never live together, so they don't need compatible pages.
         let groups = chr_groups(&entries);
 
-        // Level-wide chaser bookkeeping (see CHASER_IDS): Lakitu, the Angry
-        // Sun, and the Big Berthas follow the player across proximity groups,
-        // so the proximity assumption behind chr_groups doesn't hold for them.
-        //  - seg_all accumulates every commitment in the segment: pinned pages
-        //    from all groups up front, then every pick as it's made. A chaser
-        //    candidate must be compatible with all of it (checked in
-        //    pick_replacement via ChrCtx::segment).
-        //  - seg_chaser holds the pages of chasers present in the segment
-        //    (pinned now, or picked as we go); it seeds every group's local
-        //    slots so ordinary picks stay compatible with a chaser that will
-        //    follow the player to them.
-        let seg = segment_pins(&entries, modes, &injected, None);
-        let (mut seg_all4, mut seg_all5) = seg.all;
-        let (mut seg_chaser4, mut seg_chaser5) = seg.chaser;
+        // The Bertha tally counts an injected Bertha too: `entries` was updated
+        // in step with `data` above. The chaser pages seed every group, since
+        // Lakitu, the Angry Sun and the Big Berthas follow the player across
+        // groups (see CHASER_IDS).
+        let (all, chaser) = segment_pins(&entries, modes, &injected, None);
+        let mut state = SegmentState {
+            berthas: entries.iter().filter(|e| BERTHA_IDS.contains(&e.obj_id)).count() as u8,
+            added_hazards: 0,
+            all,
+            chaser,
+        };
 
         for group in &groups {
             // A group is picked, and if keeping a vanilla enemy clashed with
@@ -232,8 +213,7 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, opts: &Options, sta
                 .iter()
                 .map(|&i| (data[entries[i].data_index], data[entries[i].data_index + 2]))
                 .collect();
-            let saved_state =
-                (bertha_count, added_hazards, seg_all4, seg_all5, seg_chaser4, seg_chaser5);
+            let saved_state = state;
             let mut kept: Vec<usize> = Vec::new();
             for attempt in 0..=MAX_CHR_REROLLS {
                 if attempt > 0 {
@@ -241,27 +221,20 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, opts: &Options, sta
                         data[entries[i].data_index] = id;
                         data[entries[i].data_index + 2] = y;
                     }
-                    (bertha_count, added_hazards, seg_all4, seg_all5, seg_chaser4, seg_chaser5) =
-                        saved_state;
+                    state = saved_state;
                 }
 
                 // Pass 1: pre-commit CHR pages from pinned entries (non-swappable
                 // objects, uniform-CHR classes, SkipSwap protections, enemies a
                 // previous attempt had to keep), seeded with the pages of any
                 // level-wide chasers in the segment.
-                let mut committed_slot4 = seg_chaser4;
-                let mut committed_slot5 = seg_chaser5;
-
+                let mut local = state.chaser;
                 for &idx in group {
                     let entry = &entries[idx];
                     if kept.contains(&idx) {
-                        commit_chr_page(entry.obj_id, &mut committed_slot4, &mut committed_slot5);
-                        commit_chr_page(entry.obj_id, &mut seg_all4, &mut seg_all5);
-                        if CHASER_IDS.contains(&entry.obj_id) {
-                            commit_chr_page(entry.obj_id, &mut seg_chaser4, &mut seg_chaser5);
-                        }
+                        state.commit(entry.obj_id, &mut local);
                     } else if is_fixed(entry, modes, &injected) {
-                        commit_chr_page(entry.obj_id, &mut committed_slot4, &mut committed_slot5);
+                        local.commit(entry.obj_id);
                     }
                 }
 
@@ -300,19 +273,18 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, opts: &Options, sta
 
                     let was_bertha = BERTHA_IDS.contains(&data[entry.data_index]);
                     let limits = SegmentLimits {
-                        cap_full: bertha_count.saturating_sub(was_bertha as u8)
+                        bertha_cap_full: state.berthas.saturating_sub(was_bertha as u8)
                             >= MAX_BERTHA_PER_SEGMENT,
                         no_hammer_bro,
                         hazard_cap_full: match opts.limit_hazards {
                             HazardLimit::Off => false,
-                            HazardLimit::Sparse => added_hazards >= MAX_ADDED_HAZARDS_PER_SEGMENT,
+                            HazardLimit::Sparse => {
+                                state.added_hazards >= MAX_ADDED_HAZARDS_PER_SEGMENT
+                            }
                             HazardLimit::All => true,
                         },
                     };
-                    let chr = ChrCtx {
-                        local: (committed_slot4, committed_slot5),
-                        segment: (seg_all4, seg_all5),
-                    };
+                    let chr = ChrCtx { local, segment: state.all };
                     let Some(chosen) =
                         pick_replacement(entry, protection, modes, wild_pool, chr, limits, rng)
                     else {
@@ -322,38 +294,29 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, opts: &Options, sta
                         // it is the one that breaks a slot, the group goes round
                         // again with it fixed first. A pass-1-pinned entry never
                         // trips this: its own page is already in the slot.
-                        let clashes =
-                            would_conflict(entry.obj_id, committed_slot4, committed_slot5)
-                                || (CHASER_IDS.contains(&entry.obj_id)
-                                    && would_conflict(entry.obj_id, seg_all4, seg_all5));
-                        if clashes {
+                        let id = entry.obj_id;
+                        if local.would_conflict(id)
+                            || (CHASER_IDS.contains(&id) && state.all.would_conflict(id))
+                        {
                             clashed.push(idx);
                         }
-                        commit_chr_page(entry.obj_id, &mut committed_slot4, &mut committed_slot5);
-                        commit_chr_page(entry.obj_id, &mut seg_all4, &mut seg_all5);
-                        if CHASER_IDS.contains(&entry.obj_id) {
-                            commit_chr_page(entry.obj_id, &mut seg_chaser4, &mut seg_chaser5);
-                        }
+                        state.commit(id, &mut local);
                         continue;
                     };
 
                     let chosen_is_bertha = BERTHA_IDS.contains(&chosen);
                     if was_bertha && !chosen_is_bertha {
-                        bertha_count = bertha_count.saturating_sub(1);
+                        state.berthas = state.berthas.saturating_sub(1);
                     } else if !was_bertha && chosen_is_bertha {
-                        bertha_count = bertha_count.saturating_add(1);
+                        state.berthas = state.berthas.saturating_add(1);
                     }
                     // Same predicate `keep` blocks on, so under All this never
                     // fires and under Sparse it spends the segment's one budget.
                     if HAZARDS.excludes(chosen, entry.obj_id) {
-                        added_hazards = added_hazards.saturating_add(1);
+                        state.added_hazards = state.added_hazards.saturating_add(1);
                     }
                     swap_enemy(&mut data, entry.data_index, chosen);
-                    commit_chr_page(chosen, &mut committed_slot4, &mut committed_slot5);
-                    commit_chr_page(chosen, &mut seg_all4, &mut seg_all5);
-                    if CHASER_IDS.contains(&chosen) {
-                        commit_chr_page(chosen, &mut seg_chaser4, &mut seg_chaser5);
-                    }
+                    state.commit(chosen, &mut local);
                 }
 
                 if clashed.is_empty() {
@@ -364,32 +327,12 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, opts: &Options, sta
         }
     }
 
-    // Write each visited stream back through segment_writer with
-    // SortMode::Preserve: only IDs (and a tall enemy's Y) changed, and vanilla
-    // streams are not always in X order (6-6's sub-area spikes), so sorting
-    // would move entries the pass never touched.
-    for &seg_start in starts {
-        let count = (0..)
-            .map(|k| seg_start + 1 + k * 3)
-            .take_while(|&e| e + 2 < data.len() && data[e] != 0xFF)
-            .count();
-        let entries: Vec<WriterEntry> = (0..count)
-            .map(|k| {
-                let off = seg_start + 1 + k * 3;
-                WriterEntry { obj_id: data[off], x: data[off + 1], y: data[off + 2] }
-            })
-            .collect();
-        let rom_offset = ENEMY_DATA_START + seg_start;
-        segment_writer::write_segment(
-            rom,
-            &segment_writer::SegmentSpec {
-                file_offset: rom_offset,
-                original_count: count,
-                entries: &entries,
-                label: None,
-                sort_mode: SortMode::Preserve,
-            },
-        )
-        .expect("enemies: segment write failed");
+    // Write the buffer back. Only IDs (and a tall enemy's Y) changed, all
+    // inside the visited streams, and `write_byte` records only the bytes that
+    // differ, so this touches exactly what the pass changed. Entry order is
+    // never changed: vanilla streams are not always in X order (6-6's sub-area
+    // spikes), and sorting would move entries the pass never touched.
+    for (k, &b) in data.iter().enumerate() {
+        rom.write_byte(ENEMY_DATA_START + k, b);
     }
 }

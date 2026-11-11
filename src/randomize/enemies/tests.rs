@@ -1092,7 +1092,7 @@ struct PlacementStats {
 /// The deterministic set of enemy-data offsets (relative to ENEMY_DATA_START)
 /// that the wild-injection pass may overwrite: the first real entry of each
 /// `NodeKind::Level` whose first enemy is swappable and unprotected. Mirrors
-/// `collect_candidates`' selection. RNG decides *whether* a slot
+/// `collect_injection_sites` and `inject_first_enemy`. RNG decides *whether* a slot
 /// is injected, but the candidate set is fixed.
 fn injectable_offsets(
     base: &Rom,
@@ -1824,7 +1824,7 @@ fn wild_injection_rework_guarantees() {
 
 /// Buffer index of a level's first enemy byte, or `None` when `obj_ptr`
 /// isn't a real enemy set (out of range, or an empty level). Mirrors the
-/// frame `inject_segment_chasers` uses — shared by the injection tests, which
+/// frame `inject_first_enemy` uses — shared by the injection tests, which
 /// all compare a patched first enemy against vanilla's.
 fn first_enemy_idx(obj_ptr: u16, data: &[u8]) -> Option<usize> {
     use crate::randomize::rom_data::enemy_ptr_to_file_offset;
