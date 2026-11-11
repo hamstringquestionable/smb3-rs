@@ -163,6 +163,20 @@ Facts the trace pins (tests in `level_index/tests.rs`):
   anything that writes through headers must skip it. Untried: writing tileset
   1 into its pointer table entry would presumably make it a copy of its
   siblings' arena.
+- **8HB1-8HB17 are vanilla filler, not a hidden level.** All 17 are World 8
+  pointer-table entries that sit on plain path tiles (`$44/$47/$48/$4A`).
+  - Each pairs 7-7's layout (`$AAA8`) with its own object list at `$C03D`.
+    The disassembly labels that list `W8HBO`, "World 8 Hammer Bro object
+    mapping (sort of)".
+  - The list holds a Buzzy Beetle, a Patooie, a green piranha, then twelve
+    Paragoombas and a goal card at screens 3-6. The area is only 4 screens long,
+    and in play the layout's wall hides most of them.
+  - Vanilla W8 has no bro sprites, so nothing on the vanilla map enters these
+    entries.
+  - Played on 2026-11-11 (`testrom --place 8HB1 7-7`): it is 7-7's lobby with
+    a few stray enemies, and nothing in it is worth reusing.
+  - `HB_EXCLUDE_ENTRIES` and the level-pool exclusion keep the randomizer away
+    from it too.
 - **Plains level data starts no later than `0x1E509`**, not at `0x1E512`:
   5-7's sub-area header is there. `LEVEL_DATA_REGIONS` and `rom_map.py` both
   use the later start, which is how `rom_map.py` missed that sub-area.

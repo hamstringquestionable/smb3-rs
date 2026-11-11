@@ -250,16 +250,17 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, opts: &Options, sta
                     let file_offset = ENEMY_DATA_START + entry.data_index;
                     let protection = entry_protection_at(file_offset);
 
+                    // SkipSwap keeps its enemy; its CHR page was already pinned
+                    // in Pass 1 (`is_fixed`, via `is_pinned`, covers SkipSwap). So was
+                    // an enemy a previous attempt had to keep. This comes first so
+                    // that a protection holds for every enemy, Boom-Booms included.
+                    if protection == Some(EntryProtection::SkipSwap) || kept.contains(&idx) {
+                        continue;
+                    }
                     // Boom-Booms swap among their own kind and skip the class
                     // machinery entirely.
                     if BOOMBOOM_SWAP.contains(&data[entry.data_index]) {
                         data[entry.data_index] = *BOOMBOOM_SWAP.choose(rng).unwrap();
-                        continue;
-                    }
-                    // SkipSwap keeps its enemy; its CHR page was already pinned
-                    // in Pass 1 (`is_fixed`, via `is_pinned`, covers SkipSwap). So was
-                    // an enemy a previous attempt had to keep.
-                    if protection == Some(EntryProtection::SkipSwap) || kept.contains(&idx) {
                         continue;
                     }
                     // A wild injection settled this entry. Not covered by the
