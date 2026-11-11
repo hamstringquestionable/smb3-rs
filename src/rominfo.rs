@@ -206,7 +206,7 @@ fn write_object(out: &mut String, o: &Object) {
 fn randomizer_rule(offset: usize) -> &'static str {
     if powerups::PROTECTED_OFFSETS.contains(&offset) {
         "  [protected: never rerolled]"
-    } else if powerups::FLOWER_OR_LEAF_QBLOCK_OFFSETS.contains(&offset) {
+    } else if powerups::FLOWER_OR_LEAF_OFFSETS.contains(&offset) {
         "  [rerolled to flower or leaf only]"
     } else if powerups::AIRSHIP_QBLOCK_OFFSETS.contains(&offset) {
         "  [airship: no star when Koopalings are hammer-vulnerable]"
@@ -254,7 +254,7 @@ mod tests {
     fn every_listed_level_reports() {
         let Some(bytes) = vanilla() else { return };
         let names = list_levels(&bytes).unwrap();
-        assert_eq!(names.len(), 323, "322 traced entries plus the Coin Ship");
+        assert_eq!(names.len(), 324, "322 traced entries plus the Coin Ship and Unused Level 5");
         for line in names {
             let name = line.split_whitespace().next().unwrap();
             level_report(&bytes, name).unwrap_or_else(|e| panic!("{name}: {e}"));

@@ -34,6 +34,43 @@ hashes they describe are gone; the reasoning is not.
 
 ## Entries
 
+### 2026-11-09 — enemy pass on the level index (feature/enemies-level-index)
+
+**Intended: no overworld change; an RNG shift from two passes upstream of the
+builder.** Three commits, recaptured once at the end:
+
+1. `level_index::every_level` learned the eight Big [?] room slots and Unused
+   Level 5. Powerups (on the main stream) now rerolls one more block, BigQ5's
+   brick flower; music draws from its own salted stream, so only powerups
+   shifts the main sequence. Seeds 12 and 15 moved.
+2. The enemy pass found its streams through the index instead of a block-wide
+   walk, while still visiting the segments no level loads: byte-identical
+   across every `rom_identity` arm, so no recapture.
+3. Those unreferenced segments are no longer visited (the 29 southbird
+   `_XXXX` blocks and Unused Levels 12/13, plus the airship streams that
+   autoscroll removal repoints away from). About 200 fewer swaps' worth of
+   draws. All 20 seeds moved.
+
+**How that was established.** No builder, catalog or writer code changed.
+Before step 3, the walker and the index were compared on the ROM the enemy
+pass receives: every object entry the index traces is parsed by the walker at
+the same offset, no entry is shared between two object pointers, and every
+area begins its own `$FF` segment, so the streams the pass now skips are whole
+segments no level loads. `every_loaded_object_stream_was_visible_to_the_enemy_pass`
+checks that, on finished ROMs across five flag arms (defaults, all-off, all-on,
+beta stages with Big [?] room shuffle, all-on with beta stages), every stream
+the game loads was visible to the enemy pass; dropping Unused Level 5 from the
+index fails it. `enemy_invariant_baseline` passes; `chr_stats`' wild-pool
+shares move only for IDs common in the skipped segments (Green Troopa `0x6C`
++1.6 points), the vanilla bytes it now counts there; its wild-injection
+visibility figure reads 0% both before and after (a broken instrument, due its
+own fix). No census run, by the reasoning of the 2026-10-29 entry.
+
+**Merged with 3.1.1.** Recaptured again on 2026-11-10 after `beta/next`
+brought in the W8 tank-cell fix (entry below); the hashes here are both
+changes together. Of the 20 seeds only 11 moved: under this branch's RNG shift,
+seed 9 no longer puts a node on the tank cell.
+
 ### 2026-11-10 — W8's tank cell is an ordinary blank (fix/w8-tank-cell-water, 3.1.1)
 
 **Intended: an overworld change on the seeds that had the bug, and only

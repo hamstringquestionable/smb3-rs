@@ -43,13 +43,6 @@ pub(super) struct SegmentLimits {
     pub(super) hazard_cap_full: bool,
 }
 
-impl SegmentPins {
-    /// Nothing committed — the Big-?-block pass, which skips the CHR model.
-    pub(super) fn none() -> Self {
-        SegmentPins { all: (ChrSlot::Free, ChrSlot::Free), chaser: (ChrSlot::Free, ChrSlot::Free) }
-    }
-}
-
 /// Whether an entry's obj_id is settled before the picks run: pinned by class
 /// or protection, or a chaser wild injection just wrote here.
 ///

@@ -174,7 +174,8 @@ mod tests {
         assert!(!headers.contains(&0x213F7));
         assert!(headers.contains(&0x213FB), "its neighbour is still dealt");
         // The index's 224 areas (pointer tables and beta stages), plus the
-        // Coin Ship's two, less 3HB18.
-        assert_eq!(headers.len(), 225);
+        // Coin Ship's two, the eight Big [?] rooms and Unused Level 5, less
+        // 3HB18.
+        assert_eq!(headers.len(), 234);
     }
 }

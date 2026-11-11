@@ -2,31 +2,33 @@
 //!
 //! The pre-Bowser corridor (segment at file offset `0xD61B`, 14 entries)
 //! contains:
-//! - 2× DryBones (`0x3F`) — kept at vanilla positions
-//! - 1× ThwompRightSlide (`0x8C`) — kept at vanilla position
+//! - 2× DryBones (`0x3F`) and 1× ThwompRightSlide (`0x8C`) — left as the
+//!   enemy pass wrote them (the Dry Bones randomize like any other level's)
 //! - 2× CFIRE_LASER (`0xD0`) — repositioned to a random pair from a
 //!   curated 9-position statue pool
 //! - 9× OBJ_BOSSATTACK (`0x75`, the Bowser-statue fireballs) — repositioned
 //!   per-seed to random `(X, Y)` within the remaining X gaps, Y in the
 //!   `0x11..=0x17` band fred uses
 //!
-//! All 14 entries are composed together and routed through
+//! It runs after the enemy pass and reads the room from the ROM. All 14
+//! entries are composed together and routed through
 //! [`segment_writer`] so the final segment is X-sorted and collision-free.
 
 use rand::Rng;
 use rand::seq::IndexedRandom;
 
 use crate::randomize::levels::segment_writer::{self, SegmentEntry, SegmentSpec, SortMode};
+use crate::randomize::rom_data::enemy_ptr_to_file_offset;
+use crate::randomize::rom_data::level_index::read_objects;
 use crate::rom::Rom;
 
-/// File offset of the segment's page/header byte (entries start at +1).
-const SEG_OFFSET: usize = 0xD61B;
-const ENTRY_COUNT: usize = 14;
+/// 8-Bowser sub-area 1's objects pointer (file offset `0xD61B`).
+const OBJECTS_PTR: u16 = 0xD60B;
+/// Its tileset (fortress); [`read_objects`] needs it to rule out Toad Houses.
+const TILESET: u8 = 2;
 
 const LASER: u8 = 0xD0;
 const FIREBALL: u8 = 0x75;
-const DRY_BONES: u8 = 0x3F;
-const THWOMP_SLIDE: u8 = 0x8C;
 
 /// 9 curated statue positions in 8-Bowser sub-area 1, `(x, y)`.
 /// Sourced from observed output of the fred SMB3 randomizer — positions
@@ -68,29 +70,31 @@ const SEG_X_MAX: u8 = 0xEF; // a few past last vanilla fireball at 0xE5
 const DOOR_ARRIVAL_CLEAR_LO: u8 = 0x8E;
 const DOOR_ARRIVAL_CLEAR_HI: u8 = 0x9E;
 
-/// Vanilla fixed entries (DryBones + Thwomp) — hard-coded so the composer
-/// produces the same 14-entry segment regardless of what bytes the input
-/// ROM has at this offset (matters for integration tests using stub ROMs).
-const FIXED_ENTRIES: &[SegmentEntry] = &[
-    SegmentEntry { obj_id: DRY_BONES, x: 0x04, y: 0x18 },
-    SegmentEntry { obj_id: DRY_BONES, x: 0x0A, y: 0x18 },
-    SegmentEntry { obj_id: THWOMP_SLIDE, x: 0x16, y: 0x10 },
-];
-const LASER_COUNT: usize = 2;
-const FIREBALL_COUNT: usize = 9;
-
 pub(crate) fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R) {
     rom.push_tag("bowser_castle");
 
-    // 1. Lasers: pick 2 distinct positions from the 9-pool.
-    let picks: Vec<&(u8, u8)> = STATUE_POOL.choose_multiple(rng, LASER_COUNT).collect();
+    // The room as the enemy pass left it. Lasers and fireballs are re-placed
+    // below; everything else (Dry Bones, the Thwomp) keeps the ID, X and Y
+    // the enemy pass gave it.
+    let current = read_objects(rom, OBJECTS_PTR, TILESET)
+        .expect("bowser_castle: 8-Bowser sub-area 1 has an object list");
+    let count = |id: u8| current.iter().filter(|o| o.id == id).count();
+    let (laser_count, fireball_count) = (count(LASER), count(FIREBALL));
+    let kept: Vec<SegmentEntry> = current
+        .iter()
+        .filter(|o| o.id != LASER && o.id != FIREBALL)
+        .map(|o| SegmentEntry { obj_id: o.id, x: o.x, y: o.y })
+        .collect();
+
+    // 1. Lasers: pick distinct positions from the 9-pool.
+    let picks: Vec<&(u8, u8)> = STATUE_POOL.choose_multiple(rng, laser_count).collect();
     let lasers: Vec<SegmentEntry> =
         picks.into_iter().map(|&(x, y)| SegmentEntry { obj_id: LASER, x, y }).collect();
 
     // 2. Fireballs: greedy constraint-driven placement. The pool of
     //    anchors grows as fireballs are placed so each new fireball
     //    respects MIN_X_GAP to every prior entry.
-    let mut anchors: Vec<u8> = FIXED_ENTRIES
+    let mut anchors: Vec<u8> = kept
         .iter()
         .map(|e| e.x)
         .chain(lasers.iter().map(|e| e.x))
@@ -98,8 +102,8 @@ pub(crate) fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R) {
         .collect();
     anchors.sort();
 
-    let mut fireballs: Vec<SegmentEntry> = Vec::with_capacity(FIREBALL_COUNT);
-    for _ in 0..FIREBALL_COUNT {
+    let mut fireballs: Vec<SegmentEntry> = Vec::with_capacity(fireball_count);
+    for _ in 0..fireball_count {
         let x = pick_fireball_x(&anchors, rng);
         let y = rng.random_range(FIREBALL_Y_MIN..=FIREBALL_Y_MAX);
         fireballs.push(SegmentEntry { obj_id: FIREBALL, x, y });
@@ -108,16 +112,16 @@ pub(crate) fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R) {
     }
 
     // 3. Combine and write. segment_writer handles sort and validation.
-    let mut entries: Vec<SegmentEntry> = Vec::with_capacity(ENTRY_COUNT);
-    entries.extend_from_slice(FIXED_ENTRIES);
+    let mut entries: Vec<SegmentEntry> = Vec::with_capacity(current.len());
+    entries.extend(kept);
     entries.extend(lasers);
     entries.extend(fireballs);
 
     segment_writer::write_segment(
         rom,
         &SegmentSpec {
-            file_offset: SEG_OFFSET,
-            original_count: ENTRY_COUNT,
+            file_offset: enemy_ptr_to_file_offset(OBJECTS_PTR),
+            original_count: current.len(),
             entries: &entries,
             label: Some("8-Bowser sub-area 1"),
             sort_mode: SortMode::SortByX,
@@ -161,6 +165,11 @@ mod tests {
     use rand::SeedableRng;
     use rand_chacha::ChaCha8Rng;
 
+    const SEG_OFFSET: usize = 0xD61B;
+    const ENTRY_COUNT: usize = 14;
+    const DRY_BONES: u8 = 0x3F;
+    const THWOMP_SLIDE: u8 = 0x8C;
+
     fn make_test_rom() -> Rom {
         let mut data = vec![0u8; 393232];
         data[0..4].copy_from_slice(&[0x4E, 0x45, 0x53, 0x1A]);
@@ -185,6 +194,7 @@ mod tests {
             0x75, 0xD9, 0x16,
             0x75, 0xE1, 0x14,
             0x75, 0xE5, 0x17,
+            0xFF,
         ];
         data[SEG_OFFSET..SEG_OFFSET + seg.len()].copy_from_slice(seg);
         Rom::from_bytes_lax(&data, true).unwrap()
@@ -317,5 +327,44 @@ mod tests {
             }
         }
         assert!(saw_7c, "0x7C never picked across 200 seeds — pool wiring broken");
+    }
+
+    /// The composer keeps whatever the enemy pass put in the non-fireball
+    /// slots: here the two Dry Bones became a Boo and a Hot Foot.
+    #[test]
+    fn keeps_the_enemy_pass_picks() {
+        for seed in 0..20u64 {
+            let mut rom = make_test_rom();
+            rom.write_byte(SEG_OFFSET + 1, 0x2F);
+            rom.write_byte(SEG_OFFSET + 4, 0x45);
+            randomize(&mut rom, &mut ChaCha8Rng::seed_from_u64(seed));
+            let out = segment_writer::read_segment(&rom, SEG_OFFSET, ENTRY_COUNT);
+            assert!(out.contains(&SegmentEntry { obj_id: 0x2F, x: 0x04, y: 0x18 }), "seed {seed}");
+            assert!(out.contains(&SegmentEntry { obj_id: 0x45, x: 0x0A, y: 0x18 }), "seed {seed}");
+            assert!(!out.iter().any(|e| e.obj_id == DRY_BONES), "seed {seed}");
+        }
+    }
+
+    /// The stub matches the real ROM, and the pointer is an area the level
+    /// index reaches. Skips without the ROM.
+    #[test]
+    fn stub_matches_the_rom() {
+        let Some(real) = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes")
+            .ok()
+            .and_then(|b| Rom::from_bytes(&b).ok())
+        else {
+            return;
+        };
+        assert_eq!(enemy_ptr_to_file_offset(OBJECTS_PTR), SEG_OFFSET);
+        let stub = make_test_rom();
+        for i in 0..=ENTRY_COUNT * 3 + 1 {
+            assert_eq!(real.read_byte(SEG_OFFSET + i), stub.read_byte(SEG_OFFSET + i), "byte +{i}");
+        }
+        assert!(
+            crate::randomize::rom_data::level_index::every_level(&real)
+                .iter()
+                .flatten()
+                .any(|a| a.objects_ptr == OBJECTS_PTR && a.tileset == TILESET)
+        );
     }
 }

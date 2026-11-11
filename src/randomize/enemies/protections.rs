@@ -1,14 +1,18 @@
 //! Per-level enemy protection registry.
 //!
-//! One labeled table (`LEVEL_PROTECTIONS`) per protected level or sub-area
-//! that the enemy randomization passes must treat specially. Each row
-//! identifies the level by `enemy_ptr` and declares:
+//! One table (`LEVEL_PROTECTIONS`) with a row per protected level area that
+//! the enemy randomization passes must treat specially. Each row names the
+//! area the way `rominfo --level` does (a level name, then the area number it
+//! prints: 0 is the main area), gives the reason, and declares:
 //!   - `walker_segment`: how the walker pass treats the containing $FF segment
 //!     (`Default`, `Skip`, or `HammerBro`). Non-`Default` rows also block
 //!     wild injection at this entry_ptr.
 //!   - `entries`: per-entry rules keyed by absolute file offset.
 //!
-//! Adding a new protection is one block here with a label and a reason.
+//! Adding a new protection is one block here. `enemy_ptr` and the entry
+//! offsets are what the code reads; `every_row_names_the_area_its_offsets_are_in`
+//! checks them against the named area on the vanilla ROM, so a row cannot
+//! name one level and protect another's bytes.
 //! Both passes (the walker in `enemies::randomize_object_data` and
 //! `enemies::inject_wild_chasers`) consume the registry through the
 //! derived helpers (`entry_protection_at`, `walker_segment_rule_at`)
@@ -20,10 +24,17 @@ use crate::randomize::rom_data::{HAMMER_BRO_OBJ_PTRS, enemy_ptr_to_file_offset};
 /// One logical level or sub-area with protections that affect enemy
 /// randomization.
 struct LevelProtection {
-    // Reason: `label` is documentation embedded in the table — its value is
-    // grep-ability when investigating a protected offset.
+    // Reason: `level` and `area` are read only by the test that checks them
+    // against the level index; `why` is documentation in the table.
     #[allow(dead_code)]
-    label: &'static str,
+    /// The level, as `rominfo --level` names it.
+    level: &'static str,
+    #[allow(dead_code)]
+    /// Which of its areas, numbered as `rominfo --level` prints them.
+    area: usize,
+    #[allow(dead_code)]
+    why: &'static str,
+    /// The area's objects pointer.
     enemy_ptr: u16,
     walker_segment: WalkerSegmentRule,
     entries: &'static [EntryRule],
@@ -35,10 +46,8 @@ struct LevelProtection {
 pub(super) enum WalkerSegmentRule {
     /// Default class-based swaps.
     Default,
-    /// Skip the entire segment (no swaps at all). Only valid for top-level
-    /// entries whose enemy_ptr lands at the segment's page byte — NOT for
-    /// sub-area entries that share a segment with a parent level (skipping
-    /// would also block the parent's swaps).
+    /// Skip the area's whole object list (no swaps at all). Every area has a
+    /// list of its own, so this never reaches another area.
     Skip,
     /// Hammer Bro encounter — walker uses HB-specific modes and pool.
     HammerBro,
@@ -71,14 +80,18 @@ pub(super) enum EntryProtection {
 const LEVEL_PROTECTIONS: &[LevelProtection] = &[
     // --- Whole-level skips ---
     LevelProtection {
-        label: "3-2 (enemies-as-platforms, sprite-overload risk)",
+        level: "3-2",
+        area: 0,
+        why: "enemies-as-platforms, sprite-overload risk",
         enemy_ptr: 0xCA23,
         walker_segment: WalkerSegmentRule::Skip,
         entries: &[],
     },
     // --- Individual gameplay-critical entries (walker skips, no whole-level block) ---
     LevelProtection {
-        label: "8-1 (FlyingRedParatroopa required for progression; Boo restricted from path-blocking hazards)",
+        level: "8-1",
+        area: 0,
+        why: "FlyingRedParatroopa required for progression; Boo restricted from path-blocking hazards",
         enemy_ptr: 0xC424,
         walker_segment: WalkerSegmentRule::Default,
         entries: &[
@@ -90,7 +103,9 @@ const LEVEL_PROTECTIONS: &[LevelProtection] = &[
         ],
     },
     LevelProtection {
-        label: "6-3 (FlyingRedParatroopas required as platforms)",
+        level: "6-3",
+        area: 0,
+        why: "FlyingRedParatroopas required as platforms",
         enemy_ptr: 0xCA8E,
         walker_segment: WalkerSegmentRule::Default,
         entries: &[
@@ -100,7 +115,9 @@ const LEVEL_PROTECTIONS: &[LevelProtection] = &[
     },
     // --- Shell-locked entries (shells needed to break bricks for progression) ---
     LevelProtection {
-        label: "2-Pyr sub-area (Buzzy Beetles needed to break bricks)",
+        level: "2-Pyr",
+        area: 1,
+        why: "Buzzy Beetles needed to break bricks",
         enemy_ptr: 0xC5BC,
         walker_segment: WalkerSegmentRule::Default,
         entries: &[
@@ -118,7 +135,9 @@ const LEVEL_PROTECTIONS: &[LevelProtection] = &[
         ],
     },
     LevelProtection {
-        label: "2-3 (shells needed to break end-of-level bricks)",
+        level: "2-3",
+        area: 0,
+        why: "shells needed to break end-of-level bricks",
         enemy_ptr: 0xD1F0,
         walker_segment: WalkerSegmentRule::Default,
         entries: &[
@@ -127,7 +146,9 @@ const LEVEL_PROTECTIONS: &[LevelProtection] = &[
         ],
     },
     LevelProtection {
-        label: "7-1 sub-area (scr=0 GreenTroopas kept in the shell pool)",
+        level: "7-1",
+        area: 1,
+        why: "scr=0 GreenTroopas kept in the shell pool",
         enemy_ptr: 0xCD93,
         walker_segment: WalkerSegmentRule::Default,
         entries: &[
@@ -136,7 +157,9 @@ const LEVEL_PROTECTIONS: &[LevelProtection] = &[
         ],
     },
     LevelProtection {
-        label: "6-5 sub-area (shell needed for progression)",
+        level: "6-5",
+        area: 1,
+        why: "shell needed for progression",
         enemy_ptr: 0xC5EB,
         walker_segment: WalkerSegmentRule::Default,
         entries: &[
@@ -145,7 +168,9 @@ const LEVEL_PROTECTIONS: &[LevelProtection] = &[
     },
     // --- Stompable-locked entries ---
     LevelProtection {
-        label: "6-6 sub-area (floor spikes — non-stompable swap would corner player; screen 8 floor Cheep must not become a hazard; screen 8 piranhas are underwater)",
+        level: "6-6",
+        area: 1,
+        why: "floor spikes — non-stompable swap would corner player; screen 8 floor Cheep must not become a hazard; screen 8 piranhas are underwater",
         enemy_ptr: 0xC64B,
         walker_segment: WalkerSegmentRule::Default,
         entries: &[
@@ -160,7 +185,9 @@ const LEVEL_PROTECTIONS: &[LevelProtection] = &[
         ],
     },
     LevelProtection {
-        label: "5-4 (ParatroopaGreenHop guards a pipe; a hazard there would block it)",
+        level: "5-4",
+        area: 0,
+        why: "ParatroopaGreenHop guards a pipe; a hazard there would block it",
         enemy_ptr: 0xD039,
         walker_segment: WalkerSegmentRule::Default,
         entries: &[
@@ -180,14 +207,18 @@ const LEVEL_PROTECTIONS: &[LevelProtection] = &[
     // is invisible — that is what "fails to spawn" actually was. The ID half of
     // it is now handled generically by `rewrites_hammer_bro`.
     LevelProtection {
-        label: "8-Tank sub-area treasure room (bro fight via the Tank sprite)",
+        level: "8-Tank",
+        area: 1,
+        why: "bro fight via the Tank sprite",
         enemy_ptr: 0xDA29,
         walker_segment: WalkerSegmentRule::HammerBro,
         entries: &[],
     },
     // --- Hazard-excluded entries (no Patooie/Lavalotus on player walking path) ---
     LevelProtection {
-        label: "7F2 Boom-Boom sub-area (tight boss arena)",
+        level: "7F2",
+        area: 1,
+        why: "tight boss arena",
         enemy_ptr: 0xD45C,
         walker_segment: WalkerSegmentRule::Default,
         entries: &[
@@ -199,7 +230,9 @@ const LEVEL_PROTECTIONS: &[LevelProtection] = &[
         ],
     },
     LevelProtection {
-        label: "7-5 sub-area (open horizontal field — hazards at floor level unfair)",
+        level: "7-5",
+        area: 1,
+        why: "open horizontal field — hazards at floor level unfair",
         enemy_ptr: 0xC171,
         walker_segment: WalkerSegmentRule::Default,
         entries: &[
@@ -214,7 +247,9 @@ const LEVEL_PROTECTIONS: &[LevelProtection] = &[
         ],
     },
     LevelProtection {
-        label: "β4 sub-area (narrow corridor — hazards on Buzzy Beetle path unfair)",
+        level: "β4",
+        area: 1,
+        why: "narrow corridor — hazards on Buzzy Beetle path unfair",
         enemy_ptr: 0xC7A7,
         walker_segment: WalkerSegmentRule::Default,
         entries: &[
@@ -227,7 +262,9 @@ const LEVEL_PROTECTIONS: &[LevelProtection] = &[
         ],
     },
     LevelProtection {
-        label: "4F1 (narrow-hallway fort — a hazard anywhere blocks the only path)",
+        level: "4F2",
+        area: 0,
+        why: "narrow-hallway fort — a hazard anywhere blocks the only path",
         enemy_ptr: 0xD528,
         walker_segment: WalkerSegmentRule::Default,
         entries: &[
@@ -246,7 +283,9 @@ const LEVEL_PROTECTIONS: &[LevelProtection] = &[
         ],
     },
     LevelProtection {
-        label: "4F1 sub-area 1 (narrow-hallway fort)",
+        level: "4F2",
+        area: 1,
+        why: "narrow-hallway fort",
         enemy_ptr: 0xC968,
         walker_segment: WalkerSegmentRule::Default,
         entries: &[
@@ -257,7 +296,9 @@ const LEVEL_PROTECTIONS: &[LevelProtection] = &[
         ],
     },
     LevelProtection {
-        label: "4F2 (fort ground route — a hazard on the walking path is unavoidable)",
+        level: "4F1",
+        area: 0,
+        why: "fort ground route — a hazard on the walking path is unavoidable",
         enemy_ptr: 0xD508,
         walker_segment: WalkerSegmentRule::Default,
         entries: &[
@@ -273,7 +314,9 @@ const LEVEL_PROTECTIONS: &[LevelProtection] = &[
         ],
     },
     LevelProtection {
-        label: "4-1 (each troopa sits on a small platform Mario must land on to progress; a hazard here forces an unavoidable hit; the high Venus pipe is in the reservoir)",
+        level: "4-1",
+        area: 0,
+        why: "each troopa sits on a small platform Mario must land on to progress; a hazard here forces an unavoidable hit; the high Venus pipe is in the reservoir",
         enemy_ptr: 0xCE97,
         walker_segment: WalkerSegmentRule::Default,
         entries: &[
@@ -287,7 +330,9 @@ const LEVEL_PROTECTIONS: &[LevelProtection] = &[
         ],
     },
     LevelProtection {
-        label: "β2 (the low pipe is underwater)",
+        level: "β2",
+        area: 0,
+        why: "the low pipe is underwater",
         enemy_ptr: 0xC221,
         walker_segment: WalkerSegmentRule::Default,
         entries: &[
@@ -297,7 +342,9 @@ const LEVEL_PROTECTIONS: &[LevelProtection] = &[
         ],
     },
     LevelProtection {
-        label: "8F roto-disc narrow area makes hazards unfair",
+        level: "8F1",
+        area: 0,
+        why: "roto-disc narrow area makes hazards unfair",
         enemy_ptr: 0xD551,
         walker_segment: WalkerSegmentRule::Default,
         entries: &[
@@ -307,7 +354,9 @@ const LEVEL_PROTECTIONS: &[LevelProtection] = &[
     },
     // --- Rotodisc-excluded entries ---
     LevelProtection {
-        label: "3F1 (screen 5 and 7 Dry Bones must not become Rotodiscs)",
+        level: "3F1",
+        area: 0,
+        why: "screen 5 and 7 Dry Bones must not become Rotodiscs",
         enemy_ptr: 0xD393,
         walker_segment: WalkerSegmentRule::Default,
         entries: &[
@@ -320,7 +369,9 @@ const LEVEL_PROTECTIONS: &[LevelProtection] = &[
     },
     // --- Thwomp-variant exclusions ---
     LevelProtection {
-        label: "5F1 (screen 1 Rotodisc must not become a standard dropping Thwomp)",
+        level: "5F1",
+        area: 0,
+        why: "screen 1 Rotodisc must not become a standard dropping Thwomp",
         enemy_ptr: 0xD3D0,
         walker_segment: WalkerSegmentRule::Default,
         entries: &[
@@ -331,43 +382,57 @@ const LEVEL_PROTECTIONS: &[LevelProtection] = &[
     },
     // --- Hammer Bro encounters (walker uses HB modes; injection skips) ---
     LevelProtection {
-        label: "W1 Hammer Bro",
+        level: "1HB1",
+        area: 0,
+        why: "every W1 Hammer Bro fight",
         enemy_ptr: 0xC72B,
         walker_segment: WalkerSegmentRule::HammerBro,
         entries: &[],
     },
     LevelProtection {
-        label: "W2 Hammer Bro",
+        level: "2HB1",
+        area: 0,
+        why: "W2 Hammer Bro fights",
         enemy_ptr: 0xD14D,
         walker_segment: WalkerSegmentRule::HammerBro,
         entries: &[],
     },
     LevelProtection {
-        label: "W2 Hammer Bro (variant)",
+        level: "2HB21",
+        area: 0,
+        why: "W2 Hammer Bro fights (variant)",
         enemy_ptr: 0xD142,
         walker_segment: WalkerSegmentRule::HammerBro,
         entries: &[],
     },
     LevelProtection {
-        label: "W3/W5/W6/W7 Hammer Bro",
+        level: "3HB1",
+        area: 0,
+        why: "every W3, W5, W6 and W7 Hammer Bro fight",
         enemy_ptr: 0xC640,
         walker_segment: WalkerSegmentRule::HammerBro,
         entries: &[],
     },
     LevelProtection {
-        label: "W4 Hammer Bro",
+        level: "4HB1",
+        area: 0,
+        why: "every W4 Hammer Bro fight",
         enemy_ptr: 0xD0EA,
         walker_segment: WalkerSegmentRule::HammerBro,
         entries: &[],
     },
     LevelProtection {
-        label: "W8 Hammer Bro (uses 7-7 layout)",
+        level: "8HB1",
+        area: 0,
+        why: "every W8 Hammer Bro fight (uses 7-7 layout)",
         enemy_ptr: 0xC03D,
         walker_segment: WalkerSegmentRule::HammerBro,
         entries: &[],
     },
     LevelProtection {
-        label: "Coin Ship end-pipe (2-BoomerangBro fight)",
+        level: "CoinShip",
+        area: 1,
+        why: "end-pipe room: 2-BoomerangBro fight",
         enemy_ptr: 0xDA0F,
         walker_segment: WalkerSegmentRule::HammerBro,
         entries: &[],
@@ -434,6 +499,10 @@ pub(super) fn walker_segment_rule_at(segment_file_offset: usize) -> WalkerSegmen
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::randomize::overworld::node_catalog::{NodeCatalog, level_name_key};
+    use crate::randomize::rom_data::level_index::{self, read_objects};
+    use crate::randomize::rom_data::{LevelEntry, UNLISTED_LEVELS};
+    use crate::rom::Rom;
     use std::collections::HashSet;
 
     #[test]
@@ -515,26 +584,44 @@ mod tests {
         }
     }
 
+    /// Each row's `level` and `area` name the object list its `enemy_ptr`
+    /// reads, and every entry offset lies in that list. Skips without the ROM.
     #[test]
-    fn skip_segments_use_top_level_eps() {
-        // WalkerSegmentRule::Skip only makes sense at top-level enemy_ptrs
-        // (where the ep's file offset = a segment's page byte). Sub-area
-        // entry_ptrs land mid-segment, so "skip the segment" would also block
-        // the parent level's swaps. There's no cheap way to detect this without
-        // walking the ROM, but we can at least sanity-check that a Skip row's
-        // ep doesn't collide with any other row's per-entry offsets — if it
-        // did, that's a strong hint the Skip target is mid-segment.
-        let skip_eps: Vec<usize> = LEVEL_PROTECTIONS
+    fn every_row_names_the_area_its_offsets_are_in() {
+        let Some(rom) = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes")
+            .ok()
+            .and_then(|b| Rom::from_bytes(&b).ok())
+        else {
+            return;
+        };
+        let views = NodeCatalog::build(&rom, true).entry_views();
+        let levels: Vec<(&str, &LevelEntry)> = views
             .iter()
-            .filter(|l| l.walker_segment == WalkerSegmentRule::Skip)
-            .map(|l| enemy_ptr_to_file_offset(l.enemy_ptr))
+            .filter_map(|v| v.level_entry.as_ref().map(|le| (v.name.as_str(), le)))
+            .chain(UNLISTED_LEVELS.iter().map(|(name, le)| (*name, le)))
             .collect();
-        for level in LEVEL_PROTECTIONS {
-            for entry in level.entries {
+        for row in LEVEL_PROTECTIONS {
+            let (_, entry) = levels
+                .iter()
+                .find(|(name, _)| level_name_key(name) == level_name_key(row.level))
+                .unwrap_or_else(|| panic!("{}: no level by that name (rominfo --list)", row.level));
+            let (areas, _) = level_index::trace(&rom, entry).expect("a protected level traces");
+            let area = areas.get(row.area).unwrap_or_else(|| {
+                panic!("{}: has {} areas, not area {}", row.level, areas.len(), row.area)
+            });
+            assert_eq!(
+                area.objects_ptr, row.enemy_ptr,
+                "{} area {}: its objects are at ${:04X}, the row says ${:04X}",
+                row.level, row.area, area.objects_ptr, row.enemy_ptr
+            );
+            let objects = read_objects(&rom, area.objects_ptr, area.tileset).unwrap();
+            for e in row.entries {
                 assert!(
-                    !skip_eps.contains(&entry.offset),
-                    "per-entry offset 0x{:05X} collides with a Skip segment's ep — likely a sub-area mislabeled as top-level skip",
-                    entry.offset,
+                    objects.iter().any(|o| o.offset == e.offset),
+                    "{} area {}: 0x{:05X} is not one of its objects",
+                    row.level,
+                    row.area,
+                    e.offset
                 );
             }
         }

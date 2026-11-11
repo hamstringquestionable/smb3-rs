@@ -26,6 +26,54 @@ fn rom_with_segment(seg: &[u8]) -> Rom {
     Rom::from_bytes_lax(&data, true).unwrap()
 }
 
+/// The streams in a synthetic fixture. These ROMs have no pointer tables for
+/// the level index to follow, so the streams are found by walking the block:
+/// each run of `[page byte][id,x,y]...` ending on `$FF` with at least one
+/// entry, as an offset into the block.
+fn fixture_streams(rom: &Rom) -> Vec<usize> {
+    let data = rom.read_range(ENEMY_DATA_START, ENEMY_DATA_END - ENEMY_DATA_START);
+    let mut starts = Vec::new();
+    let mut i = 0;
+    while i < data.len() {
+        if data[i] == 0xFF {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        i += 1;
+        while i + 3 <= data.len() && data[i] != 0xFF {
+            i += 3;
+        }
+        if i == data.len() || data[i] != 0xFF {
+            break; // unterminated tail (zeros past a fixture's last stream)
+        }
+        if i > start + 1 {
+            starts.push(start);
+        }
+    }
+    starts
+}
+
+/// [`randomize`] over a synthetic fixture's streams.
+fn randomize_fixture<R: Rng>(rom: &mut Rom, rng: &mut R, opts: &Options) {
+    let starts = fixture_streams(rom);
+    randomize_object_data(rom, rng, opts, &starts);
+}
+
+/// [`randomize_big_q_blocks`] over a synthetic fixture's streams.
+fn randomize_big_q_fixture<R: Rng>(rom: &mut Rom, rng: &mut R) {
+    let data = rom.read_range(ENEMY_DATA_START, ENEMY_DATA_END - ENEMY_DATA_START).to_vec();
+    let mut ids = Vec::new();
+    for start in fixture_streams(rom) {
+        let mut i = start + 1;
+        while data[i] != 0xFF {
+            ids.push(ENEMY_DATA_START + i);
+            i += 3;
+        }
+    }
+    reroll_big_q_blocks(rom, rng, ids);
+}
+
 fn make_test_rom() -> Rom {
     // A realistic enemy data segment: FF terminator, then a segment with
     // page flag + entries + FF. Entries MUST be sorted by ascending X
@@ -46,7 +94,7 @@ fn make_test_rom() -> Rom {
 fn test_enemies_stay_in_class() {
     let mut rom = make_test_rom();
     let mut rng = ChaCha8Rng::seed_from_u64(42);
-    randomize(&mut rom, &mut rng, &enemy_opts());
+    randomize_fixture(&mut rom, &mut rng, &enemy_opts());
 
     // Read back the segment (skip FF + page flag = offset 2)
     let base = ENEMY_DATA_START + 2;
@@ -100,8 +148,8 @@ fn test_deterministic() {
     let mut rng1 = ChaCha8Rng::seed_from_u64(77);
     let mut rng2 = ChaCha8Rng::seed_from_u64(77);
 
-    randomize(&mut rom1, &mut rng1, &enemy_opts());
-    randomize(&mut rom2, &mut rng2, &enemy_opts());
+    randomize_fixture(&mut rom1, &mut rng1, &enemy_opts());
+    randomize_fixture(&mut rom2, &mut rng2, &enemy_opts());
 
     let len = ENEMY_DATA_END - ENEMY_DATA_START;
     assert_eq!(rom1.read_range(ENEMY_DATA_START, len), rom2.read_range(ENEMY_DATA_START, len),);
@@ -133,7 +181,7 @@ fn make_bigq_test_rom() -> Rom {
 fn test_big_q_blocks_randomized() {
     let mut rom = make_bigq_test_rom();
     let mut rng = ChaCha8Rng::seed_from_u64(42);
-    randomize_big_q_blocks(&mut rom, &mut rng);
+    randomize_big_q_fixture(&mut rom, &mut rng);
 
     // Regular Big ? Blocks should be randomized to some Big ? Block ID
     let base = ENEMY_DATA_START + 2; // skip FF + page
@@ -170,7 +218,7 @@ fn test_chr_compatibility_enforced() {
     for seed in 0..200u64 {
         let mut rom_copy = rom.clone();
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
-        randomize(&mut rom_copy, &mut rng, &enemy_opts());
+        randomize_fixture(&mut rom_copy, &mut rng, &enemy_opts());
 
         let base = ENEMY_DATA_START + 2;
         let result = rom_copy.read_range(base, 12);
@@ -243,7 +291,7 @@ fn test_chr_resets_across_segments() {
     for seed in 0..200u64 {
         let mut rom_copy = rom.clone();
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
-        randomize(&mut rom_copy, &mut rng, &enemy_opts());
+        randomize_fixture(&mut rom_copy, &mut rng, &enemy_opts());
 
         // Second segment's enemy is at offset: FF(1) + page(1) + entry(3) + FF(1) + page(1) = 7
         let enemy2 = rom_copy.read_byte(ENEMY_DATA_START + 7);
@@ -277,7 +325,7 @@ fn test_ghost_enemies_stay_in_class() {
     for seed in 0..100u64 {
         let mut rom_copy = rom.clone();
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
-        randomize(&mut rom_copy, &mut rng, &enemy_opts());
+        randomize_fixture(&mut rom_copy, &mut rng, &enemy_opts());
 
         let base = ENEMY_DATA_START + 2;
         let result = rom_copy.read_range(base, 6);
@@ -301,7 +349,7 @@ fn test_big_enemies_in_regular_classes() {
     for seed in 0..100u64 {
         let mut rom_copy = rom.clone();
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
-        randomize(&mut rom_copy, &mut rng, &enemy_opts());
+        randomize_fixture(&mut rom_copy, &mut rng, &enemy_opts());
 
         let base = ENEMY_DATA_START + 2;
         let result = rom_copy.read_range(base, 9);
@@ -461,7 +509,7 @@ fn piranhas_excluded_from_global_wild_pool() {
     ] {
         *m = EnemyMode::Wild;
     }
-    let pool = wild_pool_for(&opts);
+    let pool = ClassModes::from_options(&opts).build_wild_pool();
     for id in PIRANHAS.iter().chain(PIRANHASC).chain(std::iter::once(&ROCKY_WRENCH)) {
         assert!(!pool.contains(id), "piranha-kind 0x{id:02X} leaked into global wild pool");
     }
@@ -476,7 +524,7 @@ fn giant_red_never_replaces_non_giant_red() {
         for seed in 0..300u64 {
             let mut rom = giant_red_test_rom();
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
-            randomize(&mut rom, &mut rng, &opts);
+            randomize_fixture(&mut rom, &mut rng, &opts);
             let result = rom.read_range(ENEMY_DATA_START + 2, 6);
             assert_ne!(
                 result[0], GIANT_RED_PIRANHA,
@@ -503,7 +551,7 @@ fn test_two_pass_precommit() {
     for seed in 0..500u64 {
         let mut rom_copy = rom.clone();
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
-        randomize(&mut rom_copy, &mut rng, &enemy_opts());
+        randomize_fixture(&mut rom_copy, &mut rng, &enemy_opts());
 
         let base = ENEMY_DATA_START + 2;
         let result = rom_copy.read_range(base, 6);
@@ -543,7 +591,7 @@ fn test_uniform_class_precommit() {
     for seed in 0..500u64 {
         let mut rom_copy = rom.clone();
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
-        randomize(&mut rom_copy, &mut rng, &enemy_opts());
+        randomize_fixture(&mut rom_copy, &mut rng, &enemy_opts());
 
         let base = ENEMY_DATA_START + 2;
         let result = rom_copy.read_range(base, 6);
@@ -582,7 +630,7 @@ fn test_conflicted_slot_blocks_all() {
     for seed in 0..100u64 {
         let mut rom_copy = rom.clone();
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
-        randomize(&mut rom_copy, &mut rng, &enemy_opts());
+        randomize_fixture(&mut rom_copy, &mut rng, &enemy_opts());
 
         let base = ENEMY_DATA_START + 2;
         let result = rom_copy.read_range(base, 9);
@@ -656,7 +704,7 @@ fn test_wild_pool_merges_classes() {
     for seed in 0..500u64 {
         let mut rom_copy = rom.clone();
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
-        randomize(&mut rom_copy, &mut rng, &flags);
+        randomize_fixture(&mut rom_copy, &mut rng, &flags);
         let result_id = rom_copy.read_byte(ENEMY_DATA_START + 2);
         assert!(wild_pool.contains(&result_id), "seed {seed}: 0x{result_id:02X} not in wild pool");
         if SHELL_ENEMIES.contains(&result_id) {
@@ -680,7 +728,7 @@ fn test_off_mode_leaves_untouched() {
     for seed in 0..100u64 {
         let mut rom_copy = rom.clone();
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
-        randomize(&mut rom_copy, &mut rng, &flags);
+        randomize_fixture(&mut rom_copy, &mut rng, &flags);
         // Ground enemy stays vanilla (Off mode)
         assert_eq!(
             rom_copy.read_byte(ENEMY_DATA_START + 2),
@@ -736,7 +784,7 @@ fn test_chaser_pins_distant_groups() {
     for seed in 0..200u64 {
         let mut rom_copy = rom.clone();
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
-        randomize(&mut rom_copy, &mut rng, &flags);
+        randomize_fixture(&mut rom_copy, &mut rng, &flags);
         assert_eq!(
             rom_copy.read_byte(ENEMY_DATA_START + 2),
             0x83,
@@ -770,7 +818,7 @@ fn test_chaser_pick_respects_distant_pins() {
     for seed in 0..300u64 {
         let mut rom_copy = rom.clone();
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
-        randomize(&mut rom_copy, &mut rng, &flags);
+        randomize_fixture(&mut rom_copy, &mut rng, &flags);
         assert_eq!(rom_copy.read_byte(ENEMY_DATA_START + 2), 0x8A);
         let id = rom_copy.read_byte(ENEMY_DATA_START + 5);
         assert!(
@@ -800,7 +848,7 @@ fn test_boomboom_does_not_block_shell_picks() {
     for seed in 0..200u64 {
         let mut rom_copy = rom.clone();
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
-        randomize(&mut rom_copy, &mut rng, &flags);
+        randomize_fixture(&mut rom_copy, &mut rng, &flags);
         let boom = rom_copy.read_byte(ENEMY_DATA_START + 5);
         assert!(BOOMBOOM_SWAP.contains(&boom), "seed {seed}: Boom-Boom became 0x{boom:02X}");
         // Green/Red Troopa are $4F/+5 — CHR-conflicting with the
@@ -836,7 +884,7 @@ fn test_chr_groups_split_distant_enemies() {
     for seed in 0..500u64 {
         let mut rom_copy = rom.clone();
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
-        randomize(&mut rom_copy, &mut rng, &enemy_opts());
+        randomize_fixture(&mut rom_copy, &mut rng, &enemy_opts());
 
         let ghost = rom_copy.read_byte(ENEMY_DATA_START + 2);
         let ground = rom_copy.read_byte(ENEMY_DATA_START + 5);
@@ -874,7 +922,7 @@ fn test_chr_groups_keep_close_together() {
     for seed in 0..500u64 {
         let mut rom_copy = rom.clone();
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
-        randomize(&mut rom_copy, &mut rng, &enemy_opts());
+        randomize_fixture(&mut rom_copy, &mut rng, &enemy_opts());
 
         let ground = rom_copy.read_byte(ENEMY_DATA_START + 5);
         assert!(GROUND_ENEMIES.contains(&ground), "seed {seed}: ground 0x{ground:02X}");
@@ -919,44 +967,6 @@ fn test_chr_groups_single() {
     assert_eq!(groups[0].len(), 3);
 }
 
-/// Regression: at the exact ROM offsets where `disable_autoscroll`
-/// inserts a mid-segment $FF (here `$0CFE3`), a block-wide walker
-/// would treat the clobbered bytes as a "ghost" segment that
-/// swallows the page byte + first entry of the next real segment.
-/// The writeback's stable sort would then scramble those bytes —
-/// in the wild, that corrupted the W5 spiral castle's
-/// PIPEWAYCONTROLLER and broke its exit teleport on seed
-/// 1642218906354586 (beta.3).
-///
-/// With `autoscroll::SPOILED_SEGMENT_RANGES` honored by the
-/// walker, the clobbered region is skipped and the trailing real
-/// segment survives byte-for-byte.
-#[test]
-fn ghost_segment_does_not_corrupt_trailing_segment() {
-    let mut data = blank_rom_image();
-    data[ENEMY_DATA_START..ENEMY_DATA_END].fill(0xFF);
-
-    // Place the bug pattern at the real $0CFE2 (covered by a
-    // SPOILED_SEGMENT_RANGES entry). The "autoscroll" segment is
-    // clobbered exactly as disable_autoscroll leaves it; the
-    // trailing real segment carries a PIPEWAYCONTROLLER.
-    const PWC_SEG_START: usize = 0x0CFE7;
-    data[0x0CFE2..0x0CFE7].copy_from_slice(&[0x01, 0xFF, 0x00, 0x10, 0xFF]);
-    data[PWC_SEG_START..PWC_SEG_START + 5].copy_from_slice(&[0x01, 0x25, 0x00, 0x80, 0xFF]);
-    let pwc_before = data[PWC_SEG_START..PWC_SEG_START + 5].to_vec();
-
-    let mut rom = Rom::from_bytes_lax(&data, true).unwrap();
-    let mut rng = ChaCha8Rng::seed_from_u64(42);
-    randomize(&mut rom, &mut rng, &enemy_opts());
-
-    let pwc_after = rom.read_range(PWC_SEG_START, 5).to_vec();
-    assert_eq!(
-        pwc_after, pwc_before,
-        "PIPEWAYCONTROLLER segment was corrupted by ghost-segment sort.\n  before: {:02X?}\n  after:  {:02X?}",
-        pwc_before, pwc_after,
-    );
-}
-
 // ===================================================================
 // Enemy-placement invariant harness
 //
@@ -977,6 +987,38 @@ const REFERENCE_ROM_PATH: &str = "roms/Super Mario Bros. 3 (USA) (Rev 1).nes";
 fn load_reference_rom() -> Option<Rom> {
     let data = std::fs::read(REFERENCE_ROM_PATH).ok()?;
     Rom::from_bytes(&data).ok()
+}
+
+/// The enemy pass's input: the enemy data block, plus every object list the
+/// level index reaches in it as (offset into the block of the page byte,
+/// entry count), in block order.
+struct EnemyInput {
+    bytes: Vec<u8>,
+    rooms: Vec<(usize, usize)>,
+}
+
+impl EnemyInput {
+    fn of(rom: &Rom) -> Self {
+        let bytes = rom.read_range(ENEMY_DATA_START, ENEMY_DATA_END - ENEMY_DATA_START).to_vec();
+        let rooms = index_rooms(rom)
+            .into_iter()
+            .map(|(start, ids)| (start - ENEMY_DATA_START, ids.len()))
+            .collect();
+        EnemyInput { bytes, rooms }
+    }
+}
+
+/// Every object list the level index reaches on `rom`: (file offset of the
+/// page byte, file offset of each entry's ID byte), in block order.
+fn index_rooms(rom: &Rom) -> Vec<(usize, Vec<usize>)> {
+    let mut rooms = std::collections::BTreeMap::new();
+    for area in level_index::every_level(rom).iter().flatten() {
+        if let Some(objects) = level_index::read_objects(rom, area.objects_ptr, area.tileset) {
+            let start = enemy_ptr_to_file_offset(area.objects_ptr);
+            rooms.insert(start, objects.iter().map(|o| o.offset).collect());
+        }
+    }
+    rooms.into_iter().collect()
 }
 
 /// "Recommended" preset — only the fields the enemy pass actually reads.
@@ -1099,7 +1141,7 @@ fn injectable_offsets(
 /// the HB wild pool (batch path), everything else uses the normal class
 /// pools — plus the Boom-Boom self-swap and wild injection side channels.
 fn check_invariants(
-    vanilla: &[u8],
+    input: &EnemyInput,
     randomized: &[u8],
     opts: &Options,
     injectable: &std::collections::HashSet<usize>,
@@ -1107,21 +1149,14 @@ fn check_invariants(
     stats: &mut PlacementStats,
     out: &mut Vec<String>,
 ) {
+    let EnemyInput { bytes: vanilla, rooms } = input;
     let normal_modes = ClassModes::from_options(opts);
     let normal_wild = normal_modes.build_wild_pool();
     let hb_modes = hb_class_modes(opts.hb_encounters);
     let hb_wild = hb_modes.build_wild_pool();
-    // Same spoiled-range skips the randomizer uses, so segment boundaries
-    // (and per-segment bertha counts) line up exactly.
-    let skip_ranges: Vec<core::ops::Range<usize>> =
-        crate::randomize::levels::autoscroll::SPOILED_SEGMENT_RANGES
-            .iter()
-            .map(|r| (r.start - ENEMY_DATA_START)..(r.end - ENEMY_DATA_START))
-            .collect();
-    let bounds = segment_writer::walk_segments(randomized, 0, randomized.len(), &skip_ranges);
 
-    for b in bounds {
-        let seg_rule = walker_segment_rule_at(ENEMY_DATA_START + b.file_offset);
+    for &(seg, count) in rooms {
+        let seg_rule = walker_segment_rule_at(ENEMY_DATA_START + seg);
         let is_hb = seg_rule == WalkerSegmentRule::HammerBro;
         // HB segments with hb==Wild are batch-assigned from the HB wild pool
         // (randomize_hb_wild_segment), bypassing per-entry class pools and
@@ -1135,8 +1170,8 @@ fn check_invariants(
 
         let mut bertha_in_seg = 0u8;
         let mut hazards_added_in_seg = 0u8;
-        for i in 0..b.entry_count {
-            let off = b.file_offset + 1 + i * 3; // +1 skips the page flag
+        for i in 0..count {
+            let off = seg + 1 + i * 3; // +1 skips the page flag
             let orig = vanilla[off];
             let new = randomized[off];
             let fo = ENEMY_DATA_START + off;
@@ -1267,15 +1302,14 @@ fn check_invariants(
         // the member that makes this load-bearing rather than cosmetic — it
         // is stompable but revives, so nothing else in the room clears it.
         if hb_batch {
-            let ids: Vec<u8> =
-                (0..b.entry_count).map(|i| randomized[b.file_offset + 1 + i * 3]).collect();
+            let ids: Vec<u8> = (0..count).map(|i| randomized[seg + 1 + i * 3]).collect();
             let needs_shell: Vec<u8> =
                 ids.iter().copied().filter(|id| HB_NEEDS_SHELL_ENEMIES.contains(id)).collect();
             if !needs_shell.is_empty() && !ids.iter().any(|id| SHELL_ENEMIES.contains(id)) {
                 out.push(format!(
                     "seed {seed} @ seg {:#07X}: {:02X?} needs a shell and the room has none \
                          (ids {:02X?})",
-                    ENEMY_DATA_START + b.file_offset,
+                    ENEMY_DATA_START + seg,
                     needs_shell,
                     ids,
                 ));
@@ -1291,7 +1325,7 @@ fn check_invariants(
             stats.hazard_cap_exceeded += 1;
             out.push(format!(
                 "seed {seed} @ seg {:#07X}: {hazards_added_in_seg} added hazards, cap is {}",
-                ENEMY_DATA_START + b.file_offset,
+                ENEMY_DATA_START + seg,
                 MAX_ADDED_HAZARDS_PER_SEGMENT,
             ));
         }
@@ -1304,7 +1338,7 @@ fn check_invariants(
             stats.bertha_cap_exceeded += 1;
             out.push(format!(
                     "seed {seed} @ seg {:#07X}: {bertha_in_seg} berthas, cap is {} (rule={seg_rule:?}, hb_batch={hb_batch})",
-                    ENEMY_DATA_START + b.file_offset,
+                    ENEMY_DATA_START + seg,
                     MAX_BERTHA_PER_SEGMENT,
                 ));
         }
@@ -1312,7 +1346,14 @@ fn check_invariants(
     stats.seeds += 1;
 }
 
-fn run_preset(label: &str, opts: &Options, seeds: u64, base: &Rom, vanilla: &[u8]) -> Vec<String> {
+fn run_preset(
+    label: &str,
+    opts: &Options,
+    seeds: u64,
+    base: &Rom,
+    input: &EnemyInput,
+) -> Vec<String> {
+    let vanilla = input.bytes.as_slice();
     let mut stats = PlacementStats::default();
     let mut violations = Vec::new();
     let modes = ClassModes::from_options(opts);
@@ -1326,15 +1367,7 @@ fn run_preset(label: &str, opts: &Options, seeds: u64, base: &Rom, vanilla: &[u8
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
         randomize(&mut rom, &mut rng, opts);
         let randomized = rom.read_range(ENEMY_DATA_START, vanilla.len()).to_vec();
-        check_invariants(
-            vanilla,
-            &randomized,
-            opts,
-            &injectable,
-            seed,
-            &mut stats,
-            &mut violations,
-        );
+        check_invariants(input, &randomized, opts, &injectable, seed, &mut stats, &mut violations);
     }
 
     eprintln!("\n=== {label}: {} seeds ===", stats.seeds);
@@ -1371,7 +1404,7 @@ fn enemy_invariant_baseline() {
         eprintln!("reference ROM not present — skipping enemy_invariant_baseline");
         return;
     };
-    let vanilla = base.read_range(ENEMY_DATA_START, ENEMY_DATA_END - ENEMY_DATA_START).to_vec();
+    let vanilla = EnemyInput::of(&base);
 
     let mut violations = Vec::new();
     violations.extend(run_preset("Recommended", &preset_recommended(), 250, &base, &vanilla));
@@ -1416,10 +1449,10 @@ fn enemy_invariant_baseline() {
 /// box never appears and the player is stranded (see
 /// `rewrites_hammer_bro`).
 ///
-/// Scans every `$FF` segment rather than fixed offsets, so a room nobody
-/// has thought about yet is covered too, and sweeps the two enemy modes
-/// that reach the different code paths (HB-Wild is batch-assigned; the rest
-/// go through the walker).
+/// Checks every object list the level index reaches rather than fixed
+/// offsets, so a room nobody has thought about yet is covered too, and sweeps
+/// the two enemy modes that reach the different code paths (HB-Wild is
+/// batch-assigned; the rest go through the walker).
 #[test]
 fn treasure_box_rooms_never_get_a_hammer_bro() {
     let Some(base) = load_reference_rom() else {
@@ -1427,31 +1460,8 @@ fn treasure_box_rooms_never_get_a_hammer_bro() {
         return;
     };
 
-    // Segment starts, parsed the way the walker does: page byte, 3-byte
-    // entries, 0xFF terminator.
-    let segments = |rom: &Rom| -> Vec<(usize, Vec<usize>)> {
-        let data = rom.read_range(ENEMY_DATA_START, ENEMY_DATA_END - ENEMY_DATA_START).to_vec();
-        let mut out = Vec::new();
-        let mut i = 0;
-        while i < data.len() {
-            if data[i] == 0xFF {
-                i += 1;
-                continue;
-            }
-            let start = ENEMY_DATA_START + i;
-            i += 1;
-            let mut ids = Vec::new();
-            while i + 2 < data.len() && data[i] != 0xFF {
-                ids.push(ENEMY_DATA_START + i);
-                i += 3;
-            }
-            out.push((start, ids));
-        }
-        out
-    };
-
     // Rooms to police, decided from vanilla so a swap can't hide one.
-    let at_risk: Vec<(usize, Vec<usize>)> = segments(&base)
+    let at_risk: Vec<(usize, Vec<usize>)> = index_rooms(&base)
         .into_iter()
         .filter(|(start, ids)| {
             let has_box = ids.iter().any(|&o| base.read_range(o, 1)[0] == TREASURE_BOX_APPEAR);
@@ -1567,26 +1577,13 @@ fn closed_bro_rooms_raise_the_floor_ignoring_flyer() {
 
     // Vanilla (segment start, entry id-byte offsets) for every closed bro
     // room: an HB-ruled segment whose enemy data holds the treasure box.
-    let mut rooms: Vec<(usize, Vec<usize>)> = Vec::new();
-    let data = base.read_range(ENEMY_DATA_START, ENEMY_DATA_END - ENEMY_DATA_START).to_vec();
-    let mut i = 0;
-    while i < data.len() {
-        if data[i] == 0xFF {
-            i += 1;
-            continue;
-        }
-        let start = ENEMY_DATA_START + i;
-        i += 1;
-        let mut ids = Vec::new();
-        while i + 2 < data.len() && data[i] != 0xFF {
-            ids.push(ENEMY_DATA_START + i);
-            i += 3;
-        }
-        let closed = ids.iter().any(|&o| base.read_range(o, 1)[0] == TREASURE_BOX_APPEAR);
-        if closed && walker_segment_rule_at(start) == WalkerSegmentRule::HammerBro {
-            rooms.push((start, ids));
-        }
-    }
+    let rooms: Vec<(usize, Vec<usize>)> = index_rooms(&base)
+        .into_iter()
+        .filter(|(start, ids)| {
+            let closed = ids.iter().any(|&o| base.read_range(o, 1)[0] == TREASURE_BOX_APPEAR);
+            closed && walker_segment_rule_at(*start) == WalkerSegmentRule::HammerBro
+        })
+        .collect();
     assert!(rooms.len() >= 7, "expected the vanilla bro rooms, got {}", rooms.len());
 
     // The raise must not compound with the tall-enemy nudge `swap_enemy`
@@ -1675,7 +1672,7 @@ fn test_cannon_pins_distant_groups() {
     for seed in 0..200u64 {
         let mut rom_copy = rom.clone();
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
-        randomize(&mut rom_copy, &mut rng, &flags);
+        randomize_fixture(&mut rom_copy, &mut rng, &flags);
         assert_eq!(
             rom_copy.read_byte(ENEMY_DATA_START + 2),
             0xC8,
@@ -1710,7 +1707,7 @@ fn test_cannons_wild_respects_slot5_pin() {
     for seed in 0..300u64 {
         let mut rom_copy = rom.clone();
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
-        randomize(&mut rom_copy, &mut rng, &flags);
+        randomize_fixture(&mut rom_copy, &mut rng, &flags);
         let id = rom_copy.read_byte(ENEMY_DATA_START + 2);
         assert!(
             (0xC2..=0xCF).contains(&id),

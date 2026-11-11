@@ -14,11 +14,9 @@ mod areas;
 mod commands;
 mod header;
 mod levels;
-// Objects and their names are read only by `rominfo` and the tests so far,
-// both native-only; a randomizer module that needs one ungates it.
+// Object names are read only by `rominfo` and the tests, both native-only.
 #[cfg(not(target_arch = "wasm32"))]
 mod object_names;
-#[cfg(not(target_arch = "wasm32"))]
 mod objects;
 
 pub(crate) use areas::{Area, trace};
@@ -30,7 +28,8 @@ pub(crate) use levels::{every_level, every_power_block};
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use object_names::object_name;
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) use objects::{Object, read_objects};
+pub(crate) use objects::Object;
+pub(crate) use objects::read_objects;
 
 #[cfg(test)]
 mod tests;
