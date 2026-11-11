@@ -1,24 +1,18 @@
 //! Wild injection: seed a level-wide chaser into a fraction of real action
 //! levels, selected via the `node_catalog` (not raw enemy pointers).
 //!
-//! Level-centric design (replaces the old entry-point / `enemy_entry_points`
-//! approach). Each candidate is a `NodeKind::Level` — fortresses, airships and
+//! Each candidate is a `NodeKind::Level` — fortresses, airships and
 //! Bowser are excluded *by type*, so a chaser never lands in a boss room. For
 //! each candidate we replace its first enemy with a CHR-compatible chaser the
 //! level does not already have. Suns are re-seeded to the vanilla screen-0
 //! spawn so they engage (deep suns idle in the background).
 //!
-//! **This is not a pass.** It used to be one, running before the walker, which
-//! meant re-deriving the CHR state the walker was about to compute — a second
-//! copy of a model that had to stay in step with the first. It now happens
-//! inside the walker's segment prologue ([`inject_segment_chasers`], called
-//! from `randomize_object_data`), reading the same [`segment_pins`] the walker
-//! seeds itself from. `collect_candidates` still runs up front, because *where*
-//! a level's first enemy lives has nothing to do with the shuffle.
-//!
-//! Injecting during the prologue rather than after the walk keeps the property
-//! that made the old ordering worth its cost: the chaser is fixed before any
-//! pick is made, so every other enemy in the segment is chosen around it.
+//! **This is not a pass.** It runs inside the walker's segment prologue
+//! ([`inject_segment_chasers`], called from `randomize_object_data`), reading
+//! the same [`segment_pins`] the walker seeds itself from, before any pick is
+//! made, so every other enemy in the segment is chosen around the chaser.
+//! `collect_candidates` runs up front, because *where* a level's first enemy
+//! lives has nothing to do with the shuffle.
 //!
 //! Guards: boss-type exclusion, shared-enemy-set de-dup (one physical enemy set
 //! injects at most once), no-double (`has_enemy_id`), first-enemy must be a

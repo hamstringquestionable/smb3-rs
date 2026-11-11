@@ -61,26 +61,11 @@ impl ClassModes {
             pool.extend_from_slice(ROTODISCS_DUAL);
         }
         // ALL_CANNONS intentionally NOT added — cfire is self-contained in
-        // Wild mode for TWO reasons, both load-bearing:
-        //
-        // 1. **Gameplay correctness (permanent).** cfire IDs are projectile
-        //    emitters (bullet bill cannons, laser turrets, etc.). They fire
-        //    blind across the screen from their X position. Spawning one
-        //    where a player expects a stompable ground enemy means hits
-        //    arrive out of nowhere with no telegraph — arguably unplayable.
-        //    cfire must never appear as the random output of a non-cfire
-        //    class swap.
-        //
-        // 2. **Distribution (legacy of the bucket-first picker).** cfire
-        //    IDs share the NOCHANGE CHR slot, so the old `PageBuckets`
-        //    appended them to every bucket; the bucket-first pick then
-        //    over-weighted them ~K× per draw and flooded every level
-        //    (observed: 49 → 213 bullet bill cannons before the fix).
-        //    That picker is gone — `PageBuckets` was deleted once its
-        //    `pick` became identical to `pick_compatible` over the wild
-        //    pool, which draws uniformly among CHR-compatible ids — so the
-        //    flooding mechanism no longer exists. Reason (1) alone is
-        //    enough to keep cfire out.
+        // Wild mode. cfire IDs are projectile emitters (bullet bill cannons,
+        // laser turrets, etc.) that fire blind across the screen from their X
+        // position. Spawning one where a player expects a stompable ground
+        // enemy means hits arrive out of nowhere with no telegraph, so cfire
+        // must never be the output of a non-cfire class swap.
         //
         // Net semantic: cfire swaps only with cfire (`find_class_pool` gives
         // it ALL_CANNONS, never the wild pool), so the cfire count never exceeds

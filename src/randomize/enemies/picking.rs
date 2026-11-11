@@ -72,8 +72,8 @@ pub(super) fn pick_bucket_first<R: Rng>(
 }
 
 /// Decide the replacement enemy for one swappable walker entry, or `None` to
-/// leave it unchanged. Callers handle Big ? blocks, Boom-Booms, and SkipSwap
-/// before calling; bertha bookkeeping and the actual write stay with them too.
+/// leave it unchanged. Callers handle Boom-Booms, SkipSwap and injected
+/// entries before calling; bertha bookkeeping and the actual write stay with them too.
 ///
 /// Every entry funnels through one shape: choose a base pool + a primary
 /// (CHR-aware) pick, then filter through the placement constraints before
@@ -92,7 +92,7 @@ pub(super) fn pick_replacement<R: Rng>(
     let (slot4, slot5) = chr.local;
     let (seg4, seg5) = chr.segment;
     // Base pool + primary pick. A pool-replacing protection
-    // (ForceShell/TankBro/Stompable/Exclude) chooses the pool;
+    // (ForceShell/Stompable/Exclude) chooses the pool;
     // otherwise it's the normal class pool, picked via the
     // wild/piranha/plain strategy. `None` => no swap for this entry.
     let picked: Option<(Option<u8>, Cow<[u8]>)> = match protection {

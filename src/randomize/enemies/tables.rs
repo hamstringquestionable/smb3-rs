@@ -363,12 +363,8 @@ pub(super) const BIG_Q_BLOCKS: &[u8] = &[
 /// a level's first enemy. CHR compatibility checked via `sprite_bank()` at filter
 /// time.
 ///
-/// Boss Bass was excluded until injection moved inside the walker. It is a
-/// `WATER_ENEMIES` member, so with water Wild the walker used to reshuffle an
-/// injected one into an ordinary water enemy — a silent no-op. Deciding the
-/// injection inside the segment prologue and marking the entry settled closes
-/// that hole (Lakitu and the sun never needed it: they belong to no class pool,
-/// so nothing could pick them out).
+/// Boss Bass is also a `WATER_ENEMIES` member; an injected one is marked
+/// settled, so the walker does not reshuffle it into an ordinary water enemy.
 pub(super) const WILD_INJECTION_IDS: &[u8] = &[
     LAKITU_ID,    // Lakitu (enemy-spawning variant, CHR $0B/+4)
     ANGRY_SUN_ID, // Angry Sun
@@ -405,10 +401,10 @@ pub(super) const SUN_SPAWN_Y: u8 = 0x11;
 /// half the time it lifts to this height for variety.
 pub(super) const LAKITU_ALT_Y: u8 = 0x12;
 
-/// Probability (out of 256) that a segment will receive an injection when wild_injections is on.
-/// ~40% chance per segment (102/256). Note the effective rate is lower because a
-/// level only injects if its first enemy is a swappable class and a chaser is
-/// CHR-compatible — see the injection funnel in `inject_at_entry_points`.
+/// Chance out of 256 (~40%) that each injection site — a level's first enemy —
+/// rolls an injection when wild_injections is on. The effective rate is lower:
+/// the entry must be a swappable, unprotected enemy and some chaser must be
+/// CHR-compatible (see `inject_segment_chasers`).
 pub(super) const WILD_INJECTION_CHANCE: u8 = 102;
 
 /// Odds (numerator, denominator) that a 2-enemy HB wild segment takes the
@@ -457,11 +453,9 @@ pub(super) const MAX_BERTHA_PER_SEGMENT: u8 = 2;
 /// One, so the player can still meet a Ptooie or a nipper and learn to handle
 /// it, but never walks into a wall of them.
 ///
-/// The budget is per `$FF`-bounded enemy run, not per level. That is usually
-/// the same thing, but several levels can enter one run at different
-/// `enemy_ptr`s (see the `SortMode::Preserve` note in `mod.rs`), and there they
-/// share the one budget. Stricter than per-level, which is the safe direction
-/// for a flag whose whole job is "fewer surprises".
+/// The budget is per segment (one area's `$FF`-terminated object list). No two
+/// areas' lists overlap, but areas that load the *same* list (the shared bro
+/// arenas, for one) share its one budget.
 pub(super) const MAX_ADDED_HAZARDS_PER_SEGMENT: u8 = 1;
 
 /// Maximum X-tile gap between consecutive enemies (sorted by X) before they
@@ -527,9 +521,13 @@ pub(super) const CHASER_IDS: &[u8] = &[
 /// CFIRE_ROCKYWRENCH (0xBE), CFIRE_4WAY (0xBF), and CFIRE_LASER (0xD0)
 /// because their level-design role (spawner / multi-direction / fortress wall
 /// element) is too distinct to randomize generically.
+// Reason: rustfmt packs these rows and moves each label onto the row before.
+#[rustfmt::skip]
 pub(super) const ALL_CANNONS: &[u8] = &[
     // CFIRE_LEFT
-    0xC0, 0xC2, 0xC3, 0xC4, 0xC6, 0xC8, 0xC9, 0xCB, 0xCE, // CFIRE_RIGHT
-    0xC1, 0xC5, 0xC7, 0xCA, 0xCC, 0xCD, 0xCF, // CFIRE_BILLS
+    0xC0, 0xC2, 0xC3, 0xC4, 0xC6, 0xC8, 0xC9, 0xCB, 0xCE,
+    // CFIRE_RIGHT
+    0xC1, 0xC5, 0xC7, 0xCA, 0xCC, 0xCD, 0xCF,
+    // CFIRE_BILLS
     0xBC, 0xBD,
 ];
