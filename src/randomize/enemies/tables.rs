@@ -404,7 +404,7 @@ pub(super) const LAKITU_ALT_Y: u8 = 0x12;
 /// Chance out of 256 (~40%) that each injection site — a level's first enemy —
 /// rolls an injection when wild_injections is on. The effective rate is lower:
 /// the entry must be a swappable, unprotected enemy and some chaser must be
-/// CHR-compatible (see `inject_segment_chasers`).
+/// CHR-compatible (see `inject_first_enemy`).
 pub(super) const WILD_INJECTION_CHANCE: u8 = 102;
 
 /// Odds (numerator, denominator) that a 2-enemy HB wild segment takes the

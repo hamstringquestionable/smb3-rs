@@ -202,17 +202,15 @@ pub(super) fn find_class_pool(id: u8, modes: &ClassModes) -> Option<ClassPool> {
     // Cannons: 3 sub-classes (LEFT, RIGHT, BILLS). In Wild, all cfire merges
     // into ALL_CANNONS — self-contained, never pulls from wild_pool so cfire
     // count can't inflate (see build_wild_pool comment for why).
-    if modes.cannons != EnemyMode::Off {
-        for sub in [CFIRE_LEFT, CFIRE_RIGHT, CFIRE_BILLS] {
-            if sub.contains(&id) {
-                return match modes.cannons {
-                    EnemyMode::Off => None,
-                    // stay within sub-class
-                    EnemyMode::Shuffle => Some(ClassPool::Class(sub)),
-                    // any cfire → any cfire
-                    EnemyMode::Wild => Some(ClassPool::Class(ALL_CANNONS)),
-                };
-            }
+    for sub in [CFIRE_LEFT, CFIRE_RIGHT, CFIRE_BILLS] {
+        if sub.contains(&id) {
+            return match modes.cannons {
+                EnemyMode::Off => None,
+                // stay within sub-class
+                EnemyMode::Shuffle => Some(ClassPool::Class(sub)),
+                // any cfire → any cfire
+                EnemyMode::Wild => Some(ClassPool::Class(ALL_CANNONS)),
+            };
         }
     }
 

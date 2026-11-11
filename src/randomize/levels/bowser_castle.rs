@@ -17,7 +17,7 @@
 use rand::Rng;
 use rand::seq::IndexedRandom;
 
-use crate::randomize::levels::segment_writer::{self, SegmentEntry, SegmentSpec, SortMode};
+use crate::randomize::levels::segment_writer::{self, SegmentEntry, SegmentSpec};
 use crate::randomize::rom_data::enemy_ptr_to_file_offset;
 use crate::randomize::rom_data::level_index::read_objects;
 use crate::rom::Rom;
@@ -124,7 +124,6 @@ pub(crate) fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R) {
             original_count: current.len(),
             entries: &entries,
             label: Some("8-Bowser sub-area 1"),
-            sort_mode: SortMode::SortByX,
         },
     )
     .expect("bowser_castle: segment write failed");

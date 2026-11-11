@@ -194,6 +194,30 @@ pub(super) fn is_uniform_chr_class(class: &[u8]) -> bool {
     page4.is_some() || page5.is_some()
 }
 
+/// What the two enemy sprite slots (`PatTable_BankSel+4` and `+5`) are
+/// committed to.
+#[derive(Clone, Copy)]
+pub(super) struct Pages {
+    pub(super) slot4: ChrSlot,
+    pub(super) slot5: ChrSlot,
+}
+
+impl Pages {
+    pub(super) const FREE: Pages = Pages { slot4: ChrSlot::Free, slot5: ChrSlot::Free };
+
+    pub(super) fn commit(&mut self, id: u8) {
+        commit_chr_page(id, &mut self.slot4, &mut self.slot5);
+    }
+
+    pub(super) fn fits(self, id: u8) -> bool {
+        is_chr_compatible(id, self.slot4, self.slot5)
+    }
+
+    pub(super) fn would_conflict(self, id: u8) -> bool {
+        would_conflict(id, self.slot4, self.slot5)
+    }
+}
+
 /// CHR commitments a pick consults. `local` is the proximity group's slots —
 /// what can share the screen with the entry under the proximity model.
 /// `segment` is every commitment anywhere in the segment (pinned pages from
@@ -201,8 +225,8 @@ pub(super) fn is_uniform_chr_class(class: &[u8]) -> bool {
 /// clear, since it follows the player into every group (see `CHASER_IDS`).
 #[derive(Clone, Copy)]
 pub(super) struct ChrCtx {
-    pub(super) local: (ChrSlot, ChrSlot),
-    pub(super) segment: (ChrSlot, ChrSlot),
+    pub(super) local: Pages,
+    pub(super) segment: Pages,
 }
 
 /// Check whether an enemy is compatible with the current CHR page commitments.

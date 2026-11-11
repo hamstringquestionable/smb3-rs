@@ -15,7 +15,7 @@
 //! defaults reproduce the vanilla sprite rewards (P-Wing / Mushroom) and
 //! `items::randomize` re-rolls them when chest randomization is on.
 
-use crate::randomize::levels::segment_writer::{self, SegmentEntry, SegmentSpec, SortMode};
+use crate::randomize::levels::segment_writer::{self, SegmentEntry, SegmentSpec};
 use crate::randomize::overworld::sprite_slots::WorldSprites;
 use crate::randomize::rom_data::{FS_PIRANHA_ROOMS, MAP_OBJ_ENTRY_LINKS};
 use crate::rom::Rom;
@@ -101,7 +101,6 @@ pub(crate) fn install_treasure_sets(rom: &mut Rom) {
                 original_count: 3,
                 entries: &entries,
                 label: Some(label),
-                sort_mode: SortMode::SortByX,
             },
         )
         .expect("piranha_rooms: clone write failed");

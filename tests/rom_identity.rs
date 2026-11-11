@@ -37,7 +37,10 @@
 //! Skipped when the ROM is absent, like the other ROM-dependent tests — the ROM
 //! is gitignored and CI has no copy.
 
-use smb3_rs::{DejaVuMode, HintMode, Options, PiranhaMode, Tri, generate_patched_rom};
+use smb3_rs::{
+    DejaVuMode, EnemyMode, HazardLimit, HintMode, Options, PiranhaMode, Tri, WildChaser,
+    generate_patched_rom,
+};
 use std::path::Path;
 
 const ROM_PATH: &str = "roms/Super Mario Bros. 3 (USA) (Rev 1).nes";
@@ -110,7 +113,34 @@ fn arms() -> Vec<(&'static str, Options, u64)> {
             ARM_SEEDS,
         ),
         ("maze, no hints", Options { world_maze: true, hints: HintMode::Off, ..base() }, ARM_SEEDS),
+        // The enemy pass's own paths: every class Wild (the CHR re-roll, the
+        // HB Wild batch pick, all three injections), then again with the
+        // hazard limit, which changes what every pick may keep.
+        ("enemies wild", enemies_wild(), ARM_SEEDS),
+        (
+            "enemies wild, hazards some",
+            Options { limit_hazards: HazardLimit::Sparse, ..enemies_wild() },
+            ARM_SEEDS,
+        ),
     ]
+}
+
+fn enemies_wild() -> Options {
+    Options {
+        ground: EnemyMode::Wild,
+        shell: EnemyMode::Wild,
+        flying: EnemyMode::Wild,
+        piranhas: EnemyMode::Wild,
+        ghosts: EnemyMode::Wild,
+        thwomps: EnemyMode::Wild,
+        rotodiscs: EnemyMode::Wild,
+        cannons: EnemyMode::Wild,
+        water: EnemyMode::Wild,
+        bros: EnemyMode::Wild,
+        hb_encounters: EnemyMode::Wild,
+        wild_injections: WildChaser::ALL.to_vec(),
+        ..options()
+    }
 }
 
 /// How many hashes a full sweep produces.

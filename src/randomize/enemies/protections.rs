@@ -6,7 +6,8 @@
 //! prints: 0 is the main area), gives the reason, and declares:
 //!   - `walker_segment`: how the walker pass treats the containing $FF segment
 //!     (`Default`, `Skip`, or `HammerBro`). Non-`Default` rows also block
-//!     wild injection at this entry_ptr.
+//!     wild injection at this entry_ptr. The Hammer Bro arenas themselves
+//!     need no row: every stream in `HAMMER_BRO_OBJ_PTRS` is `HammerBro`.
 //!   - `entries`: per-entry rules keyed by absolute file offset.
 //!
 //! Adding a new protection is one block here. `enemy_ptr` and the entry
@@ -14,7 +15,7 @@
 //! checks them against the named area on the vanilla ROM, so a row cannot
 //! name one level and protect another's bytes.
 //! The walker (`enemies::randomize_object_data`) and the wild injection it
-//! runs per segment (`enemies::inject_segment_chasers`) consume the registry
+//! runs per segment (`enemies::inject_first_enemy`) consume the registry
 //! through the derived helpers (`entry_protection_at`, `walker_segment_rule_at`)
 //! — never the table directly.
 
@@ -67,7 +68,7 @@ struct EntryRule {
 }
 
 /// Per-entry behavior. The walker applies these inline during its swap pass;
-/// `inject_segment_chasers` also skips injection at any position carrying one
+/// `inject_first_enemy` also skips injection at any position carrying one
 /// of these (so wild injection can't bypass a per-entry safeguard).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum EntryProtection {
@@ -386,55 +387,6 @@ const LEVEL_PROTECTIONS: &[LevelProtection] = &[
             }, // RotodiscCCW scr=1 col=1
         ],
     },
-    // --- Hammer Bro encounters (walker uses HB modes; injection skips) ---
-    LevelProtection {
-        level: "1HB1",
-        area: 0,
-        why: "every W1 Hammer Bro fight",
-        enemy_ptr: 0xC72B,
-        walker_segment: WalkerSegmentRule::HammerBro,
-        entries: &[],
-    },
-    LevelProtection {
-        level: "2HB1",
-        area: 0,
-        why: "W2 Hammer Bro fights",
-        enemy_ptr: 0xD14D,
-        walker_segment: WalkerSegmentRule::HammerBro,
-        entries: &[],
-    },
-    LevelProtection {
-        level: "2HB21",
-        area: 0,
-        why: "W2 Hammer Bro fights (variant)",
-        enemy_ptr: 0xD142,
-        walker_segment: WalkerSegmentRule::HammerBro,
-        entries: &[],
-    },
-    LevelProtection {
-        level: "3HB1",
-        area: 0,
-        why: "every W3, W5, W6 and W7 Hammer Bro fight",
-        enemy_ptr: 0xC640,
-        walker_segment: WalkerSegmentRule::HammerBro,
-        entries: &[],
-    },
-    LevelProtection {
-        level: "4HB1",
-        area: 0,
-        why: "every W4 Hammer Bro fight",
-        enemy_ptr: 0xD0EA,
-        walker_segment: WalkerSegmentRule::HammerBro,
-        entries: &[],
-    },
-    LevelProtection {
-        level: "8HB1",
-        area: 0,
-        why: "every W8 Hammer Bro fight (uses 7-7 layout)",
-        enemy_ptr: 0xC03D,
-        walker_segment: WalkerSegmentRule::HammerBro,
-        entries: &[],
-    },
     LevelProtection {
         level: "CoinShip",
         area: 1,
@@ -489,7 +441,13 @@ pub(super) fn rewrites_hammer_bro(segment_file_offset: usize, has_treasure_box: 
 
 /// Walker rule for the segment whose page byte sits at this absolute file
 /// offset. Returns `Default` for unprotected segments.
+///
+/// Every stream in [`HAMMER_BRO_OBJ_PTRS`] is a `HammerBro` segment; the table
+/// adds only the bro-fight rooms reached some other way.
 pub(super) fn walker_segment_rule_at(segment_file_offset: usize) -> WalkerSegmentRule {
+    if HAMMER_BRO_OBJ_PTRS.iter().any(|&p| enemy_ptr_to_file_offset(p) == segment_file_offset) {
+        return WalkerSegmentRule::HammerBro;
+    }
     LEVEL_PROTECTIONS
         .iter()
         .find(|l| {
