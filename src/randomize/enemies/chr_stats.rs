@@ -10,6 +10,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use rand::SeedableRng;
+
 use super::*;
 use crate::pipeline::{self, WildChaser};
 use crate::randomize::rom_data::enemy_ptr_to_file_offset;
@@ -272,4 +274,240 @@ fn chr_page_stats() {
     );
     println!("  Total injection events     : {inj_total:>5}");
     println!("  Avg per seed               : {:.1}", inj_total as f64 / NUM_SEEDS as f64);
+}
+
+// --- Live-window CHR clashes -------------------------------------------------
+//
+// Every frame each live object writes its PatTableSel page into slot 4 or 5
+// (`Object_DoStateAction`, prg000.asm), so two objects that want different
+// pages on one slot clash whenever both are *alive*, not only when both are on
+// screen. In a horizontal level an object spawns 1 tile past the right edge
+// (`LOSBS_LookAhead`) and is deleted 2 tiles past the right / 3 past the left
+// (`PRG000_D3CC`), so two stationary objects up to ~20 tiles apart can both be
+// live. A few routines use the wide `Object_DeleteOffScreen_N2` test (8 tiles
+// either side), stretching that to ~25. `CHR_GROUP_GAP` is 20; the bands below
+// keep the 16 boundary so runs before and after the change compare.
+//
+// Run with:
+//   cargo test --release --lib chr_clash_stats -- --ignored --nocapture
+
+/// Objects whose normal routine deletes through `Object_DeleteOffScreen_N2`
+/// (8 tiles past either edge): RotoDiscs, the sliding/vertical Thwomps (all
+/// Thwomps counted, an over-count for the plain dropper), Big Bertha's
+/// birther, the Flying Green Paratroopa and the tilting platform.
+fn is_wide_range(id: u8) -> bool {
+    ROTODISCS_SINGLE.contains(&id)
+        || ROTODISCS_DUAL.contains(&id)
+        || THWOMPS.contains(&id)
+        || matches!(id, 0x63 | 0x80 | 0x90)
+}
+
+/// One room as the clash count sees it: vertical flag + (offset, id, x).
+struct ClashRoom {
+    vertical: bool,
+    objects: Vec<(usize, u8, u8)>,
+}
+
+fn clash_rooms(rom: &Rom) -> Vec<ClashRoom> {
+    let mut seen = BTreeSet::new();
+    let mut rooms = Vec::new();
+    for area in level_index::every_level(rom).iter().flatten() {
+        if !seen.insert(area.objects_ptr) {
+            continue;
+        }
+        if let Some(objects) = level_index::read_objects(rom, area.objects_ptr, area.tileset) {
+            rooms.push(ClashRoom {
+                vertical: area.header.vertical(),
+                objects: objects.iter().map(|o| (o.offset, o.id, o.x)).collect(),
+            });
+        }
+    }
+    rooms
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+enum Band {
+    /// A level-wide chaser (CHASER_IDS) clashing with anything in the room.
+    Chaser,
+    /// Within CHR_GROUP_GAP: the model claims to prevent these.
+    Within16,
+    /// 17-20 tiles: both live under the standard deletion test.
+    Gap17To20,
+    /// 21-25 tiles, one of them wide-range: both live under the N2 test.
+    Gap21To25Wide,
+    /// Vertical level, any distance (X grouping does not apply there).
+    Vertical,
+}
+
+impl Band {
+    const ALL: [Band; 5] =
+        [Band::Chaser, Band::Within16, Band::Gap17To20, Band::Gap21To25Wide, Band::Vertical];
+    fn label(self) -> &'static str {
+        match self {
+            Band::Chaser => "chaser vs anything (any gap)",
+            Band::Within16 => "gap <= 16 (inside the model)",
+            Band::Gap17To20 => "gap 17-20 (both live)",
+            Band::Gap21To25Wide => "gap 21-25, wide-range object",
+            Band::Vertical => "vertical level (any gap)",
+        }
+    }
+}
+
+fn band(vertical: bool, a: u8, b: u8, gap: u8) -> Option<Band> {
+    if vertical {
+        return Some(Band::Vertical);
+    }
+    if CHASER_IDS.contains(&a) || CHASER_IDS.contains(&b) {
+        return Some(Band::Chaser);
+    }
+    match gap {
+        0..=16 => Some(Band::Within16),
+        17..=20 => Some(Band::Gap17To20),
+        21..=25 if is_wide_range(a) || is_wide_range(b) => Some(Band::Gap21To25Wide),
+        _ => None,
+    }
+}
+
+#[derive(Default)]
+struct ClashTally {
+    /// Per band: (all clashing pairs, pairs where at least one side changed).
+    counts: BTreeMap<Band, (u64, u64)>,
+    /// Per band: changed pairs by (name, name), unordered.
+    pairs: BTreeMap<Band, BTreeMap<(&'static str, &'static str), u64>>,
+    rooms_with_new: u64,
+}
+
+/// Count every same-slot, different-page pair in each room. `vanilla` is the
+/// unrandomized ROM, to tell a pair Nintendo shipped from one the pass made.
+fn tally_clashes(rooms: &[ClashRoom], vanilla: &Rom, t: &mut ClashTally) {
+    for room in rooms {
+        let mut room_new = false;
+        for (i, &(off_a, a, xa)) in room.objects.iter().enumerate() {
+            for &(off_b, b, xb) in &room.objects[i + 1..] {
+                let (Some(pa), Some(pb)) = (sprite_bank(a), sprite_bank(b)) else { continue };
+                if pa.slot != pb.slot || pa.chr_page == pb.chr_page {
+                    continue;
+                }
+                let Some(band) = band(room.vertical, a, b, xa.abs_diff(xb)) else { continue };
+                let changed = vanilla.read_byte(off_a) != a || vanilla.read_byte(off_b) != b;
+                let c = t.counts.entry(band).or_default();
+                c.0 += 1;
+                if changed {
+                    c.1 += 1;
+                    room_new = true;
+                    let (na, nb) = (name(a), name(b));
+                    let key = if na <= nb { (na, nb) } else { (nb, na) };
+                    *t.pairs.entry(band).or_default().entry(key).or_insert(0) += 1;
+                }
+            }
+        }
+        t.rooms_with_new += room_new as u64;
+    }
+}
+
+fn print_tally(title: &str, t: &ClashTally, seeds: u64) {
+    println!("\n=== {title} ===");
+    println!("  rooms with a changed clash: {:.1}/seed", t.rooms_with_new as f64 / seeds as f64);
+    println!("  {:<40} {:>10} {:>14}", "band", "all/seed", "changed/seed");
+    for b in Band::ALL {
+        let (all, new) = t.counts.get(&b).copied().unwrap_or((0, 0));
+        println!(
+            "  {:<40} {:>10.2} {:>14.2}",
+            b.label(),
+            all as f64 / seeds as f64,
+            new as f64 / seeds as f64
+        );
+    }
+    for b in Band::ALL {
+        let Some(pairs) = t.pairs.get(&b) else { continue };
+        let mut v: Vec<_> = pairs.iter().collect();
+        v.sort_by(|x, y| y.1.cmp(x.1).then(x.0.cmp(y.0)));
+        println!("\n  top changed pairs, {}:", b.label());
+        for ((na, nb), n) in v.iter().take(12) {
+            println!("    {:>7.2}/seed  {na} + {nb}", **n as f64 / seeds as f64);
+        }
+    }
+}
+
+#[test]
+#[ignore = "instrument: counts CHR page clashes between objects that can be live together"]
+fn chr_clash_stats() {
+    let Some(rom) = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes")
+        .ok()
+        .and_then(|b| Rom::from_bytes(&b).ok())
+    else {
+        eprintln!("SKIP: requires the ROM, which is not included in the repo");
+        return;
+    };
+    let seeds: u64 = std::env::var("CLASH_SEEDS").ok().and_then(|s| s.parse().ok()).unwrap_or(200);
+
+    let mut vanilla = ClashTally::default();
+    tally_clashes(&clash_rooms(&rom), &rom, &mut vanilla);
+    print_tally("VANILLA (Nintendo's own clashes; 'changed' is 0 by definition)", &vanilla, 1);
+
+    for (label, opts) in
+        [("DEFAULT FLAGS", Options::default()), ("ALL ENEMY CLASSES WILD", max_enemy_opts())]
+    {
+        let mut t = ClashTally::default();
+        for seed in 0..seeds {
+            let mut r = rom.clone();
+            pipeline::randomize(&mut r, seed, &opts);
+            tally_clashes(&clash_rooms(&r), &rom, &mut t);
+        }
+        print_tally(&format!("{label} ({seeds} seeds) {}", opts.to_flag_key()), &t, seeds);
+    }
+
+    // The enemy pass alone, on a vanilla ROM: no stage before or after it. A
+    // clash here is the pass breaking its own rules; one only in the finished
+    // ROM came from another stage.
+    let opts = max_enemy_opts();
+    let mut t = ClashTally::default();
+    let mut pass_time = std::time::Duration::ZERO;
+    for seed in 0..seeds {
+        let mut r = rom.clone();
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(seed);
+        let started = std::time::Instant::now();
+        randomize(&mut r, &mut rng, &opts);
+        pass_time += started.elapsed();
+        tally_clashes(&clash_rooms(&r), &rom, &mut t);
+    }
+    print_tally(&format!("ENEMY PASS ALONE, ALL WILD ({seeds} seeds)"), &t, seeds);
+    println!("\n  enemy pass time: {:.3} ms/seed", pass_time.as_secs_f64() * 1000.0 / seeds as f64);
+}
+
+/// The pass never adds a CHR clash between two enemies it groups together:
+/// no new same-slot, different-page pair within [`CHR_GROUP_GAP`] in a
+/// horizontal room, and none at all in a vertical one. Chasers are left out
+/// on purpose: Wild injection can still place one beside an enemy that then
+/// fails to change, which `chr_clash_stats` reports and this does not claim to
+/// prevent. Runs the enemy pass alone, so a failure here is the pass's own.
+#[test]
+fn enemy_pass_adds_no_chr_clash_within_a_group() {
+    let Some(rom) = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes")
+        .ok()
+        .and_then(|b| Rom::from_bytes(&b).ok())
+    else {
+        eprintln!("SKIP: requires the ROM, which is not included in the repo");
+        return;
+    };
+    // The two bands checked below together cover gaps 0..=20.
+    assert_eq!(CHR_GROUP_GAP, 20, "re-point the bands checked here at the new gap");
+    for (label, opts) in [("default", Options::default()), ("all Wild", max_enemy_opts())] {
+        let mut t = ClashTally::default();
+        for seed in 0..50 {
+            let mut r = rom.clone();
+            randomize(&mut r, &mut rand_chacha::ChaCha8Rng::seed_from_u64(seed), &opts);
+            tally_clashes(&clash_rooms(&r), &rom, &mut t);
+        }
+        for b in [Band::Within16, Band::Gap17To20, Band::Vertical] {
+            let new = t.counts.get(&b).map_or(0, |c| c.1);
+            assert_eq!(
+                new,
+                0,
+                "{label}: {new} new clash(es) in band '{}': {:?}",
+                b.label(),
+                t.pairs.get(&b)
+            );
+        }
+    }
 }

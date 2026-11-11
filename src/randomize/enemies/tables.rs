@@ -465,12 +465,28 @@ pub(super) const MAX_BERTHA_PER_SEGMENT: u8 = 2;
 pub(super) const MAX_ADDED_HAZARDS_PER_SEGMENT: u8 = 1;
 
 /// Maximum X-tile gap between consecutive enemies (sorted by X) before they
-/// are split into separate CHR groups. Enemies more than one screen apart
-/// can never be visible simultaneously, so they don't need compatible CHR pages.
-pub(super) const CHR_GROUP_GAP: u8 = 16;
+/// are split into separate CHR groups.
+///
+/// What matters is not whether two enemies are on screen together but whether
+/// both are *alive*: every live object rewrites its CHR page each frame
+/// (`Object_DoStateAction`, prg000.asm), and the last writer wins. An object
+/// spawns 1 tile past the right edge (`LOSBS_LookAhead`) and is deleted 2 past
+/// the right or 3 past the left (`PRG000_D3CC`), so two stationary enemies up
+/// to ~20 tiles apart can both be live. 16 (one screen) missed that band: at
+/// 200 all-Wild seeds it left ~14 garbled pairs per seed at gaps 17-20, and ~5
+/// on default flags; 20 removes them for ~2% less spread across the wild pool.
+/// Objects deleted through the wider `Object_DeleteOffScreen_N2` test can
+/// still reach ~25; see `chr_clash_stats`.
+pub(super) const CHR_GROUP_GAP: u8 = 20;
+
+/// How many times a CHR group is picked again when an enemy that could not be
+/// replaced clashed with an earlier pick (see the group loop in
+/// `randomize_object_data`). Each retry fixes the enemies that clashed, so the
+/// other picks route around their pages; past the cap the last attempt stands.
+pub(super) const MAX_CHR_REROLLS: usize = 2;
 
 /// Enemies whose CHR page constrains *every* proximity group in the segment,
-/// so the one-screen assumption behind [`CHR_GROUP_GAP`] does not hold and
+/// so the proximity assumption behind [`CHR_GROUP_GAP`] does not hold and
 /// placing one anywhere requires compatibility with every page committed
 /// anywhere in the segment. Two ways to earn membership:
 /// - True chasers that follow the player across the whole level: Lakitu
