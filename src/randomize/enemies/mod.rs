@@ -3,7 +3,8 @@
 //!
 //! Split across submodules: `tables` (class data), `sprite_bank` (CHR model),
 //! `class_modes` (mode/pool resolution), `picking` (selection mechanics),
-//! `segments` (HB wild segments), `injection` (wild injection). This module
+//! `segments` (the parsed segment, CHR pins, proximity groups, HB Wild
+//! picks), `injection` (wild injection). This module
 //! holds the orchestration entry points and the main object-data walker.
 
 use std::borrow::Cow;
@@ -283,7 +284,7 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, opts: &Options, sta
                         continue;
                     }
                     // SkipSwap keeps its enemy; its CHR page was already pinned
-                    // in Pass 1 (is_pinned covers SkipSwap protections). So was
+                    // in Pass 1 (`is_fixed`, via `is_pinned`, covers SkipSwap). So was
                     // an enemy a previous attempt had to keep.
                     if protection == Some(EntryProtection::SkipSwap) || kept.contains(&idx) {
                         continue;
@@ -317,15 +318,15 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, opts: &Options, sta
                     else {
                         // No swap (protection mode off, unknown class, or no
                         // compatible candidate) — the vanilla enemy stays, so its
-                        // page is a real on-screen commitment like any pick.
-                        // (Redundant for pass-1-pinned entries; it matters when a
-                        // swappable entry found no compatible replacement, and
-                        // then a clash sends the group round again.)
-                        let fits =
-                            is_chr_compatible(entry.obj_id, committed_slot4, committed_slot5)
-                                && (!CHASER_IDS.contains(&entry.obj_id)
-                                    || is_chr_compatible(entry.obj_id, seg_all4, seg_all5));
-                        if !fits {
+                        // page is a real on-screen commitment like any pick. If
+                        // it is the one that breaks a slot, the group goes round
+                        // again with it fixed first. A pass-1-pinned entry never
+                        // trips this: its own page is already in the slot.
+                        let clashes =
+                            would_conflict(entry.obj_id, committed_slot4, committed_slot5)
+                                || (CHASER_IDS.contains(&entry.obj_id)
+                                    && would_conflict(entry.obj_id, seg_all4, seg_all5));
+                        if clashes {
                             clashed.push(idx);
                         }
                         commit_chr_page(entry.obj_id, &mut committed_slot4, &mut committed_slot5);

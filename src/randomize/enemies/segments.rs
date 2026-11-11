@@ -1,4 +1,5 @@
-//! Hammer-Bro "wild" segment randomization with stompability constraints.
+//! One parsed segment and the walker's state for it: entries, CHR pins,
+//! placement limits and proximity groups; plus the Hammer Bro Wild batch pick.
 
 use super::*;
 
@@ -25,7 +26,7 @@ pub(super) struct SegmentPins {
 /// that entry draws from. The first two are properties of the *room*, not the
 /// slot, which is why they ride alongside the per-entry protections rather
 /// than being expressed as `EntryRule`s. `hazard_cap_full` is the one
-/// run-scoped member: it rides here because `pick_replacement`'s `keep` is the
+/// member that changes as the segment's picks are made: it rides here because `pick_replacement`'s `keep` is the
 /// single place every pick funnels through, so one field there covers the
 /// class pools, the wild pool and all four protection paths at once.
 #[derive(Clone, Copy)]
@@ -60,8 +61,7 @@ pub(super) fn is_fixed(entry: &SegmentEntry, modes: &ClassModes, injected: &[usi
 /// to replace, whose page is on its way out.
 ///
 /// Single definition on purpose: the injection decision and the walker's own
-/// seeding must agree about what "already pinned" means, and a second copy of
-/// this loop is what let the old pre-walk injection pass drift.
+/// seeding must agree about what "already pinned" means.
 pub(super) fn segment_pins(
     entries: &[SegmentEntry],
     modes: &ClassModes,
@@ -105,11 +105,6 @@ pub(super) fn chr_groups(entries: &[SegmentEntry]) -> Vec<Vec<usize>> {
     groups
 }
 
-/// HB Wild segment randomization with stompability constraints.
-/// 1-enemy segments: pick from STOMPABLE_ENEMIES only.
-/// 2-enemy segments: `HB_NONSTOMPABLE_ODDS` chance for the non-stompable path
-/// (one from HB_NEEDS_SHELL_ENEMIES + one from SHELL_ENEMIES), otherwise both
-/// stompable.
 /// Write one HB Wild pick, raising the single enemy in the pool whose AI
 /// ignores the floor. See [`HB_FLYER_RAISE_ROWS`] for why 7 rows.
 ///
@@ -126,6 +121,11 @@ fn place_hb_pick(data: &mut [u8], id_index: usize, id: u8, closed_room: bool) {
     }
 }
 
+/// HB Wild segment randomization with stompability constraints.
+/// 1-enemy segments: pick from STOMPABLE_ENEMIES only.
+/// 2-enemy segments: `HB_NONSTOMPABLE_ODDS` chance for the non-stompable path
+/// (one from HB_NEEDS_SHELL_ENEMIES + one from SHELL_ENEMIES), otherwise both
+/// stompable. Segments with more swappable entries are left as they are.
 pub(super) fn randomize_hb_wild_segment<R: Rng>(
     data: &mut [u8],
     entries: &[SegmentEntry],

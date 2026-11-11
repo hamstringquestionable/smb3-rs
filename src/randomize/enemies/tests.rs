@@ -1092,7 +1092,7 @@ struct PlacementStats {
 /// The deterministic set of enemy-data offsets (relative to ENEMY_DATA_START)
 /// that the wild-injection pass may overwrite: the first real entry of each
 /// `NodeKind::Level` whose first enemy is swappable and unprotected. Mirrors
-/// `inject_wild_chasers`' candidate selection. RNG decides *whether* a slot
+/// `collect_candidates`' selection. RNG decides *whether* a slot
 /// is injected, but the candidate set is fixed.
 fn injectable_offsets(
     base: &Rom,
@@ -1824,7 +1824,7 @@ fn wild_injection_rework_guarantees() {
 
 /// Buffer index of a level's first enemy byte, or `None` when `obj_ptr`
 /// isn't a real enemy set (out of range, or an empty level). Mirrors the
-/// frame `inject_wild_chasers` uses — shared by the injection tests, which
+/// frame `inject_segment_chasers` uses — shared by the injection tests, which
 /// all compare a patched first enemy against vanilla's.
 fn first_enemy_idx(obj_ptr: u16, data: &[u8]) -> Option<usize> {
     use crate::randomize::rom_data::enemy_ptr_to_file_offset;
@@ -2085,4 +2085,124 @@ fn wild_injection_favors_sun() {
     assert!(lakitus > 0, "no Lakitu injected at all across 40 seeds");
     // 2:1 weighting over hundreds of samples — suns should clearly lead.
     assert!(suns > lakitus, "expected sun-favored injection, got {suns} suns vs {lakitus} Lakitu");
+}
+
+/// `sprite_bank` is copied by hand from the five `ObjectGroupNN_PatTableSel`
+/// tables (one per object bank, PRG001-PRG005, each at `$A144` and covering
+/// 36 IDs). This reads them back and compares, so a mistyped page or slot, or
+/// a missing arm, fails here instead of garbling sprites on hardware. A byte
+/// of 0 means no bank switch; otherwise bit 7 picks `PatTable_BankSel+5` over
+/// `+4` and the low 7 bits are the page (`Object_DoStateAction`, prg000).
+///
+/// IDs past `0xB3` (the cannon fires) have no table entry; their arms come
+/// from in-routine bank writes and are covered by their own comments.
+#[test]
+fn sprite_bank_matches_the_rom_pattable_tables() {
+    use crate::randomize::rom_data::prg_bank_cpu_to_file;
+    let Some(rom) = load_reference_rom() else {
+        eprintln!(
+            "reference ROM not present — skipping sprite_bank_matches_the_rom_pattable_tables"
+        );
+        return;
+    };
+    const PAT_TABLE_SEL: u16 = 0xA144;
+    // Deliberate departures from the ROM table, each with its reason.
+    const MODELLED: &[(u8, &str)] = &[(
+        0x77,
+        "Green Cheep requests no page and draws from whatever slot 5 holds; \
+         modelled as $4F, the page its sibling cheeps request, so picks keep \
+         slot 5 compatible with it",
+    )];
+    let mut mismatches = Vec::new();
+    for id in 0x00..=0xB3u8 {
+        if MODELLED.iter().any(|&(m, _)| m == id) {
+            continue;
+        }
+        let (group, rel) = (id as usize / 36, id as u16 % 36);
+        let b = rom.read_byte(prg_bank_cpu_to_file(group + 1, PAT_TABLE_SEL + rel));
+        let rom_bank = (b != 0).then(|| (b & 0x7F, if b & 0x80 == 0 { 4 } else { 5 }));
+        let ours = sprite_bank(id).map(|s| (s.chr_page, s.slot));
+        if rom_bank != ours {
+            mismatches.push(format!("0x{id:02X}: ROM {rom_bank:02X?}, sprite_bank {ours:02X?}"));
+        }
+    }
+    assert!(
+        mismatches.is_empty(),
+        "sprite_bank disagrees with the ROM:\n{}",
+        mismatches.join("\n")
+    );
+}
+
+/// Every enemy the pass can place has a `sprite_bank` entry, unless it truly
+/// needs no bank switch. `sprite_bank` returning `None` makes an ID compatible
+/// with every page, so a new pool member left out of it would be placed next
+/// to anything and garble on hardware.
+#[test]
+fn every_placeable_enemy_has_a_sprite_bank() {
+    let pools: [&[u8]; 15] = [
+        GROUND_ENEMIES,
+        SHELL_ENEMIES,
+        FLYING_ENEMIES,
+        PIRANHAS_WILD,
+        PIRANHASC_WILD,
+        GHOST_ENEMIES,
+        THWOMPS,
+        ROTODISCS_SINGLE,
+        ROTODISCS_DUAL,
+        ALL_CANNONS,
+        WATER_ENEMIES,
+        BRO_ENEMIES,
+        STOMPABLE_ENEMIES,
+        HB_NEEDS_SHELL_ENEMIES,
+        WILD_INJECTION_IDS,
+    ];
+    let missing: std::collections::BTreeSet<u8> = pools
+        .iter()
+        .flat_map(|p| p.iter().copied())
+        .filter(|&id| sprite_bank(id).is_none())
+        .collect();
+    assert!(missing.is_empty(), "pool members with no sprite_bank entry: {missing:02X?}");
+}
+
+/// The CHR re-roll, without the ROM. Two Wild enemies come first and a
+/// piranha a few tiles later. The piranha's Wild pool spans only four pages
+/// (`$3D`/`$36` on slot 4, `$4F`/`$37` on slot 5), so when the two picks fill
+/// both slots with other pages the piranha finds no candidate, keeps its
+/// vanilla `$4F`, and the group clashes. The re-roll picks the group again
+/// with the piranha committed first, so no finished group may clash. With
+/// `MAX_CHR_REROLLS = 0` this fails.
+#[test]
+fn chr_reroll_routes_a_pick_around_an_enemy_that_could_not_change() {
+    let opts = Options {
+        ground: EnemyMode::Wild,
+        shell: EnemyMode::Wild,
+        flying: EnemyMode::Wild,
+        piranhas: EnemyMode::Wild,
+        ghosts: EnemyMode::Wild,
+        water: EnemyMode::Wild,
+        bros: EnemyMode::Wild,
+        ..Options::default()
+    };
+    let mut clashes = 0;
+    for seed in 0..200 {
+        let mut rom = rom_with_segment(&[
+            0xFF, // leading terminator
+            0x00, // page flag
+            0x72, 0x10, 0x19, // Goomba: Wild
+            0x72, 0x12, 0x19, // Goomba: Wild
+            0xA0, 0x14, 0x17, // Green Piranha: same group, picks last
+            0xFF,
+        ]);
+        randomize_fixture(&mut rom, &mut ChaCha8Rng::seed_from_u64(seed), &opts);
+        let ids = [2, 5, 8].map(|k| rom.read_byte(ENEMY_DATA_START + k));
+        let (mut s4, mut s5) = (ChrSlot::Free, ChrSlot::Free);
+        for id in ids {
+            commit_chr_page(id, &mut s4, &mut s5);
+        }
+        if s4 == ChrSlot::Conflicted || s5 == ChrSlot::Conflicted {
+            clashes += 1;
+            eprintln!("seed {seed}: {ids:02X?} clash");
+        }
+    }
+    assert_eq!(clashes, 0, "{clashes} of 200 seeds left a CHR clash in one group");
 }

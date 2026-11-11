@@ -1,5 +1,7 @@
-//! CHR page statistics across many seeds vs vanilla. An instrument, not a
-//! check: it prints and asserts nothing. Run with:
+//! CHR page statistics across many seeds vs vanilla: two ignored instruments
+//! that print and assert nothing (`chr_page_stats`, `chr_clash_stats`), and one
+//! regression test built on the same clash scan
+//! (`enemy_pass_adds_no_chr_clash_within_a_group`). Run an instrument with:
 //!
 //! ```sh
 //! cargo test --release --lib chr_page_stats -- --ignored --nocapture
@@ -19,9 +21,9 @@ use crate::randomize::rom_data::level_index::{self, object_name};
 
 /// Wild-injection-only obj_ids. Neither is a member of any class swap pool,
 /// so any occurrence in a patched ROM where vanilla differed comes from wild
-/// injection. (BossBass 0x63 is excluded because it's also in WATER_ENEMIES
-/// and ambiguous under Wild water mode.)
-const INJECTION_ONLY_IDS: &[u8] = &[0x83, 0xAF];
+/// injection. (Boss Bass is left out because it's also in WATER_ENEMIES and
+/// ambiguous under Wild water mode.)
+const INJECTION_ONLY_IDS: &[u8] = &[LAKITU_ID, ANGRY_SUN_ID];
 
 const NUM_SEEDS: u64 = 200;
 
@@ -285,8 +287,7 @@ fn chr_page_stats() {
 // (`LOSBS_LookAhead`) and is deleted 2 tiles past the right / 3 past the left
 // (`PRG000_D3CC`), so two stationary objects up to ~20 tiles apart can both be
 // live. A few routines use the wide `Object_DeleteOffScreen_N2` test (8 tiles
-// either side), stretching that to ~25. `CHR_GROUP_GAP` is 20; the bands below
-// keep the 16 boundary so runs before and after the change compare.
+// either side), stretching that to ~25.
 //
 // Run with:
 //   cargo test --release --lib chr_clash_stats -- --ignored --nocapture
@@ -329,25 +330,22 @@ fn clash_rooms(rom: &Rom) -> Vec<ClashRoom> {
 enum Band {
     /// A level-wide chaser (CHASER_IDS) clashing with anything in the room.
     Chaser,
-    /// Within CHR_GROUP_GAP: the model claims to prevent these.
-    Within16,
-    /// 17-20 tiles: both live under the standard deletion test.
-    Gap17To20,
-    /// 21-25 tiles, one of them wide-range: both live under the N2 test.
-    Gap21To25Wide,
+    /// Within CHR_GROUP_GAP: the pass prevents these.
+    WithinGroup,
+    /// Past CHR_GROUP_GAP up to 25 tiles, one of them wide-range: both live
+    /// under the N2 test, outside the model.
+    WideRange,
     /// Vertical level, any distance (X grouping does not apply there).
     Vertical,
 }
 
 impl Band {
-    const ALL: [Band; 5] =
-        [Band::Chaser, Band::Within16, Band::Gap17To20, Band::Gap21To25Wide, Band::Vertical];
+    const ALL: [Band; 4] = [Band::Chaser, Band::WithinGroup, Band::WideRange, Band::Vertical];
     fn label(self) -> &'static str {
         match self {
             Band::Chaser => "chaser vs anything (any gap)",
-            Band::Within16 => "gap <= 16 (inside the model)",
-            Band::Gap17To20 => "gap 17-20 (both live)",
-            Band::Gap21To25Wide => "gap 21-25, wide-range object",
+            Band::WithinGroup => "within CHR_GROUP_GAP (inside the model)",
+            Band::WideRange => "past the gap to 25, wide-range object",
             Band::Vertical => "vertical level (any gap)",
         }
     }
@@ -360,11 +358,12 @@ fn band(vertical: bool, a: u8, b: u8, gap: u8) -> Option<Band> {
     if CHASER_IDS.contains(&a) || CHASER_IDS.contains(&b) {
         return Some(Band::Chaser);
     }
-    match gap {
-        0..=16 => Some(Band::Within16),
-        17..=20 => Some(Band::Gap17To20),
-        21..=25 if is_wide_range(a) || is_wide_range(b) => Some(Band::Gap21To25Wide),
-        _ => None,
+    if gap <= CHR_GROUP_GAP {
+        Some(Band::WithinGroup)
+    } else if gap <= 25 && (is_wide_range(a) || is_wide_range(b)) {
+        Some(Band::WideRange)
+    } else {
+        None
     }
 }
 
@@ -490,8 +489,6 @@ fn enemy_pass_adds_no_chr_clash_within_a_group() {
         eprintln!("SKIP: requires the ROM, which is not included in the repo");
         return;
     };
-    // The two bands checked below together cover gaps 0..=20.
-    assert_eq!(CHR_GROUP_GAP, 20, "re-point the bands checked here at the new gap");
     for (label, opts) in [("default", Options::default()), ("all Wild", max_enemy_opts())] {
         let mut t = ClashTally::default();
         for seed in 0..50 {
@@ -499,7 +496,7 @@ fn enemy_pass_adds_no_chr_clash_within_a_group() {
             randomize(&mut r, &mut rand_chacha::ChaCha8Rng::seed_from_u64(seed), &opts);
             tally_clashes(&clash_rooms(&r), &rom, &mut t);
         }
-        for b in [Band::Within16, Band::Gap17To20, Band::Vertical] {
+        for b in [Band::WithinGroup, Band::Vertical] {
             let new = t.counts.get(&b).map_or(0, |c| c.1);
             assert_eq!(
                 new,
