@@ -56,7 +56,7 @@ pub(super) fn collect_injection_sites(rom: &Rom, opts: &Options) -> InjectionSit
 }
 
 /// Which chaser an obj_id is, for matching against the player's allowed set.
-fn chaser_of(id: u8) -> Option<WildChaser> {
+pub(super) fn chaser_of(id: u8) -> Option<WildChaser> {
     match id {
         ANGRY_SUN_ID => Some(WildChaser::Sun),
         LAKITU_ID => Some(WildChaser::Lakitu),

@@ -2206,3 +2206,52 @@ fn chr_reroll_routes_a_pick_around_an_enemy_that_could_not_change() {
     }
     assert_eq!(clashes, 0, "{clashes} of 200 seeds left a CHR clash in one group");
 }
+
+/// Every chaser the player can pick is wired through all three places that
+/// name it by hand. Missing from `WILD_INJECTION_IDS` or `chaser_of`, turning
+/// it on silently does nothing; missing from `CHASER_IDS`, the walker treats
+/// it as a stationary enemy and checks its CHR page against one proximity
+/// group only, though it follows the player through all of them.
+#[test]
+fn every_wild_chaser_is_wired_through() {
+    for c in WildChaser::ALL {
+        let ids: Vec<u8> =
+            WILD_INJECTION_IDS.iter().copied().filter(|&id| chaser_of(id) == Some(c)).collect();
+        assert_eq!(ids.len(), 1, "{c:?}: WILD_INJECTION_IDS/chaser_of give {ids:02X?}");
+        assert!(CHASER_IDS.contains(&ids[0]), "{c:?} (${:02X}) is not in CHASER_IDS", ids[0]);
+    }
+    assert_eq!(WILD_INJECTION_IDS.len(), WildChaser::ALL.len(), "an injection ID with no option");
+}
+
+/// No enemy belongs to two classes. `find_class_pool` is first-match-wins, so
+/// an ID added to a second class would silently follow whichever is checked
+/// first and ignore the other's mode.
+#[test]
+fn enemy_classes_are_disjoint() {
+    let classes: [(&str, &[u8]); 14] = [
+        ("GROUND", GROUND_ENEMIES),
+        ("SHELL", SHELL_ENEMIES),
+        ("FLYING", FLYING_ENEMIES),
+        ("PIRANHAS_WILD", PIRANHAS_WILD),
+        ("PIRANHASC_WILD", PIRANHASC_WILD),
+        ("GHOST", GHOST_ENEMIES),
+        ("THWOMPS", THWOMPS),
+        ("ROTODISCS_SINGLE", ROTODISCS_SINGLE),
+        ("ROTODISCS_DUAL", ROTODISCS_DUAL),
+        ("WATER", WATER_ENEMIES),
+        ("BRO", BRO_ENEMIES),
+        ("CFIRE_LEFT", CFIRE_LEFT),
+        ("CFIRE_RIGHT", CFIRE_RIGHT),
+        ("CFIRE_BILLS", CFIRE_BILLS),
+    ];
+    let mut owner: std::collections::BTreeMap<u8, &str> = std::collections::BTreeMap::new();
+    let mut overlaps = Vec::new();
+    for (name, ids) in classes {
+        for &id in ids {
+            if let Some(prev) = owner.insert(id, name) {
+                overlaps.push(format!("${id:02X} is in both {prev} and {name}"));
+            }
+        }
+    }
+    assert!(overlaps.is_empty(), "{}", overlaps.join("\n"));
+}
