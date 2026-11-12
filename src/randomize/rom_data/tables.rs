@@ -898,14 +898,6 @@ pub(crate) const HB_NEEDS_SHELL_ENEMIES: &[u8] = &[
     0x3F, // DryBones — stompable but revives; only a shell clears it
 ];
 
-/// Specific (obj_ptr, tileset) pairs to exclude from the HB cycling pool.
-/// `W3[41]` has lay=0xB3E7 with tileset 3, but the layout is designed for tileset 1
-/// (17 other entries with the same layout use tileset 1). Loading it with tileset 3
-/// causes garbled background graphics.
-pub(crate) const HB_EXCLUDE_ENTRIES: &[(u16, u8)] = &[
-    (0xC640, 3), // W3[41] — tileset 3 is wrong for lay 0xB3E7
-];
-
 /// Map-object sprite slots per world. Slot 0 always holds a fixed non-HB
 /// marker and slot 1 is the airship's in W1-W7; see
 /// `rom_data::first_usable_map_obj_slot`.
