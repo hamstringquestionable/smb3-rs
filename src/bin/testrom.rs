@@ -47,6 +47,7 @@ EXAMPLES:\n  \
   testrom --place 6F1                    park 6-F1 on tile 1 of World 1\n  \
   testrom --place 6F1 5F1 8B             park three levels on tiles 1, 2, 3\n  \
   testrom --place 3:8B                   park Bowser's Castle on tile 3\n  \
+  testrom --place 5-7/1                  park 5-7's sub-area (area 1) on tile 1\n  \
   testrom --place 7A --world 7           test World 7's airship on its home map\n  \
   testrom --randomize --seed 12345       playtest a randomized overworld\n  \
   testrom --randomize --keep-locks       test lock placement on a real seed\n  \
@@ -66,6 +67,8 @@ struct Cli {
     /// the tile. Names are case-insensitive and dashes are optional. Append
     /// "@ts10" to show the level under another tileset (its layout is copied
     /// into that tileset's bank), or "@raw13" to change the tileset byte alone.
+    /// "5-7/1" places area 1 of 5-7 (its sub-area), numbered as `rominfo
+    /// --level` prints them.
     #[arg(short, long, num_args = 1..)]
     place: Vec<String>,
 

@@ -16,7 +16,7 @@ use crate::randomize::cosmetic::map_background::PALSET_MAPS;
 use crate::randomize::levels::big_q_rooms;
 use crate::randomize::overworld::node_catalog::{EntryView, NodeCatalog, level_name_key};
 use crate::randomize::overworld::world_order::WORLD_INIT_OPERAND;
-use crate::randomize::rom_data::{self, LevelEntry};
+use crate::randomize::rom_data::{self, LevelEntry, level_index};
 use crate::rom::Rom;
 use crate::{Options, randomize_rom};
 
@@ -504,7 +504,28 @@ fn source_catalog(vanilla: &[u8], include_beta: bool) -> Result<Vec<EntryView>, 
 ///
 /// `UNLISTED_LEVELS` is checked first: those levels have no pointer table entry
 /// for the catalog to have classified, so they can only be resolved by name.
-fn resolve(catalog: &[EntryView], name: &str) -> Result<LevelEntry, String> {
+///
+/// A `/N` suffix names area `N` of the level instead (`5-7/1` is 5-7's
+/// sub-area), numbered as `rominfo --level` prints them. The area is traced
+/// in vanilla and placed as an entry of its own, so a sub-area normally
+/// reached through a pipe can be walked into from the map.
+fn resolve(vanilla: &[u8], catalog: &[EntryView], name: &str) -> Result<LevelEntry, String> {
+    let Some((base, area)) = name.split_once('/') else {
+        return resolve_level(catalog, name);
+    };
+    let entry = resolve_level(catalog, base)?;
+    let n: usize = area.trim().parse().map_err(|_| format!("bad area number in {name:?}"))?;
+    let rom = Rom::from_bytes_lax(vanilla, true).map_err(|e| e.to_string())?;
+    let (areas, _) = level_index::trace(&rom, &entry)
+        .map_err(|dead| format!("{base} does not lead to a level area: {dead:?}"))?;
+    let a =
+        areas.get(n).ok_or_else(|| format!("{base} has {} area(s); no area {n}", areas.len()))?;
+    let [lay_lo, lay_hi] = a.layout_ptr.to_le_bytes();
+    let [obj_lo, obj_hi] = a.objects_ptr.to_le_bytes();
+    Ok(LevelEntry { tileset: a.tileset, obj_lo, obj_hi, lay_lo, lay_hi })
+}
+
+fn resolve_level(catalog: &[EntryView], name: &str) -> Result<LevelEntry, String> {
     let want = level_name_key(name);
     if let Some((_, entry)) =
         rom_data::UNLISTED_LEVELS.iter().find(|(n, _)| level_name_key(n) == want)
@@ -1143,7 +1164,7 @@ pub fn build(vanilla: &[u8], spec: &TestRomSpec) -> Result<TestRom, String> {
         let world = &rom_data::world_tables(&rom, world_idx);
 
         if let Some(name) = &spec.place_all {
-            let entry = resolve(&catalog, name)?;
+            let entry = resolve(vanilla, &catalog, name)?;
             for (_, entry_idx) in &slots {
                 rom_data::write_entry(&mut rom, world, *entry_idx, &entry);
             }
@@ -1157,7 +1178,7 @@ pub fn build(vanilla: &[u8], spec: &TestRomSpec) -> Result<TestRom, String> {
         let mut next_free = 0usize;
         let mut reskin_used = std::collections::HashMap::new();
         for placement in &spec.placements {
-            let mut entry = resolve(&catalog, &placement.level)?;
+            let mut entry = resolve(vanilla, &catalog, &placement.level)?;
             let mut reskin_note = String::new();
             if let Some(reskin) = placement.reskin {
                 let (reskinned, note) = reskin_entry(&mut rom, &entry, reskin, &mut reskin_used)?;
@@ -1429,7 +1450,7 @@ pub fn build(vanilla: &[u8], spec: &TestRomSpec) -> Result<TestRom, String> {
     if !spec.set_layouts.is_empty() {
         let catalog = source_catalog(vanilla, spec.include_beta)?;
         for ov in &spec.set_layouts {
-            let entry = resolve(&catalog, &ov.level)?;
+            let entry = resolve(vanilla, &catalog, &ov.level)?;
             let lay = (entry.lay_hi as u16) << 8 | entry.lay_lo as u16;
             let base = rom_data::layout_file_offset(lay, entry.tileset)
                 .ok_or_else(|| format!("{:?} has no layout data", ov.level))?;
@@ -1483,6 +1504,24 @@ mod tests {
 
     fn vanilla() -> Option<Vec<u8>> {
         std::fs::read(VANILLA).ok()
+    }
+
+    /// `5-7/1` names 5-7's sub-area: the plains area its sky half pipes
+    /// into, which `rominfo --level 5-7` lists as area 1.
+    #[test]
+    fn an_area_suffix_resolves_to_that_area() {
+        let Some(bytes) = vanilla() else { return };
+        let catalog = source_catalog(&bytes, false).unwrap();
+        let sub = resolve(&bytes, &catalog, "5-7/1").unwrap();
+        assert_eq!(
+            (sub.tileset, sub.lay_hi, sub.lay_lo, sub.obj_hi, sub.obj_lo),
+            (1, 0xA4, 0xF9, 0xC1, 0x66)
+        );
+        assert_eq!(
+            resolve(&bytes, &catalog, "5-7/0").unwrap(),
+            resolve(&bytes, &catalog, "5-7").unwrap()
+        );
+        assert!(resolve(&bytes, &catalog, "5-7/2").unwrap_err().contains("no area 2"));
     }
 
     fn spec() -> TestRomSpec {

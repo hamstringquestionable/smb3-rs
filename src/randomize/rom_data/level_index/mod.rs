@@ -32,4 +32,6 @@ pub(crate) use objects::Object;
 pub(crate) use objects::read_objects;
 
 #[cfg(test)]
+mod terrain;
+#[cfg(test)]
 mod tests;
