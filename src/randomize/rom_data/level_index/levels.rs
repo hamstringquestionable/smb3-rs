@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::randomize::rom_data::{self, BETA_LEVELS, UNLISTED_LEVELS};
 use crate::rom::Rom;
 
-use super::{Area, PowerBlock, power_blocks, read_commands, trace};
+use super::{Area, LEVEL_HEADER_SIZE, PowerBlock, power_blocks, read_commands, trace};
 
 /// Every level the game can load, each as its areas, main area first.
 ///
@@ -26,6 +26,28 @@ pub(crate) fn every_level(rom: &Rom) -> Vec<Vec<Area>> {
     entries.extend(BETA_LEVELS.iter().map(|b| b.entry()));
     entries.extend(UNLISTED_LEVELS.iter().map(|(_, e)| e.clone()));
     entries.iter().filter_map(|e| trace(rom, e).ok()).map(|(areas, _)| areas).collect()
+}
+
+/// The headers in `levels` whose nine bytes are also another area's bytes
+/// (its header or its commands). A writer must leave these alone: a byte two
+/// areas read cannot be changed for one without changing the other.
+///
+/// Vanilla has one such pair. 3HB18's header (`0x213F7`) sits inside 7-3's
+/// last command, and its byte 8 is byte 4 of the W1 Hammer Bro arena header
+/// after it (`0x213FB`) — the arena's width. Both headers are returned, so
+/// the answer does not depend on which levels a seed places: without 7-3 on
+/// a map, nothing else marks 3HB18 as data rather than a header.
+pub(crate) fn shared_headers(levels: &[Vec<Area>]) -> BTreeSet<usize> {
+    let spans: BTreeSet<(usize, usize)> =
+        levels.iter().flatten().map(|a| (a.header.offset, a.terminator)).collect();
+    spans
+        .iter()
+        .map(|&(h, _)| h)
+        .filter(|&h| {
+            let last = h + LEVEL_HEADER_SIZE - 1;
+            spans.iter().any(|&(s, e)| s != h && s <= last && h <= e)
+        })
+        .collect()
 }
 
 /// Every powerup block in [`every_level`], once each, in file order.

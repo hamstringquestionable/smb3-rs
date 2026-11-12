@@ -9,6 +9,14 @@ deploys.
 
 ## [Unreleased]
 
+### Fixed
+
+- Random level music: on seeds where 7-3 is not on any map (common with Deja
+  Vu), the World 1 Hammer Bro arena could be widened from one screen to as
+  many as eleven, so the screen kept scrolling right during the fight. The
+  arena's size is never touched now. With random level music on, the songs a
+  seed deals differ from 3.1.1; nothing else does.
+
 ## [3.1.1] - 2026-11-10
 
 ### Fixed
