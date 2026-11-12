@@ -24,7 +24,7 @@ pub(crate) use areas::{Area, trace};
 pub(crate) use areas::{ChainEnd, DeadAlt};
 pub(crate) use commands::{PowerBlock, power_blocks, read_commands};
 pub(crate) use header::{LEVEL_HEADER_SIZE, LevelHeader};
-pub(crate) use levels::{every_level, every_power_block};
+pub(crate) use levels::{every_level, every_power_block, shared_headers};
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use object_names::object_name;
 #[cfg(not(target_arch = "wasm32"))]

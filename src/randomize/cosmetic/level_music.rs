@@ -13,12 +13,13 @@
 //! [`POOL`] keep their place: those songs tell the player what the room is.
 //!
 //! Levels are found through [`level_index`], never by scanning, and a header
-//! whose bytes overlap another area (vanilla's 3HB18) is never written.
+//! whose bytes are also another area's ([`level_index::shared_headers`]:
+//! vanilla's 3HB18 and the W1 arena it overlaps) is never written.
 //!
 //! Draws from its own substream ([`MUSIC_SALT`]), so the option moves no other
 //! part of the seed, and off writes nothing.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use rand::SeedableRng;
 use rand::seq::SliceRandom;
@@ -58,24 +59,12 @@ pub(crate) fn randomize(rom: &mut Rom, seed: u64) {
 /// The header offsets of each level, levels that share a header merged into
 /// one group. Each group lists its headers in the order the engine reaches
 /// them (main area first); the groups are in order of their first header.
-/// Headers that overlap another area's bytes are left out.
+/// Headers that share bytes with another area are left out.
 fn level_groups(rom: &Rom) -> Vec<Vec<usize>> {
     let levels = level_index::every_level(rom);
 
-    // Sweep the areas in file order: one that starts inside an earlier real
-    // area's bytes (header through terminator) is that area's data, not a
-    // header, and its own span does not count against the areas after it.
-    let spans: BTreeSet<(usize, usize)> =
-        levels.iter().flatten().map(|a| (a.header.offset, a.terminator)).collect();
-    let mut writable = BTreeSet::new();
-    let mut end_of_real = None;
-    for &(start, end) in &spans {
-        if end_of_real.is_none_or(|e| start > e) {
-            writable.insert(start);
-            end_of_real = Some(end);
-        }
-    }
-    let writable = |h: usize| writable.contains(&h);
+    let shared = level_index::shared_headers(&levels);
+    let writable = |h: usize| !shared.contains(&h);
 
     // Merge levels that share a header: `owner` maps each header to the
     // first level that reached it, and `group` points each level at the
@@ -114,6 +103,8 @@ fn level_groups(rom: &Rom) -> Vec<Vec<usize>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::randomize::rom_data;
+    use std::collections::BTreeSet;
 
     fn load_rom() -> Option<Rom> {
         let data = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes").ok()?;
@@ -166,16 +157,41 @@ mod tests {
         }
     }
 
-    /// 3HB18's header sits on top of the next area's, so it is never dealt.
+    /// 3HB18's header and the W1 arena's overlap, so neither is dealt. (The
+    /// arena's own song is the battle theme, which is not in the pool.)
     #[test]
     fn the_overlapping_3hb18_header_is_never_written() {
         let Some(rom) = load_rom() else { return };
         let headers: BTreeSet<usize> = level_groups(&rom).into_iter().flatten().collect();
         assert!(!headers.contains(&0x213F7));
-        assert!(headers.contains(&0x213FB), "its neighbour is still dealt");
+        assert!(!headers.contains(&0x213FB));
         // The index's 224 areas (pointer tables and beta stages), plus the
         // Coin Ship's two, the eight Big [?] rooms and Unused Level 5, less
-        // 3HB18.
-        assert_eq!(headers.len(), 234);
+        // 3HB18 and the W1 arena.
+        assert_eq!(headers.len(), 233);
+    }
+
+    /// The 3.1.1 bug: with 7-3 on no map, nothing covered 3HB18's header, so
+    /// the file-order sweep took it for real and skipped the arena header that
+    /// starts inside it. 3HB18's song byte is the arena's width byte, and a
+    /// pool song there made the one-screen W1 arena up to eleven screens wide.
+    #[test]
+    fn the_w1_arena_width_survives_7_3_leaving_the_maps() {
+        let Some(vanilla) = load_rom() else { return };
+        let mut without_7_3 = vanilla.clone();
+        let w7 = rom_data::world_tables(&vanilla, 6);
+        let other = rom_data::read_entry(&vanilla, &w7, 21);
+        rom_data::write_entry(&mut without_7_3, &w7, 22, &other);
+        let still_loaded = level_index::every_level(&without_7_3)
+            .iter()
+            .flatten()
+            .any(|a| a.header.offset == 0x21294);
+        assert!(!still_loaded, "7-3 is still on a map");
+
+        for seed in 0..50 {
+            let mut rom = without_7_3.clone();
+            randomize(&mut rom, seed);
+            assert_eq!(rom.read_byte(0x213FF), vanilla.read_byte(0x213FF), "seed {seed}");
+        }
     }
 }
