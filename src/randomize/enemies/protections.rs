@@ -397,6 +397,21 @@ const LEVEL_PROTECTIONS: &[LevelProtection] = &[
     },
 ];
 
+/// Every `Exclude(HAZARDS)` rule: `(entry offset, level, area, why)`. Read by
+/// the hazard census, which scores a terrain-based detector against them.
+#[cfg(test)]
+pub(super) fn hazard_rules() -> Vec<(usize, &'static str, usize, &'static str)> {
+    LEVEL_PROTECTIONS
+        .iter()
+        .flat_map(|l| {
+            l.entries
+                .iter()
+                .filter(|e| e.rule == EntryProtection::Exclude(HAZARDS))
+                .map(move |e| (e.offset, l.level, l.area, l.why))
+        })
+        .collect()
+}
+
 /// Per-entry rule for the entry at this absolute file offset, if any.
 pub(super) fn entry_protection_at(file_offset: usize) -> Option<EntryProtection> {
     LEVEL_PROTECTIONS
