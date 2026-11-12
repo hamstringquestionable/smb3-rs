@@ -9,6 +9,8 @@ deploys.
 
 ## [Unreleased]
 
+## [3.1.2] - 2026-11-11
+
 ### Fixed
 
 - Random level music: on seeds where 7-3 is not on any map (common with Deja
