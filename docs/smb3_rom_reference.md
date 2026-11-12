@@ -165,7 +165,11 @@ Facts the trace pins (tests in `level_index/tests.rs`):
   corrects it**: `qol::fix_3hb18_tileset` writes tileset 1 into its pointer
   table entry (World 3 index 41) on every seed, before the catalog reads the
   tables, which makes it a copy of its siblings' arena. The vanilla ROM still
-  has the quirk, and the `level_index` tests pin it there.
+  has the quirk, and the `level_index` tests pin it there. Before that fix
+  the randomizer excluded it with `HB_EXCLUDE_ENTRIES = [($C640, 3)]`, which
+  left out the layout and so also dropped World 5's two hill arenas (`$ACB5`,
+  5HB1-5HB9; `$B422`, 5HB10) from the Hammer Bro pool on every seed; it was
+  removed with the fix.
 - **8HB1-8HB17 are vanilla filler, not a hidden level.** All 17 are World 8
   pointer-table entries that sit on plain path tiles (`$44/$47/$48/$4A`).
   - Each pairs 7-7's layout (`$AAA8`) with its own object list at `$C03D`.

@@ -898,15 +898,6 @@ pub(crate) const HB_NEEDS_SHELL_ENEMIES: &[u8] = &[
     0x3F, // DryBones — stompable but revives; only a shell clears it
 ];
 
-/// Specific (obj_ptr, tileset) pairs to exclude from the HB cycling pool.
-///
-/// Added for 3HB18 (`W3[41]`), which named tileset 3 for a tileset-1 layout;
-/// `qol::fix_3hb18_tileset` now corrects that entry, so this no longer matches
-/// it. Keyed without the layout, it also matches World 5's two arenas
-/// (`$ACB5`, `$B422`, both tileset 3 with these objects), which are real
-/// rooms and were never meant to be excluded.
-pub(crate) const HB_EXCLUDE_ENTRIES: &[(u16, u8)] = &[(0xC640, 3)];
-
 /// Map-object sprite slots per world. Slot 0 always holds a fixed non-HB
 /// marker and slot 1 is the airship's in W1-W7; see
 /// `rom_data::first_usable_map_obj_slot`.

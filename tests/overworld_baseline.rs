@@ -69,15 +69,16 @@ fn sweep_is_deterministic() {
 /// Recaptured 2026-11-09 for the enemy pass moving onto the level index (an RNG
 /// shift upstream of the builder, all 20 seeds), and again 2026-11-10 with the
 /// 3.1.1 W8 tank-cell fix merged in, and again 2026-11-10 for the enemy CHR
-/// group re-roll and 20-tile gap, and 2026-11-12 for the 3HB18 tileset
-/// correction (one pointer-table byte) — see `docs/overworld_baseline_log.md`.
+/// group re-roll and 20-tile gap, and twice on 2026-11-12: the 3HB18 tileset
+/// correction (one pointer-table byte), then World 5's arenas joining the
+/// Hammer Bro pool — see `docs/overworld_baseline_log.md`.
 #[rustfmt::skip]
 const BASELINE: [u64; SEEDS as usize] = [
-    0x601F89074B4ABBAF, 0x2BBC46A49CD0D6FF, 0x6016E8210097A4CB, 0x5B53C8D9D5F8C4FF,
-    0x52B2DA8C70D2135E, 0x69BDF4A7B1087D8C, 0xA6ED64722EEEF16D, 0x724BAF941FABBCE2,
-    0x8C8A04EF660D2AB5, 0x919C4A6D665A8C75, 0x029F661BA8F74558, 0x673BCC5246DE91F9,
-    0x8F25CB2A79265A7D, 0xFD7DB772B8F20229, 0x4BBE5B366E298181, 0x3F93C7BEE74E2D65,
-    0x36F2ACD5134DFBCC, 0xD993607ED024F017, 0xF8F92E1D736566ED, 0x9F9DB3383250DD53,
+    0xAA0B4607CDBCF888, 0x91DEDEAEB86067F9, 0xA2F25FD5E2EAEEA8, 0x86972459879428F0,
+    0x1ADD53E2F8973B74, 0xE145351BB84C195A, 0x27FF3ECB2ADE6EF2, 0xEEDC36282F655214,
+    0x2A53FCB4710F2400, 0x35AF472896977E83, 0xD907795459987CC3, 0x10C2625C1C629E7D,
+    0x100F5DBFC6A6D6D8, 0x827F689B0E406534, 0x37022F01E9F12697, 0x64A9B2217DB59E94,
+    0xE60F7D314AE846EE, 0x04460B284E71F1CB, 0x3C03C27004744766, 0x76BBE07D3A584D6A,
 ];
 
 #[test]

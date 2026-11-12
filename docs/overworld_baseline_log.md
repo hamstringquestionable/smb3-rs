@@ -34,6 +34,30 @@ hashes they describe are gone; the reasoning is not.
 
 ## Entries
 
+### 2026-11-12 — World 5's arenas join the Hammer Bro pool (fix/3hb18-tileset)
+
+**Intended: the writer deals from a 16-arena pool instead of 14; map shape
+unchanged.** `HB_EXCLUDE_ENTRIES` was added to keep 3HB18 out of the pool, but
+it keyed on `(objects, tileset)` = `($C640, 3)` without the layout, so it also
+dropped World 5's two hill arenas (`$ACB5`, used by 5HB1-5HB9, and `$B422`,
+5HB10), which are real rooms. No seed ever dealt them. With 3HB18 corrected in
+the previous entry the exclusion only matched those two, so it is removed.
+
+The pool feeds `interleave_hb_by_obj_ptr` and `shuffled_obj_groups` in the
+writer, which draw before the writer deals 1-F and the level pool, so with two
+more arenas the main stream diverges there: which level and arena sit behind
+each tile changes on every seed.
+
+**How that was established.** Whole ROMs from the previous commit and this
+one, `--no-palettes --patched-rom`, seeds 1-60 at the defaults,
+`--world-maze` and `--deja-vu double`: every differing byte (about 437 per
+seed) lies in the pointer tables (`0x19434..0x19C4B`), none in the map tiles or
+anywhere else, so every map's shape is unchanged. Over 40 default seeds the
+World 5 arenas are dealt to 381 (`$ACB5`) and 337 (`$B422`) entries, and no
+entry loads tileset 3 with `$B3E7`. No census run: the censuses build from the
+catalog, pickup and builder and never call the writer, the only reader of the
+pool (`unique_hammer_bro_levels`), so no census figure can move.
+
 ### 2026-11-12 — 3HB18 loads its siblings' arena (fix/3hb18-tileset)
 
 **Intended: one byte per ROM, and nothing else.** `qol::fix_3hb18_tileset`
