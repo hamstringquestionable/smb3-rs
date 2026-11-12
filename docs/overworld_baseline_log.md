@@ -34,6 +34,24 @@ hashes they describe are gone; the reasoning is not.
 
 ## Entries
 
+### 2026-11-12 — 3HB18 loads its siblings' arena (fix/3hb18-tileset)
+
+**Intended: one byte per ROM, and nothing else.** `qol::fix_3hb18_tileset`
+writes tileset 1 over vanilla's 3 in World 3's pointer table entry 41 (3HB18),
+so its layout pointer `$B3E7` resolves to the arena its 17 siblings load
+instead of the middle of 7-3. The byte is in the pointer tables, which the
+fingerprint covers, so all 20 seeds move.
+
+**How that was established.** Whole ROMs from `origin/beta/next` and from this
+commit, `--no-palettes --patched-rom`, seeds 1-60 for each of: defaults,
+`--world-maze`, `--world-order`, `--deja-vu double`, `--deja-vu wild
+--deja-vu-forts`, and `--world-maze --generated-overworld`. Every pair differs
+in exactly one byte, the entry's row/tileset byte (`$73` → `$71` at its
+written position). With `--level-music` the music deal also moves (the W1
+arena's header no longer overlaps 3HB18's, so it is dealt again); every other
+differing byte there is a song nibble. `HB_EXCLUDE_ENTRIES` is kept in this
+commit so the Hammer Bro pool is unchanged; its removal is the next entry.
+
 ### 2026-11-10 — enemy CHR groups: re-roll and a 20-tile gap (feature/chr-group-reroll)
 
 **Intended: no overworld change; an RNG shift from the enemy pass, which runs

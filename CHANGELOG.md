@@ -64,6 +64,8 @@ deploys.
   noticeably piranha plants and fire jets with Wild enemy classes. Two
   enemies close enough to be loaded together now get graphics that can share
   the screen, including when one of them could not be randomized.
+- One Hammer Bro battle spot in World 3 loaded a garbled arena, from a wrong
+  value in the original game's data. It loads a normal arena now.
 
 ## [3.1.2] - 2026-11-11
 
