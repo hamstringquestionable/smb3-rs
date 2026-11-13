@@ -299,6 +299,28 @@ const LEVEL_PROTECTIONS: &[LevelProtection] = &[
         ],
     },
     LevelProtection {
+        level: "8B",
+        area: 1,
+        why: "low-ceiling hallway at the area's start — a hazard here cannot be jumped",
+        enemy_ptr: 0xD60B,
+        walker_segment: WalkerSegmentRule::Default,
+        entries: &[
+            EntryRule { offset: 0x0D61C, id: 0x3F, rule: EntryProtection::Exclude(HAZARDS) }, // DryBones scr=0 col=4
+            EntryRule { offset: 0x0D61F, id: 0x3F, rule: EntryProtection::Exclude(HAZARDS) }, // DryBones scr=0 col=10
+        ],
+    },
+    LevelProtection {
+        level: "5-2",
+        area: 0,
+        why: "low-ceiling underground runs — a hazard on the floor cannot be jumped",
+        enemy_ptr: 0xC8BE,
+        walker_segment: WalkerSegmentRule::Default,
+        entries: &[
+            EntryRule { offset: 0x0C8E4, id: 0x40, rule: EntryProtection::Exclude(HAZARDS) }, // BusterBeatle scr=9 col=5
+            EntryRule { offset: 0x0C8FC, id: 0x40, rule: EntryProtection::Exclude(HAZARDS) }, // BusterBeatle scr=12 col=15
+        ],
+    },
+    LevelProtection {
         level: "4F2",
         area: 0,
         why: "fort ground route — a hazard on the walking path is unavoidable",
