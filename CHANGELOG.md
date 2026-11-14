@@ -9,6 +9,8 @@ deploys.
 
 ## [Unreleased]
 
+## [3.2.0] - 2026-11-14
+
 ### Added
 
 - World Maze: Wandom. Pick `?` for Wands To Enter and the seed needs a secret
