@@ -97,6 +97,14 @@ const OFF_ON_WILD = [
 	{ value: "wild", label: "Wild" },
 ];
 
+// Damage System pill. Values match the Rust `DamageSystem` enum's serde
+// representation.
+const DAMAGE_SYSTEMS = [
+	{ value: "standard", label: "Standard" },
+	{ value: "japanese", label: "Japanese" },
+	{ value: "one_hit_ko", label: "One-Hit KO" },
+];
+
 // Off / Double / Wild pill for Deja Vu. Values match the Rust `DejaVuMode`
 // enum's serde representation.
 const OFF_DOUBLE_WILD = [
@@ -753,9 +761,9 @@ export const SCHEMA = [
 		tip: "Number of lives you start with. The label is Mario's power-up state; the bracketed number is the actual count.",
 		icon: PLAYER_PANELS,
 		group: "player", inFlagKey: true },
-	{ id: "japanese_damage", type: "bool", default: false,
-		label: "Japanese Damage System",
-		tip: "Taking damage drops you straight to Small Mario instead of demoting one tier at a time.",
+	{ id: "damage", type: "tri", options: DAMAGE_SYSTEMS, default: "standard",
+		label: "Damage System",
+		tip: "What happens when you get hit. Standard: a suit drops you to Super Mario, Super Mario drops to Small. Japanese: any power-up drops you straight to Small Mario, as in the Famicom original. One-Hit KO: any hit kills you, whatever you're wearing — even Kuribo's Shoe.",
 		credit: { name: "MaCobra52", url: "https://github.com/macobra52" },
 		group: "player", inFlagKey: true },
 	{ id: "faster_tail_speed", type: "bool", default: false,
@@ -973,6 +981,7 @@ export const PRESETS = [
 			bro_battle_timer: true,
 			bros: "wild",
 			cannons: "wild",
+			damage: "japanese",
 			early_sun: true,
 			eights_are_wild: "maybe",
 			faster_frog: true,
@@ -982,7 +991,6 @@ export const PRESETS = [
 			ground: "wild",
 			hb_encounters: "wild",
 			include_beta_stages: true,
-			japanese_damage: true,
 			limit_bro_movement: true,
 			piranha_shuffle: "wild",
 			piranhas: "wild",
@@ -1151,6 +1159,7 @@ export const PRESETS = [
 			bro_battle_timer: true,
 			bros: "wild",
 			cannons: "wild",
+			damage: "japanese",
 			early_sun: true,
 			eights_are_wild: "maybe",
 			faster_frog: true,
@@ -1163,7 +1172,6 @@ export const PRESETS = [
 			hidden_worlds: true,
 			hints: "most",
 			include_beta_stages: true,
-			japanese_damage: true,
 			limit_bro_movement: true,
 			maze_wands: 8,
 			maze_wands_max: 7,

@@ -149,6 +149,20 @@ fn default_off() -> EnemyMode {
     EnemyMode::Off
 }
 
+/// What taking a hit does. `Standard` is vanilla US: a suit drops to Big, Big
+/// drops to Small. `Japanese` is the Famicom model (MaCobra52's "Japanese
+/// damage system (fixed)" patch): any power-up drops straight to Small.
+/// `OneHitKo` kills on any hit whatever the power-up, Kuribo's Shoe included.
+/// Star, statue and post-hit flashing still protect in every mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DamageSystem {
+    #[default]
+    Standard,
+    Japanese,
+    OneHitKo,
+}
+
 /// Random Fire Flower mode (issue #22). Collecting an in-level Fire Flower
 /// grants a power state derived deterministically from the world and the
 /// flower's level position, instead of always Fire. `On` substitutes among the
@@ -671,11 +685,9 @@ pub struct Options {
     /// ("SMB3 - Limit Bro Movement" patch.)
     #[serde(default)]
     pub limit_bro_movement: bool,
-    /// Damage drops the player straight to Small Mario regardless of
-    /// current power-up, instead of demoting tier-by-tier. (MaCobra52's
-    /// "Japanese damage system (fixed)" patch.)
+    /// What taking a hit does — see [`DamageSystem`].
     #[serde(default)]
-    pub japanese_damage: bool,
+    pub damage: DamageSystem,
     /// Toad / Mushroom Houses stay on the map after entering and can be
     /// visited any number of times. (MaCobra52's "Infinite use Mushroom
     /// Houses" patch.)
@@ -952,7 +964,7 @@ impl Default for Options {
             early_sun: false,
             bro_battle_timer: false,
             limit_bro_movement: false,
-            japanese_damage: false,
+            damage: DamageSystem::Standard,
             infinite_mushroom_houses: false,
             fast_mushroom_house: false,
             faster_tail_speed: false,

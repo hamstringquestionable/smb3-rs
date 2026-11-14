@@ -4,8 +4,9 @@ use std::path::PathBuf;
 use std::process;
 
 use smb3_rs::{
-    DejaVuMode, EnemyMode, FireFlowerMode, HazardLimit, HintMode, ITEMS, MAZE_WANDS_WANDOM,
-    Options, PiranhaMode, STARTING_LIVES_VALUES, Tri, WildChaser, item_display_name, item_id,
+    DamageSystem, DejaVuMode, EnemyMode, FireFlowerMode, HazardLimit, HintMode, ITEMS,
+    MAZE_WANDS_WANDOM, Options, PiranhaMode, STARTING_LIVES_VALUES, Tri, WildChaser,
+    item_display_name, item_id,
 };
 
 /// Human-readable label for a tri-state flag in the run summary.
@@ -76,6 +77,16 @@ fn parse_fire_flower(s: &str) -> Result<FireFlowerMode, String> {
         "on" => Ok(FireFlowerMode::On),
         "wild" => Ok(FireFlowerMode::Wild),
         _ => Err("valid values: off, on, wild".to_string()),
+    }
+}
+
+/// clap value parser for `--damage` (standard/japanese/ohko).
+fn parse_damage(s: &str) -> Result<DamageSystem, String> {
+    match s {
+        "standard" => Ok(DamageSystem::Standard),
+        "japanese" => Ok(DamageSystem::Japanese),
+        "ohko" => Ok(DamageSystem::OneHitKo),
+        _ => Err("valid values: standard, japanese, ohko".to_string()),
     }
 }
 
@@ -370,9 +381,9 @@ struct Cli {
     #[arg(long)]
     bro_battle_timer: bool,
 
-    /// Damage drops to Small Mario or kills outright instead of demoting tier-by-tier (MaCobra52's "Japanese damage system" patch)
-    #[arg(long)]
-    japanese_damage: bool,
+    /// What a hit does: standard (demote one tier), japanese (any power-up drops to Small; MaCobra52's patch) or ohko (any hit kills)
+    #[arg(long, default_value = "standard", value_parser = parse_damage)]
+    damage: DamageSystem,
 
     /// Toad / Mushroom Houses can be visited any number of times (MaCobra52's "Infinite use Mushroom Houses" patch)
     #[arg(long)]
@@ -708,7 +719,7 @@ fn build_options(cli: &Cli) -> Options {
             early_sun: cli.early_sun,
             limit_bro_movement: cli.limit_bro_movement,
             bro_battle_timer: cli.bro_battle_timer,
-            japanese_damage: cli.japanese_damage,
+            damage: cli.damage,
             infinite_mushroom_houses: cli.infinite_mushroom_houses,
             fast_mushroom_house: cli.fast_mushroom_house,
             faster_tail_speed: cli.faster_tail_speed,

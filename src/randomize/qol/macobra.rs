@@ -1,5 +1,6 @@
 //! MaCobra52 patch bundle: always-on bugfixes plus opt-in feature patches.
 
+use crate::pipeline::DamageSystem;
 use crate::randomize::rom_data::{FS_FASTER_FROG, FS_HOLD_LEFT_HELPER, FS_TAIL_STAY_DEAD};
 use crate::rom::Rom;
 
@@ -261,21 +262,34 @@ pub(crate) fn apply_limit_bro_movement(rom: &mut Rom) {
     rom.write_range(LIMIT_BRO_CODE_OFFSET, &LIMIT_BRO_CODE);
 }
 
-// Japanese damage system (by MaCobra52) — NOPs the `JMP $DA15` at file
-// 0x019F9 so the vanilla "demote power-up by one tier" subroutine is
-// skipped. Control falls through into the path that drops the player
-// straight to Small Mario from any power-up state, matching the Famicom
-// SMB3 damage model. Source:
-// https://github.com/macobra52/smb3-hacks/blob/main/SMB3%20IPS/SMB3%20-%20Japanese%20damage%20system%20(fixed).ips
-const JP_DAMAGE_OFFSET: usize = 0x019F9;
-const JP_DAMAGE_BYTES: [u8; 3] = [0xEA, 0xEA, 0xEA];
+// Damage system. `Player_GetHurt` (PRG000 `$D9D3`) checks every kind of
+// invincibility (flashing, star, statue, halted...) and then does
+// `JMP $DA15` at `$D9E9` (file 0x019F9) into the US "demote one tier" code.
+// Both non-standard modes replace that one jump, so invincibility still
+// protects in each:
+//
+// - Japanese (by MaCobra52): NOP the jump. Execution falls into the SMB3-J
+//   suit-loss code the US release left in place, which drops any power-up
+//   straight to Small. Source:
+//   https://github.com/macobra52/smb3-hacks/blob/main/SMB3%20IPS/SMB3%20-%20Japanese%20damage%20system%20(fixed).ips
+// - One-hit KO: `JMP $DA7A`, the path vanilla takes when Small Mario is hit
+//   (`LDX SlotIndexBackup`, then fall into `Player_Die`). `Player_Die` clears
+//   Kuribo's Shoe itself, so a hit in the shoe kills too.
+const DAMAGE_JMP_OFFSET: usize = 0x019F9;
+#[cfg(test)]
+const DAMAGE_JMP_VANILLA: [u8; 3] = [0x4C, 0x15, 0xDA]; // JMP $DA15
+const JP_DAMAGE_BYTES: [u8; 3] = [0xEA, 0xEA, 0xEA]; // NOP x3
+const OHKO_DAMAGE_BYTES: [u8; 3] = [0x4C, 0x7A, 0xDA]; // JMP $DA7A
 
-/// Apply MaCobra52's "Japanese damage system (fixed)" patch — taking damage
-/// from any power-up tier (Super, Fire, Raccoon, Frog, Tanooki, Hammer)
-/// drops the player straight to Small Mario instead of demoting one tier
-/// at a time.
-pub(crate) fn apply_japanese_damage(rom: &mut Rom) {
-    rom.write_range(JP_DAMAGE_OFFSET, &JP_DAMAGE_BYTES);
+/// Rewrite `Player_GetHurt`'s demote jump for the chosen [`DamageSystem`].
+/// `Standard` leaves the vanilla jump alone.
+pub(crate) fn apply_damage_system(rom: &mut Rom, damage: DamageSystem) {
+    let bytes = match damage {
+        DamageSystem::Standard => return,
+        DamageSystem::Japanese => &JP_DAMAGE_BYTES,
+        DamageSystem::OneHitKo => &OHKO_DAMAGE_BYTES,
+    };
+    rom.write_range(DAMAGE_JMP_OFFSET, bytes);
 }
 
 // Infinite use Mushroom Houses (by MaCobra52) — 5-byte rewrite at file
@@ -744,6 +758,20 @@ mod tests {
     }
 
     #[test]
+    fn test_damage_system_writes() {
+        for (mode, want) in [
+            (DamageSystem::Standard, DAMAGE_JMP_VANILLA),
+            (DamageSystem::Japanese, JP_DAMAGE_BYTES),
+            (DamageSystem::OneHitKo, OHKO_DAMAGE_BYTES),
+        ] {
+            let mut rom = make_test_rom();
+            rom.write_range(DAMAGE_JMP_OFFSET, &DAMAGE_JMP_VANILLA);
+            apply_damage_system(&mut rom, mode);
+            assert_eq!(rom.read_range(DAMAGE_JMP_OFFSET, 3), &want, "{mode:?}");
+        }
+    }
+
+    #[test]
     fn test_faster_frog_writes() {
         let mut rom = make_test_rom();
         // Mirror randomizer order: tail-swim (always-on) first, then faster_frog
@@ -1064,5 +1092,32 @@ mod asm_checks {
     #[test]
     fn tail_swim_is_well_formed() {
         asm::check(&TAIL_SWIM_ROUTINE).fragment().assert_ok();
+    }
+
+    #[test]
+    fn one_hit_ko_is_well_formed() {
+        // Only the one-hit KO jump: the Japanese bytes are three NOPs, which
+        // the checker rejects by design, and there is nothing in them to check.
+        asm::check(&OHKO_DAMAGE_BYTES).fragment().assert_ok();
+    }
+
+    /// The jump being replaced, and the one-hit KO target, against the ROM:
+    /// `$DA7A` must still be `LDX SlotIndexBackup` (`A6 CD`) directly ahead of
+    /// `Player_Die`'s `LDA Sound_QMusic1` (`AD F4 04`). Needs the ROM, so it
+    /// skips where it is absent.
+    #[test]
+    fn damage_system_sites_match_vanilla() {
+        let Ok(v) = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes") else {
+            eprintln!("SKIP: requires the ROM, which is not included in the repo");
+            return;
+        };
+        asm::check(&OHKO_DAMAGE_BYTES)
+            .fragment()
+            .hook(&v, DAMAGE_JMP_OFFSET, &OHKO_DAMAGE_BYTES)
+            .assert_ok();
+        assert_eq!(&v[DAMAGE_JMP_OFFSET..DAMAGE_JMP_OFFSET + 3], &DAMAGE_JMP_VANILLA);
+        // PRG000 sits at $C000 in a level: file = 0x10 + (cpu - $C000).
+        let target = 0x10 + (0xDA7A - 0xC000);
+        assert_eq!(&v[target..target + 5], &[0xA6, 0xCD, 0xAD, 0xF4, 0x04]);
     }
 }
