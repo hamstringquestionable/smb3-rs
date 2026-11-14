@@ -299,17 +299,48 @@ const LEVEL_PROTECTIONS: &[LevelProtection] = &[
         ],
     },
     LevelProtection {
+        level: "8B",
+        area: 1,
+        why: "low-ceiling hallway at the area's start — a hazard here cannot be jumped; a Rotodisc at the Thwomp swings over where Mario arrives",
+        enemy_ptr: 0xD60B,
+        walker_segment: WalkerSegmentRule::Default,
+        entries: &[
+            EntryRule { offset: 0x0D61C, id: 0x3F, rule: EntryProtection::Exclude(HAZARDS) }, // DryBones scr=0 col=4
+            EntryRule { offset: 0x0D61F, id: 0x3F, rule: EntryProtection::Exclude(HAZARDS) }, // DryBones scr=0 col=10
+            EntryRule { offset: 0x0D622, id: 0x8C, rule: EntryProtection::Exclude(ROTODISCS) }, // ThwompRightSlide scr=1 col=6
+        ],
+    },
+    LevelProtection {
+        level: "5-2",
+        area: 0,
+        why: "low-ceiling underground runs — a hazard on the floor cannot be jumped",
+        enemy_ptr: 0xC8BE,
+        walker_segment: WalkerSegmentRule::Default,
+        entries: &[
+            EntryRule { offset: 0x0C8E4, id: 0x40, rule: EntryProtection::Exclude(HAZARDS) }, // BusterBeatle scr=9 col=5
+            EntryRule { offset: 0x0C8FC, id: 0x40, rule: EntryProtection::Exclude(HAZARDS) }, // BusterBeatle scr=12 col=15
+        ],
+    },
+    LevelProtection {
         level: "4F2",
         area: 0,
-        why: "fort ground route — a hazard on the walking path is unavoidable",
+        why: "fort ground route — a hazard on the walking path is unavoidable; a Rotodisc at the screen-5 Dry Bones swings over the hidden door Mario comes back through",
         enemy_ptr: 0xD508,
         walker_segment: WalkerSegmentRule::Default,
         entries: &[
             EntryRule { offset: 0x0D519, id: 0x3F, rule: EntryProtection::Exclude(HAZARDS) }, // DryBones    scr=2 col=10
             EntryRule { offset: 0x0D51C, id: 0x3F, rule: EntryProtection::Exclude(HAZARDS) }, // DryBones    scr=3 col=9
             EntryRule { offset: 0x0D51F, id: 0x3F, rule: EntryProtection::Exclude(HAZARDS) }, // DryBones    scr=4 col=9
-            EntryRule { offset: 0x0D522, id: 0x3F, rule: EntryProtection::Exclude(HAZARDS) }, // DryBones    scr=5 col=4
-            EntryRule { offset: 0x0D525, id: 0x3F, rule: EntryProtection::Exclude(HAZARDS) }, // DryBones    scr=5 col=11
+            EntryRule {
+                offset: 0x0D522,
+                id: 0x3F,
+                rule: EntryProtection::Exclude(Group::Any(&[HAZARDS, ROTODISCS])),
+            }, // DryBones    scr=5 col=4
+            EntryRule {
+                offset: 0x0D525,
+                id: 0x3F,
+                rule: EntryProtection::Exclude(Group::Any(&[HAZARDS, ROTODISCS])),
+            }, // DryBones    scr=5 col=11
             EntryRule { offset: 0x0D528, id: 0x3F, rule: EntryProtection::Exclude(HAZARDS) }, // DryBones    scr=6 col=2
             EntryRule { offset: 0x0D52B, id: 0x3F, rule: EntryProtection::Exclude(HAZARDS) }, // DryBones    scr=6 col=3
             EntryRule { offset: 0x0D52E, id: 0x3F, rule: EntryProtection::Exclude(HAZARDS) }, // DryBones    scr=6 col=12
@@ -330,6 +361,41 @@ const LEVEL_PROTECTIONS: &[LevelProtection] = &[
             EntryRule { offset: 0x0CEC0, id: 0x7B, rule: EntryProtection::Exclude(HAZARDS) }, // BigRedTroopa scr=5 col=15
             EntryRule { offset: 0x0CEC3, id: 0x7B, rule: EntryProtection::Exclude(HAZARDS) }, // BigRedTroopa scr=6 col=4
             EntryRule { offset: 0x0CEC9, id: 0x7A, rule: EntryProtection::Exclude(HAZARDS) }, // BigGreenTroopa scr=7 col=10
+        ],
+    },
+    // A narrow landing between two gaps too wide to jump in one go: Mario
+    // has to land on it, so a hazard there cannot be avoided.
+    LevelProtection {
+        level: "4-2",
+        area: 0,
+        why: "narrow landings between gaps Mario has to land on",
+        enemy_ptr: 0xCF14,
+        walker_segment: WalkerSegmentRule::Default,
+        entries: &[
+            EntryRule { offset: 0x0CF2B, id: 0x7B, rule: EntryProtection::Exclude(HAZARDS) }, // BigRedTroopa scr=1 col=0
+            EntryRule { offset: 0x0CF31, id: 0x7B, rule: EntryProtection::Exclude(HAZARDS) }, // BigRedTroopa scr=1 col=6
+        ],
+    },
+    LevelProtection {
+        level: "7F2",
+        area: 0,
+        why: "narrow landings between gaps Mario has to land on",
+        enemy_ptr: 0xD41B,
+        walker_segment: WalkerSegmentRule::Default,
+        entries: &[
+            EntryRule { offset: 0x0D432, id: 0x2F, rule: EntryProtection::Exclude(HAZARDS) }, // Boo         scr=1 col=4
+            EntryRule { offset: 0x0D435, id: 0x5B, rule: EntryProtection::Exclude(HAZARDS) }, // RotodiscCCW scr=1 col=8
+            EntryRule { offset: 0x0D462, id: 0x2F, rule: EntryProtection::Exclude(HAZARDS) }, // Boo         scr=7 col=15
+        ],
+    },
+    LevelProtection {
+        level: "8B",
+        area: 0,
+        why: "narrow landing between gaps Mario has to land on",
+        enemy_ptr: 0xD5CD,
+        walker_segment: WalkerSegmentRule::Default,
+        entries: &[
+            EntryRule { offset: 0x0D60B, id: 0x5A, rule: EntryProtection::Exclude(HAZARDS) }, // RotodiscCW scr=10 col=8
         ],
     },
     LevelProtection {
@@ -370,14 +436,72 @@ const LEVEL_PROTECTIONS: &[LevelProtection] = &[
             EntryRule { offset: 0x0D3CE, id: 0x3F, rule: EntryProtection::Exclude(ROTODISCS) }, // DryBones scr=7 col=13
         ],
     },
+    // A Rotodisc swings 48-55 px round a point 48 px left of its slot, so a
+    // disc in these slots would pass over the spot Mario appears at when he
+    // comes out of a pipe or door (or starts the level), before he can move.
+    LevelProtection {
+        level: "4-6",
+        area: 0,
+        why: "a Rotodisc here swings over where Mario comes back from the other area",
+        enemy_ptr: 0xC257,
+        walker_segment: WalkerSegmentRule::Default,
+        entries: &[
+            EntryRule { offset: 0x0C274, id: 0x7A, rule: EntryProtection::Exclude(ROTODISCS) }, // BigGreenTroopa scr=2 col=13
+            EntryRule { offset: 0x0C292, id: 0x7B, rule: EntryProtection::Exclude(ROTODISCS) }, // BigRedTroopa scr=6 col=9
+            EntryRule { offset: 0x0C295, id: 0x7B, rule: EntryProtection::Exclude(ROTODISCS) }, // BigRedTroopa scr=6 col=13
+        ],
+    },
+    LevelProtection {
+        level: "4-6",
+        area: 1,
+        why: "a Rotodisc here swings over where Mario comes back from the other area",
+        enemy_ptr: 0xC1DA,
+        walker_segment: WalkerSegmentRule::Default,
+        entries: &[
+            EntryRule { offset: 0x0C1F7, id: 0x6C, rule: EntryProtection::Exclude(ROTODISCS) }, // GreenTroopa scr=2 col=14
+            EntryRule { offset: 0x0C215, id: 0x6D, rule: EntryProtection::Exclude(ROTODISCS) }, // RedTroopa scr=6 col=13
+            EntryRule { offset: 0x0C218, id: 0x6D, rule: EntryProtection::Exclude(ROTODISCS) }, // RedTroopa scr=6 col=10
+        ],
+    },
+    LevelProtection {
+        level: "1-2",
+        area: 0,
+        why: "a Rotodisc here swings over where Mario comes back from the sub-area",
+        enemy_ptr: 0xC6AA,
+        walker_segment: WalkerSegmentRule::Default,
+        entries: &[
+            EntryRule { offset: 0x0C6C4, id: 0x73, rule: EntryProtection::Exclude(ROTODISCS) }, // Paragoomba scr=3 col=9
+        ],
+    },
+    LevelProtection {
+        level: "2-1",
+        area: 0,
+        why: "a Rotodisc here swings over where Mario comes back from the sub-area",
+        enemy_ptr: 0xD189,
+        walker_segment: WalkerSegmentRule::Default,
+        entries: &[
+            EntryRule { offset: 0x0D1C4, id: 0x6B, rule: EntryProtection::Exclude(ROTODISCS) }, // PileDriver scr=10 col=1
+        ],
+    },
+    LevelProtection {
+        level: "3-3",
+        area: 0,
+        why: "a Rotodisc here swings over where Mario starts the level",
+        enemy_ptr: 0xC58E,
+        walker_segment: WalkerSegmentRule::Default,
+        entries: &[
+            EntryRule { offset: 0x0C5A2, id: 0x2D, rule: EntryProtection::Exclude(ROTODISCS) }, // BigBertha scr=0 col=0
+        ],
+    },
     // --- Thwomp-variant exclusions ---
     LevelProtection {
         level: "5F1",
         area: 0,
-        why: "screen 1 Rotodisc must not become a standard dropping Thwomp",
+        why: "screen 1 Rotodisc must not become a standard dropping Thwomp; a Rotodisc at the screen-4 Boo swings over where Mario comes back from the sub-area",
         enemy_ptr: 0xD3D0,
         walker_segment: WalkerSegmentRule::Default,
         entries: &[
+            EntryRule { offset: 0x0D3F9, id: 0x2F, rule: EntryProtection::Exclude(ROTODISCS) }, // Boo scr=4 col=9
             // OBJ_THWOMP (standard drop) only; the other five variants stay
             // allowed. Only reachable with Thwomps and Rotodiscs both Wild.
             EntryRule {

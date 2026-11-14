@@ -70,6 +70,15 @@ deploys.
   garbled World 3 arena skipped them as well. Bro battles now draw from them
   too. Which level and which arena sit on each map tile rolls differently;
   the maps themselves are unchanged.
+- Enemy randomization no longer puts an unjumpable hazard under a low
+  ceiling in two places: the Dry Bones at the start of Bowser's castle's
+  second half, and two of the Buster Beetles in 5-2's underground.
+- Enemy randomization no longer turns an enemy into a Rotodisc where the
+  disc would swing over the spot Mario appears at, before he can move: in
+  1-2, 2-1, 3-3, 4-6, 5F1, 4F2 (the hidden door) and Bowser's castle.
+- Enemy randomization no longer puts a hazard on a narrow landing between
+  two gaps Mario has to land on, the way 4-1's giant troopa platforms
+  already worked: in 4-2, 7F2 and Bowser's castle.
 
 ## [3.1.2] - 2026-11-11
 
