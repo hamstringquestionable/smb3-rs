@@ -24,6 +24,7 @@ Status column:
 | [big_q_rooms_design.md](big_q_rooms_design.md) | **Live** | The Big [?] bonus-room shuffle, opt-in since PR #197. Well maintained; the pool is 19 rooms. |
 | [wild_injection_rework.md](wild_injection_rework.md) | **Live** | How wild enemy injection works after the 0.12.2 rework. Verified accurate. |
 | [write_log_design.md](write_log_design.md) | **Live** | The ROM write log and the free-space auditor. Enhancements 1 and 2 are built; 3 is still design. |
+| [level_terrain.md](level_terrain.md) | **Live** | Dev-time tooling: the terrain loader (the engine's own level loader on an emulated 6502) and the hazard scans built on it: low ceilings, narrow landings, Rotodiscs over arrival points. How to run each, what it can't see, and what the 2026-11 pass decided. |
 | [seed_stability.md](seed_stability.md) | **Live** | When generated output may change and what has to be proved instead of byte identity. The policy (seeds are stable within a version, never across), the census bar, the current baseline, and which of the three instruments answers which question. |
 | [overworld_baseline_log.md](overworld_baseline_log.md) | **Live** | The overworld baseline recapture log. Restarted 2026-09-08, when the baseline began hashing the overworld rather than the whole ROM. |
 | [start_airship_swap_findings.md](start_airship_swap_findings.md) | **Reference** | Engine internals behind the start ↔ airship swap. Verified against the disassembly. |
