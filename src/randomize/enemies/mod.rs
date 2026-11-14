@@ -48,6 +48,8 @@ use tables::*;
 #[cfg(test)]
 mod chr_stats;
 #[cfg(test)]
+mod exit_census;
+#[cfg(test)]
 mod hazard_census;
 #[cfg(test)]
 mod platform_census;

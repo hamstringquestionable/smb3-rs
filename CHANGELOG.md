@@ -79,6 +79,9 @@ deploys.
 - Enemy randomization no longer puts a hazard on a narrow landing between
   two gaps Mario has to land on, the way 4-1's giant troopa platforms
   already worked: in 4-2, 7F2 and Bowser's castle.
+- Enemy randomization no longer puts a hazard right beside a pipe in 1F,
+  3-9 and 8F1, where small Mario, who can't defeat it, would have no way
+  into the pipe.
 
 ## [3.1.2] - 2026-11-11
 
