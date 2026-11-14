@@ -76,6 +76,9 @@ deploys.
 - Enemy randomization no longer turns an enemy into a Rotodisc where the
   disc would swing over the spot Mario appears at, before he can move: in
   1-2, 2-1, 3-3, 4-6, 5F1, 4F2 (the hidden door) and Bowser's castle.
+- Enemy randomization no longer puts a hazard on a narrow landing between
+  two gaps Mario has to land on, the way 4-1's giant troopa platforms
+  already worked: in 4-2, 7F2 and Bowser's castle.
 
 ## [3.1.2] - 2026-11-11
 

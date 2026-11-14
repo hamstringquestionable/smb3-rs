@@ -363,6 +363,41 @@ const LEVEL_PROTECTIONS: &[LevelProtection] = &[
             EntryRule { offset: 0x0CEC9, id: 0x7A, rule: EntryProtection::Exclude(HAZARDS) }, // BigGreenTroopa scr=7 col=10
         ],
     },
+    // A narrow landing between two gaps too wide to jump in one go: Mario
+    // has to land on it, so a hazard there cannot be avoided.
+    LevelProtection {
+        level: "4-2",
+        area: 0,
+        why: "narrow landings between gaps Mario has to land on",
+        enemy_ptr: 0xCF14,
+        walker_segment: WalkerSegmentRule::Default,
+        entries: &[
+            EntryRule { offset: 0x0CF2B, id: 0x7B, rule: EntryProtection::Exclude(HAZARDS) }, // BigRedTroopa scr=1 col=0
+            EntryRule { offset: 0x0CF31, id: 0x7B, rule: EntryProtection::Exclude(HAZARDS) }, // BigRedTroopa scr=1 col=6
+        ],
+    },
+    LevelProtection {
+        level: "7F2",
+        area: 0,
+        why: "narrow landings between gaps Mario has to land on",
+        enemy_ptr: 0xD41B,
+        walker_segment: WalkerSegmentRule::Default,
+        entries: &[
+            EntryRule { offset: 0x0D432, id: 0x2F, rule: EntryProtection::Exclude(HAZARDS) }, // Boo         scr=1 col=4
+            EntryRule { offset: 0x0D435, id: 0x5B, rule: EntryProtection::Exclude(HAZARDS) }, // RotodiscCCW scr=1 col=8
+            EntryRule { offset: 0x0D462, id: 0x2F, rule: EntryProtection::Exclude(HAZARDS) }, // Boo         scr=7 col=15
+        ],
+    },
+    LevelProtection {
+        level: "8B",
+        area: 0,
+        why: "narrow landing between gaps Mario has to land on",
+        enemy_ptr: 0xD5CD,
+        walker_segment: WalkerSegmentRule::Default,
+        entries: &[
+            EntryRule { offset: 0x0D60B, id: 0x5A, rule: EntryProtection::Exclude(HAZARDS) }, // RotodiscCW scr=10 col=8
+        ],
+    },
     LevelProtection {
         level: "β2",
         area: 0,
