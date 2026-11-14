@@ -40,7 +40,7 @@ const ITEM_OPTIONS = [
 // Starting-lives pill options — Mario power-up state names with the
 // actual life count in brackets. Encodes to 2 bits in the flag key.
 const STARTING_LIVES_OPTIONS = [
-	{ value: 1,  label: "Small [1]" },
+	{ value: 0,  label: "Small [0]" },
 	{ value: 5,  label: "Super [5]" },
 	{ value: 20, label: "Fire [20]" },
 	{ value: 99, label: "Hammer [99]" },

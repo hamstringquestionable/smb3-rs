@@ -568,7 +568,7 @@ struct Cli {
     #[arg(long, default_value = "off", value_parser = parse_wild_injections)]
     wild_injections: ChaserSet,
 
-    /// Set starting lives. Must be one of 1, 5, 20, 99 (default: 5).
+    /// Set starting lives. Must be one of 0, 5, 20, 99 (default: 5). 0 means the first death is Game Over.
     #[arg(long, default_value_t = 5, value_parser = parse_starting_lives)]
     starting_lives: u8,
 

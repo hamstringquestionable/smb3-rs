@@ -10,9 +10,10 @@ const STARTING_LIVES_OFFSET: usize = 0x308E1;
 /// Base of the 8-byte lives init code: LDA #lives; STA $0736; STA $0737.
 const LIVES_INIT_BASE: usize = 0x308E0;
 
-/// Set starting lives for both Mario and Luigi (1–99).
+/// Set starting lives for both Mario and Luigi (0–99). The count is extra
+/// lives: Game Over comes when a death takes it below zero, so 0 is one try.
 pub(crate) fn set_starting_lives(rom: &mut Rom, lives: u8) {
-    let clamped = lives.clamp(1, 99);
+    let clamped = lives.min(99);
     rom.write_byte(STARTING_LIVES_OFFSET, clamped);
 }
 
@@ -44,7 +45,7 @@ pub(crate) fn write_starting_items(
     items: &[u8],
     first_slot: u8,
 ) {
-    let lives = lives.clamp(1, 99);
+    let lives = lives.min(99);
     let cpu = crate::randomize::rom_data::prg031_file_to_cpu(FS_STARTING_ITEMS); // $E250
     // Build trampoline: lives init + intro skip + menu music + item writes + RTS
     let mut buf = Vec::with_capacity(33);
@@ -94,6 +95,6 @@ mod tests {
         set_starting_lives(&mut rom, 255);
         assert_eq!(rom.read_byte(STARTING_LIVES_OFFSET), 99);
         set_starting_lives(&mut rom, 0);
-        assert_eq!(rom.read_byte(STARTING_LIVES_OFFSET), 1);
+        assert_eq!(rom.read_byte(STARTING_LIVES_OFFSET), 0);
     }
 }

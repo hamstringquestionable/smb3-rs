@@ -401,7 +401,7 @@ fn flag_key_round_trip_all_off() {
     assert_eq!(decoded.thwomps, EnemyMode::Off);
     assert_eq!(decoded.hb_encounters, EnemyMode::Off);
     assert!(decoded.wild_injections.is_empty());
-    assert_eq!(decoded.starting_lives, 1);
+    assert_eq!(decoded.starting_lives, 0);
 }
 
 #[test]
@@ -1166,7 +1166,7 @@ fn all_off_options() -> Options {
         more_hammer_rocks: Tri::Off,
         eights_are_wild: Tri::Off,
         antechamber_shuffle: Tri::Off,
-        starting_lives: 1,
+        starting_lives: 0,
         card_speed_clear: false,
         remove_n_cards: false,
         skip_wand_cutscene: false,
