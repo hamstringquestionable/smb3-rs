@@ -39,18 +39,18 @@ const CLASSES: [&[u8]; 9] = [
     ROTODISCS_DUAL,
 ];
 
-fn swappable(id: u8) -> bool {
+pub(super) fn swappable(id: u8) -> bool {
     CLASSES.iter().any(|class| class.contains(&id))
 }
 
 #[derive(Clone, Copy, PartialEq)]
-enum Solid {
+pub(super) enum Solid {
     No,
     Top,
     Full,
 }
 
-fn solidity(t: &Terrain, col: usize, row: usize) -> Solid {
+pub(super) fn solidity(t: &Terrain, col: usize, row: usize) -> Solid {
     let tile = t.tile(col / 16, row, col % 16);
     let q = (tile >> 6) as usize;
     if tile >= t.attr[q + 4] {
@@ -259,7 +259,7 @@ fn hazard_census() {
 /// hazard), a forced stompable pick when no stompable enemy in the slot's own class
 /// is a hazard (the Bros are stompable, but only a Bro slot can draw one), or
 /// a whole object list the walker skips.
-fn other_cover(offset: usize, id: u8, objects_ptr: u16) -> Option<&'static str> {
+pub(super) fn other_cover(offset: usize, id: u8, objects_ptr: u16) -> Option<&'static str> {
     let class = CLASSES.iter().find(|c| c.contains(&id)).copied().unwrap_or(&[]);
     let stompable_is_safe =
         !class.iter().any(|&c| STOMPABLE_ENEMIES.contains(&c) && HAZARDS.excludes(c, 0));
