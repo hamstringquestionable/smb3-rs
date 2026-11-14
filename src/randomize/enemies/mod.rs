@@ -52,6 +52,8 @@ mod hazard_census;
 #[cfg(test)]
 mod platform_census;
 #[cfg(test)]
+mod rotodisc_reach;
+#[cfg(test)]
 mod tests;
 
 /// Randomize enemies by parsing the structured object data and only swapping
