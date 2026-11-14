@@ -265,7 +265,7 @@ const LEVEL_PROTECTIONS: &[LevelProtection] = &[
         ],
     },
     LevelProtection {
-        level: "4F2",
+        level: "4F1",
         area: 0,
         why: "narrow-hallway fort — a hazard anywhere blocks the only path",
         enemy_ptr: 0xD528,
@@ -286,7 +286,7 @@ const LEVEL_PROTECTIONS: &[LevelProtection] = &[
         ],
     },
     LevelProtection {
-        level: "4F2",
+        level: "4F1",
         area: 1,
         why: "narrow-hallway fort",
         enemy_ptr: 0xC968,
@@ -299,7 +299,7 @@ const LEVEL_PROTECTIONS: &[LevelProtection] = &[
         ],
     },
     LevelProtection {
-        level: "4F1",
+        level: "4F2",
         area: 0,
         why: "fort ground route — a hazard on the walking path is unavoidable",
         enemy_ptr: 0xD508,

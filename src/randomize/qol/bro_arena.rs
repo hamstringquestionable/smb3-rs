@@ -1,5 +1,6 @@
-//! The World 2 Hammer Bro arena, rebuilt so nothing in it is thick enough to
-//! lose an enemy inside.
+//! Two vanilla Hammer Bro arena fixes: the World 2 arena, rebuilt so nothing
+//! in it is thick enough to lose an enemy inside, and 3HB18, given the tileset
+//! its siblings use so it loads a real arena.
 
 use crate::randomize::rom_data;
 use crate::rom::Rom;
@@ -58,6 +59,33 @@ pub(crate) fn rebuild_desert_bro_arena(rom: &mut Rom) {
         // Page byte, then (id, column, row) entries: slot 0's position.
         let pos = rom_data::enemy_ptr_to_file_offset(ptr) + 2;
         rom.write_range(pos, &DESERT_ARENA_BRO_POS);
+    }
+}
+
+/// World 3 pointer table index of 3HB18, and the `(layout, objects)` it shares
+/// with the 17 other entries that name tileset 1.
+const W3_3HB18: usize = 41;
+const ARENA_B3E7: (u16, u16) = (0xB3E7, 0xC640);
+
+/// Give vanilla's 3HB18 tileset 1 instead of 3.
+///
+/// Its layout and objects are those of 17 other Hammer Bro entries, every one
+/// of which names tileset 1, where `$B3E7` is a real arena header. With
+/// tileset 3 the same address resolves in the Hilly bank, inside 7-3's last
+/// command and four bytes before the W1 arena's header, so a fight on its
+/// tile loaded a garbled room, and its header's song byte was the W1 arena's
+/// width (the 3.1.2 level-music bug). One nibble, almost certainly a typo.
+///
+/// Only the entry as vanilla has it is touched, so a ROM that already differs
+/// is left alone.
+pub(crate) fn fix_3hb18_tileset(rom: &mut Rom) {
+    let w3 = rom_data::world_tables(rom, 2);
+    let mut entry = rom_data::read_entry(rom, &w3, W3_3HB18);
+    let lay = u16::from_le_bytes([entry.lay_lo, entry.lay_hi]);
+    let obj = u16::from_le_bytes([entry.obj_lo, entry.obj_hi]);
+    if (lay, obj) == ARENA_B3E7 && entry.tileset == 3 {
+        entry.tileset = 1;
+        rom_data::write_entry(rom, &w3, W3_3HB18, &entry);
     }
 }
 
@@ -120,5 +148,36 @@ mod tests {
             items.insert(got[11]);
         }
         assert_eq!(items.into_iter().collect::<Vec<_>>(), [0x04, 0x05, 0x06]);
+    }
+
+    /// The fix turns 3HB18 into the arena its siblings load, and with it the
+    /// only vanilla header overlap is gone.
+    #[test]
+    fn three_hb18_loads_its_siblings_arena() {
+        use crate::randomize::rom_data::level_index;
+
+        let Ok(bytes) = std::fs::read(VANILLA) else {
+            return;
+        };
+        let mut rom = Rom::from_bytes_lax(&bytes, true).unwrap();
+        let w3 = rom_data::world_tables(&rom, 2);
+        let before = rom_data::read_entry(&rom, &w3, W3_3HB18);
+        assert_eq!(before.tileset, 3, "the vanilla quirk this fixes");
+        let row_byte = rom.read_byte(w3.rowtype_offset + W3_3HB18);
+
+        fix_3hb18_tileset(&mut rom);
+
+        let after = rom_data::read_entry(&rom, &w3, W3_3HB18);
+        assert_eq!(after, rom_data::LevelEntry { tileset: 1, ..before });
+        assert_eq!(rom.read_byte(w3.rowtype_offset + W3_3HB18) & 0xF0, row_byte & 0xF0);
+        let (areas, _) = level_index::trace(&rom, &after).unwrap();
+        let siblings_header = rom_data::layout_file_offset(ARENA_B3E7.0, 1).unwrap();
+        assert_eq!(areas[0].header.offset, siblings_header);
+        assert!(level_index::shared_headers(&level_index::every_level(&rom)).is_empty());
+
+        // Applying it twice changes nothing.
+        let once = rom.data.clone();
+        fix_3hb18_tileset(&mut rom);
+        assert_eq!(rom.data, once);
     }
 }

@@ -194,6 +194,11 @@ pub(super) fn map_fixes(rom: &mut Rom, run: &Resolved) {
     // applied, and before powerups and enemies so both see the rebuilt room.
     rom.set_tag("qol/desert_bro_arena");
     randomize::qol::rebuild_desert_bro_arena(rom);
+
+    // 3HB18 names tileset 3 where its siblings name 1; corrected before the
+    // catalog reads the tables, so it is an ordinary arena from here on.
+    rom.set_tag("qol/3hb18_tileset");
+    randomize::qol::fix_3hb18_tileset(rom);
 }
 
 /// Stage 2: level data — powerups, palettes, enemies, and the composed rooms.

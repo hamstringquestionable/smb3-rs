@@ -158,11 +158,18 @@ Facts the trace pins (tests in `level_index/tests.rs`):
   the Hilly bank, so `$B3E7` lands inside 7-3's last command. Loaded in Mesen
   (2026-11-03, `testrom --place 3HB18` against a `3HB17` control) it does not
   crash: the clock runs and Mario walks, but the arena is Hilly art with a
-  wall-to-wall bush backdrop and one brick row instead of two. Treat it as
-  unused: `HB_EXCLUDE_ENTRIES` keeps it out of the Hammer Bro pool, and
-  anything that writes through headers must skip it. Untried: writing tileset
-  1 into its pointer table entry would presumably make it a copy of its
-  siblings' arena.
+  wall-to-wall bush backdrop and one brick row instead of two. Its header
+  also overlaps the W1 arena's: its song byte (`0x213FF`) is that arena's
+  width, which is how random level music widened the W1 arena in 3.1.1
+  (fixed in 3.1.2 by `level_index::shared_headers`). **The randomizer now
+  corrects it**: `qol::fix_3hb18_tileset` writes tileset 1 into its pointer
+  table entry (World 3 index 41) on every seed, before the catalog reads the
+  tables, which makes it a copy of its siblings' arena. The vanilla ROM still
+  has the quirk, and the `level_index` tests pin it there. Before that fix
+  the randomizer excluded it with `HB_EXCLUDE_ENTRIES = [($C640, 3)]`, which
+  left out the layout and so also dropped World 5's two hill arenas (`$ACB5`,
+  5HB1-5HB9; `$B422`, 5HB10) from the Hammer Bro pool on every seed; it was
+  removed with the fix.
 - **8HB1-8HB17 are vanilla filler, not a hidden level.** All 17 are World 8
   pointer-table entries that sit on plain path tiles (`$44/$47/$48/$4A`).
   - Each pairs 7-7's layout (`$AAA8`) with its own object list at `$C03D`.
@@ -175,7 +182,7 @@ Facts the trace pins (tests in `level_index/tests.rs`):
     entries.
   - Played on 2026-11-11 (`testrom --place 8HB1 7-7`): it is 7-7's lobby with
     a few stray enemies, and nothing in it is worth reusing.
-  - `HB_EXCLUDE_ENTRIES` and the level-pool exclusion keep the randomizer away
+  - `HB_EXCLUDE_OBJ_PTRS` and the level-pool exclusion keep the randomizer away
     from it too.
 - **Plains level data starts no later than `0x1E509`**, not at `0x1E512`:
   5-7's sub-area header is there. `LEVEL_DATA_REGIONS` and `rom_map.py` both

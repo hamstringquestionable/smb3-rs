@@ -593,8 +593,9 @@ It is read-only and cheap (a few ms), and the ROM changes as the pipeline runs,
 so build it from the ROM you are about to edit rather than reusing one. The
 vanilla quirks it has to respect are pinned by its tests (`level_index/tests.rs`):
 3HB18 names tileset 3 where its siblings name 1, so its layout pointer lands
-inside 7-3's last command (a garbled arena; `HB_EXCLUDE_ENTRIES` keeps it unused),
-and 3-9 and 3HB18 end on alt pointers naming tileset 0.
+inside 7-3's last command (a garbled arena, whose header overlaps the W1 arena's;
+the pipeline corrects it to tileset 1 with `qol::fix_3hb18_tileset`), and 3-9 and
+3HB18 end on alt pointers naming tileset 0.
 
 Modules that read through it: `items::powerups` (`every_power_block`),
 `cosmetic::level_music` (`every_level`), and the enemy pass, Big ? pass and

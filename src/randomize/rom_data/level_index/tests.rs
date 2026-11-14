@@ -95,9 +95,10 @@ fn the_dead_alt_pointers_are_the_known_two() {
 /// No area's commands run into another's. The one exception is vanilla's:
 /// 3HB18 shares its siblings' layout pointer (`$B3E7`) but names tileset 3
 /// where they name 1, so the pointer resolves in the Hilly bank, inside 7-3's
-/// last command. It loads a garbled arena, and `HB_EXCLUDE_ENTRIES` keeps it
-/// out of the Hammer Bro pool. A walk that sizes a junction (`$E0`+) by the
-/// tileset table instead fails this in Ice/Sky.
+/// last command. It loads a garbled arena; the pipeline corrects it to
+/// tileset 1 (`qol::fix_3hb18_tileset`), but these tests read the vanilla ROM,
+/// where it stays. A walk that sizes a junction (`$E0`+) by the tileset table
+/// instead fails this in Ice/Sky.
 #[test]
 fn areas_do_not_overlap_except_3hb18() {
     let Some(rom) = load_rom() else { return };

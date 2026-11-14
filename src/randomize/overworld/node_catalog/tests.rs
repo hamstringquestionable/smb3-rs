@@ -366,3 +366,25 @@ fn toad_house_treasure_types_split_fixed_and_rolled() {
     assert_eq!(fixed, 5, "fixed-reward houses (types 3/4/5): {by_type:?}");
     assert_eq!(rolled, 17, "rolled-reward houses (types 6-9): {by_type:?}");
 }
+
+/// The Hammer Bro pool, once `fix_3hb18_tileset` has run as the pipeline runs
+/// it: World 5's two hill arenas are in it, and nothing names tileset 3 with
+/// layout `$B3E7` (3HB18's garbled room). The exclusion this replaced keyed on
+/// objects and tileset alone, so it dropped both World 5 arenas too.
+#[test]
+fn hammer_bro_pool_has_world_5s_arenas() {
+    let Some(mut rom) = load_rom() else { return };
+    crate::randomize::qol::fix_3hb18_tileset(&mut rom);
+    let pool: Vec<(u8, u16, u16)> = NodeCatalog::build(&rom, false)
+        .unique_hammer_bro_levels()
+        .iter()
+        .map(|l| {
+            let lay = u16::from_le_bytes([l.lay_lo, l.lay_hi]);
+            (l.tileset, lay, u16::from_le_bytes([l.obj_lo, l.obj_hi]))
+        })
+        .collect();
+    assert_eq!(pool.len(), 16);
+    assert!(pool.contains(&(3, 0xACB5, 0xC640)), "5HB1-5HB9's arena");
+    assert!(pool.contains(&(3, 0xB422, 0xC640)), "5HB10's arena");
+    assert!(!pool.contains(&(3, 0xB3E7, 0xC640)), "3HB18's garbled room");
+}
