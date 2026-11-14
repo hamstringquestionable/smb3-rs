@@ -48,6 +48,8 @@ use tables::*;
 #[cfg(test)]
 mod chr_stats;
 #[cfg(test)]
+mod rotodisc_reach;
+#[cfg(test)]
 mod tests;
 
 /// Randomize enemies by parsing the structured object data and only swapping
