@@ -413,12 +413,35 @@ const LEVEL_PROTECTIONS: &[LevelProtection] = &[
     LevelProtection {
         level: "8F1",
         area: 0,
-        why: "roto-disc narrow area makes hazards unfair",
+        why: "roto-disc narrow area makes hazards unfair; a hazard at the screen-3 Rotodisc would block the pipe beside it",
         enemy_ptr: 0xD551,
         walker_segment: WalkerSegmentRule::Default,
         entries: &[
             EntryRule { offset: 0x0D562, id: 0x5A, rule: EntryProtection::Exclude(HAZARDS) }, // Rotodisc
             EntryRule { offset: 0x0D568, id: 0x60, rule: EntryProtection::Exclude(HAZARDS) }, // Rotodisc
+            EntryRule { offset: 0x0D56E, id: 0x5A, rule: EntryProtection::Exclude(HAZARDS) }, // Rotodisc scr=3 col=5
+        ],
+    },
+    // Small Mario can't kill a hazard, so one next to a pipe or door he
+    // has to use blocks it.
+    LevelProtection {
+        level: "1F",
+        area: 0,
+        why: "a hazard here would block the pipe beside it",
+        enemy_ptr: 0xD32B,
+        walker_segment: WalkerSegmentRule::Default,
+        entries: &[
+            EntryRule { offset: 0x0D35A, id: 0x3F, rule: EntryProtection::Exclude(HAZARDS) }, // DryBones scr=6 col=11
+        ],
+    },
+    LevelProtection {
+        level: "3-9",
+        area: 0,
+        why: "a hazard here would block the pipe beside it",
+        enemy_ptr: 0xC38F,
+        walker_segment: WalkerSegmentRule::Default,
+        entries: &[
+            EntryRule { offset: 0x0C3DF, id: 0x77, rule: EntryProtection::Exclude(HAZARDS) }, // GreenCheep scr=8 col=10
         ],
     },
     // --- Rotodisc-excluded entries ---

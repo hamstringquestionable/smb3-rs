@@ -61,6 +61,7 @@ Run each one with
 | `hazard_census` | `enemies/hazard_census.rs` | Low-ceiling corridors: slots where headroom is too low to jump a hazard, scored against the existing `Exclude(HAZARDS)` rules. `HAZARD_CUT` sets the headroom cut-off (default 3). |
 | `platform_census` | `enemies/platform_census.rs` | Gap, narrow landing, gap: slots on a landing Mario may be forced onto, with the widths of each part. |
 | `rotodisc_reach` | `enemies/rotodisc_reach.rs` | Slots where a Rotodisc would swing over the spot Mario appears at (level start or a junction arrival). Needs no terrain. `ROTO_AREA=4F2` prints every arrival and slot for one level. |
+| `exit_census` | `enemies/exit_census.rs` | Slots near a pipe mouth or door Mario can use (found by tile, as `Player_DoSpecialTiles` and the door logic in PRG008 do), with the distance to the nearest one. Small Mario can't kill a hazard, so one beside an exit can block it. `EXIT_NEAR` sets the cut-off (default 3). |
 
 Each scan prints a shortlist for a person to judge, not a verdict. The
 protections that came out of them (2026-11) are in
@@ -70,6 +71,8 @@ protections that came out of them (2026-11) are in
 - **Rotodiscs over arrivals:** 4-6 (both areas), 1-2, 2-1, 3-3, 5F1, 4F2's
   hidden door, 8B/1.
 - **Narrow landings:** 4-2, 7F2, 8B/0.
+- **Beside an exit (2 tiles or less):** 1F, 3-9, 8F1. The only earlier
+  rule written about an exit (5-4's pipe Paratroopa) is 1 tile away.
 
 **Looked at and left alone:**
 
@@ -79,6 +82,8 @@ protections that came out of them (2026-11) are in
 - 1F, 6-10 and 6-3 (narrow landings with a way round: a jump, a spinner, a
   moving platform).
 - 1-6, β5 and β7 were listed but not reviewed.
+- Near exits: 3-1, 1-4 and 7-5/1 at 2 tiles or less, and everything at
+  3 tiles. 8HB1 (`$C03D`) is never entered (issue #420).
 
 `platform_census` misses 4-1's giant green troopa (`0x0CEC9`), which has a rule;
 its landing doesn't match the scan's shape.
