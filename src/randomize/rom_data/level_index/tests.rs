@@ -108,6 +108,16 @@ fn areas_do_not_overlap_except_3hb18() {
     assert_eq!(overlaps, vec![(0x21294, 0x213F7), (0x213F7, 0x213FB)]);
 }
 
+/// The headers a writer must leave alone are exactly 3HB18's and the W1 arena
+/// its byte 8 lands in. 7-3 is not among them: its header is its own, even
+/// though 3HB18 sits inside its commands.
+#[test]
+fn the_shared_headers_are_3hb18_and_the_w1_arena() {
+    let Some(rom) = load_rom() else { return };
+    let shared: Vec<usize> = shared_headers(&every_level(&rom)).into_iter().collect();
+    assert_eq!(shared, vec![0x213F7, 0x213FB]);
+}
+
 /// Every object any vanilla area loads is one the disassembly names: a
 /// missing name means either a misread pointer or a gap in the table. The one
 /// exception is vanilla's: 6A places `$AB`, which has no `OBJ_` constant; its
