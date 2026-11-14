@@ -358,6 +358,10 @@ mod payload {
         pub(super) hammer_vulnerable_koopalings: bool,
         pub(super) random_koopalings: bool,
         pub(super) early_sun: bool,
+        /// `DamageSystem::Japanese`. Damage was a bool before it was a
+        /// three-way choice; the bit keeps its name and place so every key
+        /// minted with it still decodes to Japanese. `one_hit_ko` below is
+        /// the third value.
         pub(super) japanese_damage: bool,
         pub(super) infinite_mushroom_houses: bool,
         pub(super) fast_mushroom_house: bool,
@@ -498,9 +502,12 @@ mod payload {
         /// low end rides in `maze_wands`, which a Wandom key leaves free, XOR 2
         /// for the same reason. Both zero unless Wandom is on.
         pub(super) maze_wandom_max: B3,
+        /// `DamageSystem::OneHitKo`. Appended and false by default; encoded
+        /// with `japanese_damage` clear, and wins if a hand-made key sets both.
+        pub(super) one_hit_ko: bool,
 
         // --- Reserve ---
-        // 122 bits. Adding an option is: declare it immediately above this
+        // 121 bits. Adding an option is: declare it immediately above this
         // block, then take the same number of bits off the reserve. An older key
         // simply has those bits zero, which is "off" for a bool and the default
         // for every enum here, so it stays a correct key for the settings it
@@ -511,7 +518,7 @@ mod payload {
         // satisfied` against the struct. It means the widths no longer add up to
         // `bytes * 8`, nothing more.
         #[skip]
-        __: B122,
+        __: B121,
     }
 }
 
@@ -550,7 +557,7 @@ impl Options {
             remove_n_cards, card_speed_clear, skip_wand_cutscene,
             adjust_boss_hitboxes, koopaling_hits, boomboom_hits,
             hammer_vulnerable_koopalings, random_koopalings, early_sun,
-            japanese_damage, infinite_mushroom_houses, fast_mushroom_house,
+            damage, infinite_mushroom_houses, fast_mushroom_house,
             faster_tail_speed, faster_frog, lakitu_stays_down, no_game_over_penalty,
             shuffle_big_q_rooms,
             poison_mushrooms, modern_powerups, anchor_visuals,
@@ -599,7 +606,8 @@ impl Options {
             .with_hammer_vulnerable_koopalings(*hammer_vulnerable_koopalings)
             .with_random_koopalings(*random_koopalings)
             .with_early_sun(*early_sun)
-            .with_japanese_damage(*japanese_damage)
+            .with_japanese_damage(*damage == DamageSystem::Japanese)
+            .with_one_hit_ko(*damage == DamageSystem::OneHitKo)
             .with_infinite_mushroom_houses(*infinite_mushroom_houses)
             .with_fast_mushroom_house(*fast_mushroom_house)
             .with_faster_tail_speed(*faster_tail_speed)
@@ -727,7 +735,13 @@ impl Options {
             hammer_vulnerable_koopalings: f.hammer_vulnerable_koopalings(),
             random_koopalings: f.random_koopalings(),
             early_sun: f.early_sun(),
-            japanese_damage: f.japanese_damage(),
+            damage: if f.one_hit_ko() {
+                DamageSystem::OneHitKo
+            } else if f.japanese_damage() {
+                DamageSystem::Japanese
+            } else {
+                DamageSystem::Standard
+            },
             infinite_mushroom_houses: f.infinite_mushroom_houses(),
             fast_mushroom_house: f.fast_mushroom_house(),
             faster_tail_speed: f.faster_tail_speed(),

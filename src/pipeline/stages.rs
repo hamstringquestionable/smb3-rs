@@ -1147,11 +1147,11 @@ pub(super) fn engine_patches(
         randomize::qol::apply_limit_bro_movement(rom);
     }
 
-    // MaCobra52's "Japanese damage system" — damage drops straight to Small
-    // Mario (or kills from a suit) instead of tier-by-tier demotion.
-    if options.japanese_damage {
-        rom.set_tag("qol/japanese_damage");
-        randomize::qol::apply_japanese_damage(rom);
+    // Damage system: Japanese (any hit drops to Small) or one-hit KO. Both
+    // rewrite the same 3-byte jump in `Player_GetHurt`.
+    if options.damage != DamageSystem::Standard {
+        rom.set_tag("qol/damage_system");
+        randomize::qol::apply_damage_system(rom, options.damage);
     }
 
     // MaCobra52's "Infinite use Mushroom Houses" — toad houses don't get

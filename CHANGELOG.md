@@ -9,6 +9,13 @@ deploys.
 
 ## [Unreleased]
 
+### Changed
+
+- The Japanese Damage System checkbox is now a three-way Damage System
+  option: Standard, Japanese, or the new One-Hit KO, where any hit kills you
+  whatever you are wearing, Kuribo's Shoe included. Flag keys made with
+  Japanese damage on still load as Japanese.
+
 ## [3.2.0] - 2026-11-14
 
 ### Added
