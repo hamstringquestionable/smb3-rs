@@ -1,9 +1,10 @@
-//! SPIKE: an area's terrain, by running the engine's own level loader.
+//! An area's terrain, by running the engine's own level loader.
 //!
 //! `LevelLoad_ByTileset` (PRG030 `$9A1D`) runs on the `mos6502` dev-dep CPU
 //! with the four PRG windows SMB3 maps during a level load (`$8000` = PRG030,
 //! `$A000` = the tileset's bank, `$C000` = PRG014, `$E000` = PRG031), and the
-//! result is read out of `Tile_Mem` (`$6000-$794F`). Test-only.
+//! result is read out of `Tile_Mem` (`$6000-$794F`). Test-only; see
+//! `docs/level_terrain.md` for what it is good for and its limits.
 
 use mos6502::cpu::CPU;
 use mos6502::instruction::Ricoh2a03;
@@ -139,7 +140,8 @@ fn call(
         }
         steps += 1;
         if is_sbc {
-            // [[mos6502_sbc_carry_bug]]: recover the operand from the result
+            // The mos6502 crate sets carry wrongly after SBC (see
+            // `sbc_probe` below), so recover the operand from the result
             // (a1 = a0 - m - borrow, mod 256) and set carry as the 6502 does.
             sbc += 1;
             let a1 = cpu.registers.accumulator;
@@ -231,11 +233,11 @@ mod tests {
         out
     }
 
-    /// Run with `cargo test --lib terrain_spike -- --ignored --nocapture`;
+    /// Run with `cargo test --release --lib terrain_render -- --ignored --nocapture`;
     /// `TERRAIN_LEVEL` picks the level (default 1-1).
     #[test]
-    #[ignore = "spike instrument"]
-    fn terrain_spike() {
+    #[ignore = "instrument"]
+    fn terrain_render() {
         let Ok(bytes) = std::fs::read(
             std::env::var("TERRAIN_ROM")
                 .unwrap_or_else(|_| "roms/Super Mario Bros. 3 (USA) (Rev 1).nes".into()),
@@ -302,7 +304,7 @@ mod sweep {
     use crate::randomize::rom_data::level_index::every_level;
 
     #[test]
-    #[ignore = "spike instrument"]
+    #[ignore = "instrument"]
     fn terrain_sweep() {
         let Ok(bytes) = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes") else { return };
         let rom = Rom::from_bytes_lax(&bytes, true).unwrap();
@@ -349,7 +351,7 @@ mod sbc_probe {
     use mos6502::registers::Status;
 
     #[test]
-    #[ignore = "spike instrument"]
+    #[ignore = "instrument"]
     fn sbc_probe() {
         for (a, m) in [(5u8, 1u8), (1, 2), (0x80, 0x10), (0x10, 0x10)] {
             let mut mem = Memory::new();
