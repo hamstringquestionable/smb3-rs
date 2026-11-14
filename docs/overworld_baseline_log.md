@@ -34,6 +34,109 @@ hashes they describe are gone; the reasoning is not.
 
 ## Entries
 
+### 2026-11-12 — World 5's arenas join the Hammer Bro pool (fix/3hb18-tileset)
+
+**Intended: the writer deals from a 16-arena pool instead of 14; map shape
+unchanged.** `HB_EXCLUDE_ENTRIES` was added to keep 3HB18 out of the pool, but
+it keyed on `(objects, tileset)` = `($C640, 3)` without the layout, so it also
+dropped World 5's two hill arenas (`$ACB5`, used by 5HB1-5HB9, and `$B422`,
+5HB10), which are real rooms. No seed ever dealt them. With 3HB18 corrected in
+the previous entry the exclusion only matched those two, so it is removed.
+
+The pool feeds `interleave_hb_by_obj_ptr` and `shuffled_obj_groups` in the
+writer, which draw before the writer deals 1-F and the level pool, so with two
+more arenas the main stream diverges there: which level and arena sit behind
+each tile changes on every seed.
+
+**How that was established.** Whole ROMs from the previous commit and this
+one, `--no-palettes --patched-rom`, seeds 1-60 at the defaults,
+`--world-maze` and `--deja-vu double`: every differing byte (about 437 per
+seed) lies in the pointer tables (`0x19434..0x19C4B`), none in the map tiles or
+anywhere else, so every map's shape is unchanged. Over 40 default seeds the
+World 5 arenas are dealt to 381 (`$ACB5`) and 337 (`$B422`) entries, and no
+entry loads tileset 3 with `$B3E7`. No census run: the censuses build from the
+catalog, pickup and builder and never call the writer, the only reader of the
+pool (`unique_hammer_bro_levels`), so no census figure can move.
+
+### 2026-11-12 — 3HB18 loads its siblings' arena (fix/3hb18-tileset)
+
+**Intended: one byte per ROM, and nothing else.** `qol::fix_3hb18_tileset`
+writes tileset 1 over vanilla's 3 in World 3's pointer table entry 41 (3HB18),
+so its layout pointer `$B3E7` resolves to the arena its 17 siblings load
+instead of the middle of 7-3. The byte is in the pointer tables, which the
+fingerprint covers, so all 20 seeds move.
+
+**How that was established.** Whole ROMs from `origin/beta/next` and from this
+commit, `--no-palettes --patched-rom`, seeds 1-60 for each of: defaults,
+`--world-maze`, `--world-order`, `--deja-vu double`, `--deja-vu wild
+--deja-vu-forts`, and `--world-maze --generated-overworld`. Every pair differs
+in exactly one byte, the entry's row/tileset byte (`$73` → `$71` at its
+written position). With `--level-music` the music deal also moves (the W1
+arena's header no longer overlaps 3HB18's, so it is dealt again); every other
+differing byte there is a song nibble. `HB_EXCLUDE_ENTRIES` is kept in this
+commit so the Hammer Bro pool is unchanged; its removal is the next entry.
+
+### 2026-11-10 — enemy CHR groups: re-roll and a 20-tile gap (feature/chr-group-reroll)
+
+**Intended: no overworld change; an RNG shift from the enemy pass, which runs
+upstream of the builder.** Two changes to how the pass picks enemies within a
+CHR proximity group:
+
+1. When an enemy that could not be replaced clashed with an earlier pick, the
+   group is picked again with that enemy's page committed first
+   (`MAX_CHR_REROLLS`). On its own this moved no baseline seed: at the default
+   flags no group inside the 16-tile gap ever needed a retry.
+2. `CHR_GROUP_GAP` went from 16 to 20, because two stationary objects up to
+   ~20 tiles apart are both live and both rewrite their page every frame.
+   Groups change shape, so the picks, their candidate counts and now the
+   default-flag retries change too, and the main stream diverges from there.
+   16 of the 20 seeds moved (all but 1, 3, 4 and 16).
+
+**How that was established.** No builder, catalog or writer code changed; the
+diff is `enemies/` only. `enemy_invariant_baseline` passes, and the new
+`enemy_pass_adds_no_chr_clash_within_a_group` holds over 50 seeds at the
+defaults and at all-Wild. `chr_clash_stats` (200 seeds) and `chr_page_stats`
+measured the enemy side: rooms with a new clash went 3.2 → 0 per seed at the
+defaults and 17.7 → 2.1 at all-Wild, with all 58 wild-pool IDs still placed.
+No census run, by the reasoning of the 2026-10-29 entry.
+
+### 2026-11-09 — enemy pass on the level index (feature/enemies-level-index)
+
+**Intended: no overworld change; an RNG shift from two passes upstream of the
+builder.** Three commits, recaptured once at the end:
+
+1. `level_index::every_level` learned the eight Big [?] room slots and Unused
+   Level 5. Powerups (on the main stream) now rerolls one more block, BigQ5's
+   brick flower; music draws from its own salted stream, so only powerups
+   shifts the main sequence. Seeds 12 and 15 moved.
+2. The enemy pass found its streams through the index instead of a block-wide
+   walk, while still visiting the segments no level loads: byte-identical
+   across every `rom_identity` arm, so no recapture.
+3. Those unreferenced segments are no longer visited (the 29 southbird
+   `_XXXX` blocks and Unused Levels 12/13, plus the airship streams that
+   autoscroll removal repoints away from). About 200 fewer swaps' worth of
+   draws. All 20 seeds moved.
+
+**How that was established.** No builder, catalog or writer code changed.
+Before step 3, the walker and the index were compared on the ROM the enemy
+pass receives: every object entry the index traces is parsed by the walker at
+the same offset, no entry is shared between two object pointers, and every
+area begins its own `$FF` segment, so the streams the pass now skips are whole
+segments no level loads. `every_loaded_object_stream_was_visible_to_the_enemy_pass`
+checks that, on finished ROMs across five flag arms (defaults, all-off, all-on,
+beta stages with Big [?] room shuffle, all-on with beta stages), every stream
+the game loads was visible to the enemy pass; dropping Unused Level 5 from the
+index fails it. `enemy_invariant_baseline` passes; `chr_stats`' wild-pool
+shares move only for IDs common in the skipped segments (Green Troopa `0x6C`
++1.6 points), the vanilla bytes it now counts there; its wild-injection
+visibility figure reads 0% both before and after (a broken instrument, due its
+own fix). No census run, by the reasoning of the 2026-10-29 entry.
+
+**Merged with 3.1.1.** Recaptured again on 2026-11-10 after `beta/next`
+brought in the W8 tank-cell fix (entry below); the hashes here are both
+changes together. Of the 20 seeds only 11 moved: under this branch's RNG shift,
+seed 9 no longer puts a node on the tank cell.
+
 ### 2026-11-10 — W8's tank cell is an ordinary blank (fix/w8-tank-cell-water, 3.1.1)
 
 **Intended: an overworld change on the seeds that had the bug, and only
@@ -42,8 +145,11 @@ open water `$8D`. That is right only when `8s are Wild` has drawn the canoe
 lake there; the row predates the flag (`ff54c74`, gated by `23c7405`) and was
 never gated with it. Pickup keeps the cell's own `$AF` (an island blank), but
 when a builder rung puts a node on the cell and later moves it off,
-`blank_tile_for` restored water, cutting the start off from the pipe at (3,8).
-Player report: 3.1.0 seed 3290458290178928 could not reach World 8's castle.
+`blank_tile_for` restored water. 3.1.0 seed 3290458290178928 was passed on as
+unbeatable (second-hand, not seen first-hand), and the cell looks like it cuts
+the start off from the pipe at (3,8). It does not: `Map_CheckDoMove` checks
+only the path tile between two nodes, never the landing tile, and a playtest of
+that ROM walked across the water into the pipe. So the bug was what the map showed, not what it allowed.
 The row is gone: the cell is chosen like any other blank, and the one general
 rule added is that pickup keeps water the map source drew (which is how the
 canoe lake survives with the flag on).
@@ -55,6 +161,33 @@ defaults (`--no-palettes`, so the comparison is exact), 82 ROMs differ from
 are byte-identical. On an affected seed the rest of the ROM moves too, because
 the builder's walks see different terrain and draw a different RNG stream from
 that point on.
+
+**On `beta/next`.** Merged in from `main` after 3.1.1 shipped, over the
+2026-11-08 sprite-slot baseline below. The same two seeds move, 9 and 11, and
+no other.
+
+### 2026-11-08 — sprite slots, phase B (feature/sprite-budget)
+
+**Intended: the map-object slot each sprite occupies moves; nothing a player
+walks does.** `overworld::sprite_slots` (phase A, byte-identical, the commit
+before) became the only writer of the map-object tables; phase B changes what
+it deals: slot 1 is sprite capacity with autoscroll removal, so Hammer Bros —
+which fill from the bottom — start at slot 1 instead of slot 2; and World 8's
+level tank moves from slot 2 into slot 0, where vanilla parks an unused HELP.
+(The World 7 plant reservation, also phase B, applies only to generated maps
+with Piranha Off, which the baseline's default options do not use.)
+
+**What moved.** All 20 seeds.
+
+**How that was established.** Each seed's patched ROM under the baseline's own
+options, phase A against phase B, byte for byte: **every** differing byte is
+inside the map-object tables (file `0x16010`-`0x161D7`) — 90 to 101 per seed —
+and **none** is anywhere else. So no RNG draw moved: under the default options
+the Hammer Bro caps never bind, so the extra slot changes no world's Bro count,
+only the indices they are written to. No census run: the route censuses build
+with `BuildFlags::default()`, which leaves slot 1 closed, and Hammer Bros are
+dealt after routes are shaped. `map_object_slot_budget` (30 seeds) is
+unchanged, and `all_world_targets_reachable` was re-run at 500 seeds.
 
 ### 2026-11-03 — powerups reads its blocks from the level index (feature/random-music)
 

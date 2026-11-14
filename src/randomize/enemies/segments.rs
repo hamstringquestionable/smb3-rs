@@ -1,4 +1,5 @@
-//! Hammer-Bro "wild" segment randomization with stompability constraints.
+//! One parsed segment and the walker's state for it: entries, CHR pins,
+//! placement limits and proximity groups; plus the Hammer Bro Wild batch pick.
 
 use super::*;
 
@@ -12,26 +13,49 @@ pub(super) struct SegmentEntry {
     pub(super) x_pos: u8,
 }
 
-/// CHR pages a segment has already spoken for before any pick is made.
-/// `all` is every fixed entry; `chaser` is the subset that follows the player
-/// across proximity groups (see `CHASER_IDS`).
+/// The walker's running state for one segment. A CHR group that is picked
+/// again restores it whole, so a new field here is restored too.
 #[derive(Clone, Copy)]
-pub(super) struct SegmentPins {
-    pub(super) all: (ChrSlot, ChrSlot),
-    pub(super) chaser: (ChrSlot, ChrSlot),
+pub(super) struct SegmentState {
+    /// Big Berthas in the segment, for `MAX_BERTHA_PER_SEGMENT`.
+    pub(super) berthas: u8,
+    /// Hazards this pass has added, for `HazardLimit::Sparse`. Starts at zero
+    /// rather than counting what's already here: the rule is additive-only, so
+    /// a segment Nintendo filled with nippers keeps them and still has its
+    /// budget for one more. Monotonic — replacing an added hazard with a
+    /// non-hazard doesn't refund it.
+    pub(super) added_hazards: u8,
+    /// Every CHR commitment anywhere in the segment: fixed entries up front,
+    /// then every pick as it's made. A chaser must fit all of it.
+    pub(super) all: Pages,
+    /// The pages of the level-wide chasers in the segment (see `CHASER_IDS`).
+    /// They seed every group's local slots, since a chaser follows the player
+    /// into each group.
+    pub(super) chaser: Pages,
+}
+
+impl SegmentState {
+    /// Commit `id`'s page to the group's `local` slots and to the segment.
+    pub(super) fn commit(&mut self, id: u8, local: &mut Pages) {
+        local.commit(id);
+        self.all.commit(id);
+        if CHASER_IDS.contains(&id) {
+            self.chaser.commit(id);
+        }
+    }
 }
 
 /// Placement limits that hold for every entry in one segment, whatever pool
 /// that entry draws from. The first two are properties of the *room*, not the
 /// slot, which is why they ride alongside the per-entry protections rather
 /// than being expressed as `EntryRule`s. `hazard_cap_full` is the one
-/// run-scoped member: it rides here because `pick_replacement`'s `keep` is the
+/// member that changes as the segment's picks are made: it rides here because `pick_replacement`'s `keep` is the
 /// single place every pick funnels through, so one field there covers the
 /// class pools, the wild pool and all four protection paths at once.
 #[derive(Clone, Copy)]
 pub(super) struct SegmentLimits {
     /// The Big Bertha cap is already reached — no new bertha here.
-    pub(super) cap_full: bool,
+    pub(super) bertha_cap_full: bool,
     /// No `$81` here: this room rewrites one into an unkillable object. See
     /// `crate::randomize::enemies::protections::rewrites_hammer_bro`.
     pub(super) no_hammer_bro: bool,
@@ -41,13 +65,6 @@ pub(super) struct SegmentLimits {
     /// `HazardLimit::Off`, and under `Sparse` it flips once the segment has
     /// gained [`MAX_ADDED_HAZARDS_PER_SEGMENT`] of them.
     pub(super) hazard_cap_full: bool,
-}
-
-impl SegmentPins {
-    /// Nothing committed — the Big-?-block pass, which skips the CHR model.
-    pub(super) fn none() -> Self {
-        SegmentPins { all: (ChrSlot::Free, ChrSlot::Free), chaser: (ChrSlot::Free, ChrSlot::Free) }
-    }
 }
 
 /// Whether an entry's obj_id is settled before the picks run: pinned by class
@@ -62,31 +79,30 @@ pub(super) fn is_fixed(entry: &SegmentEntry, modes: &ClassModes, injected: &[usi
         || is_pinned(entry.obj_id, ENEMY_DATA_START + entry.data_index, modes)
 }
 
-/// Accumulate the segment's fixed CHR pages. `skip` drops one entry from the
+/// The segment's fixed CHR pages, as `(all, chaser)` — see [`SegmentState`].
+/// `skip` drops one entry from the
 /// tally — the wild-injection decision uses it to ignore the enemy it is about
 /// to replace, whose page is on its way out.
 ///
 /// Single definition on purpose: the injection decision and the walker's own
-/// seeding must agree about what "already pinned" means, and a second copy of
-/// this loop is what let the old pre-walk injection pass drift.
+/// seeding must agree about what "already pinned" means.
 pub(super) fn segment_pins(
     entries: &[SegmentEntry],
     modes: &ClassModes,
     injected: &[usize],
     skip: Option<usize>,
-) -> SegmentPins {
-    let mut pins =
-        SegmentPins { all: (ChrSlot::Free, ChrSlot::Free), chaser: (ChrSlot::Free, ChrSlot::Free) };
+) -> (Pages, Pages) {
+    let (mut all, mut chaser) = (Pages::FREE, Pages::FREE);
     for entry in entries {
         if Some(entry.data_index) == skip || !is_fixed(entry, modes, injected) {
             continue;
         }
-        commit_chr_page(entry.obj_id, &mut pins.all.0, &mut pins.all.1);
+        all.commit(entry.obj_id);
         if CHASER_IDS.contains(&entry.obj_id) {
-            commit_chr_page(entry.obj_id, &mut pins.chaser.0, &mut pins.chaser.1);
+            chaser.commit(entry.obj_id);
         }
     }
-    pins
+    (all, chaser)
 }
 
 /// Split entries into proximity groups based on X-position gaps.
@@ -112,11 +128,6 @@ pub(super) fn chr_groups(entries: &[SegmentEntry]) -> Vec<Vec<usize>> {
     groups
 }
 
-/// HB Wild segment randomization with stompability constraints.
-/// 1-enemy segments: pick from STOMPABLE_ENEMIES only.
-/// 2-enemy segments: `HB_NONSTOMPABLE_ODDS` chance for the non-stompable path
-/// (one from HB_NEEDS_SHELL_ENEMIES + one from SHELL_ENEMIES), otherwise both
-/// stompable.
 /// Write one HB Wild pick, raising the single enemy in the pool whose AI
 /// ignores the floor. See [`HB_FLYER_RAISE_ROWS`] for why 7 rows.
 ///
@@ -133,6 +144,11 @@ fn place_hb_pick(data: &mut [u8], id_index: usize, id: u8, closed_room: bool) {
     }
 }
 
+/// HB Wild segment randomization with stompability constraints.
+/// 1-enemy segments: pick from STOMPABLE_ENEMIES only.
+/// 2-enemy segments: `HB_NONSTOMPABLE_ODDS` chance for the non-stompable path
+/// (one from HB_NEEDS_SHELL_ENEMIES + one from SHELL_ENEMIES), otherwise both
+/// stompable. Segments with more swappable entries are left as they are.
 pub(super) fn randomize_hb_wild_segment<R: Rng>(
     data: &mut [u8],
     entries: &[SegmentEntry],

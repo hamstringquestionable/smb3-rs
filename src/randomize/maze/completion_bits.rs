@@ -74,7 +74,7 @@ use crate::randomize::maze::maze_state;
 use crate::randomize::overworld::build::is_completion_unsafe;
 #[cfg(test)]
 use crate::randomize::rom_data::{self};
-use crate::randomize::rom_data::{Grid, MAP_COMPLETE_BITS};
+use crate::randomize::rom_data::{Grid, MAP_COMPLETE_BITS, PAGE_A000, PRGROM_CHANGE_A000};
 
 /// One `Map_Completions` half — 64 columns, one byte of row-bits each.
 pub(crate) const HALF_LEN: usize = 64;
@@ -671,13 +671,8 @@ const UNPACK_PLANE: [u8; 72] = [
 
 // --- Engine symbols outside PRG012 ---
 //
-// `World_Num` and `Map_Reload_with_Completions` are `rom_data::engine`'s.
-
-/// `PAGE_A000` — the MMC3 page latched into `$A000` by the next
-/// `PRGROM_Change_A000`.
-const PAGE_A000: u16 = 0x0720;
-/// `PRGROM_Change_A000`, in the always-mapped PRG031.
-const PRGROM_CHANGE_A000: u16 = 0xFFC2;
+// `World_Num`, `Map_Reload_with_Completions`, `PAGE_A000` and
+// `PRGROM_Change_A000` are `rom_data::engine`'s.
 
 /// Bytes of packed state in total: both planes, back to back.
 const PACKED_LEN: usize = 2 * PLANE_RESERVE;
@@ -981,7 +976,7 @@ const NEW_GAME_INIT: [u8; 55] = [
     0xCA,                                           // 13: DEX
     0x10, 0xFA,                                     // 14: BPL -6 -> store_loop
 
-    0xA2, (maze_state::MAZE_STATE_LEN - 1) as u8,   // 16: LDX #17
+    0xA2, (maze_state::MAZE_STATE_LEN - 1) as u8,   // 16: LDX #len-1
     0x9D, maze_state::MAZE_STATE_START as u8,
           (maze_state::MAZE_STATE_START >> 8) as u8, // 18: STA MAZE_STATE,X ; maze_loop
     0xCA,                                           // 21: DEX

@@ -191,6 +191,7 @@ impl WorldState {
                 section: 0,
                 is_hand_trap: false,
                 is_troll_pipe: false,
+                is_pyramid: false,
                 pin: None,
                 lock_hint: LockHint::default(),
             });
@@ -457,6 +458,9 @@ impl WorldState {
             section_count: self.fort_count(),
             pipe_pairs: self.pipe_pairs.clone(),
             hb_sprites: Vec::new(),
+            sprites: crate::randomize::overworld::sprite_slots::WorldSprites::unread(
+                self.world_idx,
+            ),
             fixed: self.fixed.clone(),
             c1_floor: self.c1_floor,
         }

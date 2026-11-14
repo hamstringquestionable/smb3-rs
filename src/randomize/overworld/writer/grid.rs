@@ -136,12 +136,19 @@ pub(super) fn write_tile_grid<R: Rng>(
         .filter(|pos| !wa.demoted_troll_pipes.contains(pos))
         .collect();
 
+    // Wandom's pyramid (`maze::wandom`). Takes no number, so the panels
+    // either side of it stay consecutive.
+    let pyramid_positions: HashSet<(usize, usize)> =
+        built.slots.iter().filter(|s| s.is_pyramid).map(|s| s.pos).collect();
+
     let mut level_idx: usize = 0;
     let mut assigned: Vec<bool> = vec![false; wa.level.len()];
 
     let mut pick_level_tile = |pos: (usize, usize)| -> u8 {
         if hand_trap_positions.contains(&pos) {
             TILE_HAND_TRAP
+        } else if pyramid_positions.contains(&pos) {
+            crate::randomize::maze::wandom::TILE_PYRAMID
         } else if troll_pipe_positions.contains(&pos) {
             TILE_TROLL_PIPE
         } else {
@@ -196,13 +203,11 @@ pub(super) fn write_tile_grid<R: Rng>(
         grid.set(lock.pos.0, lock.pos.1, tile);
     }
 
-    // Overwrite sprite-covered positions with connectivity-aware path nodes.
-    // W8 army sprites float on top of the grid; the underlying tile must be
-    // a plain path node, not a fortress/level tile. Skip BLANK_TILE_OVERRIDES
-    // since sprite positions are dynamic (not the vanilla fixed positions).
+    // W8 army sprites float on top of the grid; the tile under one must be a
+    // plain blank node, not a fortress/level tile. It is chosen the way every
+    // other blank is.
     for &pos in sprite_mask {
-        let tile =
-            crate::randomize::overworld::pickup::blank_tile_from_neighbors(&grid, wi, pos.0, pos.1);
+        let tile = crate::randomize::overworld::pickup::blank_tile_for(&grid, wi, pos.0, pos.1);
         grid.set(pos.0, pos.1, tile);
     }
 

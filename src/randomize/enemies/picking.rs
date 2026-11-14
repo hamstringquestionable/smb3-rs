@@ -72,8 +72,8 @@ pub(super) fn pick_bucket_first<R: Rng>(
 }
 
 /// Decide the replacement enemy for one swappable walker entry, or `None` to
-/// leave it unchanged. Callers handle Big ? blocks, Boom-Booms, and SkipSwap
-/// before calling; bertha bookkeeping and the actual write stay with them too.
+/// leave it unchanged. Callers handle Boom-Booms, SkipSwap and injected
+/// entries before calling; bertha bookkeeping and the actual write stay with them too.
 ///
 /// Every entry funnels through one shape: choose a base pool + a primary
 /// (CHR-aware) pick, then filter through the placement constraints before
@@ -89,10 +89,9 @@ pub(super) fn pick_replacement<R: Rng>(
     limits: SegmentLimits,
     rng: &mut R,
 ) -> Option<u8> {
-    let (slot4, slot5) = chr.local;
-    let (seg4, seg5) = chr.segment;
+    let Pages { slot4, slot5 } = chr.local;
     // Base pool + primary pick. A pool-replacing protection
-    // (ForceShell/TankBro/Stompable/Exclude) chooses the pool;
+    // (ForceShell/Stompable/Exclude) chooses the pool;
     // otherwise it's the normal class pool, picked via the
     // wild/piranha/plain strategy. `None` => no swap for this entry.
     let picked: Option<(Option<u8>, Cow<[u8]>)> = match protection {
@@ -148,7 +147,7 @@ pub(super) fn pick_replacement<R: Rng>(
     // true when `id` is allowed in this slot.
     let keep = |id: u8| -> bool {
         // Big Bertha cap: no new bertha once the segment is full.
-        let over_cap = limits.cap_full && BERTHA_IDS.contains(&id);
+        let over_cap = limits.bertha_cap_full && BERTHA_IDS.contains(&id);
         // A Hammer Bro in a treasure-box room is a placeholder the engine
         // rewrites into an unkillable object, stranding the player (see
         // `rewrites_hammer_bro`).
@@ -158,7 +157,7 @@ pub(super) fn pick_replacement<R: Rng>(
         // A level-wide chaser must be CHR-compatible with every page
         // committed anywhere in the segment, not just this group — it
         // follows the player into all of them (see CHASER_IDS).
-        let chaser_clash = CHASER_IDS.contains(&id) && !is_chr_compatible(id, seg4, seg5);
+        let chaser_clash = CHASER_IDS.contains(&id) && !chr.segment.fits(id);
         // This segment's hazard budget is spent (always, under HazardLimit::All).
         // Additive-only, exactly like the curated Exclude entries: a
         // hazard sharing the vanilla enemy's category is still allowed, so

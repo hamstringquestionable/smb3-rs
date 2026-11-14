@@ -166,8 +166,9 @@ mod tests {
         assert!(!headers.contains(&0x213F7));
         assert!(!headers.contains(&0x213FB));
         // The index's 224 areas (pointer tables and beta stages), plus the
-        // Coin Ship's two, less 3HB18 and the W1 arena.
-        assert_eq!(headers.len(), 224);
+        // Coin Ship's two, the eight Big [?] rooms and Unused Level 5, less
+        // 3HB18 and the W1 arena.
+        assert_eq!(headers.len(), 233);
     }
 
     /// The 3.1.1 bug: with 7-3 on no map, nothing covered 3HB18's header, so

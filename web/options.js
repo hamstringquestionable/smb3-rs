@@ -342,6 +342,13 @@ const NOTE_BLOCK = { tiles: [6200, 6202, 6201, 6203], cols: 2, palette: [0x0F, 0
 const SPADE = { tiles: [1448, 1448, 1449, 1449], cols: 2, palette: [0x0F, 0x20, 0x20, 0x1D], flipRight: true }; // $16
 const N_CARD = { tiles: [2064, 2064, 2065, 2065], cols: 2, palette: [0x0F, 0x20, 0x20, 0x1D], flipRight: true }; // $20
 
+// The "WORLD n" digits 1-8 as the arrival banner draws them: map BG tiles
+// $F1-$F8, CHR page $16 (1408 + $71..$78). Colour 3 is the card behind the
+// digit, cleared so the numeral stands alone; colour 1 is its outline.
+const WORLD_DIGITS = [1, 2, 3, 4, 5, 6, 7, 8].map((n) => ({
+	tiles: [1520 + n], cols: 1, clear: 3, palette: [0x0F, 0x0F, 0x30, 0x0F],
+}));
+
 // Water enemies, page $1A. Boss Bass is 24x32 — his two halves aren't adjacent
 // in CHR, so they're picked separately and stacked here into one grid.
 const BLOOPER = { tiles: [1712, 1712, 1713, 1713], cols: 2, palette: [0x0F, 0x1E, 0x37, 0x03], flipRight: true };
@@ -379,7 +386,7 @@ export const SCHEMA = [
 	// --- Map ---
 	{ id: "generated_overworld", type: "bool", default: false,
 		label: "Generated Overworld", flavor: "Shapes.",
-		tip: "Draw every world's map from scratch: new paths, islands and scenery each seed, in each world's own style. Turns on Wandering Hammer Bros, Piranha Shuffle and Shuffle Spade Games, and turns off 8s are Wild and More Hammer Rocks. With Toad House shuffle off, each world keeps its own Toad Houses.",
+		tip: "Draw every world's map from scratch: new paths, islands and scenery each seed, in each world's own style. Turns on Wandering Hammer Bros and Shuffle Spade Games, and turns off 8s are Wild and More Hammer Rocks. With Toad House shuffle off, each world keeps its own Toad Houses.",
 		icon: WORLD_TILES,
 		group: "map", subgroup: "layout", inFlagKey: true },
 	{ id: "world_order", type: "bool", default: false,
@@ -429,12 +436,9 @@ export const SCHEMA = [
 		forcedByGenerated: true },
 	{ id: "piranha_shuffle", type: "tri", options: OFF_ON_WILD, default: "off",
 		label: "Piranha Shuffle",
-		tip: "Free the two W7 piranha plant levels into the level shuffle. On: their plants travel with them, guarding wherever they land. Wild: the plants scatter instead — one lands on a random level in each world, and stepping on a plant starts the level under it.",
+		tip: "Off: the two piranha plants stay in World 7, guarding their own levels. On: the plant levels join the level shuffle and their plants travel with them, guarding wherever they land. Wild: the plants scatter instead — one lands on a random level in each world, and stepping on a plant starts the level under it.",
 		icon: MAP_PIRANHA,
-		group: "map", subgroup: "placement", inFlagKey: true,
-		// A generated map moves the plant levels, and only a shuffle moves
-		// their plants with them.
-		forcedByGenerated: "on" },
+		group: "map", subgroup: "placement", inFlagKey: true },
 	{ id: "shuffle_spade_games", type: "bool", default: true,
 		label: "Shuffle Spade Games",
 		tip: "Move spade (card-matching) games to random spots on the map",
@@ -519,12 +523,26 @@ export const SCHEMA = [
 		tip: "The eight maps become one big maze. Warp pads link them, a fortress can open a lock in another world, and your progress in a world is still there when you come back. Turns World Order on, and uses all eight worlds.",
 		icon: MAZE_TILES,
 		group: "maze", inFlagKey: true },
+	// 8 is Wandom (`MAZE_WANDS_WANDOM` in options.rs): the seed rolls 2-6 and
+	// hides it. Its pill reads "?" because that is what the map shows.
 	{ id: "maze_wands", type: "tri", numeric: true,
-		options: [0,1,2,3,4,5,6,7].map(n => ({ value: n, label: String(n) })),
+		options: [0,1,2,3,4,5,6,7].map(n => ({ value: n, label: String(n) }))
+			.concat([{ value: 8, label: "?" }]),
 		default: 3,
-		label: "Wands To Enter",
-		tip: "Wands needed before Bowser's castle will open. Fewer is a shorter game; 0 lets you walk straight in if you find a way there.",
+		label: "Wands To Enter", flavorWhen: { value: 8, text: "Wandom" },
+		tip: "Wands needed before Bowser's castle will open. Fewer is a shorter game; 0 lets you walk straight in if you find a way there. ? picks a secret number, from 2 to 6 unless you change it: with ? lit, click a number to set the lowest it can be, then another to set the highest. Picking the same number twice makes it a fixed count instead. Beat the obelisk level, somewhere early in the maze, to find out what it is.",
 		icon: WANDS,
+		group: "maze", inFlagKey: true,
+		mode: "maze" },
+	// Wandom's range. No row of their own: each is a hidden input on Wands To
+	// Enter, which `wireRange` drives while its "?" (`activeWhen`) is lit, and
+	// both are inert otherwise.
+	{ id: "maze_wands_min", type: "range", rangeOf: "maze_wands", activeWhen: 8, default: 2,
+		label: "Wandom Fewest Wands",
+		group: "maze", inFlagKey: true,
+		mode: "maze" },
+	{ id: "maze_wands_max", type: "range", rangeOf: "maze_wands", activeWhen: 8, default: 6,
+		label: "Wandom Most Wands",
 		group: "maze", inFlagKey: true,
 		mode: "maze" },
 	{ id: "hints", type: "tri", options: HINT_LEVELS, default: "some",
@@ -542,6 +560,12 @@ export const SCHEMA = [
 		label: "Telepad Reach", pills: ["Standard", "Uncapped"],
 		tip: "Standard telepads only warp you so far through the game. Uncapped telepads have no limit, which can make for shorter runs that skip more of the game.",
 		icon: TELEPAD,
+		group: "maze", inFlagKey: true,
+		mode: "maze" },
+	{ id: "hidden_worlds", type: "bool", default: false,
+		label: "Hidden World Numbers",
+		tip: "Every world number shows × instead, on the map, in levels, and on the card when you arrive, until you beat the obelisk level that reveals them.",
+		icon: WORLD_DIGITS,
 		group: "maze", inFlagKey: true,
 		mode: "maze" },
 
@@ -1049,8 +1073,8 @@ export const PRESETS = [
 			world_order: true,
 		} },
 	{ id: "maze_recommended", label: "Recommended", mode: "maze",
-		tip: "The everyday maze ruleset: most enemies wild, beta stages, three wands for the castle, and lock hints on.",
-		// decoded from SMB3R-3PVZZZVZ3SGT8AK9WBXQQKT00R
+		tip: "The everyday maze ruleset: freshly drawn maps, most enemies wild, beta stages, a secret wand count from 2 to 6, and full lock hints.",
+		// decoded from SMB3R-3QYZZZVZ3R0T8AK9WBXQQKY0G010
 		overrides: {
 			antechamber_shuffle: "on",
 			big_q_blocks: true,
@@ -1061,14 +1085,17 @@ export const PRESETS = [
 			faster_frog: true,
 			faster_tail_speed: true,
 			flying: "wild",
+			generated_overworld: true,
 			ghosts: "wild",
 			ground: "wild",
 			hammer_breaks_locks: "on",
 			hammer_vulnerable_koopalings: true,
 			hb_encounters: "wild",
+			hints: "full",
 			include_beta_stages: true,
 			limit_bro_movement: true,
 			limit_hazards: "some",
+			maze_wands: 8,
 			more_hammer_rocks: "maybe",
 			no_game_over_penalty: true,
 			piranha_shuffle: "wild",
@@ -1086,13 +1113,14 @@ export const PRESETS = [
 			world_order: true,
 		} },
 	{ id: "maze_beginner", label: "Beginner Friendly", mode: "maze",
-		tip: "A gentler maze: extra lives and items, hazards in check, and full hints so every lock names the world its key is in.",
-		// decoded from SMB3R-3QYZZS9ZAW8T05AG27Y120Y30R
+		tip: "A gentler maze on freshly drawn maps: extra lives and items, hazards in check, and full hints so every lock names the world its key is in.",
+		// decoded from SMB3R-3QKFZS9ZAW0T05AG27Y120Y3GR
 		overrides: {
 			big_q_blocks: true,
 			fast_mushroom_house: true,
 			faster_tail_speed: true,
 			friendlier_levels: true,
+			generated_overworld: true,
 			ground: "wild",
 			hammer_breaks_locks: "on",
 			hammer_vulnerable_koopalings: true,
@@ -1115,8 +1143,8 @@ export const PRESETS = [
 			world_order: true,
 		} },
 	{ id: "maze_challenging", label: "Challenging", mode: "maze",
-		tip: "A maze with nothing given away: wild enemies, no hints, no crutches, and the castle open from the start.",
-		// decoded from SMB3R-3NQFZZZF7J0ADANAW8XG0G2404
+		tip: "A maze that gives little away: freshly drawn maps, wild enemies, no crutches, a secret wand count from 4 to 7, lock hints only outside World 8, and world numbers hidden until you find them.",
+		// decoded from SMB3R-3Q5ZZZZF7G0ADANAW8XG0G64HM70
 		overrides: {
 			antechamber_shuffle: "on",
 			big_q_blocks: true,
@@ -1128,14 +1156,18 @@ export const PRESETS = [
 			faster_frog: true,
 			faster_tail_speed: true,
 			flying: "wild",
+			generated_overworld: true,
 			ghosts: "wild",
 			ground: "wild",
 			hb_encounters: "wild",
-			hints: "off",
+			hidden_worlds: true,
+			hints: "most",
 			include_beta_stages: true,
 			japanese_damage: true,
 			limit_bro_movement: true,
-			maze_wands: 0,
+			maze_wands: 8,
+			maze_wands_max: 7,
+			maze_wands_min: 4,
 			no_game_over_penalty: true,
 			piranha_shuffle: "wild",
 			piranhas: "wild",
@@ -1153,8 +1185,8 @@ export const PRESETS = [
 			world_order: true,
 		} },
 	{ id: "maze_max_chaos", label: "Max Chaos", mode: "maze",
-		tip: "Everything wild, inside the maze: every enemy class, every maybe, and the castle open from the start.",
-		// decoded from SMB3R-3QVFZQVZ7JNANANAXBXQPKVG
+		tip: "Everything wild, inside the maze: freshly drawn maps, every enemy class, every maybe, a secret wand count anywhere from 0 to 7, and world numbers hidden until you find them.",
+		// decoded from SMB3R-3QKFZQVZ7G5ANANAXBXQPKVGGG70
 		overrides: {
 			antechamber_shuffle: "maybe",
 			big_q_blocks: true,
@@ -1168,14 +1200,18 @@ export const PRESETS = [
 			faster_tail_speed: true,
 			fire_flower: "wild",
 			flying: "wild",
+			generated_overworld: true,
 			ghosts: "wild",
 			ground: "wild",
 			hammer_breaks_bridges: "maybe",
 			hammer_breaks_locks: "maybe",
 			hammer_vulnerable_koopalings: true,
 			hb_encounters: "wild",
+			hidden_worlds: true,
 			include_beta_stages: true,
-			maze_wands: 0,
+			maze_wands: 8,
+			maze_wands_max: 7,
+			maze_wands_min: 0,
 			more_hammer_rocks: "maybe",
 			no_game_over_penalty: true,
 			piranha_shuffle: "wild",
@@ -1266,9 +1302,16 @@ function currentMode() {
 	return entry && readValue(entry) ? "maze" : "standard";
 }
 
-// True when the option describes nothing in the mode the form is currently in.
+// True when the option describes nothing in the mode the form is currently in —
+// or, for a range (Wandom's ends), while its host is not on the value that
+// gives it meaning.
 function isInert(entry, mode) {
-	return !!entry.mode && entry.mode !== mode;
+	if (entry.mode && entry.mode !== mode) return true;
+	if (entry.rangeOf) {
+		const host = SCHEMA.find(s => s.id === entry.rangeOf);
+		return !host || readValue(host) !== entry.activeWhen;
+	}
+	return false;
 }
 
 // Options that, while on, pin others to a value: each names the schema key an
@@ -1375,7 +1418,9 @@ export function applyModeStates() {
 			setBadge(entry, forced ? modeBadgeText(entry) : null);
 			continue;
 		}
-		if (!entry.mode) continue;
+		// A range has no row of its own: its host's mode greys the row it sits
+		// in, and greying it here would grey that row whenever "?" is unlit.
+		if (!entry.mode || entry.rangeOf) continue;
 		const inert = isInert(entry, mode);
 		// Inert always greys. Re-enabling belongs to `applyEnabledWhen` when the
 		// entry has a host to answer to (World Count still rides on World Order),
@@ -1548,6 +1593,14 @@ function renderTri(entry) {
 	const icon = iconCanvas(entry);
 	if (icon) wrap.appendChild(icon);
 	wrap.appendChild(document.createTextNode(entry.label));
+	// A row's own `flavorWhen: { value, text }` shows only while that value is
+	// picked (see `applyPillFlavors`) — Wandom's "?" on the wand count.
+	if (entry.flavorWhen) {
+		wrap.appendChild(el("span", {
+			class: "option-flavor", id: `${domId(entry.id)}-flavor`,
+			hidden: entry.default !== entry.flavorWhen.value,
+		}, entry.flavorWhen.text));
+	}
 	// A pill's flavor shows on its host's label, only while the pill is lit
 	// (see `applyPillFlavors`).
 	for (const flag of pillFlagsFor(entry)) {
@@ -1573,8 +1626,85 @@ function renderTri(entry) {
 			el("label", { for: domId(flag.id), class: "pill-flag", title: flag.tip }, flag.label),
 		);
 	}
+	const range = rangeEntriesFor(entry);
+	if (range) {
+		for (const r of range) {
+			group.appendChild(el("input", { type: "hidden", id: domId(r.id), value: r.default }));
+		}
+		wireRange(entry, group, range);
+	}
 	wrap.appendChild(group);
 	return wrap;
+}
+
+// An entry's `range` children (`rangeOf`), as [low end, high end], or null.
+function rangeEntriesFor(entry) {
+	const ends = SCHEMA.filter(e => e.rangeOf === entry.id);
+	return ends.length === 2 ? ends : null;
+}
+
+// Wandom's range on Wands To Enter. While the host's `activeWhen` pill ("?") is
+// lit, a number pill no longer picks a fixed count: clicks set the low end, then
+// the high end, alternately, swapping if the second lands below the first.
+// Equal ends mean one number, so that number becomes the fixed count and the
+// range is reset; clicking the lit "?" again does the same with the host's
+// default. Keyboard arrows still move the radio as usual.
+function wireRange(entry, group, [low, high]) {
+	let next = "low";
+	const pick = (value) => {
+		writeValue(low, low.default);
+		writeValue(high, high.default);
+		const radio = document.getElementById(`${domId(entry.id)}-${value}`);
+		radio.checked = true;
+		radio.dispatchEvent(new Event("change"));
+	};
+	group.addEventListener("click", (ev) => {
+		const label = ev.target.closest("label");
+		const input = label && document.getElementById(label.htmlFor);
+		if (!input || input.name !== radioName(entry.id)) return;
+		const value = Number(input.value);
+		if (readValue(entry) !== low.activeWhen) {
+			// Not in range mode: an ordinary pick, and lighting "?" starts the
+			// alternation over at the low end.
+			if (value === low.activeWhen) next = "low";
+			return;
+		}
+		ev.preventDefault();
+		if (value === low.activeWhen) {
+			pick(entry.default);
+			return;
+		}
+		let lo = readValue(low), hi = readValue(high);
+		if (next === "low") lo = value; else hi = value;
+		next = next === "low" ? "high" : "low";
+		if (lo > hi) [lo, hi] = [hi, lo];
+		if (lo === hi) {
+			pick(lo);
+			return;
+		}
+		writeValue(low, lo);
+		writeValue(high, hi);
+		document.getElementById(domId(low.id)).dispatchEvent(new Event("change"));
+	});
+}
+
+// Paint the range onto its host's pills: both ends lit, the numbers between
+// them a light wash, and nothing while the host is off its `activeWhen` value.
+function applyRangeHighlight() {
+	for (const entry of SCHEMA) {
+		const range = rangeEntriesFor(entry);
+		if (!range) continue;
+		const [low, high] = range;
+		const on = readValue(entry) === low.activeWhen;
+		const lo = readValue(low), hi = readValue(high);
+		for (const opt of entry.options) {
+			const label = document.querySelector(`label[for="${domId(entry.id)}-${opt.value}"]`);
+			if (!label) continue;
+			const inRange = on && opt.value !== low.activeWhen;
+			label.classList.toggle("range-end", inRange && (opt.value === lo || opt.value === hi));
+			label.classList.toggle("range-mid", inRange && opt.value > lo && opt.value < hi);
+		}
+	}
 }
 
 // A `bool` entry with `pillOf: "<other id>"` is not a row of its own: its
@@ -1815,7 +1945,7 @@ export function renderOptions(rootEl, hosts = {}) {
 			fieldset.appendChild(el("p", { class: "note group-note" },
 				el("a", { href: group.link.href }, group.link.label)));
 		}
-		const entries = SCHEMA.filter(s => s.group === group.id && !s.host && !s.pillOf);
+		const entries = SCHEMA.filter(s => s.group === group.id && !s.host && !s.pillOf && !s.rangeOf);
 		const runs = group.subgroups
 			? group.subgroups.map(sub => [sub.label, entries.filter(e => e.subgroup === sub.id)])
 			: [[null, entries]];
@@ -1840,6 +1970,10 @@ export function renderOptions(rootEl, hosts = {}) {
 
 export function readValue(entry) {
 	switch (entry.type) {
+		case "range": {
+			const node = document.getElementById(domId(entry.id));
+			return node ? Number(node.value) : entry.default;
+		}
 		case "bool": {
 			if (entry.pillOf) {
 				const node = document.getElementById(domId(entry.id));
@@ -1884,6 +2018,11 @@ export function readValue(entry) {
 export function writeValue(entry, value) {
 	if (value === undefined) return;
 	switch (entry.type) {
+		case "range": {
+			const node = document.getElementById(domId(entry.id));
+			if (node) node.value = String(value);
+			break;
+		}
 		case "bool": {
 			if (entry.pillOf) {
 				const node = document.getElementById(domId(entry.id));
@@ -2044,13 +2183,19 @@ export function applyEnabledWhen() {
 	applyPillFlavors();
 }
 
-// A pill's `flavorWhenOn` shows while the pill is lit. A row's `warnWhenOn`
+// A pill's `flavorWhenOn` shows while the pill is lit, and a row's
+// `flavorWhen` while its one value is picked. A row's `warnWhenOn`
 // shows while the row is on and, with `warnWithVisualPatch`, only while one of
 // those re-skins is picked. The visual-patch radio is app.js's, so app.js calls
 // this when it changes.
 export function applyPillFlavors() {
+	applyRangeHighlight();
 	const visualPatch = document.querySelector('input[name="visual-patch"]:checked')?.value ?? "";
 	for (const entry of SCHEMA) {
+		if (entry.flavorWhen) {
+			const span = document.getElementById(`${domId(entry.id)}-flavor`);
+			if (span) span.hidden = readValue(entry) !== entry.flavorWhen.value;
+		}
 		if (entry.flavorWhenOn) {
 			const span = document.getElementById(`${domId(entry.id)}-flavor`);
 			if (span) span.hidden = !readValue(entry);
@@ -2097,6 +2242,7 @@ function applyEntryEnabled(entry, enabled) {
 
 function entryDomIds(entry) {
 	switch (entry.type) {
+		case "range":
 		case "select":
 			return [domId(entry.id)];
 		case "bool":

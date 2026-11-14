@@ -151,7 +151,9 @@ fn audit_options() -> Options {
         world_count: 7,
         swap_start_airship: true,
         world_maze: true,
-        maze_wands: 3,
+        // Wandom, the setting that writes the most: the hidden readout and
+        // the on-clear routine are its own allocations.
+        maze_wands: crate::MAZE_WANDS_WANDOM,
         ..all_on_options()
     }
 }
@@ -1150,8 +1152,11 @@ fn all_off_options() -> Options {
         world_count: 7,
         world_maze: false,
         maze_wands: 3,
+        maze_wands_min: 2,
+        maze_wands_max: 6,
         item_gates: false,
         uncapped_pad_jumps: false,
+        hidden_worlds: false,
         big_q_blocks: false,
         shuffle_airships: false,
         shuffle_hammer_bros: false,
@@ -1236,8 +1241,11 @@ fn all_on_options() -> Options {
         world_count: 3,
         world_maze: true,
         maze_wands: 5,
+        maze_wands_min: 2,
+        maze_wands_max: 6,
         item_gates: true,
         uncapped_pad_jumps: true,
+        hidden_worlds: true,
         big_q_blocks: true,
         shuffle_airships: true,
         shuffle_hammer_bros: true,
@@ -1936,6 +1944,70 @@ fn a_maze_player_starts_with_a_permanent_whistle() {
 ///
 /// So this walks the wasm path exactly: JSON in, flag key out, key back to
 /// options, and finally a real ROM to prove the mode actually ran.
+/// Wandom rides on its own flag-key bit: it round-trips, a fixed-K key keeps
+/// its old string, and with the maze off the bit is never written.
+#[test]
+fn flag_key_round_trips_wandom() {
+    let wandom = Options { world_maze: true, maze_wands: MAZE_WANDS_WANDOM, ..Default::default() };
+    let back = Options::from_flag_key(&wandom.to_flag_key()).expect("round trip");
+    assert_eq!(back.maze_wands, MAZE_WANDS_WANDOM, "Wandom did not survive the flag key");
+
+    for k in 0..=7 {
+        let fixed = Options { world_maze: true, maze_wands: k, ..Default::default() };
+        let back = Options::from_flag_key(&fixed.to_flag_key()).expect("round trip");
+        assert_eq!(back.maze_wands, k, "K = {k} did not survive the flag key");
+        assert_ne!(fixed.to_flag_key(), wandom.to_flag_key(), "K = {k} encodes as Wandom");
+    }
+
+    // Maze off: the field is inert, so Wandom must not move the key.
+    let off = Options { maze_wands: MAZE_WANDS_WANDOM, ..Default::default() };
+    assert_eq!(off.to_flag_key(), Options::default().to_flag_key());
+
+    // And it parses from the JSON the web app sends for the "?" pill.
+    let json: Options = serde_json::from_str(r#"{"world_maze":true,"maze_wands":8}"#).unwrap();
+    assert_eq!(json.maze_wands, MAZE_WANDS_WANDOM);
+    assert_eq!((json.maze_wands_min, json.maze_wands_max), (2, 6), "range defaults from JSON");
+}
+
+/// Wandom's range survives the key for every pair of ends, and moves the key
+/// only on Wandom seeds.
+#[test]
+fn flag_key_round_trips_the_wandom_range() {
+    for min in 0..=7 {
+        for max in 0..=7 {
+            let opts = Options {
+                world_maze: true,
+                maze_wands: MAZE_WANDS_WANDOM,
+                maze_wands_min: min,
+                maze_wands_max: max,
+                ..Default::default()
+            };
+            let back = Options::from_flag_key(&opts.to_flag_key()).expect("round trip");
+            assert_eq!((back.maze_wands, back.maze_wands_min, back.maze_wands_max), (8, min, max));
+        }
+    }
+    // Off Wandom the range is inert, so it must not move the key.
+    let fixed = Options { world_maze: true, maze_wands: 4, ..Default::default() };
+    let odd = Options { maze_wands_min: 0, maze_wands_max: 7, ..fixed.clone() };
+    assert_eq!(fixed.to_flag_key(), odd.to_flag_key());
+}
+
+/// A Wandom key minted before the range existed (seed 1's, from the CLI at
+/// 51597cb) still decodes to Wandom 2-6 — the XOR-with-default encoding is
+/// what makes those zero bits mean the old range.
+#[test]
+fn a_pre_range_wandom_key_decodes_to_two_through_six() {
+    let back = Options::from_flag_key("SMB3R-3Q9FQHRF000525AG00X000200010").expect("old key");
+    assert!(back.world_maze);
+    assert_eq!((back.maze_wands, back.maze_wands_min, back.maze_wands_max), (8, 2, 6));
+    let default_range = Options {
+        world_maze: true,
+        maze_wands: MAZE_WANDS_WANDOM,
+        ..Options::from_flag_key("SMB3R-3Q9FQHRF000525AG00X000200010").unwrap()
+    };
+    assert_eq!(default_range.to_flag_key(), "SMB3R-3Q9FQHRF000525AG00X000200010");
+}
+
 #[test]
 fn the_wasm_json_entry_path_carries_the_maze() {
     // What the JS layer sends when the two controls are set.
@@ -2682,4 +2754,69 @@ fn item_gates_only_install_when_the_option_is_on() {
         !crate::randomize::maze::canoe_gate::is_installed(&no_maze),
         "gate asked for outside the maze, and installed anyway"
     );
+}
+
+/// Every object stream a finished ROM loads is one the enemy pass could see:
+/// a level the index reaches on the ROM the enemy pass is handed, or a room a
+/// later pass built in free space (the hand and piranha room clones).
+///
+/// The enemy pass randomizes what [`level_index::every_level`] finds at stage
+/// 2, so this is the check that "the streams it skips are dead" holds under
+/// every flag. Whether a stream is dead depends on the flags — removing
+/// autoscroll and fixing the beta stages each orphan a couple — and a flag that
+/// makes a level live after stage 2 (as Big [?] room shuffle does for Unused
+/// Level 5) would otherwise leave its enemies untouched without a sound.
+///
+/// [`level_index::every_level`]: crate::randomize::rom_data::level_index::every_level
+#[test]
+fn every_loaded_object_stream_was_visible_to_the_enemy_pass() {
+    use crate::randomize::rom_data::level_index::{every_level, read_objects};
+    use crate::randomize::rom_data::{FREE_SPACE_ALLOCATIONS, enemy_ptr_to_file_offset};
+    use std::collections::BTreeSet;
+    if make_test_rom().is_none() {
+        eprintln!("SKIP: requires the ROM, which is not included in the repo");
+        return;
+    }
+    let streams = |rom: &Rom| -> BTreeSet<usize> {
+        every_level(rom)
+            .iter()
+            .flatten()
+            .filter(|a| read_objects(rom, a.objects_ptr, a.tileset).is_some())
+            .map(|a| enemy_ptr_to_file_offset(a.objects_ptr))
+            .collect()
+    };
+    let in_free_space = |s: usize| {
+        FREE_SPACE_ALLOCATIONS.iter().any(|f| (f.offset..f.offset + f.size).contains(&s))
+    };
+    let beta = |o: Options| Options { include_beta_stages: true, ..o };
+    let arms = [
+        ("defaults", test_options()),
+        ("all_off", all_off_options()),
+        ("all_on", all_on_options()),
+        ("defaults+beta+bigq", Options { shuffle_big_q_rooms: true, ..beta(test_options()) }),
+        ("all_on+beta", beta(all_on_options())),
+    ];
+    let seeds: u64 = std::env::var("CENSUS_SEEDS").ok().and_then(|s| s.parse().ok()).unwrap_or(3);
+    for (name, o) in arms {
+        for seed in 1..=seeds {
+            // The ROM as the enemy pass receives it: stages 0-2. Nothing after
+            // the enemy pass in stage 2 repoints a level, so the index here is
+            // the one it walked.
+            let mut stage2 = make_test_rom().unwrap();
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            let run = super::stages::resolve(seed, &o, &mut rng);
+            super::stages::map_fixes(&mut stage2, &run);
+            super::stages::level_data(&mut stage2, &o, &mut rng);
+            let visible = streams(&stage2);
+
+            let mut rom = make_test_rom().unwrap();
+            randomize(&mut rom, seed, &o);
+            let unseen: Vec<String> = streams(&rom)
+                .into_iter()
+                .filter(|&s| !visible.contains(&s) && !in_free_space(s))
+                .map(|s| format!("0x{s:05X}"))
+                .collect();
+            assert!(unseen.is_empty(), "{name}/seed {seed}: loaded but never visible: {unseen:?}");
+        }
+    }
 }

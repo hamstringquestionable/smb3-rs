@@ -94,10 +94,25 @@ fn default_world_count() -> u8 {
     7
 }
 
+/// The [`Options::maze_wands`] value that means **Wandom**: K is rolled per
+/// seed and hidden until the pyramid level is beaten. One past the largest real
+/// K, so every other value keeps its meaning; the flag key spends a bit of its
+/// own on it rather than widening `maze_wands` (see `flag_key.rs`).
+pub const MAZE_WANDS_WANDOM: u8 = 8;
+
 /// Wands the world maze's castle demands by default — see
 /// [`Options::maze_wands`] for the measurement that chose 3.
 pub(super) fn default_maze_wands() -> u8 {
     crate::randomize::maze::DEFAULT_WANDS_REQUIRED
+}
+
+/// Wandom's default range, 2-6: the ends left out, so a hidden K is never
+/// "none" or "all of them" unless the player asks for it.
+pub(super) fn default_wandom_min() -> u8 {
+    *crate::randomize::maze::wandom::WANDOM_K.start()
+}
+pub(super) fn default_wandom_max() -> u8 {
+    *crate::randomize::maze::wandom::WANDOM_K.end()
 }
 
 /// Per-class enemy randomization mode.
@@ -502,7 +517,10 @@ pub struct Options {
     /// the wand counter chains through the routine it installs.
     #[serde(default)]
     pub world_maze: bool,
-    /// Wands the castle demands, 0–7. Only read when `world_maze` is on.
+    /// Wands the castle demands, 0–7, or [`MAZE_WANDS_WANDOM`] (8) for
+    /// **Wandom**: the seed rolls K from 2–6 and the map's readout shows `N/×`
+    /// until the player beats the pyramid level that reveals it. Only read
+    /// when `world_maze` is on.
     ///
     /// **This is a floor, not a length dial** (`maze_wand_gate_sweep`, 40 seeds
     /// per K): at 0 a telepad chain finishes some seeds in a *single level*; at
@@ -510,6 +528,18 @@ pub struct Options {
     /// only starts costing the median at 6–7.
     #[serde(default = "default_maze_wands")]
     pub maze_wands: u8,
+    /// **Wandom's range**, low end: K is rolled uniformly from
+    /// `maze_wands_min..=maze_wands_max`, each 0-7, and a range given backwards
+    /// is read the other way round. Default 2-6. The web app never sends equal
+    /// ends with Wandom on — picking the same number twice turns Wandom off and
+    /// makes that number the fixed K — but Rust accepts it (a hidden fixed K).
+    ///
+    /// **Only read when `maze_wands` is [`MAZE_WANDS_WANDOM`].**
+    #[serde(default = "default_wandom_min")]
+    pub maze_wands_min: u8,
+    /// Wandom's range, high end. See [`Options::maze_wands_min`].
+    #[serde(default = "default_wandom_max")]
+    pub maze_wands_max: u8,
     /// **Item gates.** A way forward can be shut until the player holds the item
     /// that opens it, and the placement pass guarantees that item sits somewhere
     /// they can reach without it. One switch for the whole class rather than one
@@ -544,6 +574,16 @@ pub struct Options {
     /// **Only read when `world_maze` is on.**
     #[serde(default)]
     pub uncapped_pad_jumps: bool,
+    /// **Hidden world numbers.** Every "WORLD n" — the world-intro banner and
+    /// both status bars — reads `×` until the player beats a second obelisk
+    /// level, placed by Wandom's rule (optional, a few worlds in). The number
+    /// tells a maze player which world's airship leads on toward World 8, and
+    /// which world a Full-hints lock digit means; only World 8's own map is
+    /// fixed enough to recognise without it.
+    ///
+    /// **Only read when `world_maze` is on.** See `maze::hidden_worlds`.
+    #[serde(default)]
+    pub hidden_worlds: bool,
     #[serde(default)]
     pub big_q_blocks: bool,
     /// Shuffle airship levels across worlds 1-7.
@@ -745,9 +785,10 @@ pub struct Options {
     #[serde(default)]
     pub antechamber_shuffle: Tri,
     /// Piranha shuffle: release the two W7 piranha plant levels into the
-    /// level pool. `On` = plant sprites follow the levels; `Wild` = plants
-    /// scatter onto ~1 random level slot per world instead (see
-    /// [`PiranhaMode`]).
+    /// level pool. `Off` = they stay in World 7 (on vanilla maps, on their own
+    /// cells; on generated maps, pinned to World 7 slots); `On` = plant sprites
+    /// follow the levels; `Wild` = plants scatter onto ~1 random level slot per
+    /// world instead (see [`PiranhaMode`]).
     #[serde(default)]
     pub piranha_shuffle: PiranhaMode,
     /// Per-world (W1-W7) coin flip: when on, each world independently rolls
@@ -850,7 +891,9 @@ pub struct Options {
     pub skip_rom_validation: bool,
     /// Generated Overworld: every world's map is drawn afresh from one of its
     /// recipes instead of vanilla's layout. Forces Hammer Bro shuffle on (the
-    /// builder must place the bros) and Piranha Shuffle on.
+    /// builder must place the bros). Piranha Shuffle Off pins the two plant
+    /// levels to World 7 instead of leaving them on vanilla cells that no
+    /// longer exist (`overworld::piranha_home`).
     #[serde(default)]
     pub generated_overworld: bool,
     /// Which worlds get a generated map, as a bitmask (bit 0 is World 1), on
@@ -880,8 +923,11 @@ impl Default for Options {
             world_count: default_world_count(),
             world_maze: false,
             maze_wands: default_maze_wands(),
+            maze_wands_min: default_wandom_min(),
+            maze_wands_max: default_wandom_max(),
             item_gates: false,
             uncapped_pad_jumps: false,
+            hidden_worlds: false,
             big_q_blocks: false,
             shuffle_airships: true,
             shuffle_hammer_bros: true,

@@ -4,6 +4,7 @@ use super::*;
 use super::types::stamp_slots;
 use crate::randomize::overworld;
 use crate::randomize::overworld::map_walker::walk_map_blocked;
+use crate::randomize::overworld::sprite_slots::WorldSprites;
 use crate::rom::Rom;
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
@@ -563,7 +564,7 @@ fn hammer_bro_redistribution_invariants() {
             assert!(n <= max, "seed {seed} W{}: {n} HB sprites (max {max})", w.world_idx + 1);
             // At least RESERVED_DYNAMIC_SLOTS eligible map-object slots stay
             // free for a runtime white-house spawn.
-            let eligible = rom_data::eligible_hb_map_slots(&rom, w.world_idx).len();
+            let eligible = WorldSprites::read(&rom, w.world_idx).hb_eligible().len();
             assert!(
                 eligible.saturating_sub(n) >= RESERVED_DYNAMIC_SLOTS,
                 "seed {seed} W{}: only {} eligible slots free after {n} HBs",

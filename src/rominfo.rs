@@ -10,10 +10,10 @@ use std::fmt::Write;
 
 use crate::randomize::items::powerups;
 use crate::randomize::overworld::node_catalog::{EntryView, NodeCatalog, level_name_key};
+use crate::randomize::rom_data::UNLISTED_LEVELS;
 use crate::randomize::rom_data::level_index::{
     self, Area, ChainEnd, DeadAlt, Object, object_name, power_blocks, read_commands, read_objects,
 };
-use crate::randomize::rom_data::{HB_EXCLUDE_ENTRIES, UNLISTED_LEVELS};
 use crate::rom::Rom;
 
 /// Every level name `--level` accepts, with its kind.
@@ -60,10 +60,6 @@ pub fn level_report(rom_bytes: &[u8], name: &str) -> Result<String, String> {
         "  loaded with: tileset {}, layout ${:02X}{:02X}, objects ${:02X}{:02X}",
         le.tileset, le.lay_hi, le.lay_lo, le.obj_hi, le.obj_lo
     );
-
-    if HB_EXCLUDE_ENTRIES.contains(&(u16::from_be_bytes([le.obj_hi, le.obj_lo]), le.tileset)) {
-        let _ = writeln!(out, "  unused: the randomizer keeps it out of the Hammer Bro pool");
-    }
 
     let (areas, end) = level_index::trace(&rom, le)
         .map_err(|dead| format!("{} does not lead to a level area: {dead:?}", entry.name))?;
@@ -206,7 +202,7 @@ fn write_object(out: &mut String, o: &Object) {
 fn randomizer_rule(offset: usize) -> &'static str {
     if powerups::PROTECTED_OFFSETS.contains(&offset) {
         "  [protected: never rerolled]"
-    } else if powerups::FLOWER_OR_LEAF_QBLOCK_OFFSETS.contains(&offset) {
+    } else if powerups::FLOWER_OR_LEAF_OFFSETS.contains(&offset) {
         "  [rerolled to flower or leaf only]"
     } else if powerups::AIRSHIP_QBLOCK_OFFSETS.contains(&offset) {
         "  [airship: no star when Koopalings are hammer-vulnerable]"
@@ -254,7 +250,7 @@ mod tests {
     fn every_listed_level_reports() {
         let Some(bytes) = vanilla() else { return };
         let names = list_levels(&bytes).unwrap();
-        assert_eq!(names.len(), 323, "322 traced entries plus the Coin Ship");
+        assert_eq!(names.len(), 324, "322 traced entries plus the Coin Ship and Unused Level 5");
         for line in names {
             let name = line.split_whitespace().next().unwrap();
             level_report(&bytes, name).unwrap_or_else(|e| panic!("{name}: {e}"));
@@ -270,7 +266,5 @@ mod tests {
         assert!(r.contains("loops back to area 0"), "{r}");
         assert_eq!(level_report(&bytes, "6-F1"), level_report(&bytes, "6f1"));
         assert!(level_report(&bytes, "9-9").is_err());
-        assert!(level_report(&bytes, "3HB18").unwrap().contains("unused:"));
-        assert!(!level_report(&bytes, "3HB17").unwrap().contains("unused:"));
     }
 }

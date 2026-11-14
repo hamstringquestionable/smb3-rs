@@ -66,15 +66,19 @@ fn sweep_is_deterministic() {
 /// dated entry to `docs/overworld_baseline_log.md` in the same commit saying
 /// what moved and how you established it — never to make a red test green.
 ///
-/// Recaptured 2026-10-29 for the underwater piranha-slot exclusions (an
-/// upstream RNG shift, seed 11 only) — see `docs/overworld_baseline_log.md`.
+/// Recaptured 2026-11-09 for the enemy pass moving onto the level index (an RNG
+/// shift upstream of the builder, all 20 seeds), and again 2026-11-10 with the
+/// 3.1.1 W8 tank-cell fix merged in, and again 2026-11-10 for the enemy CHR
+/// group re-roll and 20-tile gap, and twice on 2026-11-12: the 3HB18 tileset
+/// correction (one pointer-table byte), then World 5's arenas joining the
+/// Hammer Bro pool — see `docs/overworld_baseline_log.md`.
 #[rustfmt::skip]
 const BASELINE: [u64; SEEDS as usize] = [
-    0x8D094CA3855BED6D, 0xECC723BC99FB1E6E, 0x5960AF589B999ADB, 0x4A9A6ADAD632F30B,
-    0xCFB71C13F45AC820, 0x91282DAFB2204D66, 0x70E5AF2B8BDC2045, 0xA459C2D1E4B6E561,
-    0x96F9F9F775C37F18, 0x421AAEDFA2A1EC0A, 0xFF8B115CAD4AF53A, 0x3770F4808B4F791D,
-    0x2AC90917841F11A3, 0x3A70D6D99AF332BB, 0x9E81CABA4797A0D2, 0xADE0494F28DC9AC5,
-    0x23774A36F7A4DCBD, 0x7C962EE290378F90, 0x03B0F43FBF8644F9, 0xD05DABE4F7B85830,
+    0xAA0B4607CDBCF888, 0x91DEDEAEB86067F9, 0xA2F25FD5E2EAEEA8, 0x86972459879428F0,
+    0x1ADD53E2F8973B74, 0xE145351BB84C195A, 0x27FF3ECB2ADE6EF2, 0xEEDC36282F655214,
+    0x2A53FCB4710F2400, 0x35AF472896977E83, 0xD907795459987CC3, 0x10C2625C1C629E7D,
+    0x100F5DBFC6A6D6D8, 0x827F689B0E406534, 0x37022F01E9F12697, 0x64A9B2217DB59E94,
+    0xE60F7D314AE846EE, 0x04460B284E71F1CB, 0x3C03C27004744766, 0x76BBE07D3A584D6A,
 ];
 
 #[test]

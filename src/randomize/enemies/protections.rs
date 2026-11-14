@@ -1,17 +1,22 @@
 //! Per-level enemy protection registry.
 //!
-//! One labeled table (`LEVEL_PROTECTIONS`) per protected level or sub-area
-//! that the enemy randomization passes must treat specially. Each row
-//! identifies the level by `enemy_ptr` and declares:
+//! One table (`LEVEL_PROTECTIONS`) with a row per protected level area that
+//! the enemy randomization passes must treat specially. Each row names the
+//! area the way `rominfo --level` does (a level name, then the area number it
+//! prints: 0 is the main area), gives the reason, and declares:
 //!   - `walker_segment`: how the walker pass treats the containing $FF segment
 //!     (`Default`, `Skip`, or `HammerBro`). Non-`Default` rows also block
-//!     wild injection at this entry_ptr.
+//!     wild injection at this entry_ptr. The Hammer Bro arenas themselves
+//!     need no row: every stream in `HAMMER_BRO_OBJ_PTRS` is `HammerBro`.
 //!   - `entries`: per-entry rules keyed by absolute file offset.
 //!
-//! Adding a new protection is one block here with a label and a reason.
-//! Both passes (the walker in `enemies::randomize_object_data` and
-//! `enemies::inject_wild_chasers`) consume the registry through the
-//! derived helpers (`entry_protection_at`, `walker_segment_rule_at`)
+//! Adding a new protection is one block here. `enemy_ptr` and the entry
+//! offsets are what the code reads; `every_row_names_the_area_its_offsets_are_in`
+//! checks them against the named area on the vanilla ROM, so a row cannot
+//! name one level and protect another's bytes.
+//! The walker (`enemies::randomize_object_data`) and the wild injection it
+//! runs per segment (`enemies::inject_first_enemy`) consume the registry
+//! through the derived helpers (`entry_protection_at`, `walker_segment_rule_at`)
 //! — never the table directly.
 
 use super::tables::{BEHIND_BG, Group, HAZARDS, ROTODISCS};
@@ -20,10 +25,17 @@ use crate::randomize::rom_data::{HAMMER_BRO_OBJ_PTRS, enemy_ptr_to_file_offset};
 /// One logical level or sub-area with protections that affect enemy
 /// randomization.
 struct LevelProtection {
-    // Reason: `label` is documentation embedded in the table — its value is
-    // grep-ability when investigating a protected offset.
+    // Reason: `level` and `area` are read only by the test that checks them
+    // against the level index; `why` is documentation in the table.
     #[allow(dead_code)]
-    label: &'static str,
+    /// The level, as `rominfo --level` names it.
+    level: &'static str,
+    #[allow(dead_code)]
+    /// Which of its areas, numbered as `rominfo --level` prints them.
+    area: usize,
+    #[allow(dead_code)]
+    why: &'static str,
+    /// The area's objects pointer.
     enemy_ptr: u16,
     walker_segment: WalkerSegmentRule,
     entries: &'static [EntryRule],
@@ -35,10 +47,8 @@ struct LevelProtection {
 pub(super) enum WalkerSegmentRule {
     /// Default class-based swaps.
     Default,
-    /// Skip the entire segment (no swaps at all). Only valid for top-level
-    /// entries whose enemy_ptr lands at the segment's page byte — NOT for
-    /// sub-area entries that share a segment with a parent level (skipping
-    /// would also block the parent's swaps).
+    /// Skip the area's whole object list (no swaps at all). Every area has a
+    /// list of its own, so this never reaches another area.
     Skip,
     /// Hammer Bro encounter — walker uses HB-specific modes and pool.
     HammerBro,
@@ -48,11 +58,17 @@ pub(super) enum WalkerSegmentRule {
 /// file offset.
 struct EntryRule {
     offset: usize,
+    /// The vanilla enemy at `offset`. Read only by
+    /// `every_row_names_the_area_its_offsets_are_in`, so a row a few bytes
+    /// off (on the next enemy in the same area) fails instead of protecting
+    /// the wrong one.
+    #[allow(dead_code)]
+    id: u8,
     rule: EntryProtection,
 }
 
 /// Per-entry behavior. The walker applies these inline during its swap pass;
-/// `inject_at_entry_points` also skips injection at any position carrying one
+/// `inject_first_enemy` also skips injection at any position carrying one
 /// of these (so wild injection can't bypass a per-entry safeguard).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum EntryProtection {
@@ -71,100 +87,118 @@ pub(super) enum EntryProtection {
 const LEVEL_PROTECTIONS: &[LevelProtection] = &[
     // --- Whole-level skips ---
     LevelProtection {
-        label: "3-2 (enemies-as-platforms, sprite-overload risk)",
+        level: "3-2",
+        area: 0,
+        why: "enemies-as-platforms, sprite-overload risk",
         enemy_ptr: 0xCA23,
         walker_segment: WalkerSegmentRule::Skip,
         entries: &[],
     },
     // --- Individual gameplay-critical entries (walker skips, no whole-level block) ---
     LevelProtection {
-        label: "8-1 (FlyingRedParatroopa required for progression; Boo restricted from path-blocking hazards)",
+        level: "8-1",
+        area: 0,
+        why: "FlyingRedParatroopa required for progression; Boo restricted from path-blocking hazards",
         enemy_ptr: 0xC424,
         walker_segment: WalkerSegmentRule::Default,
         entries: &[
             // Boo is swap-safe, but a hazard here (Ptooie/nipper/lotus/etc.) would
             // block a narrow pathway the player must pass through — so swap it to
             // anything except a hazard rather than skipping it outright.
-            EntryRule { offset: 0x0C456, rule: EntryProtection::Exclude(HAZARDS) }, // Boo scr=5 col=1
-            EntryRule { offset: 0x0C465, rule: EntryProtection::SkipSwap }, // FlyingRedParatroopa scr=6 col=14
+            EntryRule { offset: 0x0C456, id: 0x2F, rule: EntryProtection::Exclude(HAZARDS) }, // Boo scr=5 col=1
+            EntryRule { offset: 0x0C465, id: 0x6F, rule: EntryProtection::SkipSwap }, // FlyingRedParatroopa scr=6 col=14
         ],
     },
     LevelProtection {
-        label: "6-3 (FlyingRedParatroopas required as platforms)",
+        level: "6-3",
+        area: 0,
+        why: "FlyingRedParatroopas required as platforms",
         enemy_ptr: 0xCA8E,
         walker_segment: WalkerSegmentRule::Default,
         entries: &[
-            EntryRule { offset: 0x0CAB1, rule: EntryProtection::SkipSwap }, // scr=6 col=13
-            EntryRule { offset: 0x0CAB4, rule: EntryProtection::SkipSwap }, // scr=7 col=1
+            EntryRule { offset: 0x0CAB1, id: 0x6F, rule: EntryProtection::SkipSwap }, // scr=6 col=13
+            EntryRule { offset: 0x0CAB4, id: 0x6F, rule: EntryProtection::SkipSwap }, // scr=7 col=1
         ],
     },
     // --- Shell-locked entries (shells needed to break bricks for progression) ---
     LevelProtection {
-        label: "2-Pyr sub-area (Buzzy Beetles needed to break bricks)",
+        level: "2-Pyr",
+        area: 1,
+        why: "Buzzy Beetles needed to break bricks",
         enemy_ptr: 0xC5BC,
         walker_segment: WalkerSegmentRule::Default,
         entries: &[
-            EntryRule { offset: 0x0C5CD, rule: EntryProtection::ForceShell },
-            EntryRule { offset: 0x0C5D0, rule: EntryProtection::ForceShell },
-            EntryRule { offset: 0x0C5D3, rule: EntryProtection::ForceShell },
-            EntryRule { offset: 0x0C5D6, rule: EntryProtection::ForceShell },
-            EntryRule { offset: 0x0C5DC, rule: EntryProtection::ForceShell },
-            EntryRule { offset: 0x0C5DF, rule: EntryProtection::ForceShell },
-            EntryRule { offset: 0x0C5E2, rule: EntryProtection::ForceShell },
-            EntryRule { offset: 0x0C5E5, rule: EntryProtection::ForceShell },
-            EntryRule { offset: 0x0C5E8, rule: EntryProtection::ForceShell },
-            EntryRule { offset: 0x0C5EB, rule: EntryProtection::ForceShell },
-            EntryRule { offset: 0x0C5F1, rule: EntryProtection::ForceShell },
+            EntryRule { offset: 0x0C5CD, id: 0x70, rule: EntryProtection::ForceShell },
+            EntryRule { offset: 0x0C5D0, id: 0x70, rule: EntryProtection::ForceShell },
+            EntryRule { offset: 0x0C5D3, id: 0x70, rule: EntryProtection::ForceShell },
+            EntryRule { offset: 0x0C5D6, id: 0x70, rule: EntryProtection::ForceShell },
+            EntryRule { offset: 0x0C5DC, id: 0x70, rule: EntryProtection::ForceShell },
+            EntryRule { offset: 0x0C5DF, id: 0x70, rule: EntryProtection::ForceShell },
+            EntryRule { offset: 0x0C5E2, id: 0x70, rule: EntryProtection::ForceShell },
+            EntryRule { offset: 0x0C5E5, id: 0x70, rule: EntryProtection::ForceShell },
+            EntryRule { offset: 0x0C5E8, id: 0x70, rule: EntryProtection::ForceShell },
+            EntryRule { offset: 0x0C5EB, id: 0x70, rule: EntryProtection::ForceShell },
+            EntryRule { offset: 0x0C5F1, id: 0x70, rule: EntryProtection::ForceShell },
         ],
     },
     LevelProtection {
-        label: "2-3 (shells needed to break end-of-level bricks)",
+        level: "2-3",
+        area: 0,
+        why: "shells needed to break end-of-level bricks",
         enemy_ptr: 0xD1F0,
         walker_segment: WalkerSegmentRule::Default,
         entries: &[
-            EntryRule { offset: 0x0D22B, rule: EntryProtection::ForceShell }, // GreenTroopa scr=8 col=11
-            EntryRule { offset: 0x0D22E, rule: EntryProtection::ForceShell }, // GreenTroopa scr=8 col=13
+            EntryRule { offset: 0x0D22B, id: 0x6C, rule: EntryProtection::ForceShell }, // GreenTroopa scr=8 col=11
+            EntryRule { offset: 0x0D22E, id: 0x6C, rule: EntryProtection::ForceShell }, // GreenTroopa scr=8 col=13
         ],
     },
     LevelProtection {
-        label: "7-1 sub-area (scr=0 GreenTroopas kept in the shell pool)",
+        level: "7-1",
+        area: 1,
+        why: "scr=0 GreenTroopas kept in the shell pool",
         enemy_ptr: 0xCD93,
         walker_segment: WalkerSegmentRule::Default,
         entries: &[
-            EntryRule { offset: 0x0CDA7, rule: EntryProtection::ForceShell }, // GreenTroopa scr=0 col=2
-            EntryRule { offset: 0x0CDAA, rule: EntryProtection::ForceShell }, // GreenTroopa scr=0 col=4
+            EntryRule { offset: 0x0CDA7, id: 0x6C, rule: EntryProtection::ForceShell }, // GreenTroopa scr=0 col=2
+            EntryRule { offset: 0x0CDAA, id: 0x6C, rule: EntryProtection::ForceShell }, // GreenTroopa scr=0 col=4
         ],
     },
     LevelProtection {
-        label: "6-5 sub-area (shell needed for progression)",
+        level: "6-5",
+        area: 1,
+        why: "shell needed for progression",
         enemy_ptr: 0xC5EB,
         walker_segment: WalkerSegmentRule::Default,
         entries: &[
-            EntryRule { offset: 0x0C60E, rule: EntryProtection::ForceShell }, // GreenTroopa scr=4 col=10
+            EntryRule { offset: 0x0C60E, id: 0x6C, rule: EntryProtection::ForceShell }, // GreenTroopa scr=4 col=10
         ],
     },
     // --- Stompable-locked entries ---
     LevelProtection {
-        label: "6-6 sub-area (floor spikes — non-stompable swap would corner player; screen 8 floor Cheep must not become a hazard; screen 8 piranhas are underwater)",
+        level: "6-6",
+        area: 1,
+        why: "floor spikes — non-stompable swap would corner player; screen 8 floor Cheep must not become a hazard; screen 8 piranhas are underwater",
         enemy_ptr: 0xC64B,
         walker_segment: WalkerSegmentRule::Default,
         entries: &[
-            EntryRule { offset: 0x0C698, rule: EntryProtection::Exclude(HAZARDS) }, // GreenCheep scr=8 col=13 row=15
+            EntryRule { offset: 0x0C698, id: 0x77, rule: EntryProtection::Exclude(HAZARDS) }, // GreenCheep scr=8 col=13 row=15
             // Underwater pipes: a Rocky Wrench or giant piranha here is
             // invisible behind the water tiles (see BEHIND_BG).
-            EntryRule { offset: 0x0C69E, rule: EntryProtection::Exclude(BEHIND_BG) }, // RedPiranha scr=8 col=4
-            EntryRule { offset: 0x0C6A4, rule: EntryProtection::Exclude(BEHIND_BG) }, // RedPiranha scr=8 col=12
-            EntryRule { offset: 0x0C6A7, rule: EntryProtection::ForceStompable }, // Spike scr=10 col=0
-            EntryRule { offset: 0x0C6AA, rule: EntryProtection::ForceStompable }, // Spike scr=10 col=6
-            EntryRule { offset: 0x0C6AD, rule: EntryProtection::ForceStompable }, // Spike scr=10 col=4
+            EntryRule { offset: 0x0C69E, id: 0xA2, rule: EntryProtection::Exclude(BEHIND_BG) }, // RedPiranha scr=8 col=4
+            EntryRule { offset: 0x0C6A4, id: 0xA2, rule: EntryProtection::Exclude(BEHIND_BG) }, // RedPiranha scr=8 col=12
+            EntryRule { offset: 0x0C6A7, id: 0x29, rule: EntryProtection::ForceStompable }, // Spike scr=10 col=0
+            EntryRule { offset: 0x0C6AA, id: 0x29, rule: EntryProtection::ForceStompable }, // Spike scr=10 col=6
+            EntryRule { offset: 0x0C6AD, id: 0x29, rule: EntryProtection::ForceStompable }, // Spike scr=10 col=4
         ],
     },
     LevelProtection {
-        label: "5-4 (ParatroopaGreenHop guards a pipe; a hazard there would block it)",
+        level: "5-4",
+        area: 0,
+        why: "ParatroopaGreenHop guards a pipe; a hazard there would block it",
         enemy_ptr: 0xD039,
         walker_segment: WalkerSegmentRule::Default,
         entries: &[
-            EntryRule { offset: 0x0D074, rule: EntryProtection::Exclude(HAZARDS) }, // ParatroopaGreenHop scr=7 col=12 row=6
+            EntryRule { offset: 0x0D074, id: 0x6E, rule: EntryProtection::Exclude(HAZARDS) }, // ParatroopaGreenHop scr=7 col=12 row=6
         ],
     },
     // --- Bro-fight rooms reached by a non-bro map object ---
@@ -172,207 +206,358 @@ const LEVEL_PROTECTIONS: &[LevelProtection] = &[
     // pool: every enemy in it must be permanently killable. These two are
     // fight-shaped rooms the player reaches through the Coin Ship / Tank map
     // sprite rather than a bro sprite, so nothing else classifies them.
-    //
-    // This replaced a `ForceTankBro` row on $DA29 labelled "HammerBro fails to
-    // spawn in ts=10". The tileset was never the cause: it is a
-    // `Level_Event = 7` room entered via `MAPOBJ_TANK` ($0E), so a $81 there
-    // resolved through `BattleEnemy_ByEnterID[14]` to $07 `OBJ_WARPHIDE`, which
-    // is invisible — that is what "fails to spawn" actually was. The ID half of
-    // it is now handled generically by `rewrites_hammer_bro`.
+    // A `$81` in one is rewritten into something unkillable (entered via
+    // `MAPOBJ_TANK`, it resolves to the invisible `OBJ_WARPHIDE`); that half is
+    // handled generically by `rewrites_hammer_bro`.
     LevelProtection {
-        label: "8-Tank sub-area treasure room (bro fight via the Tank sprite)",
+        level: "8-Tank",
+        area: 1,
+        why: "bro fight via the Tank sprite",
         enemy_ptr: 0xDA29,
         walker_segment: WalkerSegmentRule::HammerBro,
         entries: &[],
     },
     // --- Hazard-excluded entries (no Patooie/Lavalotus on player walking path) ---
     LevelProtection {
-        label: "7F2 Boom-Boom sub-area (tight boss arena)",
+        level: "7F2",
+        area: 1,
+        why: "tight boss arena",
         enemy_ptr: 0xD45C,
         walker_segment: WalkerSegmentRule::Default,
         entries: &[
-            EntryRule { offset: 0x0D46D, rule: EntryProtection::Exclude(HAZARDS) }, // Rotodisc CW scr=1 col=0
-            EntryRule { offset: 0x0D470, rule: EntryProtection::Exclude(HAZARDS) }, // DryBones    scr=1 col=1
-            EntryRule { offset: 0x0D473, rule: EntryProtection::Exclude(HAZARDS) }, // DryBones    scr=1 col=3
-            EntryRule { offset: 0x0D476, rule: EntryProtection::Exclude(HAZARDS) }, // Rotodisc CW scr=1 col=9
-            EntryRule { offset: 0x0D479, rule: EntryProtection::Exclude(HAZARDS) }, // Thwomp      scr=1 col=10
+            EntryRule { offset: 0x0D46D, id: 0x5A, rule: EntryProtection::Exclude(HAZARDS) }, // Rotodisc CW scr=1 col=0
+            EntryRule { offset: 0x0D470, id: 0x3F, rule: EntryProtection::Exclude(HAZARDS) }, // DryBones    scr=1 col=1
+            EntryRule { offset: 0x0D473, id: 0x3F, rule: EntryProtection::Exclude(HAZARDS) }, // DryBones    scr=1 col=3
+            EntryRule { offset: 0x0D476, id: 0x5A, rule: EntryProtection::Exclude(HAZARDS) }, // Rotodisc CW scr=1 col=9
+            EntryRule { offset: 0x0D479, id: 0x8A, rule: EntryProtection::Exclude(HAZARDS) }, // Thwomp      scr=1 col=10
         ],
     },
     LevelProtection {
-        label: "7-5 sub-area (open horizontal field — hazards at floor level unfair)",
+        level: "7-5",
+        area: 1,
+        why: "open horizontal field — hazards at floor level unfair",
         enemy_ptr: 0xC171,
         walker_segment: WalkerSegmentRule::Default,
         entries: &[
-            EntryRule { offset: 0x0C182, rule: EntryProtection::Exclude(HAZARDS) }, // ParatroopaGreenHop scr=0 col=12
-            EntryRule { offset: 0x0C185, rule: EntryProtection::Exclude(HAZARDS) }, // ParatroopaGreenHop scr=1 col=2
-            EntryRule { offset: 0x0C18E, rule: EntryProtection::Exclude(HAZARDS) }, // BobOmb             scr=2 col=5
-            EntryRule { offset: 0x0C191, rule: EntryProtection::Exclude(HAZARDS) }, // BobOmb             scr=2 col=7
-            EntryRule { offset: 0x0C194, rule: EntryProtection::Exclude(HAZARDS) }, // BobOmb             scr=2 col=9
-            EntryRule { offset: 0x0C1A0, rule: EntryProtection::Exclude(HAZARDS) }, // ParatroopaGreenHop scr=4 col=14
-            EntryRule { offset: 0x0C1A3, rule: EntryProtection::Exclude(HAZARDS) }, // ParatroopaGreenHop scr=5 col=1
-            EntryRule { offset: 0x0C1A6, rule: EntryProtection::Exclude(HAZARDS) }, // ParatroopaGreenHop scr=5 col=4
+            EntryRule { offset: 0x0C182, id: 0x6E, rule: EntryProtection::Exclude(HAZARDS) }, // ParatroopaGreenHop scr=0 col=12
+            EntryRule { offset: 0x0C185, id: 0x6E, rule: EntryProtection::Exclude(HAZARDS) }, // ParatroopaGreenHop scr=1 col=2
+            EntryRule { offset: 0x0C18E, id: 0x55, rule: EntryProtection::Exclude(HAZARDS) }, // BobOmb             scr=2 col=5
+            EntryRule { offset: 0x0C191, id: 0x55, rule: EntryProtection::Exclude(HAZARDS) }, // BobOmb             scr=2 col=7
+            EntryRule { offset: 0x0C194, id: 0x55, rule: EntryProtection::Exclude(HAZARDS) }, // BobOmb             scr=2 col=9
+            EntryRule { offset: 0x0C1A0, id: 0x6E, rule: EntryProtection::Exclude(HAZARDS) }, // ParatroopaGreenHop scr=4 col=14
+            EntryRule { offset: 0x0C1A3, id: 0x6E, rule: EntryProtection::Exclude(HAZARDS) }, // ParatroopaGreenHop scr=5 col=1
+            EntryRule { offset: 0x0C1A6, id: 0x6E, rule: EntryProtection::Exclude(HAZARDS) }, // ParatroopaGreenHop scr=5 col=4
         ],
     },
     LevelProtection {
-        label: "β4 sub-area (narrow corridor — hazards on Buzzy Beetle path unfair)",
+        level: "β4",
+        area: 1,
+        why: "narrow corridor — hazards on Buzzy Beetle path unfair",
         enemy_ptr: 0xC7A7,
         walker_segment: WalkerSegmentRule::Default,
         entries: &[
-            EntryRule { offset: 0x0C7B8, rule: EntryProtection::Exclude(HAZARDS) }, // BuzzyBeatle scr=1 col=2
-            EntryRule { offset: 0x0C7BB, rule: EntryProtection::Exclude(HAZARDS) }, // BuzzyBeatle scr=1 col=5
-            EntryRule { offset: 0x0C7BE, rule: EntryProtection::Exclude(HAZARDS) }, // BuzzyBeatle scr=1 col=9
-            EntryRule { offset: 0x0C7CA, rule: EntryProtection::Exclude(HAZARDS) }, // BuzzyBeatle scr=2 col=11
-            EntryRule { offset: 0x0C7CD, rule: EntryProtection::Exclude(HAZARDS) }, // BuzzyBeatle scr=3 col=2
-            EntryRule { offset: 0x0C7D0, rule: EntryProtection::Exclude(HAZARDS) }, // BuzzyBeatle scr=3 col=4
+            EntryRule { offset: 0x0C7B8, id: 0x70, rule: EntryProtection::Exclude(HAZARDS) }, // BuzzyBeatle scr=1 col=2
+            EntryRule { offset: 0x0C7BB, id: 0x70, rule: EntryProtection::Exclude(HAZARDS) }, // BuzzyBeatle scr=1 col=5
+            EntryRule { offset: 0x0C7BE, id: 0x70, rule: EntryProtection::Exclude(HAZARDS) }, // BuzzyBeatle scr=1 col=9
+            EntryRule { offset: 0x0C7CA, id: 0x70, rule: EntryProtection::Exclude(HAZARDS) }, // BuzzyBeatle scr=2 col=11
+            EntryRule { offset: 0x0C7CD, id: 0x70, rule: EntryProtection::Exclude(HAZARDS) }, // BuzzyBeatle scr=3 col=2
+            EntryRule { offset: 0x0C7D0, id: 0x70, rule: EntryProtection::Exclude(HAZARDS) }, // BuzzyBeatle scr=3 col=4
         ],
     },
     LevelProtection {
-        label: "4F1 (narrow-hallway fort — a hazard anywhere blocks the only path)",
+        level: "4F1",
+        area: 0,
+        why: "narrow-hallway fort — a hazard anywhere blocks the only path",
         enemy_ptr: 0xD528,
         walker_segment: WalkerSegmentRule::Default,
         entries: &[
-            EntryRule { offset: 0x0D539, rule: EntryProtection::Exclude(HAZARDS) }, // HotFootShy      scr=1 col=0
-            EntryRule { offset: 0x0D53C, rule: EntryProtection::Exclude(HAZARDS) }, // HotFootShy      scr=1 col=8
-            EntryRule { offset: 0x0D53F, rule: EntryProtection::Exclude(HAZARDS) }, // HotFootShy      scr=2 col=7
-            EntryRule { offset: 0x0D542, rule: EntryProtection::Exclude(HAZARDS) }, // ThwompLeftSlide scr=2 col=2
-            EntryRule { offset: 0x0D545, rule: EntryProtection::Exclude(HAZARDS) }, // ThwompLeftSlide scr=3 col=0
-            EntryRule { offset: 0x0D548, rule: EntryProtection::Exclude(HAZARDS) }, // HotFootShy      scr=3 col=2
-            EntryRule { offset: 0x0D54B, rule: EntryProtection::Exclude(HAZARDS) }, // HotFootShy      scr=3 col=10
-            EntryRule { offset: 0x0D54E, rule: EntryProtection::Exclude(HAZARDS) }, // ThwompRightSlide scr=4 col=1
-            EntryRule { offset: 0x0D551, rule: EntryProtection::Exclude(HAZARDS) }, // HotFootShy      scr=4 col=12
-            EntryRule { offset: 0x0D554, rule: EntryProtection::Exclude(HAZARDS) }, // Thwomp          scr=5 col=2
-            EntryRule { offset: 0x0D557, rule: EntryProtection::Exclude(HAZARDS) }, // HotFootShy      scr=5 col=3
-            EntryRule { offset: 0x0D55A, rule: EntryProtection::Exclude(HAZARDS) }, // ThwompRightSlide scr=5 col=12
+            EntryRule { offset: 0x0D539, id: 0x30, rule: EntryProtection::Exclude(HAZARDS) }, // HotFootShy      scr=1 col=0
+            EntryRule { offset: 0x0D53C, id: 0x30, rule: EntryProtection::Exclude(HAZARDS) }, // HotFootShy      scr=1 col=8
+            EntryRule { offset: 0x0D53F, id: 0x30, rule: EntryProtection::Exclude(HAZARDS) }, // HotFootShy      scr=2 col=7
+            EntryRule { offset: 0x0D542, id: 0x8B, rule: EntryProtection::Exclude(HAZARDS) }, // ThwompLeftSlide scr=2 col=2
+            EntryRule { offset: 0x0D545, id: 0x8B, rule: EntryProtection::Exclude(HAZARDS) }, // ThwompLeftSlide scr=3 col=0
+            EntryRule { offset: 0x0D548, id: 0x30, rule: EntryProtection::Exclude(HAZARDS) }, // HotFootShy      scr=3 col=2
+            EntryRule { offset: 0x0D54B, id: 0x30, rule: EntryProtection::Exclude(HAZARDS) }, // HotFootShy      scr=3 col=10
+            EntryRule { offset: 0x0D54E, id: 0x8C, rule: EntryProtection::Exclude(HAZARDS) }, // ThwompRightSlide scr=4 col=1
+            EntryRule { offset: 0x0D551, id: 0x30, rule: EntryProtection::Exclude(HAZARDS) }, // HotFootShy      scr=4 col=12
+            EntryRule { offset: 0x0D554, id: 0x8A, rule: EntryProtection::Exclude(HAZARDS) }, // Thwomp          scr=5 col=2
+            EntryRule { offset: 0x0D557, id: 0x30, rule: EntryProtection::Exclude(HAZARDS) }, // HotFootShy      scr=5 col=3
+            EntryRule { offset: 0x0D55A, id: 0x8C, rule: EntryProtection::Exclude(HAZARDS) }, // ThwompRightSlide scr=5 col=12
         ],
     },
     LevelProtection {
-        label: "4F1 sub-area 1 (narrow-hallway fort)",
+        level: "4F1",
+        area: 1,
+        why: "narrow-hallway fort",
         enemy_ptr: 0xC968,
         walker_segment: WalkerSegmentRule::Default,
         entries: &[
-            EntryRule { offset: 0x0C979, rule: EntryProtection::Exclude(HAZARDS) }, // DryBones scr=0 col=8
-            EntryRule { offset: 0x0C97C, rule: EntryProtection::Exclude(HAZARDS) }, // DryBones scr=1 col=4
-            EntryRule { offset: 0x0C97F, rule: EntryProtection::Exclude(HAZARDS) }, // Boo      scr=1 col=13
-            EntryRule { offset: 0x0C982, rule: EntryProtection::Exclude(HAZARDS) }, // DryBones scr=2 col=3
+            EntryRule { offset: 0x0C979, id: 0x3F, rule: EntryProtection::Exclude(HAZARDS) }, // DryBones scr=0 col=8
+            EntryRule { offset: 0x0C97C, id: 0x3F, rule: EntryProtection::Exclude(HAZARDS) }, // DryBones scr=1 col=4
+            EntryRule { offset: 0x0C97F, id: 0x2F, rule: EntryProtection::Exclude(HAZARDS) }, // Boo      scr=1 col=13
+            EntryRule { offset: 0x0C982, id: 0x3F, rule: EntryProtection::Exclude(HAZARDS) }, // DryBones scr=2 col=3
         ],
     },
     LevelProtection {
-        label: "4F2 (fort ground route — a hazard on the walking path is unavoidable)",
+        level: "8B",
+        area: 1,
+        why: "low-ceiling hallway at the area's start — a hazard here cannot be jumped; a Rotodisc at the Thwomp swings over where Mario arrives",
+        enemy_ptr: 0xD60B,
+        walker_segment: WalkerSegmentRule::Default,
+        entries: &[
+            EntryRule { offset: 0x0D61C, id: 0x3F, rule: EntryProtection::Exclude(HAZARDS) }, // DryBones scr=0 col=4
+            EntryRule { offset: 0x0D61F, id: 0x3F, rule: EntryProtection::Exclude(HAZARDS) }, // DryBones scr=0 col=10
+            EntryRule { offset: 0x0D622, id: 0x8C, rule: EntryProtection::Exclude(ROTODISCS) }, // ThwompRightSlide scr=1 col=6
+        ],
+    },
+    LevelProtection {
+        level: "5-2",
+        area: 0,
+        why: "low-ceiling underground runs — a hazard on the floor cannot be jumped",
+        enemy_ptr: 0xC8BE,
+        walker_segment: WalkerSegmentRule::Default,
+        entries: &[
+            EntryRule { offset: 0x0C8E4, id: 0x40, rule: EntryProtection::Exclude(HAZARDS) }, // BusterBeatle scr=9 col=5
+            EntryRule { offset: 0x0C8FC, id: 0x40, rule: EntryProtection::Exclude(HAZARDS) }, // BusterBeatle scr=12 col=15
+        ],
+    },
+    LevelProtection {
+        level: "4F2",
+        area: 0,
+        why: "fort ground route — a hazard on the walking path is unavoidable; a Rotodisc at the screen-5 Dry Bones swings over the hidden door Mario comes back through",
         enemy_ptr: 0xD508,
         walker_segment: WalkerSegmentRule::Default,
         entries: &[
-            EntryRule { offset: 0x0D519, rule: EntryProtection::Exclude(HAZARDS) }, // DryBones    scr=2 col=10
-            EntryRule { offset: 0x0D51C, rule: EntryProtection::Exclude(HAZARDS) }, // DryBones    scr=3 col=9
-            EntryRule { offset: 0x0D51F, rule: EntryProtection::Exclude(HAZARDS) }, // DryBones    scr=4 col=9
-            EntryRule { offset: 0x0D522, rule: EntryProtection::Exclude(HAZARDS) }, // DryBones    scr=5 col=4
-            EntryRule { offset: 0x0D525, rule: EntryProtection::Exclude(HAZARDS) }, // DryBones    scr=5 col=11
-            EntryRule { offset: 0x0D528, rule: EntryProtection::Exclude(HAZARDS) }, // DryBones    scr=6 col=2
-            EntryRule { offset: 0x0D52B, rule: EntryProtection::Exclude(HAZARDS) }, // DryBones    scr=6 col=3
-            EntryRule { offset: 0x0D52E, rule: EntryProtection::Exclude(HAZARDS) }, // DryBones    scr=6 col=12
-            EntryRule { offset: 0x0D531, rule: EntryProtection::Exclude(HAZARDS) }, // RotodiscCCW scr=6 col=14
+            EntryRule { offset: 0x0D519, id: 0x3F, rule: EntryProtection::Exclude(HAZARDS) }, // DryBones    scr=2 col=10
+            EntryRule { offset: 0x0D51C, id: 0x3F, rule: EntryProtection::Exclude(HAZARDS) }, // DryBones    scr=3 col=9
+            EntryRule { offset: 0x0D51F, id: 0x3F, rule: EntryProtection::Exclude(HAZARDS) }, // DryBones    scr=4 col=9
+            EntryRule {
+                offset: 0x0D522,
+                id: 0x3F,
+                rule: EntryProtection::Exclude(Group::Any(&[HAZARDS, ROTODISCS])),
+            }, // DryBones    scr=5 col=4
+            EntryRule {
+                offset: 0x0D525,
+                id: 0x3F,
+                rule: EntryProtection::Exclude(Group::Any(&[HAZARDS, ROTODISCS])),
+            }, // DryBones    scr=5 col=11
+            EntryRule { offset: 0x0D528, id: 0x3F, rule: EntryProtection::Exclude(HAZARDS) }, // DryBones    scr=6 col=2
+            EntryRule { offset: 0x0D52B, id: 0x3F, rule: EntryProtection::Exclude(HAZARDS) }, // DryBones    scr=6 col=3
+            EntryRule { offset: 0x0D52E, id: 0x3F, rule: EntryProtection::Exclude(HAZARDS) }, // DryBones    scr=6 col=12
+            EntryRule { offset: 0x0D531, id: 0x5B, rule: EntryProtection::Exclude(HAZARDS) }, // RotodiscCCW scr=6 col=14
         ],
     },
     LevelProtection {
-        label: "4-1 (each troopa sits on a small platform Mario must land on to progress; a hazard here forces an unavoidable hit; the high Venus pipe is in the reservoir)",
+        level: "4-1",
+        area: 0,
+        why: "each troopa sits on a small platform Mario must land on to progress; a hazard here forces an unavoidable hit; the high Venus pipe is in the reservoir",
         enemy_ptr: 0xCE97,
         walker_segment: WalkerSegmentRule::Default,
         entries: &[
             // In the water up top: a Rocky Wrench or giant piranha here is
             // invisible behind the water tiles (see BEHIND_BG).
-            EntryRule { offset: 0x0CEB1, rule: EntryProtection::Exclude(BEHIND_BG) }, // VenusFireTrap scr=2 col=6
-            EntryRule { offset: 0x0CEBD, rule: EntryProtection::Exclude(HAZARDS) }, // BigRedTroopa scr=5 col=8
-            EntryRule { offset: 0x0CEC0, rule: EntryProtection::Exclude(HAZARDS) }, // BigRedTroopa scr=5 col=15
-            EntryRule { offset: 0x0CEC3, rule: EntryProtection::Exclude(HAZARDS) }, // BigRedTroopa scr=6 col=4
-            EntryRule { offset: 0x0CEC9, rule: EntryProtection::Exclude(HAZARDS) }, // BigGreenTroopa scr=7 col=10
+            EntryRule { offset: 0x0CEB1, id: 0xA6, rule: EntryProtection::Exclude(BEHIND_BG) }, // VenusFireTrap scr=2 col=6
+            EntryRule { offset: 0x0CEBD, id: 0x7B, rule: EntryProtection::Exclude(HAZARDS) }, // BigRedTroopa scr=5 col=8
+            EntryRule { offset: 0x0CEC0, id: 0x7B, rule: EntryProtection::Exclude(HAZARDS) }, // BigRedTroopa scr=5 col=15
+            EntryRule { offset: 0x0CEC3, id: 0x7B, rule: EntryProtection::Exclude(HAZARDS) }, // BigRedTroopa scr=6 col=4
+            EntryRule { offset: 0x0CEC9, id: 0x7A, rule: EntryProtection::Exclude(HAZARDS) }, // BigGreenTroopa scr=7 col=10
+        ],
+    },
+    // A narrow landing between two gaps too wide to jump in one go: Mario
+    // has to land on it, so a hazard there cannot be avoided.
+    LevelProtection {
+        level: "4-2",
+        area: 0,
+        why: "narrow landings between gaps Mario has to land on",
+        enemy_ptr: 0xCF14,
+        walker_segment: WalkerSegmentRule::Default,
+        entries: &[
+            EntryRule { offset: 0x0CF2B, id: 0x7B, rule: EntryProtection::Exclude(HAZARDS) }, // BigRedTroopa scr=1 col=0
+            EntryRule { offset: 0x0CF31, id: 0x7B, rule: EntryProtection::Exclude(HAZARDS) }, // BigRedTroopa scr=1 col=6
         ],
     },
     LevelProtection {
-        label: "β2 (the low pipe is underwater)",
+        level: "7F2",
+        area: 0,
+        why: "narrow landings between gaps Mario has to land on",
+        enemy_ptr: 0xD41B,
+        walker_segment: WalkerSegmentRule::Default,
+        entries: &[
+            EntryRule { offset: 0x0D432, id: 0x2F, rule: EntryProtection::Exclude(HAZARDS) }, // Boo         scr=1 col=4
+            EntryRule { offset: 0x0D435, id: 0x5B, rule: EntryProtection::Exclude(HAZARDS) }, // RotodiscCCW scr=1 col=8
+            EntryRule { offset: 0x0D462, id: 0x2F, rule: EntryProtection::Exclude(HAZARDS) }, // Boo         scr=7 col=15
+        ],
+    },
+    LevelProtection {
+        level: "8B",
+        area: 0,
+        why: "narrow landing between gaps Mario has to land on",
+        enemy_ptr: 0xD5CD,
+        walker_segment: WalkerSegmentRule::Default,
+        entries: &[
+            EntryRule { offset: 0x0D60B, id: 0x5A, rule: EntryProtection::Exclude(HAZARDS) }, // RotodiscCW scr=10 col=8
+        ],
+    },
+    LevelProtection {
+        level: "β2",
+        area: 0,
+        why: "the low pipe is underwater",
         enemy_ptr: 0xC221,
         walker_segment: WalkerSegmentRule::Default,
         entries: &[
             // A Rocky Wrench or giant piranha here is invisible behind the
             // water tiles (see BEHIND_BG).
-            EntryRule { offset: 0x0C23E, rule: EntryProtection::Exclude(BEHIND_BG) }, // GreenPiranha scr=1 col=10
+            EntryRule { offset: 0x0C23E, id: 0xA0, rule: EntryProtection::Exclude(BEHIND_BG) }, // GreenPiranha scr=1 col=10
         ],
     },
     LevelProtection {
-        label: "8F roto-disc narrow area makes hazards unfair",
+        level: "8F1",
+        area: 0,
+        why: "roto-disc narrow area makes hazards unfair; a hazard at the screen-3 Rotodisc would block the pipe beside it",
         enemy_ptr: 0xD551,
         walker_segment: WalkerSegmentRule::Default,
         entries: &[
-            EntryRule { offset: 0x0D562, rule: EntryProtection::Exclude(HAZARDS) }, // Rotodisc
-            EntryRule { offset: 0x0D568, rule: EntryProtection::Exclude(HAZARDS) }, // Rotodisc
+            EntryRule { offset: 0x0D562, id: 0x5A, rule: EntryProtection::Exclude(HAZARDS) }, // Rotodisc
+            EntryRule { offset: 0x0D568, id: 0x60, rule: EntryProtection::Exclude(HAZARDS) }, // Rotodisc
+            EntryRule { offset: 0x0D56E, id: 0x5A, rule: EntryProtection::Exclude(HAZARDS) }, // Rotodisc scr=3 col=5
+        ],
+    },
+    // Small Mario can't kill a hazard, so one next to a pipe or door he
+    // has to use blocks it.
+    LevelProtection {
+        level: "1F",
+        area: 0,
+        why: "a hazard here would block the pipe beside it",
+        enemy_ptr: 0xD32B,
+        walker_segment: WalkerSegmentRule::Default,
+        entries: &[
+            EntryRule { offset: 0x0D35A, id: 0x3F, rule: EntryProtection::Exclude(HAZARDS) }, // DryBones scr=6 col=11
+        ],
+    },
+    LevelProtection {
+        level: "3-9",
+        area: 0,
+        why: "a hazard here would block the pipe beside it",
+        enemy_ptr: 0xC38F,
+        walker_segment: WalkerSegmentRule::Default,
+        entries: &[
+            EntryRule { offset: 0x0C3DF, id: 0x77, rule: EntryProtection::Exclude(HAZARDS) }, // GreenCheep scr=8 col=10
         ],
     },
     // --- Rotodisc-excluded entries ---
     LevelProtection {
-        label: "3F1 (screen 5 and 7 Dry Bones must not become Rotodiscs)",
+        level: "3F1",
+        area: 0,
+        why: "screen 5 and 7 Dry Bones must not become Rotodiscs",
         enemy_ptr: 0xD393,
         walker_segment: WalkerSegmentRule::Default,
         entries: &[
-            EntryRule { offset: 0x0D3BC, rule: EntryProtection::Exclude(ROTODISCS) }, // DryBones scr=5 col=12
-            EntryRule { offset: 0x0D3BF, rule: EntryProtection::Exclude(ROTODISCS) }, // DryBones scr=5 col=5
-            EntryRule { offset: 0x0D3C8, rule: EntryProtection::Exclude(ROTODISCS) }, // DryBones scr=7 col=2
-            EntryRule { offset: 0x0D3CB, rule: EntryProtection::Exclude(ROTODISCS) }, // DryBones scr=7 col=4
-            EntryRule { offset: 0x0D3CE, rule: EntryProtection::Exclude(ROTODISCS) }, // DryBones scr=7 col=13
+            EntryRule { offset: 0x0D3BC, id: 0x3F, rule: EntryProtection::Exclude(ROTODISCS) }, // DryBones scr=5 col=12
+            EntryRule { offset: 0x0D3BF, id: 0x3F, rule: EntryProtection::Exclude(ROTODISCS) }, // DryBones scr=5 col=5
+            EntryRule { offset: 0x0D3C8, id: 0x3F, rule: EntryProtection::Exclude(ROTODISCS) }, // DryBones scr=7 col=2
+            EntryRule { offset: 0x0D3CB, id: 0x3F, rule: EntryProtection::Exclude(ROTODISCS) }, // DryBones scr=7 col=4
+            EntryRule { offset: 0x0D3CE, id: 0x3F, rule: EntryProtection::Exclude(ROTODISCS) }, // DryBones scr=7 col=13
+        ],
+    },
+    // A Rotodisc swings 48-55 px round a point 48 px left of its slot, so a
+    // disc in these slots would pass over the spot Mario appears at when he
+    // comes out of a pipe or door (or starts the level), before he can move.
+    LevelProtection {
+        level: "4-6",
+        area: 0,
+        why: "a Rotodisc here swings over where Mario comes back from the other area",
+        enemy_ptr: 0xC257,
+        walker_segment: WalkerSegmentRule::Default,
+        entries: &[
+            EntryRule { offset: 0x0C274, id: 0x7A, rule: EntryProtection::Exclude(ROTODISCS) }, // BigGreenTroopa scr=2 col=13
+            EntryRule { offset: 0x0C292, id: 0x7B, rule: EntryProtection::Exclude(ROTODISCS) }, // BigRedTroopa scr=6 col=9
+            EntryRule { offset: 0x0C295, id: 0x7B, rule: EntryProtection::Exclude(ROTODISCS) }, // BigRedTroopa scr=6 col=13
+        ],
+    },
+    LevelProtection {
+        level: "4-6",
+        area: 1,
+        why: "a Rotodisc here swings over where Mario comes back from the other area",
+        enemy_ptr: 0xC1DA,
+        walker_segment: WalkerSegmentRule::Default,
+        entries: &[
+            EntryRule { offset: 0x0C1F7, id: 0x6C, rule: EntryProtection::Exclude(ROTODISCS) }, // GreenTroopa scr=2 col=14
+            EntryRule { offset: 0x0C215, id: 0x6D, rule: EntryProtection::Exclude(ROTODISCS) }, // RedTroopa scr=6 col=13
+            EntryRule { offset: 0x0C218, id: 0x6D, rule: EntryProtection::Exclude(ROTODISCS) }, // RedTroopa scr=6 col=10
+        ],
+    },
+    LevelProtection {
+        level: "1-2",
+        area: 0,
+        why: "a Rotodisc here swings over where Mario comes back from the sub-area",
+        enemy_ptr: 0xC6AA,
+        walker_segment: WalkerSegmentRule::Default,
+        entries: &[
+            EntryRule { offset: 0x0C6C4, id: 0x73, rule: EntryProtection::Exclude(ROTODISCS) }, // Paragoomba scr=3 col=9
+        ],
+    },
+    LevelProtection {
+        level: "2-1",
+        area: 0,
+        why: "a Rotodisc here swings over where Mario comes back from the sub-area",
+        enemy_ptr: 0xD189,
+        walker_segment: WalkerSegmentRule::Default,
+        entries: &[
+            EntryRule { offset: 0x0D1C4, id: 0x6B, rule: EntryProtection::Exclude(ROTODISCS) }, // PileDriver scr=10 col=1
+        ],
+    },
+    LevelProtection {
+        level: "3-3",
+        area: 0,
+        why: "a Rotodisc here swings over where Mario starts the level",
+        enemy_ptr: 0xC58E,
+        walker_segment: WalkerSegmentRule::Default,
+        entries: &[
+            EntryRule { offset: 0x0C5A2, id: 0x2D, rule: EntryProtection::Exclude(ROTODISCS) }, // BigBertha scr=0 col=0
         ],
     },
     // --- Thwomp-variant exclusions ---
     LevelProtection {
-        label: "5F1 (screen 1 Rotodisc must not become a standard dropping Thwomp)",
+        level: "5F1",
+        area: 0,
+        why: "screen 1 Rotodisc must not become a standard dropping Thwomp; a Rotodisc at the screen-4 Boo swings over where Mario comes back from the sub-area",
         enemy_ptr: 0xD3D0,
         walker_segment: WalkerSegmentRule::Default,
         entries: &[
+            EntryRule { offset: 0x0D3F9, id: 0x2F, rule: EntryProtection::Exclude(ROTODISCS) }, // Boo scr=4 col=9
             // OBJ_THWOMP (standard drop) only; the other five variants stay
             // allowed. Only reachable with Thwomps and Rotodiscs both Wild.
-            EntryRule { offset: 0x0D3E7, rule: EntryProtection::Exclude(Group::Ids(&[0x8A])) }, // RotodiscCCW scr=1 col=1
+            EntryRule {
+                offset: 0x0D3E7,
+                id: 0x5B,
+                rule: EntryProtection::Exclude(Group::Ids(&[0x8A])),
+            }, // RotodiscCCW scr=1 col=1
         ],
     },
-    // --- Hammer Bro encounters (walker uses HB modes; injection skips) ---
     LevelProtection {
-        label: "W1 Hammer Bro",
-        enemy_ptr: 0xC72B,
-        walker_segment: WalkerSegmentRule::HammerBro,
-        entries: &[],
-    },
-    LevelProtection {
-        label: "W2 Hammer Bro",
-        enemy_ptr: 0xD14D,
-        walker_segment: WalkerSegmentRule::HammerBro,
-        entries: &[],
-    },
-    LevelProtection {
-        label: "W2 Hammer Bro (variant)",
-        enemy_ptr: 0xD142,
-        walker_segment: WalkerSegmentRule::HammerBro,
-        entries: &[],
-    },
-    LevelProtection {
-        label: "W3/W5/W6/W7 Hammer Bro",
-        enemy_ptr: 0xC640,
-        walker_segment: WalkerSegmentRule::HammerBro,
-        entries: &[],
-    },
-    LevelProtection {
-        label: "W4 Hammer Bro",
-        enemy_ptr: 0xD0EA,
-        walker_segment: WalkerSegmentRule::HammerBro,
-        entries: &[],
-    },
-    LevelProtection {
-        label: "W8 Hammer Bro (uses 7-7 layout)",
-        enemy_ptr: 0xC03D,
-        walker_segment: WalkerSegmentRule::HammerBro,
-        entries: &[],
-    },
-    LevelProtection {
-        label: "Coin Ship end-pipe (2-BoomerangBro fight)",
+        level: "CoinShip",
+        area: 1,
+        why: "end-pipe room: 2-BoomerangBro fight",
         enemy_ptr: 0xDA0F,
         walker_segment: WalkerSegmentRule::HammerBro,
         entries: &[],
     },
 ];
+
+/// Every `Exclude(HAZARDS)` rule: `(entry offset, level, area, why)`. Read by
+/// the hazard census, which scores a terrain-based detector against them.
+#[cfg(test)]
+pub(super) fn hazard_rules() -> Vec<(usize, &'static str, usize, &'static str)> {
+    LEVEL_PROTECTIONS
+        .iter()
+        .flat_map(|l| {
+            l.entries
+                .iter()
+                .filter(|e| e.rule == EntryProtection::Exclude(HAZARDS))
+                .map(move |e| (e.offset, l.level, l.area, l.why))
+        })
+        .collect()
+}
 
 /// Per-entry rule for the entry at this absolute file offset, if any.
 pub(super) fn entry_protection_at(file_offset: usize) -> Option<EntryProtection> {
@@ -411,9 +596,6 @@ pub(super) fn entry_protection_at(file_offset: usize) -> Option<EntryProtection>
 /// it there would mean a Hammer Bro could never appear as an HB encounter.
 /// (W8's `0xC03D` is in that list but is the full 7-7 action level with no
 /// treasure box, so it never reaches this check.)
-///
-/// Nothing here depends on the tileset — an earlier `ForceTankBro` row on the
-/// 8-Tank sub-area blamed tileset 10, which was a misdiagnosis of this.
 pub(super) fn rewrites_hammer_bro(segment_file_offset: usize, has_treasure_box: bool) -> bool {
     has_treasure_box
         && !HAMMER_BRO_OBJ_PTRS.iter().any(|&p| enemy_ptr_to_file_offset(p) == segment_file_offset)
@@ -421,7 +603,13 @@ pub(super) fn rewrites_hammer_bro(segment_file_offset: usize, has_treasure_box: 
 
 /// Walker rule for the segment whose page byte sits at this absolute file
 /// offset. Returns `Default` for unprotected segments.
+///
+/// Every stream in [`HAMMER_BRO_OBJ_PTRS`] is a `HammerBro` segment; the table
+/// adds only the bro-fight rooms reached some other way.
 pub(super) fn walker_segment_rule_at(segment_file_offset: usize) -> WalkerSegmentRule {
+    if HAMMER_BRO_OBJ_PTRS.iter().any(|&p| enemy_ptr_to_file_offset(p) == segment_file_offset) {
+        return WalkerSegmentRule::HammerBro;
+    }
     LEVEL_PROTECTIONS
         .iter()
         .find(|l| {
@@ -434,6 +622,10 @@ pub(super) fn walker_segment_rule_at(segment_file_offset: usize) -> WalkerSegmen
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::randomize::overworld::node_catalog::{NodeCatalog, level_name_key};
+    use crate::randomize::rom_data::level_index::{self, read_objects};
+    use crate::randomize::rom_data::{LevelEntry, UNLISTED_LEVELS};
+    use crate::rom::Rom;
     use std::collections::HashSet;
 
     #[test]
@@ -515,26 +707,48 @@ mod tests {
         }
     }
 
+    /// Each row's `level` and `area` name the object list its `enemy_ptr`
+    /// reads, and every entry offset lies in that list. Skips without the ROM.
     #[test]
-    fn skip_segments_use_top_level_eps() {
-        // WalkerSegmentRule::Skip only makes sense at top-level enemy_ptrs
-        // (where the ep's file offset = a segment's page byte). Sub-area
-        // entry_ptrs land mid-segment, so "skip the segment" would also block
-        // the parent level's swaps. There's no cheap way to detect this without
-        // walking the ROM, but we can at least sanity-check that a Skip row's
-        // ep doesn't collide with any other row's per-entry offsets — if it
-        // did, that's a strong hint the Skip target is mid-segment.
-        let skip_eps: Vec<usize> = LEVEL_PROTECTIONS
+    fn every_row_names_the_area_its_offsets_are_in() {
+        let Some(rom) = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes")
+            .ok()
+            .and_then(|b| Rom::from_bytes(&b).ok())
+        else {
+            return;
+        };
+        let views = NodeCatalog::build(&rom, true).entry_views();
+        let levels: Vec<(&str, &LevelEntry)> = views
             .iter()
-            .filter(|l| l.walker_segment == WalkerSegmentRule::Skip)
-            .map(|l| enemy_ptr_to_file_offset(l.enemy_ptr))
+            .filter_map(|v| v.level_entry.as_ref().map(|le| (v.name.as_str(), le)))
+            .chain(UNLISTED_LEVELS.iter().map(|(name, le)| (*name, le)))
             .collect();
-        for level in LEVEL_PROTECTIONS {
-            for entry in level.entries {
-                assert!(
-                    !skip_eps.contains(&entry.offset),
-                    "per-entry offset 0x{:05X} collides with a Skip segment's ep — likely a sub-area mislabeled as top-level skip",
-                    entry.offset,
+        for row in LEVEL_PROTECTIONS {
+            let (_, entry) = levels
+                .iter()
+                .find(|(name, _)| level_name_key(name) == level_name_key(row.level))
+                .unwrap_or_else(|| panic!("{}: no level by that name (rominfo --list)", row.level));
+            let (areas, _) = level_index::trace(&rom, entry).expect("a protected level traces");
+            let area = areas.get(row.area).unwrap_or_else(|| {
+                panic!("{}: has {} areas, not area {}", row.level, areas.len(), row.area)
+            });
+            assert_eq!(
+                area.objects_ptr, row.enemy_ptr,
+                "{} area {}: its objects are at ${:04X}, the row says ${:04X}",
+                row.level, row.area, area.objects_ptr, row.enemy_ptr
+            );
+            let objects = read_objects(&rom, area.objects_ptr, area.tileset).unwrap();
+            for e in row.entries {
+                let found = objects.iter().find(|o| o.offset == e.offset).unwrap_or_else(|| {
+                    panic!(
+                        "{} area {}: 0x{:05X} is not one of its objects",
+                        row.level, row.area, e.offset
+                    )
+                });
+                assert_eq!(
+                    found.id, e.id,
+                    "{} area {}: 0x{:05X} holds ${:02X}, the row says ${:02X}",
+                    row.level, row.area, e.offset, found.id, e.id
                 );
             }
         }

@@ -158,11 +158,32 @@ Facts the trace pins (tests in `level_index/tests.rs`):
   the Hilly bank, so `$B3E7` lands inside 7-3's last command. Loaded in Mesen
   (2026-11-03, `testrom --place 3HB18` against a `3HB17` control) it does not
   crash: the clock runs and Mario walks, but the arena is Hilly art with a
-  wall-to-wall bush backdrop and one brick row instead of two. Treat it as
-  unused: `HB_EXCLUDE_ENTRIES` keeps it out of the Hammer Bro pool, and
-  anything that writes through headers must skip it. Untried: writing tileset
-  1 into its pointer table entry would presumably make it a copy of its
-  siblings' arena.
+  wall-to-wall bush backdrop and one brick row instead of two. Its header
+  also overlaps the W1 arena's: its song byte (`0x213FF`) is that arena's
+  width, which is how random level music widened the W1 arena in 3.1.1
+  (fixed in 3.1.2 by `level_index::shared_headers`). **The randomizer now
+  corrects it**: `qol::fix_3hb18_tileset` writes tileset 1 into its pointer
+  table entry (World 3 index 41) on every seed, before the catalog reads the
+  tables, which makes it a copy of its siblings' arena. The vanilla ROM still
+  has the quirk, and the `level_index` tests pin it there. Before that fix
+  the randomizer excluded it with `HB_EXCLUDE_ENTRIES = [($C640, 3)]`, which
+  left out the layout and so also dropped World 5's two hill arenas (`$ACB5`,
+  5HB1-5HB9; `$B422`, 5HB10) from the Hammer Bro pool on every seed; it was
+  removed with the fix.
+- **8HB1-8HB17 are vanilla filler, not a hidden level.** All 17 are World 8
+  pointer-table entries that sit on plain path tiles (`$44/$47/$48/$4A`).
+  - Each pairs 7-7's layout (`$AAA8`) with its own object list at `$C03D`.
+    The disassembly labels that list `W8HBO`, "World 8 Hammer Bro object
+    mapping (sort of)".
+  - The list holds a Buzzy Beetle, a Patooie, a green piranha, then twelve
+    Paragoombas and a goal card at screens 3-6. The area is only 4 screens long,
+    and in play the layout's wall hides most of them.
+  - Vanilla W8 has no bro sprites, so nothing on the vanilla map enters these
+    entries.
+  - Played on 2026-11-11 (`testrom --place 8HB1 7-7`): it is 7-7's lobby with
+    a few stray enemies, and nothing in it is worth reusing.
+  - `HB_EXCLUDE_OBJ_PTRS` and the level-pool exclusion keep the randomizer away
+    from it too.
 - **Plains level data starts no later than `0x1E509`**, not at `0x1E512`:
   5-7's sub-area header is there. `LEVEL_DATA_REGIONS` and `rom_map.py` both
   use the later start, which is how `rom_map.py` missed that sub-area.
@@ -1281,6 +1302,9 @@ Vanilla uses `(0x40, 0x15)` and `(0xA3, 0x16)`. The other 7 are
 there but no `CFIRE_LASER` entry points at it. SMB3-RS's `bowser_castle`
 composer picks any 2 of the 9 and writes them at the two laser entry
 slots, coordinating fireball placement so the segment stays X-sorted.
+It reads the room after the enemy pass and keeps every other entry as
+that pass left it, so the two Dry Bones randomize (before 2026-11 a
+hard-coded table put them back).
 
 Fireball X spread in fred's data spans the whole segment
 (`0x18..0xEF`). Y values cluster in `0x11..0x17` (7-row band).
@@ -1306,9 +1330,14 @@ up, not the way in.)
 #### 5-F2 Sub-Area 1 (file offset `0xD2C9`, 26 entries)
 
 Podoboo gauntlet — 16 Podoboo (0x9E) + 6 Ceiling Podoboo (0x53) + 2
-DryBones (0x3F) + 2 Boos (0x2F) — the randomizer's composer
-substitutes upward water jets (0x65) there on purpose; see
-`podoboo_gauntlet.rs`. Y high nibble = vertical page (page
+DryBones (0x3F) + 2 Boos (0x2F). The randomizer's composer
+(`podoboo_gauntlet.rs`) runs after the enemy pass and moves only the
+podoboos; the Boos and Dry Bones keep what that pass rolled. (Before
+2026-11 it rebuilt the room from a hard-coded table, which undid those
+rolls and put upward water jets, 0x65, on the Boo spots.) Vanilla lists
+the Dry Bones at 0x28 after the podoboos at 0x2C/0x2E and the Boo at
+0x6F before the podoboo at 0x6A, so the stream is not X-sorted as
+shipped. Y high nibble = vertical page (page
 0 for ceiling podoboos, page 1 for regular). The composer preserves
 the high nibble so a ceiling podoboo can't fall to a regular page or
 vice versa.
@@ -3183,6 +3212,26 @@ ends meet land:
 | Vertical | `$B0` `TILE_VERTPATHW` | `$AA` `…WLU` | `$AB` `…WLL` | `$BA` `…WLB` |
 | Horizontal | `$AC` `TILE_HORZPATHW` | `$B7` `…WLL` | `$B8` `…WLR` | `$B9` `…WLB` |
 
+### Which map-object slots the engine treats specially (2026-11-08)
+
+Verified against the disassembly for the sprite-slot ledger
+(`overworld::sprite_slots`, `docs/sprite_slots_design.md`). Every loop over
+the nine slots covers all of them — drawing, marching, entering, completion
+(`prg011:1974`, `DEY/BPL`), `Map_Init` — except these:
+
+| Slot | Special case | Where | Consequence |
+|---|---|---|---|
+| 0 | skipped by the died-on-an-object check | `prg011:1161`, `DEY/BNE`, "Ignores the HELP bubble" | only acts on the airship (scurry away) and a coin ship (reverts to a Hammer Bro), so a coin ship in slot 0 would not revert |
+| 0 | skipped by the canoe search | `prg010:3490`, `DEX/BNE` | a canoe in slot 0 is never found |
+| 0 | never hidden while a beaten object poofs | `MapObject_DrawSleepEnter`, `CPX #$00` (0 is `Map_HideObj`'s "none") | a beaten object there stays drawn until the poof empties the slot; **playtested 2026-11-08 with a World 8 tank: cosmetic only** — no re-entry, normal death, stays cleared |
+| 1 | the airship's: `Map_Object_Airship` (op 4 travel), the "on top of the airship" scurry, `Map_Anchored` | `prg011:1191`, `2890-3260` | all dispatched by object **id**, so dead with autoscroll removal, which retires the only writer of the airship id (`TAndK_WaitPlayerButtonA`, `prg024:306`) |
+| 1 | the death-skid wait ORs slot 1's march counter | `prg011:1409` | harmless for any object: march counters are zero at that point |
+
+**World 8's slot 0** holds HELP (`$01`) parked off the map (y=`$10`, screen 5
+of a 4-screen map), on generated maps too. Nothing reads it — no king, no wand,
+and the maze's slot-0 clear is keyed on `WANDS_TABLE[7]`, never set — so the
+randomizer moves World 8's level tank there.
+
 ### World-Map Object March Validation (PRG011)
 
 How wandering map objects (Hammer Bros, N-Spade, white toad house, coin ship)
@@ -3516,6 +3565,31 @@ When a fortress is cleared (Boom-Boom defeated, magic ball collected), the game 
 a map effect that busts a lock or builds a bridge, opening progression on the overworld.
 The entire system lives in PRG010 and uses **17 FX slots** (0x00–0x10), one per
 fortress/ship in the game.
+
+**Op 8 runs after every return to the map alive, not only fortress clears**
+(traced 2026-11-07). Back on the map, `PRG030_90C4` sets `Y = 6` if
+`Map_ReturnStatus` says the player lived (Toad Houses and bonus games included)
+and `Y = 2` if they died, and `PRG030_9128` stores it in `Map_Operation`. Op 6
+(`MO_Wait14Ticks`) waits and increments to 7; op 7 (`MO_DoLevelClear`,
+`prg011.asm:1660`) completes whatever tile the player stands on, and every one
+of its branches (panel flip, poof, map object, pipe) ends at `PRG011_ABBE`,
+which stores 8 — the airship-object branch reaches 8 by `INC`. So a chest
+ending, a secret exit or a level placed twice all pass op 8 with the player
+on the cell they just cleared. The randomizer's rewritten effect
+(`lock_keys::FORTRESS_FX`) leaves at once when no orb armed it, and with an
+on-clear trigger (`lock_keys::install_on_clear`, first used by Wandom) it hands
+that player cell to `maze::on_clear`'s table instead.
+
+**Map-side code can borrow PRG026, and that is how the table fits.** The map
+loop itself swaps `$A000` between page 11 and page 26 every frame
+(`prg030.asm`, `PRG030_86F9` / `PRG030_8715`: 26 for the inventory and
+`StatusBar_UpdateValues`, 11 for `Map_DoMap`), so the map running with PRG026
+mapped — NMI included — is vanilla's normal state. A routine reached from map
+code may therefore `LDA #26 / STA PAGE_A000 / JSR PRGROM_Change_A000` and call
+into PRG026's ~2 KB tail. It must put page 11 back before returning into
+anything in PRG011; code in `$A000` can do that itself by tail-calling
+`PRGROM_Change_A000` (`$FFC2`, clobbers `A` only), whose `RTS` then returns to
+its caller's caller.
 
 **Mechanism (`MO_DoFortressFX` at Map_Operation 8):**
 
@@ -6489,9 +6563,18 @@ Rendered from the ROM unless noted:
 | `$EE` / `$EF` | power-meter arrow, glowing / dark (`StatusBar_Fill_PowerMT`) |
 | `$70`-`$73` | "WORLD" as four packed tiles |
 | `$74`-`$77` | the `<M>` and `<L>` pairs |
+| `$78`-`$79` | "1UP" art. `$7A`, right after it, is solid colour 0; nothing has checked whether anything draws it, so it is **not** known to be free |
+| `$E9` / `$EA` / **`$EB`** | `.` / `!` / **`?`** — the dialog-box font's punctuation (Wandom tried `$EB` and settled on `$FB` `×`, which matches the digits) |
+| `$B0`-`$C9`, `$D0`-`$DF`, `$CA`-`$CF` | **a full dialog-box font**: A-Z, a-p, q-v (w/x/y/z scattered at `$81`/`$88`/`$8C`/`$8F`). `king_quotes::encode_char` is the authoritative map |
 
-**There is no alphabet** — "WORLD" and M/L are word-glyphs, not a font — so a
-readout here can use digits, a slash and borrowed icons, and cannot spell a word.
+**Correction (2026-11-07): there *is* an alphabet in this page.** The earlier
+claim here ("no alphabet; WORLD and M/L are word-glyphs, not a font") was made
+from the bar's own art and missed that the dialog-box font shares the page —
+rendering all 256 tiles of pages `$5C`-`$5F` shows it plainly. Two caveats
+before spelling words on the bar: the font glyphs are drawn in **colour 0 on
+colour 3**, where the bar's digits are colours 1/2 on 3, so they do not match
+the digits and may be dim against the bar; and the letters are scattered
+(see `encode_char`), so a word costs a lookup per character.
 
 ### Two template copies, and neither owns its cells
 

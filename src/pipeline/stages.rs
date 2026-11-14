@@ -14,6 +14,7 @@ use crate::randomize::maze::GlobalState;
 use crate::randomize::overworld::build::BuildResult;
 use crate::randomize::overworld::node_catalog::NodeCatalog;
 use crate::randomize::overworld::pickup::PickupResult;
+use crate::randomize::overworld::sprite_slots::WorldSprites;
 use crate::randomize::overworld::writer::WrittenOverworld;
 
 /// Everything settled from the seed and options before the first ROM write.
@@ -31,11 +32,14 @@ pub(super) struct Resolved {
     eights_are_wild: bool,
     antechamber_shuffle: bool,
     piranha_active: bool,
-    /// The piranha mode the run uses: the option, except that a run with
-    /// generated worlds never has it off (user, 2026-10-13). Their maps move
-    /// the plant levels, and only a shuffle moves the plants' sprites with
-    /// them, the way Hammer Bro shuffle must be on to place the bros.
+    /// The piranha mode the run uses: the option, except that Off on generated
+    /// worlds is played as On. Their maps have no vanilla plant cells to keep,
+    /// and only a shuffle moves the plants' sprites with their levels.
     piranha: PiranhaMode,
+    /// Off on generated worlds: the plant levels are pinned to World 7 so Off
+    /// still means "the plants stay in World 7" (user, 2026-11-08). See
+    /// `overworld::piranha_home`.
+    piranha_home: bool,
     hints: crate::HintMode,
     /// The worlds whose maps are generated, a bit each (bit 0 is World 1):
     /// all eight with Generated Overworld, else `testrom`'s per-world mask.
@@ -61,6 +65,25 @@ pub(super) struct MazeModel {
     wands: u8,
     /// Per world: whether the ROM side must install the canoe gate.
     gated: [bool; 8],
+    /// Wandom's pyramid, `(world, cell)`: `Some` exactly when K is hidden.
+    pyramid: Option<(usize, (usize, usize))>,
+    /// The world-number obelisk, `(world, cell)`: `Some` exactly when the
+    /// world numbers are hidden.
+    world_obelisk: Option<(usize, (usize, usize))>,
+}
+
+/// What [`maze_rom`] hands on to the stages after it.
+pub(super) struct MazeRomOut {
+    /// Which worlds' canoes the item gate must beach, for [`engine_patches`];
+    /// `None` when no gate was installed.
+    pub(super) canoe_gated: Option<[bool; 8]>,
+    /// Wandom's pyramid, `(world, cell)`. The oracle names its world.
+    pub(super) pyramid: Option<(usize, (usize, usize))>,
+    /// The world-number obelisk, `(world, cell)`. The oracle may name its world.
+    pub(super) world_obelisk: Option<(usize, (usize, usize))>,
+    /// Whether any on-clear trigger was written — and so whether [`locks`]
+    /// must send op 8's no-orb exit to the dispatcher.
+    pub(super) on_clear: bool,
 }
 
 /// Stage 0: resolve random starting items and the tri-state flags.
@@ -126,6 +149,7 @@ pub(super) fn resolve(seed: u64, options: &Options, rng: &mut ChaCha8Rng) -> Res
         PiranhaMode::Off if generated_worlds != 0 => PiranhaMode::On,
         mode => mode,
     };
+    let piranha_home = options.piranha_shuffle == PiranhaMode::Off && generated_worlds != 0;
 
     Resolved {
         whistles_removed,
@@ -139,6 +163,7 @@ pub(super) fn resolve(seed: u64, options: &Options, rng: &mut ChaCha8Rng) -> Res
         antechamber_shuffle,
         piranha_active: piranha != PiranhaMode::Off,
         piranha,
+        piranha_home,
         hints,
         generated_worlds,
         shuffle_hammer_bros: options.shuffle_hammer_bros || generated_worlds != 0,
@@ -169,6 +194,11 @@ pub(super) fn map_fixes(rom: &mut Rom, run: &Resolved) {
     // applied, and before powerups and enemies so both see the rebuilt room.
     rom.set_tag("qol/desert_bro_arena");
     randomize::qol::rebuild_desert_bro_arena(rom);
+
+    // 3HB18 names tileset 3 where its siblings name 1; corrected before the
+    // catalog reads the tables, so it is an ordinary arena from here on.
+    rom.set_tag("qol/3hb18_tileset");
+    randomize::qol::fix_3hb18_tileset(rom);
 }
 
 /// Stage 2: level data — powerups, palettes, enemies, and the composed rooms.
@@ -366,26 +396,16 @@ pub(super) fn overworld_catalog(
             {
                 if let Some(canoe) = generated.canoe {
                     rom.set_tag("overworld/generated_canoe");
-                    let placed = randomize::rom_data::place_canoe(rom, wi, canoe);
+                    let placed = WorldSprites::edit(rom, wi, |w| w.place_canoe(canoe));
                     assert!(placed, "W{} has no map-object slot for its canoe", wi + 1);
                 }
                 if let Some((castle, help)) = generated.castle {
                     use randomize::rom_data::{AIRSHIP_OBJ_SLOT, HELP_OBJ_SLOT};
                     rom.set_tag("overworld/generated_castle_sprites");
-                    randomize::rom_data::write_map_sprite_position(
-                        rom,
-                        wi,
-                        AIRSHIP_OBJ_SLOT,
-                        castle.0,
-                        castle.1,
-                    );
-                    randomize::rom_data::write_map_sprite_position(
-                        rom,
-                        wi,
-                        HELP_OBJ_SLOT,
-                        help.0,
-                        help.1,
-                    );
+                    WorldSprites::edit(rom, wi, |w| {
+                        w.move_to(AIRSHIP_OBJ_SLOT, castle);
+                        w.move_to(HELP_OBJ_SLOT, help);
+                    });
                 }
                 if let Some(limit) = generated.pan_limit {
                     rom.set_tag("overworld/generated_pan_limit");
@@ -521,6 +541,8 @@ pub(super) fn overworld_build(
             eights_are_wild: run.eights_are_wild,
             shuffle_hammer_bros: run.shuffle_hammer_bros,
             world_maze: options.world_maze,
+            airship_slot_free: options.disable_autoscroll,
+            reserve_plant_slots: run.piranha_home,
         },
     );
     if options.hands_levels {
@@ -544,6 +566,7 @@ pub(super) fn maze_model(
     run: &Resolved,
     build: &mut BuildResult,
     credits_progression: Option<&[u8]>,
+    seed: u64,
     rng: &mut ChaCha8Rng,
 ) -> Option<MazeModel> {
     // World maze: the eight world maps stop being a sequence and become the
@@ -573,7 +596,22 @@ pub(super) fn maze_model(
             .collect();
         // K cannot exceed the airships the spine offers: a shorter spine means
         // fewer than seven wands exist in the game at all.
-        let wands = options.maze_wands.min(spine.len().saturating_sub(1) as u8);
+        //
+        // Wandom rolls K, and later the pyramid, from a substream of its own:
+        // the main stream sees no extra draw, so a Wandom seed builds the maze
+        // a fixed-K seed with the same rolled K would.
+        let wandom = options.maze_wands == crate::MAZE_WANDS_WANDOM;
+        let mut wandom_rng = ChaCha8Rng::seed_from_u64(seed ^ randomize::maze::wandom::WANDOM_SALT);
+        let wands = if wandom {
+            randomize::maze::wandom::roll_wands(
+                spine.len(),
+                options.maze_wands_min,
+                options.maze_wands_max,
+                &mut wandom_rng,
+            )
+        } else {
+            options.maze_wands.min(spine.len().saturating_sub(1) as u8)
+        };
         let (state, _report) = randomize::maze::generate(
             build,
             &spine,
@@ -638,8 +676,46 @@ pub(super) fn maze_model(
             let randomize::maze::GateTarget::Canoe(w) = g.target;
             gated[w] = true;
         }
-        MazeModel { state, wands, gated }
+        // Wandom's pyramid, last, so it sees the maze exactly as it will ship:
+        // pads, relocated forts and any item gates. No eligible level anywhere
+        // leaves K shown from the start rather than hidden for good.
+        let pyramid = if wandom {
+            randomize::maze::wandom::pick_pyramid(&state, &mut wandom_rng, &[])
+        } else {
+            None
+        };
+        if let Some(cell) = pyramid {
+            randomize::maze::wandom::mark_pyramid(build, cell);
+        }
+        // The world-number obelisk, after Wandom's so it can avoid it, by the
+        // same rule and from a substream of its own: turning it on moves
+        // nothing else in the seed. No eligible level shows the numbers.
+        let world_obelisk = if options.hidden_worlds {
+            let mut rng = ChaCha8Rng::seed_from_u64(
+                seed ^ randomize::maze::hidden_worlds::HIDDEN_WORLDS_SALT,
+            );
+            randomize::maze::hidden_worlds::pick_obelisk(&state, &mut rng, pyramid)
+        } else {
+            None
+        };
+        if let Some(cell) = world_obelisk {
+            randomize::maze::wandom::mark_pyramid(build, cell);
+        }
+        MazeModel { state, wands, gated, pyramid, world_obelisk }
     })
+}
+
+/// Stage 8b: Piranha Shuffle Off on generated maps pins the two plant levels
+/// to World 7. After the maze model, which marks the obelisks and may pin
+/// item-gate keys, so the pick sees every slot already spoken for; before the
+/// writer, whose pre-deal honours the pins. Its own substream.
+pub(super) fn home_plants(run: &Resolved, build: &mut BuildResult, seed: u64) {
+    if !run.piranha_home {
+        return;
+    }
+    let mut rng =
+        ChaCha8Rng::seed_from_u64(seed ^ randomize::overworld::piranha_home::PIRANHA_HOME_SALT);
+    randomize::overworld::piranha_home::pin_plants_home(build, &mut rng);
 }
 
 /// Stage 9: write the finished overworld to the ROM in one pass.
@@ -671,14 +747,14 @@ pub(super) fn write_overworld(
 }
 
 /// Stage 10: the world maze's ROM side. Returns which worlds' canoes the item
-/// gate must beach, for [`engine_patches`]; `None` when no gate was installed.
+/// gate must beach and where Wandom's pyramid is — see [`MazeRomOut`].
 pub(super) fn maze_rom(
     rom: &mut Rom,
     options: &Options,
     maze: Option<MazeModel>,
     written: &WrittenOverworld,
     credits_progression: Option<&[u8]>,
-) -> Option<[bool; 8]> {
+) -> MazeRomOut {
     // The world maze's ROM side. The map itself is already written — the maze
     // was a model pass before the writer — so what is left is the engine
     // scaffolding the mode needs, and none of it touches a map grid.
@@ -691,6 +767,9 @@ pub(super) fn maze_rom(
     // installed much further down, with the rest of the item patches.
     let canoe_gated: Option<[bool; 8]> =
         maze.as_ref().map(|m| m.gated).filter(|g| g.iter().any(|&g| g));
+    let pyramid = maze.as_ref().and_then(|m| m.pyramid);
+    let world_obelisk = maze.as_ref().and_then(|m| m.world_obelisk);
+    let mut on_clear = false;
 
     if let Some(MazeModel { state, wands, .. }) = maze {
         rom.set_tag("world_maze");
@@ -700,7 +779,21 @@ pub(super) fn maze_rom(
         // After wand_gate: it installs the marker that fills WANDS_TABLE, and
         // the readout counts what that marker records.
         rom.set_tag("wand_readout");
-        randomize::maze::wand_readout::apply(rom, wands);
+        // Hidden only with a pyramid to reveal it: a Wandom seed that found no
+        // eligible level shows its rolled K from the start.
+        randomize::maze::wand_readout::apply(rom, wands, pyramid.is_some());
+        // Every "beat this cell, set this flag" row, in one table. [`locks`]
+        // points op 8 at it once the effect it hangs off has been written.
+        let triggers: Vec<_> = pyramid
+            .map(|cell| randomize::maze::wandom::trigger(cell, wands))
+            .into_iter()
+            .chain(world_obelisk.map(randomize::maze::hidden_worlds::trigger))
+            .collect();
+        if !triggers.is_empty() {
+            rom.set_tag("on_clear");
+            randomize::maze::on_clear::apply(rom, &triggers);
+            on_clear = true;
+        }
         rom.set_tag("world_persist");
         randomize::maze::world_persist::apply(
             rom,
@@ -723,8 +816,14 @@ pub(super) fn maze_rom(
             written.grids(rom),
             credits_progression.expect("world_maze forces world_order on"),
         );
+        // Hidden only with an obelisk to reveal them. After `world_order`
+        // (stage 3), whose display lookup at both draw sites this hooks.
+        if world_obelisk.is_some() {
+            rom.set_tag("hidden_worlds");
+            randomize::maze::hidden_worlds::apply(rom);
+        }
     }
-    canoe_gated
+    MazeRomOut { canoe_gated, pyramid, world_obelisk, on_clear }
 }
 
 /// Stage 11: every lock in the game, and the 2-player Vs retirement.
@@ -733,6 +832,7 @@ pub(super) fn locks(
     run: &Resolved,
     build: &BuildResult,
     written: &WrittenOverworld,
+    on_clear: bool,
 ) {
     // Every lock in the game, home and away, in one table — and with it the
     // rewritten fortress-FX effect that reads it. This is unconditional: the
@@ -760,6 +860,12 @@ pub(super) fn locks(
         written.grids(rom),
         written.lock_tiles(),
     );
+    // Send an ordinary clear through the on-clear routine, when something
+    // (today only Wandom's pyramid) wrote a trigger. After `apply`, which writes the
+    // effect this rearranges; without a routine the effect stays as it was.
+    if on_clear {
+        randomize::overworld::lock_keys::install_on_clear(rom);
+    }
     // The away fortress $EB wears the nub. A no-op with hints off, so every
     // other mode's bytes are untouched.
     rom.set_tag("away_family");
@@ -849,6 +955,8 @@ pub(super) fn bosses_and_quotes(
     options: &Options,
     written: &WrittenOverworld,
     credits_progression: Option<&[u8]>,
+    pyramid_world: Option<usize>,
+    world_obelisk_world: Option<usize>,
     rng: &mut ChaCha8Rng,
 ) {
     // The stomp-count randomizers sit here, immediately above `king_quotes`,
@@ -894,6 +1002,8 @@ pub(super) fn bosses_and_quotes(
             koopaling_hits,
             world_progression: credits_progression,
             one_f_chest,
+            pyramid_world,
+            world_obelisk_world,
         },
     );
     rom.set_tag("princess_thanks");

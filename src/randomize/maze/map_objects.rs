@@ -248,6 +248,9 @@ const MAP_OBJECTS_IDS: u16 = 0x7F15;
 const MAPOBJ_EMPTY: u8 = 0x00;
 #[cfg(test)]
 const MAPOBJ_HELP: u8 = 0x01;
+/// `MAPOBJ_AIRSHIP`, which the retired king scene put in slot 1.
+#[cfg(test)]
+const MAPOBJ_AIRSHIP: u8 = 0x02;
 
 /// File offset of the same table, for that test.
 #[cfg(test)]
@@ -640,26 +643,34 @@ mod tests {
                         slot,
                     ))
                 };
-                assert_eq!(
-                    id(0),
-                    MAPOBJ_HELP,
-                    "W{}: slot 0 must still be the HELP bubble — it is the engine's own \
-                     \"have I sent you to the airship yet\" flag",
-                    w + 1,
-                );
-                // Slot 1 is empty in every world's ROM table. W8 has no
-                // airship so the builder already uses it
-                // (`first_usable_map_obj_slot`); W1-W7 leave it alone. Note
-                // that is now caution rather than necessity — with the
-                // cutscene retired above, nothing ever writes the airship
-                // there.
-                if w != 7 {
+                // World 8's slot 0 holds a HELP parked off the map in vanilla
+                // and nothing reads it, so the shipped ROM puts the level tank
+                // there (`sprite_slots::WorldSprites::take_w8_help_slot`).
+                if w != 7 || std::ptr::eq(rom, &van) {
                     assert_eq!(
-                        id(1),
-                        MAPOBJ_EMPTY,
-                        "W{}: slot 1 must be empty until the king scene puts the airship there",
+                        id(0),
+                        MAPOBJ_HELP,
+                        "W{}: slot 0 must still be the HELP bubble — it is the engine's own \
+                         \"have I sent you to the airship yet\" flag",
                         w + 1,
                     );
+                }
+                // Slot 1 is empty in every world's vanilla table: the king
+                // scene puts the airship there at run time. With that scene
+                // retired above, nothing ever does, so the shipped ROM deals
+                // slot 1 like any other (`sprite_slots::open_airship_slot`) —
+                // what must hold there is only that it is never the airship.
+                if std::ptr::eq(rom, &van) {
+                    if w != 7 {
+                        assert_eq!(
+                            id(1),
+                            MAPOBJ_EMPTY,
+                            "W{}: vanilla's slot 1 is empty until the king scene",
+                            w + 1,
+                        );
+                    }
+                } else {
+                    assert_ne!(id(1), MAPOBJ_AIRSHIP, "W{}: the airship is in slot 1", w + 1);
                 }
             }
         }
@@ -911,7 +922,7 @@ mod tests {
     /// A slot above the eight `Map_Init` reloads is still stored and still
     /// restored. Slot 8 is the one a byte-per-world layout would have had to
     /// drop, and the randomizer places Hammer Bros there
-    /// (`eligible_hb_map_slots` runs to 9).
+    /// (`sprite_slots::WorldSprites::hb_eligible` runs to 9).
     #[test]
     fn the_ninth_slot_is_stored_too() {
         let Some(rom) = vanilla() else {

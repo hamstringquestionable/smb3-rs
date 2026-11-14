@@ -1525,6 +1525,86 @@ removable. With a removable wall on the map it would blow a hole in it. The
 builder's shared-bit rule (#212) predates any removable wall, so the gate cell's
 row/column pairing has to be held to it explicitly.
 
+### Wandom: a hidden K (2026-11-07)
+
+`maze_wands = 8` (`?` on the web page, `--maze-wands ?` on the CLI) rolls K
+uniformly from the player's range — `maze_wands_min..=maze_wands_max`, default
+2-6, any ends 0-7 — capped by the airships the spine offers, and hides it: the
+readout shows `N/×` until the player beats one level drawn as a **pyramid**
+(`$69`). Then a 1-up plays and the readout shows `N/K` for the rest of the game.
+The oracle king always names the pyramid's world on these seeds. The code is
+`maze::wandom`; what follows is the reasoning it rests on.
+
+- **Which level.** Telepad depth from the start world, where the start world
+  is depth 1 and a pad or the spine's airship hop is one step. Depths are
+  searched in the order 3, 4, 2, 5, 1, 6, 7, 8; within a depth the candidates
+  are shuffled and the first that qualifies wins. Qualifying means a plain
+  level slot (no hand trap, no troll pipe), reachable at all, and **optional**:
+  `spheres_with_blocked({cell}).solvable` — the same counterfactual the
+  required-stage count asks. Measured over 200 seeds: depth 3 every time, no
+  seed fell back, 0.43 ms per pick (release).
+- **How the clear is noticed: by cell, not by level.** Every return to the map
+  alive passes map operation 8 with the player on the cell just cleared (see
+  the ROM reference, "Op 8 runs after every return to the map alive").
+  `lock_keys::install_on_clear` swaps the first 35 bytes of the op-8 effect so
+  the cell key is built before the orb test and the no-orb exit jumps to
+  `FS_ON_CLEAR` instead of advancing. Nothing at or past offset 35 moves.
+  Keying on the cell is what makes Deja Vu, chest endings and secret exits all
+  correct for free: none of them changes which cell the player stands on.
+- **The on-clear hook is general.** `FS_ON_CLEAR` is a 14-byte trampoline that
+  maps PRG026 in and runs `maze::on_clear`'s dispatcher over a table of
+  4-byte rows — cell key, flag address, value to `ORA` in. Wandom is its first
+  row; a later "beat this level, do that" feature adds a row and never touches
+  map-bank code. 32 rows reserved.
+- **The reveal byte is the digit.** `maze_state::WANDOM_REVEAL` (`$7ADD`; two
+  free maze bytes remain after it) holds `$00` or `$F0 + K`, so the readout draws it
+  directly and holds no K of its own. Shared by both players: one screen, one
+  castle.
+- **The writer keeps sprites off it.** The W8 tank and piranha plants blank the
+  cell under them to a path node, which would erase the pyramid; both pickers
+  skip a pyramid slot.
+- **The hidden K is `×` (`$FB`), not `?`.** The dialog font's `?` (`$EB`) was
+  tried first. It is drawn in colour 0 and sits a pixel above the digits, and
+  moving it would take a CHR edit that also moves every `?` in the king's
+  letters. `×` uses the bar's own colours.
+- **Players see an obelisk.** The king, the web tip and the changelog call it
+  an obelisk; the code says pyramid, after the tile.
+- **The range (2026-11-08).** The player picks K's ends on the web page: with
+  `?` lit, number clicks alternate low end / high end, a high end below the low
+  one swaps them, and equal ends turn Wandom off and make that number the
+  fixed K. Clicking the lit `?` turns it off too. The flag key carries the low
+  end in `maze_wands` (which a Wandom key otherwise leaves free) and the high
+  end in a new 3-bit field, **both XOR their defaults**, so every key minted
+  before the range existed still reads as 2-6. The default range draws exactly
+  what the fixed 2-6 did, so those seeds are unchanged.
+
+### Hidden world numbers: a second obelisk (2026-11-08)
+
+`Options::hidden_worlds`, maze only, independent of Wandom. Every "WORLD n"
+reads `×` until a second obelisk is beaten (`maze::hidden_worlds`).
+
+- **Why.** The maze lets a player work forward from wherever a telepad drops
+  them, and the world number says where they are in the run — which world's
+  airship leads into World 8, and which world a Full-hints lock digit means.
+  Worlds 1-7 are shuffled, so their maps do not give the number away; World
+  8's map is the same every seed, so it is the one world a player can always
+  name.
+- **Placement is Wandom's rule**, through `wandom::pick_pyramid` with a
+  `taken` list: never Wandom's cell, and Wandom's stays walled off while this
+  one is tested, so both obelisks are optional *together*. Its own substream
+  (`HIDDEN_WORLDS_SALT`), so turning it on moves nothing else. Same tile.
+- **The trigger is an `on_clear` row** setting `maze_state::WORLDS_REVEAL`
+  (`$7ADE`). After it, **one** maze SRAM byte is left (`$7ADF`).
+- **Two draw sites, three screens.** `world_order` already rewrote both
+  "WORLD n" draws to read its display table: `Map_ConfigWorldIntro` (PRG010,
+  the arrival banner) and `StatusBar_Fill_World` (PRG026, map *and* level
+  status bars). Each now `JSR`s a 14-byte copy of the same routine in its own
+  bank (`FS_WORLD_DIGIT_MAP`, `FS_WORLD_DIGIT_BAR`) rather than one copy in
+  always-mapped PRG030, which neither caller needs. `$FB` is `×` in the map's
+  CHR (page `$16`) as well as the bar's (`$5E`).
+- **The oracle.** With only this obelisk on he names its world; with both on
+  he names one of the two at random — one extra draw, on those seeds only.
+
 ## Data model
 
 Sketch, not a signature list — the point is that the maze's state is a thin

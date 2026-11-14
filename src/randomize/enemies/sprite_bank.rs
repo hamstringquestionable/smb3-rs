@@ -1,32 +1,32 @@
 //! Sprite CHR-bank model: which graphics page each enemy needs, and the
 //! slot-commitment bookkeeping that keeps on-screen swaps from garbling tiles.
 
-pub struct SpriteBank {
-    pub chr_page: u8, // CHR ROM page number
-    pub slot: u8,     // 4 or 5 (PatTable_BankSel index)
+pub(crate) struct SpriteBank {
+    pub(crate) chr_page: u8, // CHR ROM page number
+    pub(crate) slot: u8,     // 4 or 5 (PatTable_BankSel index)
 }
 
 /// Look up the CHR sprite bank requirement for any object ID.
 /// Returns `None` for objects that use NOCHANGE (no bank switch).
-/// Covers ALL object IDs 0x00–0xB3 (from ROM PatTableSel tables) so that
-/// the two-pass pre-scan can correctly pre-commit CHR pages from non-swappable
+/// Covers ALL object IDs 0x00–0xB3 (from ROM PatTableSel tables, checked by
+/// `sprite_bank_matches_the_rom_pattable_tables`) so that the walker's Pass 1
+/// can correctly pre-commit CHR pages from non-swappable
 /// objects (platforms, rotodiscs, bosses, fire jets, etc.), plus the cannon
 /// fire family 0xBC–0xD0 whose requirements come from in-routine bank writes
 /// and spawned children rather than a PatTableSel entry (see the cfire arm).
-pub fn sprite_bank(id: u8) -> Option<SpriteBank> {
+pub(crate) fn sprite_bank(id: u8) -> Option<SpriteBank> {
     match id {
         // === Group 1: PRG001 (IDs 0x00–0x23) ===
-        // Boss fireball
-        0x34 | 0x35 => Some(SpriteBank { chr_page: 0x05, slot: 4 }),
         // MicroGoomba, Poof, DVPlatform
         0x01 | 0x03 | 0x04 | 0x05 | 0x0A | 0x16 | 0x1D => {
             Some(SpriteBank { chr_page: 0x48, slot: 4 })
         }
         0x02 => Some(SpriteBank { chr_page: 0x4C, slot: 4 }),
-        // FireChomp flames
+        // P-Switch door
         0x08 => Some(SpriteBank { chr_page: 0x13, slot: 5 }),
+        // Airship anchor
         0x09 => Some(SpriteBank { chr_page: 0x37, slot: 5 }),
-        // Airship propeller
+        // Spiny Cheep
         0x17 => Some(SpriteBank { chr_page: 0x1A, slot: 4 }),
         // Bowser
         0x18 => Some(SpriteBank { chr_page: 0x3A, slot: 4 }),
@@ -34,6 +34,8 @@ pub fn sprite_bank(id: u8) -> Option<SpriteBank> {
         0x20 => Some(SpriteBank { chr_page: 0x0A, slot: 4 }),
 
         // === Group 2: PRG002 (IDs 0x24–0x47) ===
+        // Toad, Toad House item
+        0x34 | 0x35 => Some(SpriteBank { chr_page: 0x05, slot: 4 }),
         // Platforms (various)
         0x24 | 0x26 | 0x27 | 0x28 | 0x36 | 0x37 | 0x38 | 0x3C | 0x44 => {
             Some(SpriteBank { chr_page: 0x0E, slot: 4 })
@@ -46,17 +48,17 @@ pub fn sprite_bank(id: u8) -> Option<SpriteBank> {
         0x2B => Some(SpriteBank { chr_page: 0x0B, slot: 4 }),
         // Cloud platform
         0x2C => Some(SpriteBank { chr_page: 0x0E, slot: 4 }),
-        // Chain Chomp (strained/staked), Platform ULDR
+        // Big Bertha, floating wooden platform
         0x2D | 0x3E => Some(SpriteBank { chr_page: 0x1A, slot: 4 }),
         // Wood block, Rocket sled
         0x2E | 0x3A => Some(SpriteBank { chr_page: 0x13, slot: 5 }),
         // Boo, Hot Foot shy, Stretch Boos, Hot Foot
         0x2F | 0x30 | 0x31 | 0x32 | 0x45 => Some(SpriteBank { chr_page: 0x12, slot: 4 }),
-        // Fire jet left
+        // Charging Cheep Cheep
         0x3B => Some(SpriteBank { chr_page: 0x4F, slot: 5 }),
         // Dry Bones
         0x3F => Some(SpriteBank { chr_page: 0x13, slot: 5 }),
-        // Object42, Object43
+        // Pool-to-pool Cheep Cheeps
         0x42 | 0x43 => Some(SpriteBank { chr_page: 0x4F, slot: 5 }),
 
         // === Group 3: PRG003 (IDs 0x48–0x6B) ===
@@ -91,7 +93,9 @@ pub fn sprite_bank(id: u8) -> Option<SpriteBank> {
         0x6B => Some(SpriteBank { chr_page: 0x4F, slot: 5 }),
 
         // === Group 4: PRG004 (IDs 0x6C–0x8F) ===
-        // Koopas, Paratroopas, Goomba, Paragoomba, FlyingParatroopa, Cheeps
+        // Koopas, Paratroopas, Goomba, Paragoomba, FlyingParatroopa, Cheeps.
+        // Green Cheep 0x77 asks the table for no page, but its routine
+        // (ObjNorm_SpikeCheep) writes $4F to slot 5 itself, so $4F/5 is real.
         0x6C | 0x6D | 0x6E | 0x6F | 0x72 | 0x73 | 0x74 | 0x76 | 0x77 | 0x78 | 0x79 | 0x80
         | 0x88 => Some(SpriteBank { chr_page: 0x4F, slot: 5 }),
         // Buzzy Beetle, Spiny, Lakitu, Spiny Egg
@@ -192,15 +196,39 @@ pub(super) fn is_uniform_chr_class(class: &[u8]) -> bool {
     page4.is_some() || page5.is_some()
 }
 
+/// What the two enemy sprite slots (`PatTable_BankSel+4` and `+5`) are
+/// committed to.
+#[derive(Clone, Copy)]
+pub(super) struct Pages {
+    pub(super) slot4: ChrSlot,
+    pub(super) slot5: ChrSlot,
+}
+
+impl Pages {
+    pub(super) const FREE: Pages = Pages { slot4: ChrSlot::Free, slot5: ChrSlot::Free };
+
+    pub(super) fn commit(&mut self, id: u8) {
+        commit_chr_page(id, &mut self.slot4, &mut self.slot5);
+    }
+
+    pub(super) fn fits(self, id: u8) -> bool {
+        is_chr_compatible(id, self.slot4, self.slot5)
+    }
+
+    pub(super) fn would_conflict(self, id: u8) -> bool {
+        would_conflict(id, self.slot4, self.slot5)
+    }
+}
+
 /// CHR commitments a pick consults. `local` is the proximity group's slots —
-/// what can share the screen with the entry under the one-screen model.
+/// what can share the screen with the entry under the proximity model.
 /// `segment` is every commitment anywhere in the segment (pinned pages from
 /// all groups, plus every pick made so far): the bar a level-wide chaser must
 /// clear, since it follows the player into every group (see `CHASER_IDS`).
 #[derive(Clone, Copy)]
 pub(super) struct ChrCtx {
-    pub(super) local: (ChrSlot, ChrSlot),
-    pub(super) segment: (ChrSlot, ChrSlot),
+    pub(super) local: Pages,
+    pub(super) segment: Pages,
 }
 
 /// Check whether an enemy is compatible with the current CHR page commitments.
@@ -213,6 +241,16 @@ pub(super) fn is_chr_compatible(id: u8, slot4: ChrSlot, slot5: ChrSlot) -> bool 
             _ => true,
         },
     }
+}
+
+/// Whether committing this object would *make* a conflict: its slot already
+/// holds a different page. A slot that is `Conflicted` already doesn't count,
+/// so only the entry that broke the slot is blamed, not every one after it.
+pub(super) fn would_conflict(id: u8, slot4: ChrSlot, slot5: ChrSlot) -> bool {
+    sprite_bank(id).is_some_and(|sb| {
+        let slot = if sb.slot == 4 { slot4 } else { slot5 };
+        matches!(slot, ChrSlot::Page(p) if p != sb.chr_page)
+    })
 }
 
 /// Record a CHR page commitment for the given object's bank slot.

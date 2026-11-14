@@ -65,8 +65,8 @@ pub(super) const WATER_ENEMIES: &[u8] = &[
     0x64, // OBJ_CHEEPCHEEPHOPPER
     0x67, // OBJ_LAVALOTUS (southbird: "underwater lava plant")
     0x6A, // OBJ_BLOOPERCHILDSHOOT
-    0x76, // OBJ_GREENCHEEP (jumping)
-    0x77, // OBJ_REDCHEEP
+    0x76, // OBJ_JUMPINGCHEEPCHEEP
+    0x77, // OBJ_GREENCHEEP (loads its own page, see sprite_bank)
     0x88, // OBJ_ORANGECHEEP
 ];
 
@@ -363,12 +363,8 @@ pub(super) const BIG_Q_BLOCKS: &[u8] = &[
 /// a level's first enemy. CHR compatibility checked via `sprite_bank()` at filter
 /// time.
 ///
-/// Boss Bass was excluded until injection moved inside the walker. It is a
-/// `WATER_ENEMIES` member, so with water Wild the walker used to reshuffle an
-/// injected one into an ordinary water enemy — a silent no-op. Deciding the
-/// injection inside the segment prologue and marking the entry settled closes
-/// that hole (Lakitu and the sun never needed it: they belong to no class pool,
-/// so nothing could pick them out).
+/// Boss Bass is also a `WATER_ENEMIES` member; an injected one is marked
+/// settled, so the walker does not reshuffle it into an ordinary water enemy.
 pub(super) const WILD_INJECTION_IDS: &[u8] = &[
     LAKITU_ID,    // Lakitu (enemy-spawning variant, CHR $0B/+4)
     ANGRY_SUN_ID, // Angry Sun
@@ -405,10 +401,10 @@ pub(super) const SUN_SPAWN_Y: u8 = 0x11;
 /// half the time it lifts to this height for variety.
 pub(super) const LAKITU_ALT_Y: u8 = 0x12;
 
-/// Probability (out of 256) that a segment will receive an injection when wild_injections is on.
-/// ~40% chance per segment (102/256). Note the effective rate is lower because a
-/// level only injects if its first enemy is a swappable class and a chaser is
-/// CHR-compatible — see the injection funnel in `inject_at_entry_points`.
+/// Chance out of 256 (~40%) that each injection site — a level's first enemy —
+/// rolls an injection when wild_injections is on. The effective rate is lower:
+/// the entry must be a swappable, unprotected enemy and some chaser must be
+/// CHR-compatible (see `inject_first_enemy`).
 pub(super) const WILD_INJECTION_CHANCE: u8 = 102;
 
 /// Odds (numerator, denominator) that a 2-enemy HB wild segment takes the
@@ -457,20 +453,34 @@ pub(super) const MAX_BERTHA_PER_SEGMENT: u8 = 2;
 /// One, so the player can still meet a Ptooie or a nipper and learn to handle
 /// it, but never walks into a wall of them.
 ///
-/// The budget is per `$FF`-bounded enemy run, not per level. That is usually
-/// the same thing, but several levels can enter one run at different
-/// `enemy_ptr`s (see the `SortMode::Preserve` note in `mod.rs`), and there they
-/// share the one budget. Stricter than per-level, which is the safe direction
-/// for a flag whose whole job is "fewer surprises".
+/// The budget is per segment (one area's `$FF`-terminated object list). No two
+/// areas' lists overlap, but areas that load the *same* list (the shared bro
+/// arenas, for one) share its one budget.
 pub(super) const MAX_ADDED_HAZARDS_PER_SEGMENT: u8 = 1;
 
 /// Maximum X-tile gap between consecutive enemies (sorted by X) before they
-/// are split into separate CHR groups. Enemies more than one screen apart
-/// can never be visible simultaneously, so they don't need compatible CHR pages.
-pub(super) const CHR_GROUP_GAP: u8 = 16;
+/// are split into separate CHR groups.
+///
+/// What matters is not whether two enemies are on screen together but whether
+/// both are *alive*: every live object rewrites its CHR page each frame
+/// (`Object_DoStateAction`, prg000.asm), and the last writer wins. An object
+/// spawns 1 tile past the right edge (`LOSBS_LookAhead`) and is deleted 2 past
+/// the right or 3 past the left (`PRG000_D3CC`), so two stationary enemies up
+/// to ~20 tiles apart can both be live. 16 (one screen) missed that band: at
+/// 200 all-Wild seeds it left ~14 garbled pairs per seed at gaps 17-20, and ~5
+/// on default flags; 20 removes them for ~2% less spread across the wild pool.
+/// Objects deleted through the wider `Object_DeleteOffScreen_N2` test can
+/// still reach ~25; see `chr_clash_stats`.
+pub(super) const CHR_GROUP_GAP: u8 = 20;
+
+/// How many times a CHR group is picked again when an enemy that could not be
+/// replaced clashed with an earlier pick (see the group loop in
+/// `randomize_object_data`). Each retry fixes the enemies that clashed, so the
+/// other picks route around their pages; past the cap the last attempt stands.
+pub(super) const MAX_CHR_REROLLS: usize = 2;
 
 /// Enemies whose CHR page constrains *every* proximity group in the segment,
-/// so the one-screen assumption behind [`CHR_GROUP_GAP`] does not hold and
+/// so the proximity assumption behind [`CHR_GROUP_GAP`] does not hold and
 /// placing one anywhere requires compatibility with every page committed
 /// anywhere in the segment. Two ways to earn membership:
 /// - True chasers that follow the player across the whole level: Lakitu
@@ -511,9 +521,13 @@ pub(super) const CHASER_IDS: &[u8] = &[
 /// CFIRE_ROCKYWRENCH (0xBE), CFIRE_4WAY (0xBF), and CFIRE_LASER (0xD0)
 /// because their level-design role (spawner / multi-direction / fortress wall
 /// element) is too distinct to randomize generically.
+// Reason: rustfmt packs these rows and moves each label onto the row before.
+#[rustfmt::skip]
 pub(super) const ALL_CANNONS: &[u8] = &[
     // CFIRE_LEFT
-    0xC0, 0xC2, 0xC3, 0xC4, 0xC6, 0xC8, 0xC9, 0xCB, 0xCE, // CFIRE_RIGHT
-    0xC1, 0xC5, 0xC7, 0xCA, 0xCC, 0xCD, 0xCF, // CFIRE_BILLS
+    0xC0, 0xC2, 0xC3, 0xC4, 0xC6, 0xC8, 0xC9, 0xCB, 0xCE,
+    // CFIRE_RIGHT
+    0xC1, 0xC5, 0xC7, 0xCA, 0xCC, 0xCD, 0xCF,
+    // CFIRE_BILLS
     0xBC, 0xBD,
 ];

@@ -30,6 +30,13 @@ RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --document-private-items  # doc l
 cargo test                   # must pass
 ```
 
+**The Rust version is pinned in `rust-toolchain.toml`**, and rustup uses it
+for every cargo command in this checkout, locally and in CI. Without the pin,
+CI floated on the newest stable while local stayed wherever it was last
+updated, so a new clippy lint could pass locally and fail CI. Bumping the
+version is a deliberate change: edit `channel`, run the gates below, and fix
+what they report in the same PR.
+
 The wasm pass is not redundant: native clippy never evaluates code behind
 `cfg(target_arch = "wasm32")`, so a warning that only exists there is invisible
 until CI fails. Note also that `cargo fmt --check` runs *before* both clippy
@@ -149,7 +156,7 @@ is the one to read:
 | PRG011 | `$A000–$BFFF`, map | 46 | 14 |
 | PRG025 | `$C000–$DFFF`, title screen | 2707 | 2695 |
 | PRG012 | `$A000–$BFFF`, map reload | 620 | 240 |
-| PRG026 | `$A000–$BFFF`, map/inventory | 2269 | 2251 |
+| PRG026 | `$A000–$BFFF`, map/inventory | 2061 | 2043 |
 | PRG027 | `$A000–$BFFF`, letter cutscene | 657 | 657 |
 | PRG029 | `$C000–$DFFF`, Toad House | 2548 | 1528 |
 
@@ -217,9 +224,13 @@ The fortress-FX rework (2026-09-06) retired vanilla's `MO_DoFortressFX` and its
 seven slot tables by repointing one word of the map-operation jump table,
 freeing `$C7BD..$C9D5` — 537 contiguous bytes, the largest run in the map bank.
 Those bytes were never `$FF`, so `--free-space` counts none of them. The
-registry row is the record instead: `FS_FORTRESS_FX` claims the whole run at
-537 reserved / 484 used, leaving **53 spare bytes the per-bank table above does
-not know about**. The same is true of every allocation sited on retired vanilla
+registry rows are the record instead: `FS_FORTRESS_FX` claims the first 496
+(484 used) and `FS_ON_CLEAR` the next 16 (14 used) — the fixed trampoline into
+the on-clear trigger table in PRG026 (`maze::on_clear`), which a "beat this
+level, do that" feature adds a row to rather than editing map-bank code. The
+next 16 (`FS_WORLD_DIGIT_MAP`) hold the hidden-worlds banner digit, and the
+**last 9 (`$C9CD..$C9D5`) are unclaimed**. Those slack bytes are **not visible to the
+per-bank table above**. The same is true of every allocation sited on retired vanilla
 code — check `FREE_SPACE_ALLOCATIONS` alongside the scan, not instead of it.
 
 **Repointing a jump-table vector is the cheapest way to reclaim a large run**
@@ -582,17 +593,22 @@ It is read-only and cheap (a few ms), and the ROM changes as the pipeline runs,
 so build it from the ROM you are about to edit rather than reusing one. The
 vanilla quirks it has to respect are pinned by its tests (`level_index/tests.rs`):
 3HB18 names tileset 3 where its siblings name 1, so its layout pointer lands
-inside 7-3's last command (a garbled arena; `HB_EXCLUDE_ENTRIES` keeps it unused),
-and 3-9 and 3HB18 end on alt pointers naming tileset 0.
+inside 7-3's last command (a garbled arena, whose header overlaps the W1 arena's;
+the pipeline corrects it to tileset 1 with `qol::fix_3hb18_tileset`), and 3-9 and
+3HB18 end on alt pointers naming tileset 0.
 
-Modules that read through it: `items::powerups` (`every_power_block`) and
-`cosmetic::level_music` (`every_level`). The region walk powerups used before
-rerolled every real block but also 15 header-shaped bytes no level loads, and
-misread junctions after an Ice/Sky `E7` (fixed in the shared
-`LevelDataRegion::command_size`, which still sizes every command).
+Modules that read through it: `items::powerups` (`every_power_block`),
+`cosmetic::level_music` (`every_level`), and the enemy pass, Big ? pass and
+5-F2/Bowser composers (`every_level` / `read_objects`). The region walk
+powerups used before rerolled every real block but also 15 header-shaped bytes
+no level loads, and misread junctions after an Ice/Sky `E7` (fixed in the
+shared `LevelDataRegion::command_size`, which still sizes every command).
 `items::chest_item_offsets` stays a hand-kept list; a pipeline test checks it
-against every `$D6` chest the index finds on finished ROMs. The enemy modules
-have not been compared with the index yet and are due a review of their own.
+against every `$D6` chest the index finds on finished ROMs. Enemy protections
+name their level and area, and a test checks each against the index. A stream
+no level loads is not randomized;
+`every_loaded_object_stream_was_visible_to_the_enemy_pass` checks, across a
+flag matrix, that no flag makes one live later.
 
 ## ROM Map
 

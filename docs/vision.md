@@ -77,10 +77,10 @@ What SMB3-RS deliberately is not, and does not intend to become:
 
 ## Released, and what that changed
 
-SMB3-RS **released on 2026-07-27** and is on 3.1.2 as of 2026-11-11. The two
-bars 1.0 was defined against — feature parity with **SMB3R** and enough
-community confidence that seeds are beatable and free of game-breaking bugs —
-were the right bars, and clearing them changed the rules in one specific way:
+SMB3-RS **released on 2026-07-27**. The two bars 1.0 was defined against —
+feature parity with **SMB3R** and enough community confidence that seeds are
+beatable and free of game-breaking bugs — were the right bars, and clearing
+them changed the rules in one specific way:
 
 **Flag keys are now compatibility surface.** Before release, bit assignments
 were free to move. They are not any more: a key someone posted in a race or a

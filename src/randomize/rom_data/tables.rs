@@ -100,7 +100,6 @@ pub(crate) fn active_canoe_edges(world_idx: usize, eights_are_wild: bool) -> Vec
 /// or equivalent are 4-byte.
 pub(crate) struct LevelDataRegion {
     pub(crate) start: usize,
-    pub(crate) end: usize,
     extra_byte_dispatches: &'static [u8],
     /// Whether group 2 fixed-size shapes 1-6 are note/wood powerups in this
     /// tileset. In most tilesets they are, but in TS2 (Dungeon) shapes 1-2 map
@@ -112,9 +111,8 @@ pub(crate) struct LevelDataRegion {
 impl LevelDataRegion {
     /// Size in bytes of the generator command whose first and third stream
     /// bytes are `b0`/`b2`: 3 normally, 4 when the tileset's variable-size
-    /// dispatch reads an extra byte. Every level-stream walker (powerups,
-    /// enemy entry points) must step with this — a re-derived copy of the
-    /// formula is how parsers drift out of alignment.
+    /// dispatch reads an extra byte. The level index steps with this; a
+    /// re-derived copy of the formula is how parsers drift out of alignment.
     ///
     /// A first byte of `$E0` or more is a junction, always 3 bytes:
     /// `LevelLoad` (PRG030 `$98EE`) checks for it before any tileset
@@ -133,12 +131,12 @@ impl LevelDataRegion {
     }
 }
 
-/// Level data regions by tileset (file offset ranges + extra-byte dispatch info).
+/// Level data regions by tileset: where each bank's level data starts (the
+/// level index uses it to name the bank) and its extra-byte dispatch info.
 pub(crate) const LEVEL_DATA_REGIONS: &[LevelDataRegion] = &[
     LevelDataRegion {
         // Underground (TS14) — same dispatch table as TS3
         start: 0x1A587,
-        end: 0x1C005,
         extra_byte_dispatches: &[
             35, 36, 37, 38, 39, 40, 41, 42, // TopDecoBlocks
             60, 61, 62, // BGOrWater
@@ -150,7 +148,6 @@ pub(crate) const LEVEL_DATA_REGIONS: &[LevelDataRegion] = &[
     LevelDataRegion {
         // Plains (TS1)
         start: 0x1E512,
-        end: 0x20005,
         extra_byte_dispatches: &[
             11, 12, // GroundRun
             35, 36, 37, 38, 39, 40, 41, 42, // TopDecoBlocks
@@ -160,7 +157,6 @@ pub(crate) const LEVEL_DATA_REGIONS: &[LevelDataRegion] = &[
     LevelDataRegion {
         // Hilly (TS3)
         start: 0x20587,
-        end: 0x22005,
         extra_byte_dispatches: &[
             35, 36, 37, 38, 39, 40, 41, 42, // TopDecoBlocks
             60, 61, 62, // BGOrWater
@@ -172,7 +168,6 @@ pub(crate) const LEVEL_DATA_REGIONS: &[LevelDataRegion] = &[
     LevelDataRegion {
         // Ice / Sky (TS4/12)
         start: 0x227E0,
-        end: 0x24005,
         extra_byte_dispatches: &[
             0, // LongWoodBlock
             35, 36, 37, 38, 39, 40, 41, 42,  // TopDecoBlocks
@@ -185,7 +180,6 @@ pub(crate) const LEVEL_DATA_REGIONS: &[LevelDataRegion] = &[
     LevelDataRegion {
         // Pipe / Water (TS7)
         start: 0x24BA7,
-        end: 0x26005,
         extra_byte_dispatches: &[
             35, 36, 37, 38, 39, 40, 41, 42, // TopDecoBlocks
             49, // OrangeBlock
@@ -203,7 +197,6 @@ pub(crate) const LEVEL_DATA_REGIONS: &[LevelDataRegion] = &[
         // levels and HB battle scenes). Real data ends with an empty stub
         // level at 0x28000-0x28009; 0x2800A is one past its terminator.
         start: 0x26A6F,
-        end: 0x2800A,
         extra_byte_dispatches: &[
             13, // DoubleCloud
             35, 36, 37, 38, 39, 40, 41, 42, // TopDecoBlocks
@@ -217,7 +210,6 @@ pub(crate) const LEVEL_DATA_REGIONS: &[LevelDataRegion] = &[
     LevelDataRegion {
         // Desert (TS9)
         start: 0x28F36,
-        end: 0x2A005,
         extra_byte_dispatches: &[
             10, 11, 12, 13, // DiagRect variants
             35, 36, 37, 38, 39, 40, 41, 42, // TopDecoBlocks
@@ -227,7 +219,6 @@ pub(crate) const LEVEL_DATA_REGIONS: &[LevelDataRegion] = &[
     LevelDataRegion {
         // Dungeon (TS2)
         start: 0x2A7F7,
-        end: 0x2C005,
         extra_byte_dispatches: &[
             13, 14, // SolidBrick, BrightDiamondLong (LL21_InitLongRun)
             35, 36, 37, 38, 39, 40, 41, 42, // TopDecoBlocks
@@ -241,7 +232,6 @@ pub(crate) const LEVEL_DATA_REGIONS: &[LevelDataRegion] = &[
     LevelDataRegion {
         // Ship (TS10)
         start: 0x2EC07,
-        end: 0x30005,
         extra_byte_dispatches: &[
             1, 2, // WoodBodyLong
             35, 36, 37, 38, 39, 40, 41, 42, // TopDecoBlocks
@@ -908,14 +898,6 @@ pub(crate) const HB_NEEDS_SHELL_ENEMIES: &[u8] = &[
     0x3F, // DryBones — stompable but revives; only a shell clears it
 ];
 
-/// Specific (obj_ptr, tileset) pairs to exclude from the HB cycling pool.
-/// `W3[41]` has lay=0xB3E7 with tileset 3, but the layout is designed for tileset 1
-/// (17 other entries with the same layout use tileset 1). Loading it with tileset 3
-/// causes garbled background graphics.
-pub(crate) const HB_EXCLUDE_ENTRIES: &[(u16, u8)] = &[
-    (0xC640, 3), // W3[41] — tileset 3 is wrong for lay 0xB3E7
-];
-
 /// Map-object sprite slots per world. Slot 0 always holds a fixed non-HB
 /// marker and slot 1 is the airship's in W1-W7; see
 /// `rom_data::first_usable_map_obj_slot`.
@@ -964,12 +946,29 @@ pub(crate) struct LevelEntry {
 /// the real thing only spawns when `OBJ_BONUSCONTROLLER`'s coin/score check
 /// fires.
 ///
-/// `level_music` deals the Coin Ship a song through this entry too, which is
-/// why it is no longer native-only.
-pub(crate) const UNLISTED_LEVELS: &[(&str, LevelEntry)] = &[(
-    "CoinShip",
-    LevelEntry { tileset: 10, obj_lo: 0x04, obj_hi: 0xDA, lay_lo: 0x15, lay_hi: 0xBC },
-)];
+/// "Unused Level 5" is the other: nothing in vanilla reaches it, but the Big [?]
+/// room shuffle (`levels::big_q_rooms`) repoints Big [?] slot 0 at it. It is
+/// listed here rather than read from that slot because the shuffle runs after
+/// the level-data passes, which must already treat it as a level.
+///
+/// `level_music` deals these a song through this list too, which is why it is
+/// no longer native-only.
+pub(crate) const UNLISTED_LEVELS: &[(&str, LevelEntry)] = &[
+    (
+        "CoinShip",
+        LevelEntry { tileset: 10, obj_lo: 0x04, obj_hi: 0xDA, lay_lo: 0x15, lay_hi: 0xBC },
+    ),
+    (
+        "Unused5",
+        LevelEntry {
+            tileset: UNUSED5_TILESET,
+            obj_lo: UNUSED5_OBJECT_PTR as u8,
+            obj_hi: (UNUSED5_OBJECT_PTR >> 8) as u8,
+            lay_lo: UNUSED5_LAYOUT_PTR as u8,
+            lay_hi: (UNUSED5_LAYOUT_PTR >> 8) as u8,
+        },
+    ),
+];
 
 /// A beta (unreferenced) level — layout data exists in the ROM but no vanilla
 /// pointer table entry references it. Injected into the shuffle pool when
@@ -1122,7 +1121,7 @@ pub(crate) const BETA_PATCHES: &[(usize, u8)] = &[
     (0x22F0B, 0x1A),
     (0x22F0F, 0x9F),
     (0x23004, 0x04),
-    // β6 (ts8 $AF18) — 20 patches (header: alt_layout/alt_objects/alt_tileset + commands)
+    // β6 (ts8 $AF18) — 21 patches (header: alt_layout/alt_objects/alt_tileset + commands)
     (0x24F28, 0x32),
     (0x24F29, 0xB3),
     (0x24F2A, 0xD8),
@@ -1132,7 +1131,15 @@ pub(crate) const BETA_PATCHES: &[(usize, u8)] = &[
     (0x25029, 0x41),
     (0x2502B, 0x00),
     (0x2502C, 0x41),
-    (0x2502D, 0x23),
+    // The pipe drops a row (0x25063 below), so vanilla's wood strip under it
+    // at row 2 (`22 0D 42`) is spent: re-aimed as one block at row 5 col 15
+    // (`25 0F 40`). Without it the right wall has a one-tile-tall slot at
+    // row 5 between the shelf (rows 3-4) and the row-6 block, and a Frog
+    // swims into it and cannot get out. Only col 15 is filled: cols 13-14
+    // stay open, as that is the way out to the exit pipe.
+    (0x2502D, 0x25),
+    (0x2502E, 0x0F),
+    (0x2502F, 0x40),
     (0x25031, 0x00),
     (0x25032, 0x41),
     (0x2503A, 0x00),
@@ -1142,7 +1149,6 @@ pub(crate) const BETA_PATCHES: &[(usize, u8)] = &[
     (0x25063, 0x21),
     (0x25067, 0x53),
     (0x25068, 0x32),
-    (0x250D2, 0x01),
     // β9 (ts13 $ACA9) — 2 patches
     (0x26DB8, 0x63),
     (0x26DB9, 0x20),
@@ -1165,7 +1171,6 @@ pub(crate) const BETA_PATCHES: &[(usize, u8)] = &[
 pub(crate) const BIG_Q_AREA_LAYOUTS: usize = 0x3491B;
 pub(crate) const BIG_Q_AREA_OBJECTS: usize = 0x3492B;
 pub(crate) const BIG_Q_AREA_TILESETS: usize = 0x3493B;
-#[cfg(not(target_arch = "wasm32"))] // only testrom iterates all eight areas
 pub(crate) const BIG_Q_AREA_COUNT: usize = 8;
 
 /// 5-2's Big [?] Block junction command — slot 4 of its entry area, the screen
@@ -1353,6 +1358,18 @@ pub(crate) const TEMP_VAR9: u8 = 0x08;
 /// makes an "N of K" readout possible without adding CHR.
 pub(crate) const STATUS_GLYPH_DIGIT0: u8 = 0xF0;
 pub(crate) const STATUS_GLYPH_SLASH: u8 = 0xFA;
+/// `Sound_QLevel1`: the level sound-effect queue. The map plays it too —
+/// vanilla's own level clear queues `SND_LEVELPOOF` here while on the map
+/// (`PRG011_AB9E`), and so does the rewritten fortress effect.
+pub(crate) const SOUND_QLEVEL1: u16 = 0x04F2;
+/// `SND_LEVEL1UP`, the 1-up jingle, on [`SOUND_QLEVEL1`].
+pub(crate) const SND_LEVEL1UP: u8 = 0x40;
+
+/// `×`, in the bar's own colours like the digits. Wandom's hidden K, chosen in
+/// playtest over `?` (`$EB`), which is the dialog font: drawn in colour 0 and a
+/// pixel above the digits, and the tile cannot move without a CHR edit that
+/// would also move every `?` in the king's letters.
+pub(crate) const STATUS_GLYPH_TIMES: u8 = 0xFB;
 
 #[cfg(test)]
 mod world_tables_tests {

@@ -824,10 +824,10 @@ fn test_hammer_bro_redistribution_written() {
             );
 
             // After writing HBs, at least 2 eligible map-object slots remain
-            // empty for a runtime white-house spawn. eligible_hb_map_slots
+            // empty for a runtime white-house spawn. `hb_eligible`
             // counts both placed HBs and still-empty slots, so the empties
             // are the eligible count minus what we wrote.
-            let eligible = rom_data::eligible_hb_map_slots(&test_rom, wi).len();
+            let eligible = WorldSprites::read(&test_rom, wi).hb_eligible().len();
             let empty = eligible - written.len();
             assert!(
                 empty >= 2,
@@ -1493,7 +1493,7 @@ fn test_march_veto_covers_vanilla_plants() {
         Some(r) => r,
         None => return,
     };
-    let vanilla_plants = rom_data::read_plant_sprite_positions(&rom, 6);
+    let vanilla_plants = WorldSprites::read(&rom, 6).positions(SpriteKind::Plant);
     assert_eq!(vanilla_plants.len(), 2, "vanilla W7 has two plant sprites");
 
     let catalog = node_catalog::NodeCatalog::build(&rom, false);

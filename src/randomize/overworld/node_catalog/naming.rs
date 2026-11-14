@@ -7,10 +7,15 @@ use super::{CatalogEntry, NodeKind};
 // Naming
 // ---------------------------------------------------------------------------
 
-/// Special name overrides for entries that sit on non-standard tiles.
+/// Special name overrides: entries that sit on non-standard tiles, and forts
+/// whose list order is not the order the player meets them.
 const LEVEL_NAME_OVERRIDES: &[(usize, usize, &str)] = &[
-    (1, 32, "2-QS"),   // quicksand
-    (1, 42, "2-Pyr"),  // pyramid
+    (1, 32, "2-QS"),  // quicksand
+    (1, 42, "2-Pyr"), // pyramid
+    // World 4's forts, named in play order: the pipe from the start reaches
+    // the far fort (entry 16) first, so list order would swap them.
+    (3, 9, "4F2"),     // Dry Bones fort with the hidden door
+    (3, 16, "4F1"),    // Hot Foot and Thwomp hallway fort
     (4, 10, "5-SC"),   // spiral castle
     (6, 11, "7-P1"),   // piranha plant 1
     (6, 45, "7-P2"),   // piranha plant 2

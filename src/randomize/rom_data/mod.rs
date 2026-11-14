@@ -34,7 +34,7 @@ pub(crate) use tables::*;
 pub(crate) use tiles::*;
 
 // Part of the lib's public API (consumed by the chr_stats integration test).
-pub use access::{ENEMY_DATA_END, ENEMY_DATA_START};
+pub(crate) use access::{ENEMY_DATA_END, ENEMY_DATA_START};
 
 // Part of the lib's public API: `tests/overworld_baseline.rs` links the library
 // as an outside consumer, so the regions it hashes have to be reachable from

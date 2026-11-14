@@ -16,7 +16,7 @@ use crate::randomize::cosmetic::map_background::PALSET_MAPS;
 use crate::randomize::levels::big_q_rooms;
 use crate::randomize::overworld::node_catalog::{EntryView, NodeCatalog, level_name_key};
 use crate::randomize::overworld::world_order::WORLD_INIT_OPERAND;
-use crate::randomize::rom_data::{self, LevelEntry};
+use crate::randomize::rom_data::{self, LevelEntry, level_index};
 use crate::rom::Rom;
 use crate::{Options, randomize_rom};
 
@@ -425,6 +425,14 @@ pub struct TestRomSpec {
     /// Pair with `--starting-items anchor` to test the unlock; without it the
     /// wall is what gets tested.
     pub canoe_gate: bool,
+    /// Move a Wandom seed's reveal trigger to this cell, as `(world, (row,
+    /// col))` with a 1-based world: beating the level there reveals K instead
+    /// of the obelisk's. The obelisk tile stays where the seed drew it.
+    /// Needs a `--flags` base with Wands To Enter on `?`.
+    pub obelisk_at: Option<(u8, (usize, usize))>,
+    /// The same for the world-number obelisk: beating the level at this cell
+    /// reveals the world numbers. Needs a `--flags` base with hidden worlds on.
+    pub world_obelisk_at: Option<(u8, (usize, usize))>,
     /// Let the Hammer item break fortress lock tiles on the map.
     pub hammer_breaks_locks: bool,
     /// Let the Hammer item break water-gap (bridge) tiles on the map.
@@ -496,7 +504,28 @@ fn source_catalog(vanilla: &[u8], include_beta: bool) -> Result<Vec<EntryView>, 
 ///
 /// `UNLISTED_LEVELS` is checked first: those levels have no pointer table entry
 /// for the catalog to have classified, so they can only be resolved by name.
-fn resolve(catalog: &[EntryView], name: &str) -> Result<LevelEntry, String> {
+///
+/// A `/N` suffix names area `N` of the level instead (`5-7/1` is 5-7's
+/// sub-area), numbered as `rominfo --level` prints them. The area is traced
+/// in vanilla and placed as an entry of its own, so a sub-area normally
+/// reached through a pipe can be walked into from the map.
+fn resolve(vanilla: &[u8], catalog: &[EntryView], name: &str) -> Result<LevelEntry, String> {
+    let Some((base, area)) = name.split_once('/') else {
+        return resolve_level(catalog, name);
+    };
+    let entry = resolve_level(catalog, base)?;
+    let n: usize = area.trim().parse().map_err(|_| format!("bad area number in {name:?}"))?;
+    let rom = Rom::from_bytes_lax(vanilla, true).map_err(|e| e.to_string())?;
+    let (areas, _) = level_index::trace(&rom, &entry)
+        .map_err(|dead| format!("{base} does not lead to a level area: {dead:?}"))?;
+    let a =
+        areas.get(n).ok_or_else(|| format!("{base} has {} area(s); no area {n}", areas.len()))?;
+    let [lay_lo, lay_hi] = a.layout_ptr.to_le_bytes();
+    let [obj_lo, obj_hi] = a.objects_ptr.to_le_bytes();
+    Ok(LevelEntry { tileset: a.tileset, obj_lo, obj_hi, lay_lo, lay_hi })
+}
+
+fn resolve_level(catalog: &[EntryView], name: &str) -> Result<LevelEntry, String> {
     let want = level_name_key(name);
     if let Some((_, entry)) =
         rom_data::UNLISTED_LEVELS.iter().find(|(n, _)| level_name_key(n) == want)
@@ -1054,8 +1083,10 @@ pub fn build(vanilla: &[u8], spec: &TestRomSpec) -> Result<TestRom, String> {
             crate::randomize::qol::rebuild_desert_bro_arena(&mut rom);
             rom.set_tag("qol/big_q_blocks");
             crate::randomize::qol::fix_big_q_block_rooms(&mut rom);
+            rom.set_tag("qol/macobra");
+            crate::randomize::qol::apply_macobra_patches(&mut rom);
             report.push(
-                "always-on patches: stomp_fairness, real_time_clock, desert_bro_arena, big_q_blocks"
+                "always-on patches: stomp_fairness, real_time_clock, desert_bro_arena, big_q_blocks, macobra"
                     .to_string(),
             );
         } else {
@@ -1119,6 +1150,13 @@ pub fn build(vanilla: &[u8], spec: &TestRomSpec) -> Result<TestRom, String> {
         return Err(format!("starting world index {world_idx} out of range"));
     }
 
+    // Beta stages are only playable with their layout fixes, which the
+    // pipeline applies whenever it can place them; do the same here.
+    if spec.include_beta {
+        crate::randomize::qol::fix_beta_stages(&mut rom);
+        report.push("beta layout fixes applied".to_string());
+    }
+
     // 3. Level placement.
     if spec.place_all.is_some() || !spec.placements.is_empty() {
         let catalog = source_catalog(vanilla, spec.include_beta)?;
@@ -1126,7 +1164,7 @@ pub fn build(vanilla: &[u8], spec: &TestRomSpec) -> Result<TestRom, String> {
         let world = &rom_data::world_tables(&rom, world_idx);
 
         if let Some(name) = &spec.place_all {
-            let entry = resolve(&catalog, name)?;
+            let entry = resolve(vanilla, &catalog, name)?;
             for (_, entry_idx) in &slots {
                 rom_data::write_entry(&mut rom, world, *entry_idx, &entry);
             }
@@ -1140,7 +1178,7 @@ pub fn build(vanilla: &[u8], spec: &TestRomSpec) -> Result<TestRom, String> {
         let mut next_free = 0usize;
         let mut reskin_used = std::collections::HashMap::new();
         for placement in &spec.placements {
-            let mut entry = resolve(&catalog, &placement.level)?;
+            let mut entry = resolve(vanilla, &catalog, &placement.level)?;
             let mut reskin_note = String::new();
             if let Some(reskin) = placement.reskin {
                 let (reskinned, note) = reskin_entry(&mut rom, &entry, reskin, &mut reskin_used)?;
@@ -1242,6 +1280,40 @@ pub fn build(vanilla: &[u8], spec: &TestRomSpec) -> Result<TestRom, String> {
             crate::randomize::maze::canoe_gate::apply(&mut rom, &[true; 8]);
             report.push("canoe gate: boats offshore, anchor summons".to_string());
         }
+    }
+
+    // 5d. Wandom's trigger, moved. Only a seed that installed the hook has one
+    //     to move, so a base without it is an error rather than a silent no-op.
+    if let Some((world, (row, col))) = spec.obelisk_at {
+        let w = usize::from(world)
+            .checked_sub(1)
+            .filter(|&w| w < 8)
+            .ok_or_else(|| format!("--obelisk-at world {world} is out of range (1-8)"))?;
+        if !crate::randomize::maze::wandom::retarget(&mut rom, (w, (row, col))) {
+            return Err(
+                "--obelisk-at needs a Wandom seed: --flags with Wands To Enter on ?".to_string()
+            );
+        }
+        let tile = rom.read_byte(crate::randomize::rom_data::map_tile_offset(w, row, col));
+        report.push(format!(
+            "obelisk trigger: W{world} row {row} col {col} (tile {tile:#04X}) now reveals K"
+        ));
+    }
+    if let Some((world, (row, col))) = spec.world_obelisk_at {
+        let w = usize::from(world)
+            .checked_sub(1)
+            .filter(|&w| w < 8)
+            .ok_or_else(|| format!("--world-obelisk-at world {world} is out of range (1-8)"))?;
+        if !crate::randomize::maze::hidden_worlds::retarget(&mut rom, (w, (row, col))) {
+            return Err("--world-obelisk-at needs a hidden-worlds seed: --flags with \
+                        Hidden World Numbers on"
+                .to_string());
+        }
+        let tile = rom.read_byte(crate::randomize::rom_data::map_tile_offset(w, row, col));
+        report.push(format!(
+            "world-number obelisk: W{world} row {row} col {col} (tile {tile:#04X}) now reveals \
+             the world numbers"
+        ));
     }
 
     // 6. Hammer tile-breaking. Applied here rather than via `Options` so it
@@ -1378,7 +1450,7 @@ pub fn build(vanilla: &[u8], spec: &TestRomSpec) -> Result<TestRom, String> {
     if !spec.set_layouts.is_empty() {
         let catalog = source_catalog(vanilla, spec.include_beta)?;
         for ov in &spec.set_layouts {
-            let entry = resolve(&catalog, &ov.level)?;
+            let entry = resolve(vanilla, &catalog, &ov.level)?;
             let lay = (entry.lay_hi as u16) << 8 | entry.lay_lo as u16;
             let base = rom_data::layout_file_offset(lay, entry.tileset)
                 .ok_or_else(|| format!("{:?} has no layout data", ov.level))?;
@@ -1434,6 +1506,24 @@ mod tests {
         std::fs::read(VANILLA).ok()
     }
 
+    /// `5-7/1` names 5-7's sub-area: the plains area its sky half pipes
+    /// into, which `rominfo --level 5-7` lists as area 1.
+    #[test]
+    fn an_area_suffix_resolves_to_that_area() {
+        let Some(bytes) = vanilla() else { return };
+        let catalog = source_catalog(&bytes, false).unwrap();
+        let sub = resolve(&bytes, &catalog, "5-7/1").unwrap();
+        assert_eq!(
+            (sub.tileset, sub.lay_hi, sub.lay_lo, sub.obj_hi, sub.obj_lo),
+            (1, 0xA4, 0xF9, 0xC1, 0x66)
+        );
+        assert_eq!(
+            resolve(&bytes, &catalog, "5-7/0").unwrap(),
+            resolve(&bytes, &catalog, "5-7").unwrap()
+        );
+        assert!(resolve(&bytes, &catalog, "5-7/2").unwrap_err().contains("no area 2"));
+    }
+
     fn spec() -> TestRomSpec {
         TestRomSpec {
             base: Base::Vanilla,
@@ -1450,6 +1540,8 @@ mod tests {
             starting_items: Vec::new(),
             starting_lives: 5,
             canoe_gate: false,
+            obelisk_at: None,
+            world_obelisk_at: None,
             hammer_breaks_locks: false,
             hammer_breaks_bridges: false,
             water_stomp: false,

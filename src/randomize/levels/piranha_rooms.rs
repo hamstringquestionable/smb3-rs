@@ -15,8 +15,9 @@
 //! defaults reproduce the vanilla sprite rewards (P-Wing / Mushroom) and
 //! `items::randomize` re-rolls them when chest randomization is on.
 
-use crate::randomize::levels::segment_writer::{self, SegmentEntry, SegmentSpec, SortMode};
-use crate::randomize::rom_data::{self, FS_PIRANHA_ROOMS, MAP_OBJ_ENTRY_LINKS};
+use crate::randomize::levels::segment_writer::{self, SegmentEntry, SegmentSpec};
+use crate::randomize::overworld::sprite_slots::WorldSprites;
+use crate::randomize::rom_data::{FS_PIRANHA_ROOMS, MAP_OBJ_ENTRY_LINKS};
 use crate::rom::Rom;
 
 /// The map-object sprite id of a stationary piranha plant.
@@ -29,7 +30,7 @@ pub(crate) const PLANT_SPRITE_ID: u8 = 0x07;
 pub(crate) fn clear_vanilla_plants(rom: &mut Rom) {
     rom.push_tag("piranha_rooms/clear_vanilla");
     for &(world_idx, slot, _entry_idx) in MAP_OBJ_ENTRY_LINKS {
-        rom_data::clear_map_sprite(rom, world_idx, slot);
+        WorldSprites::edit(rom, world_idx, |w| w.clear_slot(slot));
     }
     rom.pop_tag();
 }
@@ -100,7 +101,6 @@ pub(crate) fn install_treasure_sets(rom: &mut Rom) {
                 original_count: 3,
                 entries: &entries,
                 label: Some(label),
-                sort_mode: SortMode::SortByX,
             },
         )
         .expect("piranha_rooms: clone write failed");

@@ -15,14 +15,6 @@ pub(super) struct ClassModes {
     bros: EnemyMode,
 }
 
-/// Return the wild swap pool that would be in effect for the given Options
-/// (union of class pools where the class is in Wild mode). Exposed `pub`
-/// so integration tests / analyzers can enumerate the pool to compute
-/// per-pool distribution metrics.
-pub fn wild_pool_for(opts: &Options) -> Vec<u8> {
-    ClassModes::from_options(opts).build_wild_pool()
-}
-
 impl ClassModes {
     pub(super) fn from_options(opts: &Options) -> Self {
         Self {
@@ -69,26 +61,11 @@ impl ClassModes {
             pool.extend_from_slice(ROTODISCS_DUAL);
         }
         // ALL_CANNONS intentionally NOT added — cfire is self-contained in
-        // Wild mode for TWO reasons, both load-bearing:
-        //
-        // 1. **Gameplay correctness (permanent).** cfire IDs are projectile
-        //    emitters (bullet bill cannons, laser turrets, etc.). They fire
-        //    blind across the screen from their X position. Spawning one
-        //    where a player expects a stompable ground enemy means hits
-        //    arrive out of nowhere with no telegraph — arguably unplayable.
-        //    cfire must never appear as the random output of a non-cfire
-        //    class swap.
-        //
-        // 2. **Distribution (legacy of the bucket-first picker).** cfire
-        //    IDs share the NOCHANGE CHR slot, so the old `PageBuckets`
-        //    appended them to every bucket; the bucket-first pick then
-        //    over-weighted them ~K× per draw and flooded every level
-        //    (observed: 49 → 213 bullet bill cannons before the fix).
-        //    That picker is gone — `PageBuckets` was deleted once its
-        //    `pick` became identical to `pick_compatible` over the wild
-        //    pool, which draws uniformly among CHR-compatible ids — so the
-        //    flooding mechanism no longer exists. Reason (1) alone is
-        //    enough to keep cfire out.
+        // Wild mode. cfire IDs are projectile emitters (bullet bill cannons,
+        // laser turrets, etc.) that fire blind across the screen from their X
+        // position. Spawning one where a player expects a stompable ground
+        // enemy means hits arrive out of nowhere with no telegraph, so cfire
+        // must never be the output of a non-cfire class swap.
         //
         // Net semantic: cfire swaps only with cfire (`find_class_pool` gives
         // it ALL_CANNONS, never the wild pool), so the cfire count never exceeds
@@ -225,17 +202,15 @@ pub(super) fn find_class_pool(id: u8, modes: &ClassModes) -> Option<ClassPool> {
     // Cannons: 3 sub-classes (LEFT, RIGHT, BILLS). In Wild, all cfire merges
     // into ALL_CANNONS — self-contained, never pulls from wild_pool so cfire
     // count can't inflate (see build_wild_pool comment for why).
-    if modes.cannons != EnemyMode::Off {
-        for sub in [CFIRE_LEFT, CFIRE_RIGHT, CFIRE_BILLS] {
-            if sub.contains(&id) {
-                return match modes.cannons {
-                    EnemyMode::Off => None,
-                    // stay within sub-class
-                    EnemyMode::Shuffle => Some(ClassPool::Class(sub)),
-                    // any cfire → any cfire
-                    EnemyMode::Wild => Some(ClassPool::Class(ALL_CANNONS)),
-                };
-            }
+    for sub in [CFIRE_LEFT, CFIRE_RIGHT, CFIRE_BILLS] {
+        if sub.contains(&id) {
+            return match modes.cannons {
+                EnemyMode::Off => None,
+                // stay within sub-class
+                EnemyMode::Shuffle => Some(ClassPool::Class(sub)),
+                // any cfire → any cfire
+                EnemyMode::Wild => Some(ClassPool::Class(ALL_CANNONS)),
+            };
         }
     }
 

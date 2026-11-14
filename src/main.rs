@@ -4,8 +4,8 @@ use std::path::PathBuf;
 use std::process;
 
 use smb3_rs::{
-    DejaVuMode, EnemyMode, FireFlowerMode, HazardLimit, HintMode, ITEMS, Options, PiranhaMode,
-    STARTING_LIVES_VALUES, Tri, WildChaser, item_display_name, item_id,
+    DejaVuMode, EnemyMode, FireFlowerMode, HazardLimit, HintMode, ITEMS, MAZE_WANDS_WANDOM,
+    Options, PiranhaMode, STARTING_LIVES_VALUES, Tri, WildChaser, item_display_name, item_id,
 };
 
 /// Human-readable label for a tri-state flag in the run summary.
@@ -45,6 +45,17 @@ fn parse_starting_lives(s: &str) -> Result<u8, String> {
             STARTING_LIVES_VALUES.iter().map(u8::to_string).collect::<Vec<_>>().join(", "),
             n
         ))
+    }
+}
+
+/// CLI validator for `--maze-wands`: 0-7, or `?` (also `wandom`) for Wandom.
+fn parse_maze_wands(s: &str) -> Result<u8, String> {
+    if s == "?" || s.eq_ignore_ascii_case("wandom") {
+        return Ok(MAZE_WANDS_WANDOM);
+    }
+    match s.parse::<u8>() {
+        Ok(n) if n <= 7 => Ok(n),
+        _ => Err(format!("must be 0-7 or ? (got {s})")),
     }
 }
 
@@ -228,9 +239,19 @@ struct Cli {
     #[arg(long)]
     world_maze: bool,
 
-    /// Wands Bowser's castle demands in world-maze mode (0-7, default 3)
-    #[arg(long, default_value_t = 3, value_parser = clap::value_parser!(u8).range(0..=7))]
+    /// Wands Bowser's castle demands in world-maze mode (0-7, default 3), or `?`
+    /// for Wandom: the seed rolls a number from --wandom-min to --wandom-max
+    /// (default 2-6) and hides it behind an obelisk level
+    #[arg(long, default_value_t = 3, value_parser = parse_maze_wands)]
     maze_wands: u8,
+
+    /// Wandom's lowest possible wand count (0-7). Only read with --maze-wands ?
+    #[arg(long, default_value_t = 2, value_parser = clap::value_parser!(u8).range(0..=7))]
+    wandom_min: u8,
+
+    /// Wandom's highest possible wand count (0-7). Only read with --maze-wands ?
+    #[arg(long, default_value_t = 6, value_parser = clap::value_parser!(u8).range(0..=7))]
+    wandom_max: u8,
 
     /// Lock ways forward behind the item that opens them, with the item placed
     /// where it can be reached without it. Today that is the boats: canoes park
@@ -244,6 +265,12 @@ struct Cli {
     /// routes run about a level shorter. Requires --world-maze.
     #[arg(long)]
     uncapped_pad_jumps: bool,
+
+    /// Hide the world number — the banner on entering a world and both status
+    /// bars show × — until the player beats a second obelisk level. Requires
+    /// --world-maze.
+    #[arg(long)]
+    hidden_worlds: bool,
 
     /// Enable Big ? Block randomization
     #[arg(long)]
@@ -654,8 +681,11 @@ fn build_options(cli: &Cli) -> Options {
             world_count: cli.world_count,
             world_maze: cli.world_maze,
             maze_wands: cli.maze_wands,
+            maze_wands_min: cli.wandom_min,
+            maze_wands_max: cli.wandom_max,
             item_gates: cli.item_gates,
             uncapped_pad_jumps: cli.uncapped_pad_jumps,
+            hidden_worlds: cli.hidden_worlds,
             big_q_blocks: cli.big_q_blocks,
             shuffle_airships: !cli.no_shuffle_airships,
             shuffle_hammer_bros: !cli.no_shuffle_hammer_bros,
@@ -770,7 +800,15 @@ fn print_summary(options: &Options, seed: u64, output_path: &std::path::Path) {
     );
     eprintln!("  World order: {}", if options.world_order { "on" } else { "off" });
     if options.world_maze {
-        eprintln!("  World maze: on ({} wand(s) to open the castle)", options.maze_wands);
+        if options.maze_wands == MAZE_WANDS_WANDOM {
+            let (lo, hi) = (
+                options.maze_wands_min.min(options.maze_wands_max),
+                options.maze_wands_min.max(options.maze_wands_max),
+            );
+            eprintln!("  World maze: on (Wandom: {lo}-{hi} wands, revealed by the obelisk)");
+        } else {
+            eprintln!("  World maze: on ({} wand(s) to open the castle)", options.maze_wands);
+        }
         // Only under the mode: outside it the option is inert, so reporting it
         // would name a setting the run ignores.
         eprintln!(
@@ -779,6 +817,9 @@ fn print_summary(options: &Options, seed: u64, output_path: &std::path::Path) {
         );
         if options.uncapped_pad_jumps {
             eprintln!("  Pad jumps: uncapped");
+        }
+        if options.hidden_worlds {
+            eprintln!("  World numbers: hidden until the obelisk");
         }
     }
     // Silent under --world-maze: the mode pins the spine to all eight worlds, so

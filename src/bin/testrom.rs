@@ -47,6 +47,7 @@ EXAMPLES:\n  \
   testrom --place 6F1                    park 6-F1 on tile 1 of World 1\n  \
   testrom --place 6F1 5F1 8B             park three levels on tiles 1, 2, 3\n  \
   testrom --place 3:8B                   park Bowser's Castle on tile 3\n  \
+  testrom --place 5-7/1                  park 5-7's sub-area (area 1) on tile 1\n  \
   testrom --place 7A --world 7           test World 7's airship on its home map\n  \
   testrom --randomize --seed 12345       playtest a randomized overworld\n  \
   testrom --randomize --keep-locks       test lock placement on a real seed\n  \
@@ -66,6 +67,8 @@ struct Cli {
     /// the tile. Names are case-insensitive and dashes are optional. Append
     /// "@ts10" to show the level under another tileset (its layout is copied
     /// into that tileset's bank), or "@raw13" to change the tileset byte alone.
+    /// "5-7/1" places area 1 of 5-7 (its sub-area), numbered as `rominfo
+    /// --level` prints them.
     #[arg(short, long, num_args = 1..)]
     place: Vec<String>,
 
@@ -138,7 +141,7 @@ struct Cli {
     #[arg(long)]
     keep_gaps: bool,
 
-    /// Apply the always-on gameplay patches (stomp fairness, real-time clock) to a
+    /// Apply the always-on gameplay patches (stomp fairness, real-time clock, MaCobra bundle) to a
     /// vanilla base. Use when playtesting one of them — a plain vanilla base
     /// does not contain them, so the test silently exercises vanilla instead.
     /// Ignored on a --randomize base, which already has them.
@@ -184,6 +187,19 @@ struct Cli {
     /// one alongside. Pair with `--starting-items anchor` to test the unlock.
     #[arg(long)]
     canoe_gate: bool,
+
+    /// Move a Wandom seed's reveal to the level at W:ROW,COL (1-based world,
+    /// map row and column), e.g. --obelisk-at 1:2,4. Beating that level then
+    /// plays the 1-up and shows K. Needs --flags with Wands To Enter on ?.
+    #[arg(long, value_parser = parse_obelisk_at)]
+    obelisk_at: Option<(u8, (usize, usize))>,
+
+    /// Move a hidden-worlds seed's world-number obelisk to the level at
+    /// W:ROW,COL, as --obelisk-at does for Wandom's. Beating that level then
+    /// plays the 1-up and shows every world number. Needs --flags with Hidden
+    /// World Numbers on.
+    #[arg(long, value_parser = parse_obelisk_at)]
+    world_obelisk_at: Option<(u8, (usize, usize))>,
 
     /// Let the Hammer item break fortress lock tiles on the map.
     #[arg(long)]
@@ -393,6 +409,15 @@ fn parse_set_layout(spec: &str) -> Result<LayoutOverride, String> {
     })
 }
 
+/// `--obelisk-at W:ROW,COL`.
+fn parse_obelisk_at(s: &str) -> Result<(u8, (usize, usize)), String> {
+    let bad = || format!("expected W:ROW,COL (e.g. 1:2,4), got {s:?}");
+    let (w, rc) = s.split_once(':').ok_or_else(bad)?;
+    let (r, c) = rc.split_once(',').ok_or_else(bad)?;
+    let n = |x: &str| x.trim().parse().map_err(|_| bad());
+    Ok((w.trim().parse().map_err(|_| bad())?, (n(r)?, n(c)?)))
+}
+
 fn main() {
     let cli = Cli::parse();
 
@@ -578,6 +603,8 @@ fn main() {
         starting_lives: cli.starting_lives,
         bro_battle_timer: cli.bro_battle_timer,
         canoe_gate: cli.canoe_gate,
+        obelisk_at: cli.obelisk_at,
+        world_obelisk_at: cli.world_obelisk_at,
         hammer_breaks_locks: cli.hammer_locks,
         hammer_breaks_bridges: cli.hammer_bridges,
         water_stomp: cli.water_stomp,

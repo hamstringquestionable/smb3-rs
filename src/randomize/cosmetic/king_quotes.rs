@@ -972,9 +972,9 @@ fn cpu_addr(file_offset: usize) -> u16 {
 
 /// ROM offset of the vanilla quote selection code at CPU $A293.
 /// Vanilla: `LDY Player_Form; LDA $A494,Y; ...` — indexes by powerup only.
-/// We patch this to JMP to a hook that checks Player_Form first:
-///   Form >= 4 (suit) → fall through to vanilla table lookup (unchanged)
-///   Form < 4 (no suit) → index by World_Num for per-world quotes
+/// We patch this to JMP to [`quote_select_hook`]: the oracle's world always
+/// gets his remark; elsewhere a suit (form >= 4) keeps vanilla's table and no
+/// suit indexes by World_Num for its per-world quote.
 const QUOTE_SELECT_PATCH: usize = 0x362A3;
 
 /// The princess's closing speech, `EndText` in PRG024 (CPU `$BAC9`). The
@@ -1185,6 +1185,12 @@ pub(crate) struct OracleFacts<'a> {
     /// 1-F's treasure chest, or `None` when the fort deal left that level off
     /// every map this seed.
     pub(crate) one_f_chest: Option<OneFChest>,
+    /// Internal world number of Wandom's pyramid — the level whose clear
+    /// reveals the wand count. `None` on every seed without one.
+    pub(crate) pyramid_world: Option<usize>,
+    /// Internal world number of the world-number obelisk — the level whose
+    /// clear reveals the world numbers. `None` on every seed without one.
+    pub(crate) world_obelisk_world: Option<usize>,
 }
 
 /// The chest in 1-F's sub-area — what is in it, and where the level landed.
@@ -1216,7 +1222,19 @@ fn oracle_remark(facts: &OracleFacts, rng: &mut ChaCha8Rng) -> Lines {
     let mut repertoire = vec![topic_stomp_thresholds(facts)];
     repertoire.extend(topic_next_world(facts));
     repertoire.extend(topic_one_f_chest(facts));
-    repertoire.choose(rng).expect("the stomp topic never declines").clone()
+    let drawn = repertoire.choose(rng).expect("the stomp topic never declines").clone();
+    // An obelisk overrides the draw rather than joining it: what it reveals is
+    // hidden until it is beaten, so the player has to learn it exists. The draw
+    // above still happens, which keeps the stream where it was. With both
+    // obelisks on, he names one of them, at random — one more draw, on those
+    // seeds only.
+    let obelisk = match (topic_pyramid(facts), topic_world_obelisk(facts)) {
+        (Some(wands), Some(worlds)) => {
+            Some(if rand::Rng::random_bool(rng, 0.5) { wands } else { worlds })
+        }
+        (wands, worlds) => wands.or(worlds),
+    };
+    obelisk.unwrap_or(drawn)
 }
 
 /// The eight worlds by name, indexed by internal world number.
@@ -1280,6 +1298,35 @@ fn topic_next_world(facts: &OracleFacts) -> Option<Lines> {
         String::new(),
         format!("{}.", WORLD_NAMES[next]),
         NEXT_WORLD_FLAVOUR[next].into(),
+    ])
+}
+
+/// Where Wandom's pyramid is. Silent on every seed without one.
+fn topic_pyramid(facts: &OracleFacts) -> Option<Lines> {
+    let world = facts.pyramid_world?;
+    Some([
+        "An obelisk in".into(),
+        WORLD_NAMES[world].into(),
+        "knows how many".into(),
+        "wands you need.".into(),
+        "Pass its test and".into(),
+        "reveal your fate.".into(),
+    ])
+}
+
+/// Where the world-number obelisk is. Silent on every seed without one.
+///
+/// Named by world *name*, which is the point: the number is exactly what the
+/// player cannot read yet, while "Ice Land" is the same place in every mode.
+fn topic_world_obelisk(facts: &OracleFacts) -> Option<Lines> {
+    let world = facts.world_obelisk_world?;
+    Some([
+        "An obelisk in".into(),
+        WORLD_NAMES[world].into(),
+        "knows every".into(),
+        "world's number.".into(),
+        "Pass its test and".into(),
+        "know where you are.".into(),
     ])
 }
 
@@ -1362,6 +1409,77 @@ fn table_pattern(table: &[u8; 7]) -> Option<&'static [&'static str; 6]> {
     None
 }
 
+/// Length of [`quote_select_hook`]: 37 bytes of code, then the two 7-entry
+/// address tables.
+const HOOK_LEN: usize = 51;
+/// Where the hook's address tables start; everything before them is code.
+const HOOK_DATA_AT: usize = 37;
+
+/// The quote-select hook, run in place of vanilla's `LDY Player_Form` lookup.
+///
+/// The oracle's world is tested **first**, so a suit cannot replace his
+/// remark. The frog, raccoon and hammer jokes are vanilla's own slots, picked
+/// by form alone, and used to win in every world. Everywhere else nothing
+/// changed: a suit (form >= 4) takes vanilla's table at `$A494`/`$A49B`, and
+/// no suit takes this world's quote.
+///
+/// Both paths leave the text address in A (low) and X (high) and share one
+/// tail, which is what pays for the world test: this is 3 bytes smaller than
+/// the 54-byte hook that had no world test. X is dead from `$A2A1` on — the
+/// routine stores constants and returns, and every routine the cinematic loop
+/// runs next loads X before reading it (`WandAndToad_DrawAndUpdate`'s `LDX #`,
+/// `Player_Draw`'s `LDX <Player_Frame`).
+///
+/// ```text
+///  0: LDY $0727        ; World_Num
+///  3: CPY #oracle
+///  5: BEQ std          ; the oracle speaks whatever Mario is wearing
+///  7: LDA $ED          ; Player_Form
+///  9: CMP #$04
+/// 11: BCC std          ; no suit: this world's quote (Y is still World_Num)
+/// 13: TAY
+/// 14: LDA $A494,Y      ; vanilla suit table
+/// 17: LDX $A49B,Y
+/// 20: BCS tail         ; carry still set from the CMP: always taken
+/// 22: std:  LDA std_lo,Y
+/// 25:       LDX std_hi,Y
+/// 28: tail: STA $070D  ; ToadTalk_CPos
+/// 31:       STX $7A04  ; CineKing_DiagHi
+/// 34:       JMP $A2A1
+/// 37: std_lo[7]
+/// 44: std_hi[7]
+/// ```
+fn quote_select_hook(hook_cpu: u16, oracle_at: u8, std_addrs: &[u16; 7]) -> [u8; HOOK_LEN] {
+    let lo = (hook_cpu + HOOK_DATA_AT as u16).to_le_bytes();
+    let hi = (hook_cpu + HOOK_DATA_AT as u16 + 7).to_le_bytes();
+    #[rustfmt::skip]
+    let code: [u8; HOOK_DATA_AT] = [
+        0xAC, 0x27, 0x07,   //  0: LDY $0727
+        0xC0, oracle_at,    //  3: CPY #oracle
+        0xF0, 15,           //  5: BEQ std (22)
+        0xA5, 0xED,         //  7: LDA $ED
+        0xC9, 0x04,         //  9: CMP #$04
+        0x90, 9,            // 11: BCC std (22)
+        0xA8,               // 13: TAY
+        0xB9, 0x94, 0xA4,   // 14: LDA $A494,Y
+        0xBE, 0x9B, 0xA4,   // 17: LDX $A49B,Y
+        0xB0, 6,            // 20: BCS tail (28)
+        0xB9, lo[0], lo[1], // 22: LDA std_lo,Y
+        0xBE, hi[0], hi[1], // 25: LDX std_hi,Y
+        0x8D, 0x0D, 0x07,   // 28: STA $070D
+        0x8E, 0x04, 0x7A,   // 31: STX $7A04
+        0x4C, 0xA1, 0xA2,   // 34: JMP $A2A1
+    ];
+    let mut hook = [0u8; HOOK_LEN];
+    hook[..HOOK_DATA_AT].copy_from_slice(&code);
+    for (w, addr) in std_addrs.iter().enumerate() {
+        let [l, h] = addr.to_le_bytes();
+        hook[HOOK_DATA_AT + w] = l;
+        hook[HOOK_DATA_AT + 7 + w] = h;
+    }
+    hook
+}
+
 /// Write randomized king quotes into the ROM.
 ///
 /// `enabled` gates the ROM writes only. Every RNG draw this module makes
@@ -1390,14 +1508,14 @@ pub(crate) fn randomize(rom: &mut Rom, rng: &mut ChaCha8Rng, enabled: bool, fact
 
     // --- 2. Write 7 unique standard quotes into free space ---
     let oracle_at = oracle_world(facts);
-    let mut std_addrs = Vec::with_capacity(7);
+    let mut std_addrs = [0u16; 7];
     for (world, quote) in std_picks.iter().enumerate() {
         // The oracle's drawn quote is replaced rather than skipped, so the pick
         // above still consumes exactly seven and the stream stays put.
         let encoded = if world == oracle_at { encode_quote(&oracle) } else { encode_quote(quote) };
         let file_offset = KING_QUOTE_BASE + world * 120;
         rom.write_range(file_offset, &encoded);
-        std_addrs.push(cpu_addr(file_offset));
+        std_addrs[world] = cpu_addr(file_offset);
     }
 
     // --- 3. Write suit-specific quotes to vanilla slots ---
@@ -1411,50 +1529,7 @@ pub(crate) fn randomize(rom: &mut Rom, rng: &mut ChaCha8Rng, enabled: bool, fact
     // Hook goes right after the 7 quote blocks in free space.
     let hook_file = KING_QUOTE_BASE + 7 * 120;
     let hook_cpu = cpu_addr(hook_file);
-    let std_lo_cpu = hook_cpu + 40;
-    let std_hi_cpu = hook_cpu + 47;
-
-    //  0: LDA $ED          ; Player_Form
-    //  2: CMP #$04
-    //  4: BCS +18          ; suit → offset 24
-    //  6: LDY $0727        ; World_Num (per-world path)
-    //  9: LDA std_lo,Y
-    // 12: STA $070D
-    // 15: LDA std_hi,Y
-    // 18: STA $7A04
-    // 21: JMP $A2A1
-    // 24: TAY              ; suit path — reuse vanilla table
-    // 25: LDA $A494,Y
-    // 28: STA $070D
-    // 31: LDA $A49B,Y
-    // 34: STA $7A04
-    // 37: JMP $A2A1
-    // 40: std_lo[7]        ; data
-    // 47: std_hi[7]        ; data
-    // Total: 54 bytes
-    let mut hook: Vec<u8> = Vec::with_capacity(54);
-    hook.extend_from_slice(&[0xA5, 0xED]); //  0: LDA $ED
-    hook.extend_from_slice(&[0xC9, 0x04]); //  2: CMP #$04
-    hook.extend_from_slice(&[0xB0, 18]); //  4: BCS +18 → offset 24
-    hook.extend_from_slice(&[0xAC, 0x27, 0x07]); //  6: LDY $0727
-    hook.extend_from_slice(&[0xB9, std_lo_cpu as u8, (std_lo_cpu >> 8) as u8]);
-    hook.extend_from_slice(&[0x8D, 0x0D, 0x07]); // 12: STA $070D
-    hook.extend_from_slice(&[0xB9, std_hi_cpu as u8, (std_hi_cpu >> 8) as u8]);
-    hook.extend_from_slice(&[0x8D, 0x04, 0x7A]); // 18: STA $7A04
-    hook.extend_from_slice(&[0x4C, 0xA1, 0xA2]); // 21: JMP $A2A1
-    hook.push(0xA8); // 24: TAY
-    hook.extend_from_slice(&[0xB9, 0x94, 0xA4]); // 25: LDA $A494,Y
-    hook.extend_from_slice(&[0x8D, 0x0D, 0x07]); // 28: STA $070D
-    hook.extend_from_slice(&[0xB9, 0x9B, 0xA4]); // 31: LDA $A49B,Y
-    hook.extend_from_slice(&[0x8D, 0x04, 0x7A]); // 34: STA $7A04
-    hook.extend_from_slice(&[0x4C, 0xA1, 0xA2]); // 37: JMP $A2A1
-    for addr in &std_addrs {
-        hook.push(*addr as u8);
-    } // 40: std_lo[7]
-    for addr in &std_addrs {
-        hook.push((*addr >> 8) as u8);
-    } // 47: std_hi[7]
-
+    let hook = quote_select_hook(hook_cpu, oracle_at as u8, &std_addrs);
     rom.write_range(hook_file, &hook);
 
     // --- 5. Patch original site: JMP hook + NOP fill ---
@@ -1498,7 +1573,13 @@ mod tests {
 
     /// Facts with nothing in them but a stomp table: the shape most tests want.
     fn facts(koopaling_hits: [u8; 7]) -> OracleFacts<'static> {
-        OracleFacts { koopaling_hits, world_progression: None, one_f_chest: None }
+        OracleFacts {
+            koopaling_hits,
+            world_progression: None,
+            one_f_chest: None,
+            pyramid_world: None,
+            world_obelisk_world: None,
+        }
     }
 
     #[test]
@@ -1578,6 +1659,8 @@ mod tests {
                 koopaling_hits: VANILLA_KOOPALING_HITS,
                 world_progression: Some(&order),
                 one_f_chest: None,
+                pyramid_world: None,
+                world_obelisk_world: None,
             };
             let lines = topic_next_world(&f).expect("the first world has a successor here");
             validate_lines("next world", &lines);
@@ -1589,12 +1672,70 @@ mod tests {
                     koopaling_hits: VANILLA_KOOPALING_HITS,
                     world_progression: None,
                     one_f_chest: Some(OneFChest { world, item }),
+                    pyramid_world: None,
+                    world_obelisk_world: None,
                 };
                 if let Some(lines) = topic_one_f_chest(&f) {
                     validate_lines("1-F chest", &lines);
                 }
             }
         }
+
+        for world in 0..8 {
+            let f = OracleFacts { pyramid_world: Some(world), ..facts(VANILLA_KOOPALING_HITS) };
+            let lines = topic_pyramid(&f).expect("a pyramid always has a world to name");
+            validate_lines("pyramid", &lines);
+            let f =
+                OracleFacts { world_obelisk_world: Some(world), ..facts(VANILLA_KOOPALING_HITS) };
+            let lines = topic_world_obelisk(&f).expect("an obelisk always has a world to name");
+            validate_lines("world obelisk", &lines);
+        }
+    }
+
+    /// On a Wandom seed the oracle always names the pyramid's world — the
+    /// count is hidden until it is beaten, so the player must hear it exists —
+    /// and the draw still happens, so nothing after it in the stream moves.
+    #[test]
+    fn the_pyramid_overrides_the_draw_without_moving_the_stream() {
+        use rand::{Rng, SeedableRng};
+        let plain = facts(VANILLA_KOOPALING_HITS);
+        let wandom = OracleFacts { pyramid_world: Some(2), ..facts(VANILLA_KOOPALING_HITS) };
+        for seed in 0..20 {
+            let mut a = ChaCha8Rng::seed_from_u64(seed);
+            let mut b = ChaCha8Rng::seed_from_u64(seed);
+            oracle_remark(&plain, &mut a);
+            let said = oracle_remark(&wandom, &mut b);
+            assert_eq!(said[1], WORLD_NAMES[2], "seed {seed}: the oracle did not name the pyramid");
+            assert_eq!(a.random::<u64>(), b.random::<u64>(), "seed {seed}: the stream moved");
+        }
+    }
+
+    /// Hidden worlds alone: he names that obelisk, and the stream does not
+    /// move. Both on: he names one or the other, and over many seeds both.
+    #[test]
+    fn the_world_obelisk_is_named_and_shares_with_wandom() {
+        use rand::{Rng, SeedableRng};
+        let plain = facts(VANILLA_KOOPALING_HITS);
+        let worlds = OracleFacts { world_obelisk_world: Some(5), ..facts(VANILLA_KOOPALING_HITS) };
+        let both = OracleFacts { pyramid_world: Some(2), ..worlds };
+        let (mut saw_wands, mut saw_worlds) = (false, false);
+        for seed in 0..40 {
+            let mut a = ChaCha8Rng::seed_from_u64(seed);
+            let mut b = ChaCha8Rng::seed_from_u64(seed);
+            oracle_remark(&plain, &mut a);
+            let said = oracle_remark(&worlds, &mut b);
+            assert_eq!(said[1], WORLD_NAMES[5], "seed {seed}: the obelisk was not named");
+            assert_eq!(said[3], "world's number.");
+            assert_eq!(a.random::<u64>(), b.random::<u64>(), "seed {seed}: the stream moved");
+
+            let said = oracle_remark(&both, &mut ChaCha8Rng::seed_from_u64(seed));
+            match said[1].as_str() {
+                s if s == WORLD_NAMES[2] => saw_wands = true,
+                s if s == WORLD_NAMES[5] => saw_worlds = true,
+                other => panic!("seed {seed}: named {other}, neither obelisk"),
+            }
+        }
+        assert!(saw_wands && saw_worlds, "both obelisks should come up");
     }
 
     /// The oracle declines what he cannot know, rather than guessing.
@@ -1611,6 +1752,8 @@ mod tests {
                 koopaling_hits: VANILLA_KOOPALING_HITS,
                 world_progression: Some(&order),
                 one_f_chest: None,
+                pyramid_world: None,
+                world_obelisk_world: None,
             };
             assert!(topic_next_world(&f).is_none(), "order {order:?} has no successor to name");
         }
@@ -1624,6 +1767,8 @@ mod tests {
                 koopaling_hits: VANILLA_KOOPALING_HITS,
                 world_progression: None,
                 one_f_chest: Some(OneFChest { world: 0, item }),
+                pyramid_world: None,
+                world_obelisk_world: None,
             };
             assert!(topic_one_f_chest(&f).is_none(), "item {item:#04X} must not draw a verdict");
         }
@@ -1798,5 +1943,91 @@ mod tests {
             "Need at least 7 quotes for 7 unique worlds, have {}",
             QUOTES.len()
         );
+    }
+}
+
+#[cfg(test)]
+mod asm_checks {
+    use mos6502::cpu::CPU;
+    use mos6502::instruction::Ricoh2a03;
+    use mos6502::memory::{Bus, Memory};
+
+    use super::*;
+    use crate::randomize::rom_data::{FREE_SPACE_ALLOCATIONS, asm};
+
+    const HOOK_FILE: usize = KING_QUOTE_BASE + 7 * 120;
+    /// Stand-in quote addresses, one per world, distinct from the suit table's.
+    const STD: [u16; 7] = [0xB000, 0xB111, 0xB222, 0xB333, 0xB444, 0xB555, 0xB666];
+
+    /// The hook shares `FS_KING_QUOTES` with the seven quotes before it, so
+    /// the allocation check is the sum, not `.allocation()` (no row starts at
+    /// the hook).
+    #[test]
+    fn quote_select_hook_is_well_formed() {
+        let cpu = cpu_addr(HOOK_FILE);
+        asm::check(&quote_select_hook(cpu, 3, &STD))
+            .origin(cpu)
+            .data_from(HOOK_DATA_AT)
+            .assert_ok();
+
+        let row = FREE_SPACE_ALLOCATIONS
+            .iter()
+            .find(|a| a.offset == KING_QUOTE_BASE)
+            .expect("FS_KING_QUOTES has a row");
+        assert!(
+            7 * 120 + HOOK_LEN <= row.size,
+            "7 quotes + a {HOOK_LEN}-byte hook overrun the {}-byte allocation",
+            row.size
+        );
+    }
+
+    /// Run the hook for every (oracle world, current world, form) and read
+    /// back which text it chose. The oracle's world must give his quote in
+    /// any form; elsewhere a suit gives vanilla's suit text and no suit the
+    /// world's quote.
+    #[test]
+    fn the_oracle_speaks_through_a_suit() {
+        // Vanilla's suit table, stood in by distinct addresses per form.
+        let suit = |form: u8| 0xC000 + u16::from(form) * 0x0101;
+        for oracle in 0..7u8 {
+            let hook_cpu = cpu_addr(HOOK_FILE);
+            let mut mem = Memory::new();
+            mem.set_bytes(hook_cpu, &quote_select_hook(hook_cpu, oracle, &STD));
+            for form in 0..7u8 {
+                let [l, h] = suit(form).to_le_bytes();
+                mem.set_byte(0xA494 + u16::from(form), l);
+                mem.set_byte(0xA49B + u16::from(form), h);
+            }
+            let mut cpu = CPU::new(mem, Ricoh2a03);
+
+            for world in 0..7u8 {
+                for form in 0..7u8 {
+                    cpu.memory.set_byte(0x0727, world);
+                    cpu.memory.set_byte(0x00ED, form);
+                    cpu.memory.set_byte(0x070D, 0xAA); // poison: a missed store shows
+                    cpu.memory.set_byte(0x7A04, 0xAA);
+                    cpu.registers.program_counter = hook_cpu;
+                    let mut steps = 0;
+                    while cpu.registers.program_counter != 0xA2A1 {
+                        cpu.single_step();
+                        steps += 1;
+                        assert!(steps < 20, "hook never reached $A2A1");
+                    }
+                    let got = u16::from_le_bytes([
+                        cpu.memory.get_byte(0x070D),
+                        cpu.memory.get_byte(0x7A04),
+                    ]);
+                    let want = if world == oracle || form < 4 {
+                        STD[usize::from(world)]
+                    } else {
+                        suit(form)
+                    };
+                    assert_eq!(
+                        got, want,
+                        "oracle in world {oracle}, Mario in world {world} with form {form}"
+                    );
+                }
+            }
+        }
     }
 }

@@ -22,7 +22,7 @@ pub(crate) mod two_player_vs;
 
 pub(crate) use beta::fix_beta_stages;
 pub(crate) use big_q::fix_big_q_block_rooms;
-pub(crate) use bro_arena::rebuild_desert_bro_arena;
+pub(crate) use bro_arena::{fix_3hb18_tileset, rebuild_desert_bro_arena};
 pub(crate) use bro_timer::apply_bro_battle_timer;
 pub(crate) use canoe::fix_canoe_softlock;
 #[cfg(test)]

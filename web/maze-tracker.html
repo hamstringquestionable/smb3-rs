@@ -372,6 +372,9 @@ body {
     cursor: pointer;
 }
 .wnum:hover { filter: brightness(1.15); }
+/* Worlds 1-7 also drag by the number, to swap slots once the real number is
+   known (hidden world numbers). Dark Land's is a plain tick box. */
+.wnum[draggable="true"] { cursor: grab; }
 /* Ticked off by the player. The number stays readable under the tick: which
    world this is still matters after it is finished. */
 .wnum.checked { color: rgba(12, 12, 30, 0.45); }
@@ -407,7 +410,7 @@ body {
 .row { display: flex; align-items: flex-start; gap: 0.5rem; min-height: 2.3rem; }
 .rowlabel {
     flex: none;
-    width: 3.9rem;
+    width: 4.9rem; /* fits OBELISKS */
     padding-top: 0.6rem;
     font-size: 0.78rem;
     letter-spacing: 0.08em;
@@ -520,6 +523,8 @@ body {
 }
 
 .pad { border-color: #a05cff; color: #cbaaff; background: #1c1230; }
+/* Desert sand, like the pyramid it is drawn with. */
+.obelisk { border-color: #d4a14e; color: #f0d4a0; background: #2a2010; }
 
 /* A token still looking for its world. */
 .token {
@@ -653,6 +658,13 @@ body {
             <dt><span class="chip pad"><span class="body" data-icon="pad">Warp pad</span></span></dt>
             <dd>Pads come in pairs and work both ways, so linking one here draws
                 its partner on the other world too.</dd>
+            <dt><span class="chip obelisk"><span class="body" data-icon="obelisk">Obelisk</span></span></dt>
+            <dd>A pyramid on a level panel. Beating it reveals something: with
+                Wandom on, how many wands the castle needs; with Hidden World
+                Numbers on, every world's number at once. Both look the same
+                until beaten, and neither is ever on the only way forward. When
+                the numbers appear, drag each world by its number onto the right
+                slot. Everything you logged comes with it.</dd>
         </dl>
         <p class="note">
             Fortress designs only mean this with Hints on Some or Full. With Hints
@@ -701,6 +713,14 @@ const HINTS = [
 // hints the alternate colour is "away"; on Full an away lock shows the world
 // number instead, and the token on the chip is where that number goes.
 // (src/randomize/lock_keys.rs lock_tile)
+// What an obelisk turned out to reveal once beaten (maze/wandom.rs,
+// maze/hidden_worlds.rs). Both are drawn with the same pyramid tile.
+const OBELISK_REVEALS = [
+	{ id: "unknown", label: "?" },
+	{ id: "wands",   label: "Wands" },
+	{ id: "worlds",  label: "Worlds" },
+];
+
 const LOCK_HINTS = [
 	{ id: "unknown", label: "?" },
 	{ id: "here",    label: "Here" },
@@ -729,6 +749,9 @@ const ICONS = {
 	"lock-here": HINT_TILES[0],
 	"lock-away": HINT_TILES[1],
 	"pad": MAZE_TILES[3],
+	// The obelisk: map tile $69, vanilla's 2-Pyramid, which is also Desert Land's
+	// scenery tile — so it is drawn in the desert palette wherever it stands.
+	"obelisk": WORLD_TILES[1],
 	// The king's HELP balloon: map object $01, its second frame ($29/$2B on
 	// page $20), in map object palette 3.
 	"help": { tiles: [2088, 2090, 2089, 2091], cols: 2, palette: [0x0F, 0x30, 0x16, 0x0F] },
@@ -773,6 +796,9 @@ const FORTS_TOTAL = 17;     // those 13 plus Dark Land's 4
 const LOCKS_TOTAL = FORTS_TOTAL; // the fort/lock bijection survives relocation
 const WANDS_TOTAL = 7;      // one per world 1-7, held once its castle falls
 const W8 = 7;               // index of the Dark Land slot
+// One for Wandom, one for hidden world numbers, each its own option, so a
+// seed has 0 to 2. A ceiling for the + button, not a count worth showing.
+const OBELISKS_MAX = 2;     // whole game
 
 const STORE_KEY = "smb3r-maze-tracker-v1";
 
@@ -788,6 +814,7 @@ function blankState() {
 			forts: [],
 			locks: [],
 			pads: [],
+			obelisks: [],
 		});
 	}
 	// Every world 1-7 starts with one lock nobody has pinned on a fortress,
@@ -817,12 +844,15 @@ function id() { return state.nextId++; }
 // and repair the counter — a stored tracker from an older shape can arrive
 // without one, and ids minted from `undefined` collide on every chip.
 function stampIds() {
+	// Obelisks came later than the other three, so a stored board can lack them.
+	for (const world of state.worlds) world.obelisks ??= [];
 	if (typeof state.nextId !== "number" || !Number.isFinite(state.nextId)) {
-		const ids = state.worlds.flatMap(w => [...w.forts, ...w.locks, ...w.pads].map(i => i.id ?? 0));
+		const ids = state.worlds.flatMap(w =>
+			[...w.forts, ...w.locks, ...w.pads, ...w.obelisks].map(i => i.id ?? 0));
 		state.nextId = Math.max(0, ...ids) + 1;
 	}
 	for (const world of state.worlds) {
-		for (const list of [world.forts, world.locks, world.pads]) {
+		for (const list of [world.forts, world.locks, world.pads, world.obelisks]) {
 			for (const item of list) if (!item.id) item.id = id();
 		}
 	}
@@ -879,6 +909,9 @@ function load() {
 		for (const world of parsed.worlds) {
 			if (!world || !Array.isArray(world.forts)
 				|| !Array.isArray(world.locks) || !Array.isArray(world.pads)) return null;
+			// Missing is an older board (stampIds adds the list); anything else
+			// is not one this page wrote.
+			if (world.obelisks != null && !Array.isArray(world.obelisks)) return null;
 		}
 		return parsed;
 	} catch { return null; }
@@ -992,6 +1025,10 @@ function locksIn(target) {
 // castle was set to open at, and seven is the number that is actually out there.
 function countWands() {
 	return state.worlds.slice(0, 7).filter(world => world.wand).length;
+}
+
+function countObelisks() {
+	return state.worlds.reduce((n, world) => n + world.obelisks.length, 0);
 }
 
 function countForts(from = 0, to = 8) {
@@ -1191,6 +1228,31 @@ function unlinkPad(world, padId) {
 	}
 	pad.dest = null;
 	pad.partner = null;
+}
+
+// Swap two slots whole — map, wand, tick, and every chip — for when hidden
+// world numbers reveal that a world was logged under the wrong number.
+//
+// Anything that names a world by slot is renamed with it, so a fortress whose
+// lock was "away in 3" still points at the same map after 3 moves. Hints are
+// relative to the world a chip stands in, and the chips move with that world,
+// so none of them change.
+function swapWorlds(a, b) {
+	if (a === b || a === W8 || b === W8) return;
+	const rename = w => w === a ? b : w === b ? a : w;
+	for (const world of state.worlds) {
+		for (const fort of world.forts) {
+			if (fort.lockWorld != null) fort.lockWorld = rename(fort.lockWorld);
+			if (fort.took && fort.took.keyWorld != null) fort.took.keyWorld = rename(fort.took.keyWorld);
+		}
+		for (const lock of world.locks) {
+			if (lock.keyWorld != null) lock.keyWorld = rename(lock.keyWorld);
+		}
+		for (const pad of world.pads) {
+			if (pad.dest != null) pad.dest = rename(pad.dest);
+		}
+	}
+	[state.worlds[a], state.worlds[b]] = [state.worlds[b], state.worlds[a]];
 }
 
 // Deleting goes through the unlink so the far side is left in a state the game
@@ -1484,6 +1546,9 @@ function renderWorld(w) {
 	card.appendChild(renderRow("Pads", renderPads(w),
 		() => { world.pads.push({ id: id(), dest: null, partner: null }); render(); },
 		world.pads.length >= PADS_MAX || countPadTiles() >= PAD_TILES_MAX));
+	card.appendChild(renderRow("Obelisks", renderObelisks(w),
+		() => { world.obelisks.push({ id: id(), reveals: "unknown", done: false }); render(); },
+		countObelisks() >= OBELISKS_MAX));
 	return card;
 }
 
@@ -1491,11 +1556,19 @@ function renderHead(w) {
 	// The number is the player's own tick box. It claims nothing the rest of the
 	// board checks — "done with this world" means whatever they want it to.
 	const checked = !!state.worlds[w].checked;
+	// Worlds 1-7 also drag by it: dropped on another slot, the two swap.
+	// Dark Land's map is the same every seed, so it never needs to move.
+	const movable = w !== W8;
 	const col = el("div", { class: "wcol" }, el("button", {
 		class: "wnum" + (checked ? " checked" : ""),
 		type: "button",
-		title: checked ? "Untick this world" : "Tick this world off",
+		title: (checked ? "Untick this world" : "Tick this world off")
+			+ (movable ? ". Drag onto another world to swap the two." : ""),
 		"aria-pressed": String(checked),
+		draggable: movable ? "true" : null,
+		ondragstart: movable ? ev => {
+			ev.dataTransfer.setData("text/plain", JSON.stringify({ kind: "world", world: w }));
+		} : null,
 		onclick: ev => {
 			ev.stopPropagation();
 			state.worlds[w].checked = !checked;
@@ -1580,6 +1653,7 @@ const ADD_TIPS = {
 	Forts: "A fortress you have found here",
 	Locks: "A lock you have seen here but cannot pin on a fortress yet",
 	Pads: "A warp pad you have found here",
+	Obelisks: "A pyramid you have found here",
 };
 
 function renderRow(label, chips, onAdd, addDisabled) {
@@ -1835,10 +1909,50 @@ function renderPads(w) {
 	});
 }
 
+// The two obelisks look the same until one is beaten, so the chip starts as
+// "?" and the player clicks it to what it turned out to reveal.
+function renderObelisks(w) {
+	return state.worlds[w].obelisks.map(ob => {
+		const shown = OBELISK_REVEALS.find(r => r.id === ob.reveals) ?? OBELISK_REVEALS[0];
+		const chip = el("span", { class: "chip obelisk" + (ob.done ? " done" : "") });
+		chip.appendChild(el("button", {
+			class: faceClass("body"),
+			type: "button",
+			title: "What beating it revealed — click to change",
+			onclick: ev => {
+				ev.stopPropagation();
+				const i = OBELISK_REVEALS.indexOf(shown);
+				ob.reveals = OBELISK_REVEALS[(i + 1) % OBELISK_REVEALS.length].id;
+				render();
+			},
+		}, ...face(ICONS.obelisk, "▲", shown.label)));
+		chip.appendChild(el("button", {
+			class: "mini",
+			type: "button",
+			title: ob.done ? "Mark not beaten" : "Mark beaten",
+			onclick: ev => { ev.stopPropagation(); ob.done = !ob.done; render(); },
+		}, ob.done ? "↺" : "✓"));
+		chip.appendChild(el("button", {
+			class: "mini",
+			type: "button",
+			title: "Remove",
+			onclick: ev => {
+				ev.stopPropagation();
+				state.worlds[w].obelisks = state.worlds[w].obelisks.filter(o => o.id !== ob.id);
+				render();
+			},
+		}, "×"));
+		return chip;
+	});
+}
+
 // --- Placing ------------------------------------------------------------
 
 function place(target, world) {
-	if (target.kind === "lock") {
+	if (target.kind === "world") {
+		if (world === W8) flash(`${DARK_LAND.name} is the same map every seed — it stays in slot 8.`);
+		else swapWorlds(target.world, world);
+	} else if (target.kind === "lock") {
 		const fort = state.worlds[target.world].forts.find(f => f.id === target.id);
 		// An "away" fortress means the lock is somewhere else. Dropping it back
 		// on its own world is the player telling us the design said otherwise.

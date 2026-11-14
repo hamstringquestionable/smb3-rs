@@ -9,6 +9,82 @@ deploys.
 
 ## [Unreleased]
 
+## [3.2.0] - 2026-11-14
+
+### Added
+
+- World Maze: Wandom. Pick `?` for Wands To Enter and the seed needs a secret
+  number of wands, from 2 to 6 unless you pick your own range: with `?` lit,
+  click a number for the fewest it can be and another for the most, anywhere
+  from 0 to 7. The map shows how many you hold over a `×`
+  until you beat the obelisk level, an optional level a few worlds into the
+  maze: then a 1-up chimes and the number appears. The oracle king says which
+  world the obelisk is in.
+- World Maze: Hidden World Numbers option. Every world number shows `×` — on
+  the card when you arrive, on the map and in levels — until you beat a second
+  obelisk level, placed the same way as Wandom's. With both options on, the
+  oracle king tells you where one of the two obelisks is.
+- World Maze tracker: drag a world by its number onto another slot and the
+  two swap, keeping everything logged in them — for when hidden world numbers
+  are revealed. Each world also has an Obelisks row, for marking what an
+  obelisk turned out to reveal.
+
+### Changed
+
+- World Maze presets use the new options, and all four now draw Generated
+  Overworld maps. Recommended: Wandom 2-6 and Full hints. Challenging: Wandom
+  4-7, Most hints, world numbers hidden. Max Chaos: Wandom 0-7, Some hints,
+  world numbers hidden.
+- Generated Overworld no longer forces Piranha Shuffle on. Off keeps both
+  piranha plants in World 7, guarding their own levels, as on the original
+  maps; On and Wild work as before.
+- Hammer Bros can use one more map-object slot in each world, and World 8's
+  tank is stored in a slot the game left unused, so worlds have a little more
+  room for map sprites. Seeds roll differently.
+- The arrow lifts in 7-6 move faster: a little more than twice their
+  original speed.
+- Q-block randomization now reaches the brick in 5-2's Big [?] room, which
+  holds a flower or a leaf so small Mario can get big for the Big [?] Block.
+  8-F's first brick flower can now be a leaf as well. Random level music now
+  covers the Big [?] rooms too.
+- Enemy randomization now reaches the Boos and Dry Bones in 5-F2's podoboo
+  corridor and the Dry Bones in Bowser's castle; they used to be put back
+  after every roll. The two upward water jets 5-F2's corridor had in place of
+  its Boos are gone: with enemies off they are Boos again, as in the original.
+
+### Fixed
+
+- The oracle king's hint is no longer replaced by the suit joke when you
+  meet him as Frog, Tanooki or Hammer Mario.
+- Beta stage β6 (the vertical underwater pipe level): Frog Mario can no
+  longer get stuck in the narrow gap below the exit pipe.
+- With beta stages on and Q-block randomization off, 3-5's first Q-block
+  gives its vanilla fire flower again instead of a leaf.
+- 8-F's sub-area Q-block always gives a flower or a leaf, so small Mario can
+  get big there; it could roll a star.
+- Far fewer enemies drawn with the wrong graphics (garbled sprites), most
+  noticeably piranha plants and fire jets with Wild enemy classes. Two
+  enemies close enough to be loaded together now get graphics that can share
+  the screen, including when one of them could not be randomized.
+- One Hammer Bro battle spot in World 3 loaded a garbled arena, from a wrong
+  value in the original game's data. It loads a normal arena now.
+- World 5's two Hammer Bro arenas were never used: a rule meant to skip the
+  garbled World 3 arena skipped them as well. Bro battles now draw from them
+  too. Which level and which arena sit on each map tile rolls differently;
+  the maps themselves are unchanged.
+- Enemy randomization no longer puts an unjumpable hazard under a low
+  ceiling in two places: the Dry Bones at the start of Bowser's castle's
+  second half, and two of the Buster Beetles in 5-2's underground.
+- Enemy randomization no longer turns an enemy into a Rotodisc where the
+  disc would swing over the spot Mario appears at, before he can move: in
+  1-2, 2-1, 3-3, 4-6, 5F1, 4F2 (the hidden door) and Bowser's castle.
+- Enemy randomization no longer puts a hazard on a narrow landing between
+  two gaps Mario has to land on, the way 4-1's giant troopa platforms
+  already worked: in 4-2, 7F2 and Bowser's castle.
+- Enemy randomization no longer puts a hazard right beside a pipe in 1F,
+  3-9 and 8F1, where small Mario, who can't defeat it, would have no way
+  into the pipe.
+
 ## [3.1.2] - 2026-11-11
 
 ### Fixed
@@ -23,10 +99,10 @@ deploys.
 
 ### Fixed
 
-- World 8: with 8s are Wild off, about 1 seed in 12 drew water where the tank
-  sits on the first screen. That cell is the only way from the start to the
-  pipe above it, so on some of those seeds the rest of World 8 and Bowser could
-  not be reached. It is land again. Seeds that had the water play differently
+- World 8: with 8s are Wild off, about 1 seed in 12 drew open water where the
+  tank sits on the first screen. That cell is on the only way from the start to
+  the pipe above it, so the way on looked cut off, though Mario could still
+  walk across. It is land again. Seeds that had the water play differently
   now; every other seed is unchanged.
 
 ## [3.1.0] - 2026-11-07

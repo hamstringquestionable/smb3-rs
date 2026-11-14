@@ -484,9 +484,23 @@ mod payload {
         pub(super) generated_overworld: bool,
         /// Uncapped maze pad jumps. Appended and false by default.
         pub(super) uncapped_pad_jumps: bool,
+        /// Wandom: the maze rolls K and hides it behind the pyramid level.
+        /// Appended and false by default. **Only written when `world_maze` is
+        /// on**, like `maze_wands` beside it, whose value it replaces: a Wandom
+        /// key writes `maze_wands` as 0 and this bit set, and decodes back to
+        /// [`MAZE_WANDS_WANDOM`].
+        pub(super) maze_wandom: bool,
+        /// Hidden world numbers. Appended and false by default. Encoded as set,
+        /// like `item_gates`; the maze is the only reader.
+        pub(super) hidden_worlds: bool,
+        /// Wandom's high end, **XOR its default 6**, so every Wandom key minted
+        /// before the range existed (these bits zero) still decodes to 6. The
+        /// low end rides in `maze_wands`, which a Wandom key leaves free, XOR 2
+        /// for the same reason. Both zero unless Wandom is on.
+        pub(super) maze_wandom_max: B3,
 
         // --- Reserve ---
-        // 127 bits. Adding an option is: declare it immediately above this
+        // 122 bits. Adding an option is: declare it immediately above this
         // block, then take the same number of bits off the reserve. An older key
         // simply has those bits zero, which is "off" for a bool and the default
         // for every enum here, so it stays a correct key for the settings it
@@ -497,7 +511,7 @@ mod payload {
         // satisfied` against the struct. It means the widths no longer add up to
         // `bytes * 8`, nothing more.
         #[skip]
-        __: B127,
+        __: B122,
     }
 }
 
@@ -546,8 +560,9 @@ impl Options {
             cannons, water, bros, hb_encounters, limit_hazards, friendlier_levels,
             bro_battle_timer, deja_vu, deja_vu_forts,
             fire_flower, piranha_shuffle, wild_injections,
-            starting_lives, world_count, world_maze, maze_wands, hints, item_gates,
+            starting_lives, world_count, world_maze, maze_wands, maze_wands_min, maze_wands_max, hints, item_gates,
             mariomon, water_stomp, generated_overworld, uncapped_pad_jumps,
+            hidden_worlds,
             starting_items,
             // Not encoded — see NOT_ENCODED for the reason on each.
             palettes: _, palette_themed: _, player_color: _,
@@ -556,6 +571,7 @@ impl Options {
             generated_worlds: _,
         } = self;
 
+        let wandom = *world_maze && *maze_wands == MAZE_WANDS_WANDOM;
         let item = |i: usize| starting_items.get(i).copied().unwrap_or(0);
         let has = |c: WildChaser| wild_injections.contains(&c);
 
@@ -634,7 +650,23 @@ impl Options {
             // off, and encoding its default anyway would have moved the
             // default key string for every seed that never touches the mode —
             // which is a flag-key compatibility event bought for nothing.
-            .with_maze_wands(if *world_maze { (*maze_wands).min(7) } else { 0 })
+            // Wandom rides on its own bit and writes the count as 0, so a key
+            // that never picks it is byte-for-byte what it was before it existed.
+            .with_maze_wands(if wandom {
+                // The range's low end, XOR its default: see `maze_wandom_max`.
+                (*maze_wands_min).min(7) ^ default_wandom_min()
+            } else if *world_maze {
+                (*maze_wands).min(7)
+            } else {
+                0
+            })
+            .with_maze_wandom_max(if wandom {
+                (*maze_wands_max).min(7) ^ default_wandom_max()
+            } else {
+                0
+            })
+            .with_maze_wandom(wandom)
+            .with_hidden_worlds(*hidden_worlds)
             .with_hints(if *world_maze { *hints } else { HintMode::default() })
             .with_item_gates(*item_gates)
             .with_mariomon(*mariomon)
@@ -739,13 +771,31 @@ impl Options {
             // 0 is a REAL value with the maze on — a pure maze, no gate on the
             // castle — so it is taken at face value there. With the maze off
             // the field was never encoded, so the default is the honest read.
-            maze_wands: if f.world_maze() { f.maze_wands() } else { default_maze_wands() },
+            maze_wands: match (f.world_maze(), f.maze_wandom()) {
+                (true, true) => MAZE_WANDS_WANDOM,
+                (true, false) => f.maze_wands(),
+                (false, _) => default_maze_wands(),
+            },
+            // Wandom's range, read back through the XOR its encoder applied —
+            // so a key with these bits zero, every Wandom key minted before the
+            // range existed included, reads as the default 2-6.
+            maze_wands_min: if f.world_maze() && f.maze_wandom() {
+                f.maze_wands() ^ default_wandom_min()
+            } else {
+                default_wandom_min()
+            },
+            maze_wands_max: if f.world_maze() && f.maze_wandom() {
+                f.maze_wandom_max() ^ default_wandom_max()
+            } else {
+                default_wandom_max()
+            },
             hints: if f.world_maze() {
                 f.hints_or_err().unwrap_or_default()
             } else {
                 HintMode::default()
             },
             item_gates: f.item_gates(),
+            hidden_worlds: f.hidden_worlds(),
             // Every pattern is a value now, 0 included — it is "start in Dark
             // Land", not "unset". A key minted before that meaning existed
             // cannot carry 0 (the encoder clamped to 1–7), so nothing older is
