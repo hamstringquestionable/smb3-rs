@@ -70,7 +70,7 @@ fn default_starting_lives() -> u8 {
 
 /// The four valid starting-lives counts (matches the flag-key encoding
 /// and the WASM pill-toggle options).
-pub const STARTING_LIVES_VALUES: [u8; 4] = [1, 5, 20, 99];
+pub const STARTING_LIVES_VALUES: [u8; 4] = [0, 5, 20, 99];
 
 /// Map a 2-bit flag-key index to the corresponding lives count.
 pub(super) fn idx_to_lives(idx: u8) -> u8 {
@@ -82,7 +82,7 @@ pub(super) fn idx_to_lives(idx: u8) -> u8 {
 /// predate this layout still round-trip cleanly.
 pub(super) fn lives_to_idx(lives: u8) -> u8 {
     match lives {
-        n if n <= 2 => 0,  // → 1
+        n if n <= 2 => 0,  // → 0
         n if n <= 12 => 1, // → 5
         n if n <= 59 => 2, // → 20
         _ => 3,            // → 99

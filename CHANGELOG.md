@@ -15,6 +15,9 @@ deploys.
   option: Standard, Japanese, or the new One-Hit KO, where any hit kills you
   whatever you are wearing, Kuribo's Shoe included. Flag keys made with
   Japanese damage on still load as Japanese.
+- Starting Lives: the Small setting now starts you on your last life (0
+  extra lives), so the first death is Game Over. It used to give one spare.
+  Flag keys that chose Small now mean 0.
 
 ## [3.2.0] - 2026-11-14
 
