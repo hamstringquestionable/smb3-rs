@@ -131,7 +131,7 @@ fn randomize_inner(
     // 1-4. Level and map data: fixes the later passes build on, then the
     //      per-level randomizers, world order, and the Koopalings.
     stages::map_fixes(rom, &run);
-    stages::level_data(rom, options, &mut rng);
+    stages::level_data(rom, seed, options, &mut rng);
     let progression = stages::world_order_and_shuffles(rom, options, &run, &mut rng);
     stages::koopalings(rom, options, &mut rng);
 

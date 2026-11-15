@@ -10,6 +10,8 @@ use crate::rom::Rom;
 
 // ? block contents.
 pub(crate) mod powerups;
+// Where a power-up sits in its pattern of look-alike blocks.
+pub(crate) mod powerup_locations;
 
 // --- Power-up behaviour patches ---
 pub(crate) mod fire_flower;

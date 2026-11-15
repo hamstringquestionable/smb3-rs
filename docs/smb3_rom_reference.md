@@ -575,6 +575,25 @@ only), green note blocks `%1111`. A note block is the one to reach for when the
 player must land on it. Coins are the only entry that consults collected-coin
 memory (`LoadLevel_CheckBGHMem`), so retyping one away also drops that check.
 
+**How vanilla draws a power-up inside a row of blocks** (found 2026-11 for
+`items::powerup_locations`, checked by rendering every area): commands draw in
+stream order and a later one overwrites, so there are three shapes.
+
+- **Drawn over the run.** The run covers every cell and the power-up's fixed
+  command comes after it (1-3, 4-6, 5-1, most Hammer Bro arenas). Moving the
+  power-up is a new `b1`; the run's own block shows through where it was.
+- **Drawn beside the run.** At the end of a row the run often stops one short
+  and the power-up is the last block (2-5's `23 76 22` then `23 79 01`; 6F1,
+  6-10, 7-8, 5F2, 1HB5). Lengthening the run by one (`b2 + 1`, and `b1 - 1` when
+  it starts just after the power-up) turns this into the first shape.
+- **Separate one-block commands.** Scattered blocks are each their own
+  command: 1-2's plain note blocks are `LoadLevel_BlockRun` runs of one
+  (`b2 = $60`). Swapping two commands' `b0` row and `b1` trades the blocks.
+
+A few rows fit none of these without reordering the stream: 5-5's ? row and
+3-5's first row (the power-up is drawn *before* the run that would cover it),
+3-9's 18-brick row past its first 8-block run, and 8F1's 1-up brick row.
+
 **Group 1 power blocks found in 1-1 (verified by simulator):**
 
 | ROM Offset | Bytes | Tile | Screen | Row | Col |

@@ -464,6 +464,11 @@ fn default_tri_on() -> Tri {
 pub struct Options {
     #[serde(default = "default_true")]
     pub powerups: bool,
+    /// Random Power Up locations: a power-up in a pattern of look-alike
+    /// blocks (a row of ? blocks, 1-2's note blocks) trades places with the
+    /// plain blocks around it. See `items::powerup_locations`.
+    #[serde(default)]
+    pub powerup_locations: bool,
     /// Player colors: recolor the character wardrobe (random or picked via
     /// `player_color`). Off = vanilla outfits. Cosmetic — not in the flag key.
     #[serde(default = "default_true")]
@@ -924,6 +929,7 @@ impl Default for Options {
     fn default() -> Self {
         Options {
             powerups: true,
+            powerup_locations: false,
             palettes: true,
             palette_themed: false,
             player_color: None,

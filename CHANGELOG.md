@@ -9,6 +9,12 @@ deploys.
 
 ## [Unreleased]
 
+### Added
+
+- Random Power Up locations: a power-up in a row or small pattern of matching
+  blocks (? blocks, bricks, note blocks) can come out of any of them, so it
+  stays near its original spot without being in the exact same block.
+
 ### Changed
 
 - The Japanese Damage System checkbox is now a three-way Damage System

@@ -14,7 +14,7 @@
 // drift in either direction via console.error.
 
 import { NES_PALETTE } from "./chr.js";
-import { W1_PAL0, W1_PAL1, W1_PAL2, W1_PAL3, HINT_TILES, MAZE_TILES, TELEPAD, W8_MILITARY, WORLD_TILES, WANDS } from "./icons.js";
+import { W1_PAL0, W1_PAL1, W1_PAL2, W1_PAL3, HINT_TILES, MAZE_TILES, Q_BLOCK, TELEPAD, W8_MILITARY, WORLD_TILES, WANDS } from "./icons.js";
 
 const ITEM_OPTIONS = [
 	{ value: 0, label: "None" },
@@ -707,6 +707,11 @@ export const SCHEMA = [
 		label: "Power-ups",
 		tip: "Randomize ? block and brick block contents, keeping each roughly the same tier",
 		icon: POWERUPS,
+		group: "items", inFlagKey: true },
+	{ id: "powerup_locations", type: "bool", default: false,
+		label: "Random Power Up locations", flavor: "It's in here somewhere…",
+		tip: "A power-up in a row of matching blocks can come out of any of them. It stays near where it was in the original game, not anywhere in the level.",
+		icon: Q_BLOCK,
 		group: "items", inFlagKey: true },
 	{ id: "chest_items", type: "bool", default: true,
 		label: "Chest Items",
