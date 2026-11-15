@@ -202,7 +202,7 @@ pub(super) fn map_fixes(rom: &mut Rom, run: &Resolved) {
 }
 
 /// Stage 2: level data — powerups, palettes, enemies, and the composed rooms.
-pub(super) fn level_data(rom: &mut Rom, options: &Options, rng: &mut ChaCha8Rng) {
+pub(super) fn level_data(rom: &mut Rom, seed: u64, options: &Options, rng: &mut ChaCha8Rng) {
     // Autoscroll must run BEFORE powerups and the overworld builder:
     // it writes pre-baked replacement level data for airship levels, and
     // powerups/enemies need to randomize on top of that patched data.
@@ -219,6 +219,13 @@ pub(super) fn level_data(rom: &mut Rom, options: &Options, rng: &mut ChaCha8Rng)
     if options.include_beta_stages {
         rom.set_tag("qol/beta_stages");
         randomize::qol::fix_beta_stages(rom);
+    }
+    // Positions only (each command's row and column), so it is independent of
+    // the content reroll below. After autoscroll and the beta fixes, which
+    // rewrite level data; before anything that copies an area elsewhere.
+    if options.powerup_locations {
+        rom.set_tag("items/powerup_locations");
+        randomize::items::powerup_locations::randomize(rom, seed);
     }
     if options.powerups {
         rom.set_tag("powerups");

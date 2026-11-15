@@ -508,6 +508,7 @@ fn flag_key_per_option_round_trip() {
     // Encoded booleans: toggling must change the flag key.
     let bools: Vec<OptionTweak> = vec![
         ("powerups", Box::new(|o| o.powerups = !o.powerups)),
+        ("powerup_locations", Box::new(|o| o.powerup_locations = !o.powerup_locations)),
         ("world_order", Box::new(|o| o.world_order = !o.world_order)),
         ("big_q_blocks", Box::new(|o| o.big_q_blocks = !o.big_q_blocks)),
         ("shuffle_airships", Box::new(|o| o.shuffle_airships = !o.shuffle_airships)),
@@ -1141,6 +1142,7 @@ fn all_off_options() -> Options {
         limit_hazards: HazardLimit::Off,
         piranha_shuffle: PiranhaMode::Off,
         powerups: false,
+        powerup_locations: false,
         palettes: false,
         palette_themed: false,
         player_color: None,
@@ -1230,6 +1232,7 @@ fn all_on_options() -> Options {
         deja_vu_forts: true,
         piranha_shuffle: PiranhaMode::On,
         powerups: true,
+        powerup_locations: true,
         palettes: false,
         palette_themed: false,
         player_color: None,
@@ -2806,7 +2809,7 @@ fn every_loaded_object_stream_was_visible_to_the_enemy_pass() {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
             let run = super::stages::resolve(seed, &o, &mut rng);
             super::stages::map_fixes(&mut stage2, &run);
-            super::stages::level_data(&mut stage2, &o, &mut rng);
+            super::stages::level_data(&mut stage2, seed, &o, &mut rng);
             let visible = streams(&stage2);
 
             let mut rom = make_test_rom().unwrap();
@@ -2817,6 +2820,48 @@ fn every_loaded_object_stream_was_visible_to_the_enemy_pass() {
                 .map(|s| format!("0x{s:05X}"))
                 .collect();
             assert!(unseen.is_empty(), "{name}/seed {seed}: loaded but never visible: {unseen:?}");
+        }
+    }
+}
+
+/// Random Power Up locations' table names the commands it moves and the runs
+/// it lengthens by file offset, as the vanilla ROM has them. No other stage
+/// may rewrite a moved command's position (`b0`, `b1`) or a prep byte, before or after it, or an entry would move a
+/// command that is no longer there. What a block holds (`b2`) is free to change: the
+/// content reroll and the beta fixes both rewrite it.
+#[test]
+fn powerup_locations_bytes_are_its_own() {
+    use crate::randomize::items::powerup_locations::GROUPS;
+    use std::collections::BTreeSet;
+    let watched: BTreeSet<usize> = GROUPS
+        .iter()
+        .flat_map(|g| {
+            let commands = g.slots.iter().filter_map(|s| s.2).flat_map(|o| [o, o + 1]);
+            g.prep.iter().map(|p| p.0).chain(commands)
+        })
+        .collect();
+    let mut beta = all_on_options();
+    beta.include_beta_stages = true;
+    let arms = [
+        ("defaults", Options { powerup_locations: true, ..test_options() }),
+        ("all_on+beta", beta),
+    ];
+    for (name, o) in arms {
+        assert!(o.powerup_locations);
+        for seed in 1..=3 {
+            let Some(mut rom) = make_test_rom() else { return };
+            randomize(&mut rom, seed, &o);
+            for w in
+                rom.write_log().iter().filter(|w| !w.tag.starts_with("items/powerup_locations"))
+            {
+                for (offset, old, new) in w.changes() {
+                    assert!(
+                        !watched.contains(&offset),
+                        "{name}/seed {seed}: {} changed {offset:#X} ({old:02X} -> {new:02X})",
+                        w.tag
+                    );
+                }
+            }
         }
     }
 }

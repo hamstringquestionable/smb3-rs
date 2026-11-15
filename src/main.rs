@@ -197,6 +197,11 @@ struct Cli {
     #[arg(long)]
     no_powerups: bool,
 
+    /// Random Power Up locations: a power-up in a row or pattern of look-alike
+    /// blocks trades places with the plain blocks around it
+    #[arg(long)]
+    powerup_locations: bool,
+
     /// Disable player color randomization (keep the brothers' vanilla outfits)
     #[arg(long)]
     no_palettes: bool,
@@ -678,6 +683,7 @@ fn build_options(cli: &Cli) -> Options {
     } else {
         Options {
             powerups: !cli.no_powerups,
+            powerup_locations: cli.powerup_locations,
             palettes: !cli.no_palettes,
             palette_themed: cli.themed_palettes,
             player_color: cli.player_color,
@@ -773,6 +779,10 @@ fn print_summary(options: &Options, seed: u64, output_path: &std::path::Path) {
     eprintln!("  Seed: {seed}");
     eprintln!("  Flags: {}", options.to_flag_key());
     eprintln!("  Powerups: {}", if options.powerups { "on" } else { "off" });
+    eprintln!(
+        "  Power-up locations: {}",
+        if options.powerup_locations { "shuffled" } else { "vanilla" }
+    );
     eprintln!(
         "  Player colors: {}",
         match (options.palettes, options.player_color) {

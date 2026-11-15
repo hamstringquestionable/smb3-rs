@@ -22,6 +22,8 @@ mod objects;
 pub(crate) use areas::{Area, trace};
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use areas::{ChainEnd, DeadAlt};
+#[cfg(test)]
+pub(crate) use commands::Command;
 pub(crate) use commands::{PowerBlock, power_blocks, read_commands};
 pub(crate) use header::{LEVEL_HEADER_SIZE, LevelHeader};
 pub(crate) use levels::{every_level, every_power_block, shared_headers};

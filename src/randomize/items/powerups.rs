@@ -108,6 +108,17 @@ pub(crate) fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R, no_airship_stars: bo
     }
 }
 
+/// Whether `block` holds a power-up the reroll is free to change: what
+/// `powerup_locations` may move. Blocks pinned to a content (the protected
+/// list, the flower-or-leaf gates) stay where they are too.
+#[cfg(test)]
+pub(crate) fn holds_free_power_up(block: &PowerBlock) -> bool {
+    let offset = block.shape_offset();
+    !PROTECTED_OFFSETS.contains(&offset)
+        && !FLOWER_OR_LEAF_OFFSETS.contains(&offset)
+        && shape_pool(block, false).is_some()
+}
+
 /// The shapes `block` may be rerolled to, or `None` if it holds something
 /// that is not rerolled (a coin, a vine, a P-switch...).
 fn shape_pool(block: &PowerBlock, no_airship_stars: bool) -> Option<&'static [u8]> {
