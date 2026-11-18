@@ -1070,7 +1070,72 @@ W8[10] (ts=10), W8[36] (ts=10) — these 7 entries have no boss in their obj_ptr
 enemy data and would incorrectly appear in `collect_shuffleable()` as regular levels,
 causing tileset leakage when shuffled.
 
-#### Boom-Boom Detection: Approaches Tried and Lessons Learned
+#### Boom-Boom Boss Rooms: Floating Platforms (researched 2026-11-17)
+
+Every fortress boss room has the same shell. It is one screen wide, the
+screen Boom-Boom is placed on. Column 15 is a wall (generator `$E8`), the
+ceiling is row 15 and the floor is row 25, except in 3F2 and 8F1, where it
+is row 26 (Boom-Boom stands one row lower there too). Mario
+comes in from the left. A jumping Boom-Boom stands on the floor at column 12
+or 13. The floating platforms are ordinary layout commands
+`[row, screen<<4|col, $E0, width-1]`, a run of fortress blocks (TS2), at rows
+19-22. Moving one means rewriting `b0`'s low 5 bits and `b1`, in place, with
+no change to the stream's length. Found with `rominfo --level` plus the
+`terrain_render` instrument:
+
+| Fort | Boss area/screen | Platforms (row, col, width) |
+|------|------------------|-----------------------------|
+| 1F | 0 / 9 | none |
+| 2F | 0 / 10 | none (desert, TS9) |
+| 3F1 | 0 / 10 | none |
+| 3F2 | 1 / 5 | (20,4,1) (21,11,1) |
+| 4F1 | 0 / 8 | (21,6,3) |
+| 4F2 | 0 / 8 | (21,2,2) (21,11,2) (22,7,1) |
+| 5F1 | 1 / 3 | none |
+| 5F2 | 0 / 4 | none |
+| 6F1 | 0 / 7 | (22,4,1) (22,10,1) |
+| 6F2 | 1 / 1 | (21,4) (19,8) (22,11), TS12 group-3 shapes `$10`/`$13`, 3-byte |
+| 6F3 | 0 / 10 | (19,5,1) (19,10,1) (22,3,1) (22,8,1) (22,12,1) |
+| 7F1 | 0 / 6 | none |
+| 7F2 | 1 / 3 | (22,3,1) (22,7,1) (22,11,1) |
+| 8F1 | 0 / 14 | none |
+| 8-Navy, 8-Air, 8-STnk | 1 / 0 | none (TS10, one-screen sub-area, 13 three-byte commands) |
+
+The three World 8 rooms are byte-identical boxes. A fourth copy, 8-Tank's room
+(boss: Boomerang Bro), is laid out at the same place. The four streams sit back
+to back at 0x2FD1D..0x2FDE0, 49 bytes each. Every one of the 13 commands draws
+structure: the background fill, the ceiling, two walls, the seven 2-wide floor
+pieces (`[$19, col, $61]`) and two ceiling-hole edges. None can be removed.
+
+When Boom-Boom dies it turns into the `?` ball (`BoomBoom_Death`, PRG003
+`$AE95`) where it stands. The ball then falls under `Object_Move`, so it can
+land on a platform.
+
+`2F`'s room is the same shape (the render shows it open at rows 16-25), built
+with desert generators.
+
+**Commands that can be stolen for a platform.** A command must sit in the same
+area as the room, because its position is relative to that area's stream. The
+search: take each command out in turn, reload the area with the terrain
+loader, and compare the tile grid.
+
+- *Fully overdrawn* (no tile changes when removed), 4 bytes, in a
+  boss area: 1F `0x2A99E`, 5F2 `0x2A870`, 8F1 `0x2BA21` and `0x2BA85`.
+  5F2's is not usable as it stands: it comes before the command that fills the
+  room's background, so a platform written there is painted over. Swapping it
+  with a later command of the same size would fix that. Also,
+  outside an empty room: 4F2 `0x2B65B`, and 6F2 `0x22C4D`, `0x22C6E`, `0x22CD2`.
+- *Three-byte solid shapes in TS2*: group-0 fixed shape `$02` is the
+  Rotodisc pivot block. It draws one solid tile `$9E`, and every one sits
+  under a Rotodisc object, so the ones in place cannot be taken. Group-1
+  `$1n` is a run of `n+1` bricks (breakable). Group-1 `$8n` is a run of
+  coins (tile `$40`, not solid). Rewriting `b2` turns a coin run into a brick
+  run in place, at the same length. The group-1 shape list is the
+  `LoadLevel_Generator_TS2` jump table in `prg021.asm` (index 15 = bricks,
+  16 = `?` with coin, 22 = coins).
+- 5F1's boss area holds seven coin-run commands in its first screen, plus three
+  hidden 1-up blocks. 3F1 and 7F1 have only window decorations (fixed shape
+  `$00`, tile `$43`, not solid). 2F (TS9) was not decoded.
 
 Identifying the 17 fortress/boss entries was harder than expected. This section
 documents the approaches tried, why they failed, and what was ultimately chosen.

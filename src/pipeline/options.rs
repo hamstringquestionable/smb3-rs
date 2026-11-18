@@ -469,6 +469,11 @@ pub struct Options {
     /// plain blocks around it. See `items::powerup_locations`.
     #[serde(default)]
     pub powerup_locations: bool,
+    /// Boom-Boom Room: the floating platforms in a fortress boss room get
+    /// new places and widths, and 1F and 8F1 get some. See
+    /// `levels::boom_boom_room`.
+    #[serde(default)]
+    pub boom_boom_room: bool,
     /// Player colors: recolor the character wardrobe (random or picked via
     /// `player_color`). Off = vanilla outfits. Cosmetic — not in the flag key.
     #[serde(default = "default_true")]
@@ -930,6 +935,7 @@ impl Default for Options {
         Options {
             powerups: true,
             powerup_locations: false,
+            boom_boom_room: false,
             palettes: true,
             palette_themed: false,
             player_color: None,

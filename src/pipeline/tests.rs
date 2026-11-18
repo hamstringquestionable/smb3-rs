@@ -509,6 +509,7 @@ fn flag_key_per_option_round_trip() {
     let bools: Vec<OptionTweak> = vec![
         ("powerups", Box::new(|o| o.powerups = !o.powerups)),
         ("powerup_locations", Box::new(|o| o.powerup_locations = !o.powerup_locations)),
+        ("boom_boom_room", Box::new(|o| o.boom_boom_room = !o.boom_boom_room)),
         ("world_order", Box::new(|o| o.world_order = !o.world_order)),
         ("big_q_blocks", Box::new(|o| o.big_q_blocks = !o.big_q_blocks)),
         ("shuffle_airships", Box::new(|o| o.shuffle_airships = !o.shuffle_airships)),
@@ -1143,6 +1144,7 @@ fn all_off_options() -> Options {
         piranha_shuffle: PiranhaMode::Off,
         powerups: false,
         powerup_locations: false,
+        boom_boom_room: false,
         palettes: false,
         palette_themed: false,
         player_color: None,
@@ -1233,6 +1235,7 @@ fn all_on_options() -> Options {
         piranha_shuffle: PiranhaMode::On,
         powerups: true,
         powerup_locations: true,
+        boom_boom_room: true,
         palettes: false,
         palette_themed: false,
         player_color: None,
@@ -2853,6 +2856,39 @@ fn powerup_locations_bytes_are_its_own() {
             randomize(&mut rom, seed, &o);
             for w in
                 rom.write_log().iter().filter(|w| !w.tag.starts_with("items/powerup_locations"))
+            {
+                for (offset, old, new) in w.changes() {
+                    assert!(
+                        !watched.contains(&offset),
+                        "{name}/seed {seed}: {} changed {offset:#X} ({old:02X} -> {new:02X})",
+                        w.tag
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// Boom-Boom Room rewrites its commands whole, by file offset, as the vanilla
+/// ROM has them. No other stage may write those bytes, before or after it, or
+/// a platform would be rewritten over something else, or another stage's
+/// edit lost.
+#[test]
+fn boom_boom_room_bytes_are_its_own() {
+    use crate::randomize::levels::boom_boom_room::ROOMS;
+    use std::collections::BTreeSet;
+    let watched: BTreeSet<usize> =
+        ROOMS.iter().flat_map(|r| r.commands).flat_map(|&o| o..o + 4).collect();
+    let mut beta = all_on_options();
+    beta.include_beta_stages = true;
+    let arms =
+        [("defaults", Options { boom_boom_room: true, ..test_options() }), ("all_on+beta", beta)];
+    for (name, o) in arms {
+        assert!(o.boom_boom_room);
+        for seed in 1..=3 {
+            let Some(mut rom) = make_test_rom() else { return };
+            randomize(&mut rom, seed, &o);
+            for w in rom.write_log().iter().filter(|w| !w.tag.starts_with("levels/boom_boom_room"))
             {
                 for (offset, old, new) in w.changes() {
                     assert!(

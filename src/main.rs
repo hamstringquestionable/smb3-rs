@@ -202,6 +202,11 @@ struct Cli {
     #[arg(long)]
     powerup_locations: bool,
 
+    /// Boom-Boom Room: new places and widths for the floating platforms in
+    /// fortress boss rooms
+    #[arg(long)]
+    boom_boom_room: bool,
+
     /// Disable player color randomization (keep the brothers' vanilla outfits)
     #[arg(long)]
     no_palettes: bool,
@@ -684,6 +689,7 @@ fn build_options(cli: &Cli) -> Options {
         Options {
             powerups: !cli.no_powerups,
             powerup_locations: cli.powerup_locations,
+            boom_boom_room: cli.boom_boom_room,
             palettes: !cli.no_palettes,
             palette_themed: cli.themed_palettes,
             player_color: cli.player_color,
@@ -783,6 +789,7 @@ fn print_summary(options: &Options, seed: u64, output_path: &std::path::Path) {
         "  Power-up locations: {}",
         if options.powerup_locations { "shuffled" } else { "vanilla" }
     );
+    eprintln!("  Boom-Boom rooms: {}", if options.boom_boom_room { "shuffled" } else { "vanilla" });
     eprintln!(
         "  Player colors: {}",
         match (options.palettes, options.player_color) {

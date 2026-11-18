@@ -441,6 +441,8 @@ pub struct TestRomSpec {
     pub water_stomp: bool,
     /// Random Power Up locations, dealt from this seed.
     pub powerup_locations: Option<u64>,
+    /// Boom-Boom Room platforms, dealt from this seed.
+    pub boom_boom_room: Option<u64>,
     /// **World-maze POC.** Keep every world's map progress across transitions
     /// — pack the world being left, expand the one being entered — instead of
     /// wiping `Map_Completions`. Beat a level, leave the world by any route the
@@ -1352,6 +1354,12 @@ pub fn build(vanilla: &[u8], spec: &TestRomSpec) -> Result<TestRom, String> {
         report.push(format!("power-up locations: shuffled (seed {seed})"));
     }
 
+    if let Some(seed) = spec.boom_boom_room {
+        rom.set_tag("levels/boom_boom_room");
+        crate::randomize::levels::boom_boom_room::randomize(&mut rom, seed);
+        report.push(format!("boom-boom rooms: platforms dealt (seed {seed})"));
+    }
+
     // 6b. Bro-encounter clock. Same reasoning as the hammer patch above: it is
     //     applied directly so a vanilla-base ROM can walk into W1's Hammer Bro
     //     and see the 10-second clock without randomizing anything.
@@ -1554,6 +1562,7 @@ mod tests {
             hammer_breaks_bridges: false,
             water_stomp: false,
             powerup_locations: None,
+            boom_boom_room: None,
             world_persist: false,
             telepads: Vec::new(),
             bro_battle_timer: false,

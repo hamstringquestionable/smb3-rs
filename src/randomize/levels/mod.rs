@@ -4,6 +4,8 @@
 // --- Room and entry shuffles ---
 pub(crate) mod antechambers;
 pub(crate) mod big_q_rooms;
+// --- Layout rewrites in place ---
+pub(crate) mod boom_boom_room;
 
 // --- Treasure rooms that need their own enemy streams ---
 pub(crate) mod hand_rooms;

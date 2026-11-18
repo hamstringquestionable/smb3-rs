@@ -14,6 +14,8 @@ deploys.
 - Random Power Up locations: a power-up in a row or small pattern of matching
   blocks (? blocks, bricks, note blocks) can come out of any of them, so it
   stays near its original spot without being in the exact same block.
+- Boom-Boom Room: the floating blocks in fortress boss rooms are dealt new
+  places and widths, and the 1-F and 8-F1 boss rooms get some.
 
 ### Changed
 
