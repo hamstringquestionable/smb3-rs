@@ -16,6 +16,13 @@ deploys.
   stays near its original spot without being in the exact same block.
 - Boom-Boom Room: the floating blocks in fortress boss rooms are dealt new
   places and widths, and the 1-F and 8-F1 boss rooms get some.
+- Suit Blocks: blocks can now hand out a Tanooki, Frog or Hammer Suit. A
+  suit comes out as an upside-down star in the suit's colours. With it on,
+  flower, leaf, star and the three suits each come out of about 1 in 6 ?
+  blocks, and a star from a brick, note or wood block can be any of the
+  three suits or still a star. Needs Power-ups on. Protected blocks (7-7's
+  stars, 6-5's leaf, the blocks that must make you big) and Big ? blocks are
+  unchanged.
 
 ### Changed
 
@@ -26,6 +33,18 @@ deploys.
 - Starting Lives: the Small setting now starts you on your last life (0
   extra lives), so the first death is Game Over. It used to give one spare.
   Flag keys that chose Small now mean 0.
+- Poison Mushrooms now decide each 1-Up block on its own. Before, every
+  1-Up on the same screen of a level gave the same result. Picks also change
+  between copies of a level when Deja Vu repeats it. Seeds give different
+  results from before.
+- The three ? blocks that gave a single coin through a duplicate coin block
+  in 2-1 and 7-1 give a coin, or a star if you are already
+  invincible, when Suit Blocks is on.
+
+### Removed
+
+- Random Fire Flower is replaced by Suit Blocks. Flag keys made with it on
+  now turn Suit Blocks on.
 
 ## [3.2.0] - 2026-11-14
 

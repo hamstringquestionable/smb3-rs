@@ -1,8 +1,8 @@
 //! Level-geometry fixes for the two spots where an unwanted Frog Suit strands
 //! the player.
 //!
-//! [`crate::randomize::items::fire_flower`] can hand out a Frog Suit from any in-level Fire
-//! Flower, so a player who grabbed what looked like a power-up can arrive at an
+//! [`crate::randomize::items::block_spawn`] can hand out a Frog Suit from a
+//! suit block, so a player who grabbed a suit at random can arrive at an
 //! obstacle wearing the one suit that cannot clear it. The Frog Suit cannot
 //! crouch, so a gap the vanilla level expects Big Mario to duck under stops
 //! being passable at all.
@@ -135,8 +135,8 @@ static FIXES: [Fix; 2] = [
     },
 ];
 
-/// Apply both fixes. Gated by the caller on Random Fire Flower being enabled,
-/// which is what turns "a Fire Flower" into "a suit the player did not pick".
+/// Apply both fixes. Gated by the caller on Suit Blocks being enabled, which
+/// is what hands the player a suit they did not pick.
 ///
 /// A fix with any site that is not vanilla is left alone entirely, so this is
 /// a no-op on a ROM that already carries someone else's edit there.

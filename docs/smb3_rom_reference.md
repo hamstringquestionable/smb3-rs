@@ -1644,17 +1644,38 @@ Object group 0 (IDs $00–$23, dispatched from PRG001, CPU $A000–$BFFF, file o
 > (upside-down 1-Up sprite, hurts on touch). It **reuses the 1-Up's Norm
 > handler** (`ObjNorm_PUp1UpMush` at $A77E) and adds only a 17-byte Init+Hit
 > stub pair at $A703, so it inherits the rise-out-of-block animation and
-> powerup-style hit-testing. The same module also adds a **1-Up spawn hook**:
-> both block-spawn sites that run `STA Level_ObjectID,Y` (`99 71 06` at file
-> `0x02597` / `0x02AED`, CPU $A587 / $AADD — where `LDA Bouncer_PUp,Y` has just
-> resolved the block's object) are patched to `JSR` a 31-byte routine at $A714.
-> That routine replays the store and, if the object is a 1-Up ($0B),
-> position-hashes (`salt + World_Num + Level_LayPtr_AddrL + Objects_XHi/X/Y,X`)
-> to keep $0B or swap in $0A — so each 1-Up block independently gives a real
-> 1-Up or poison, deterministically per seed (salt = `WORLD_INIT_OPERAND`, like
-> random fire flower). Covers brick-1up **and** invis-1up (both resolve to
-> `Bouncer_PUp[7]=$0B`). The stub + hook use ~48 bytes of the ~123-byte island;
-> the rest, and the other six unused IDs, remain open.
+> powerup-style hit-testing.
+>
+> **The block-spawn hook** (`src/randomize/items/block_spawn.rs`, shared by
+> Poison Mushroom and Suit Blocks) takes the rest of that island, $A714–$A77D.
+> Both block-spawn sites that run `STA Level_ObjectID,Y` (`99 71 06` at file
+> `0x02597` / `0x02AED`, CPU $A587 / $AADD, where `LDA Bouncer_PUp,Y` has just
+> resolved the block's object) are patched to `JSR` it. On entry `X` is the
+> bouncing block (its position is the block's) and `Y` = 5. The routine
+> replays the store, then for a watched ID hashes
+> `(Map_Entered_X + Map_Entered_Y + block X + block Y) >> 4 + XHi + YHi + salt`.
+> `Map_Entered_Y/XHi/X` are `$7976/$7978/$797A`, per player, indexed by
+> `Player_Current` ($0726); the map entry makes Deja Vu copies differ. Then:
+> - a 1-Up ($0B) becomes poison ($0A) on bit 0;
+> - a suit-block marker ($03, see "From a hit tile to a spawned object") becomes
+>   the Starman ($0C) or one of three suit objects on the hash's low two bits.
+>
+> It covers brick-1up **and** invis-1up (both resolve to `Bouncer_PUp[7]=$0B`).
+> 90 of 106 bytes are used with both flags on (69 suits only, 43 poison only).
+>
+> **$01, $02 and $1A are now taken** by Suit Blocks: Tanooki, Frog and Hammer.
+> All three already had the Starman's PRG000 `Object_AttrFlags` (`BOUNDBOX01 |
+> FIREIMMUNITY | HITNOTKILL`), so only PRG001's tables change:
+> - **Norm:** `$A7E0`, the star's Norm past its colour cycle.
+> - **Init:** a stub that runs `ObjInit_StarOrSuit`, sets `SPR_VFLIP`, and tail-jumps to
+>   `Object_SetPaletteFromAttr` ($D3BC). That re-applies ATTR1's palette (1/2/3,
+>   the Big ? suits' colours) over the star's.
+> - **Hit:** an entry that loads the suit index and jumps to `PRG001_A818`.
+> - **PatTableSel** (`$A144`, file `0x2154`; missing from the list below): this
+>   must be copied from the star (`OPTS_NOCHANGE`), because $01/$02 vanilla ask
+>   for pages $48/$4C.
+>
+> $04, $05 and $1C remain open.
 
 - **No level data uses them** — zero hits across all 2077 enemy entries in `rom_map.json`.
 - **No code spawns them** — every `STA Level_ObjectID` site in the disassembly was audited; all use named `OBJ_` constants or table-driven spawn lists containing only named IDs. (Two raw-immediate near-misses are benign: PRG000 $D07E stores a *frame* of 3; PRG005 wooden-platform spawner stores $00 as a placeholder before setting the real ID.)
@@ -2409,6 +2430,61 @@ LATP item IDs (different from Global Item IDs and Player_Suit values):
 
 **Important:** Index 1 (leaf) must not be randomized — World 6-5 requires a
 leaf ? block to beat the level (flying needed).
+
+#### From a hit tile to a spawned object (verified 2026-11-19)
+
+1. **Tile → item code.** `LATP_PowerUps` (`prg008.asm:4830`; the ? range is
+   `LATP_QBlocks` above) gives every action tile an item code `0`–`B`.
+2. **Item code → handler.** `LATP_HandleSpecialBounceTiles` jumps through
+   `LATP_JumpTable` (file `0x117E1`, one word per code). Each handler sets
+   `PUp_StarManFlash` ($0586: `$00` flower/leaf, `$80` star and coin-or-star)
+   and returns `Y` = an index into PRG001's `Bouncer_PUp`. `Y` = 0 means no
+   bounce; `$80` means a brick broke.
+3. **Index → object.** `Player_Bounce` = restore-tile nibble | `Y` becomes the
+   bouncing block's `Objects_Var1`. At bump position 10, PRG001 (`$A56F` /
+   `$AAC5`) does `Var1 AND #$0F` → `LDA Bouncer_PUp,Y` (file `0x024FC`:
+   `00 00 19 1E 0C 0D 1F 0B` = none, none, flower, leaf, star, mushroom, vine,
+   1-Up). That object is stored into slot 5 at `$A587` / `$AADD`.
+
+The low nibble is never range-checked. **Index 8 reads `$03`**, the first byte
+of `Bounce_TileReplacements` (`CHNGTILE_TOGNOTEBLOCK`), which no vanilla block
+produces. That makes it a clean marker. Nothing else reads `Player_Bounce`
+except as zero/non-zero, and its high nibble (the restore tile) is untouched.
+
+**Spare pieces:**
+- **Tile `$65`** (`TILEA_QBLOCKCOIN2`, "? block with coin (again)") duplicates
+  `$63`. Three vanilla blocks use it, all via power-block shape 4: 2-1
+  (`0x294EC`), 7-1 (`0x24CEA`) and Unused5 (`0x2B85A`). Shape 3 (coin-or-star)
+  gives the same coin unless Mario is invincible. Its `LATP_QBlocks` byte is
+  at file `0x11692`.
+- **Every block family's star is item code 3** (`LATP_Star`): ? `$62` (file
+  `0x1168F`), brick `$6A` (`0x11697`), note `$31` (`0x11688`) and wood `$75`
+  (`0x1168C`). The coin-or-star blocks are code 5 (`LATP_CoinStar`), a
+  separate handler, so the star chains never pass through code 3.
+- **Code `B`** (`LATP_BrickAltClear`, `$B90D`, file `0x1191D`, 10 bytes) is
+  reached only by `TILE9_PIPEWORKS_JCT`, the unused desert pipeworks tile.
+- There are no spare brick, note or wood tiles. Brick coin-or-star (`$6C`) and
+  ? coin-or-star (`$64`) drive star chains in 3-2, 5-1, 5-7, 6-1, 7-3 and 8F1.
+- Undefined `TILEA_` numbers are not free. Tile numbers outside the shared
+  block ranges are per-tileset: `$76`–`$78` are Plains' Bullet Bill cannon,
+  for example.
+
+**Suit Blocks** (`items::block_spawn`) uses all of this. `$65` and the brick,
+note and wood stars → code `B`; the ? star `$62` keeps code 3, so 7-7's fixed
+stars stay stars. The handler at `$B90D` is rewritten to `LDA #$80 / STA
+PUp_StarManFlash / LDY #8 / RTS` — `LATP_Star` with the marker index, so a
+suit block that comes out a star cycles like one. The spawn hook sees `$03`
+and swaps in the Starman or a suit object; see "Unused Group-0 Objects".
+
+**The Starman is the suit object.** A Big ? box's suit is a Starman whose
+`Objects_Frame` is 1/2/3. The frame picks the picture (suit art lives only in
+page `$4C`, which only the Big ? box objects request), the palette at Init
+(`Star_Palettes`, `$A7xx`), and, at touch, the suit through
+`PUp_StarOrSuitFrames` (`00 05 04 06`). The suit half of
+`ObjHit_StarOrSuit` starts at `PRG001_A818` (`TAY` / `LDA
+PUp_StarOrSuitFrames,Y` / …), entered with `A` = 1/2/3. `ObjNorm_StarOrSuit`
+(`$A7D6`) colour-cycles while `PUp_StarManFlash` is negative. Entering at
+`$A7E0` skips that.
 
 ### Other Block / Power-Up Offsets
 

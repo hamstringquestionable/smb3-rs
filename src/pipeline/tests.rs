@@ -297,7 +297,7 @@ fn flag_key_round_trip_defaults() {
 fn flag_key_round_trip_all_wild() {
     // Everything flipped away from the all-off baseline.
     let opts = Options {
-        fire_flower: FireFlowerMode::Wild,
+        suit_blocks: true,
         piranha_shuffle: PiranhaMode::Wild,
         powerups: true,
         palettes: true,
@@ -903,14 +903,19 @@ fn flag_key_v29_golden() {
         world_count: 3,
         wild_injections: WildChaser::ALL.to_vec(),
         eights_are_wild: Tri::Maybe,
-        fire_flower: FireFlowerMode::Wild,
+        suit_blocks: true,
         piranha_shuffle: PiranhaMode::Wild,
         hb_encounters: EnemyMode::Wild,
         ..Default::default()
     };
-    let mixed_key = "SMB3R-3PTFKHRF020525AGXAFJP40";
+    let mixed_key = "SMB3R-3NEFKHRF020525AGWTFJP40";
     assert_eq!(mixed.to_flag_key(), mixed_key);
-    assert_eq!(Options::from_flag_key(mixed_key).unwrap(), normalized(mixed));
+    assert_eq!(Options::from_flag_key(mixed_key).unwrap(), normalized(mixed.clone()));
+    // The same settings as minted when those two bits were Random Fire Flower,
+    // set to Wild (2). Suit Blocks inherited the bits and reads any non-zero
+    // value as on, so the old key still asks for suits.
+    let fire_flower_wild_key = "SMB3R-3PTFKHRF020525AGXAFJP40";
+    assert_eq!(Options::from_flag_key(fire_flower_wild_key).unwrap(), normalized(mixed));
 }
 
 /// Reserve bits are the whole durability story: adding an option must not
@@ -1131,7 +1136,7 @@ fn fnv1a(data: &[u8]) -> u64 {
 /// tests to be updated alongside the struct.
 fn all_off_options() -> Options {
     Options {
-        fire_flower: FireFlowerMode::Off,
+        suit_blocks: false,
         // Not "off": with the maze off this option is inert, and the key
         // normalizes it to the default the way it does maze_wands. Claiming
         // Off here would fail the round trip against a decoder that
@@ -1226,7 +1231,7 @@ fn all_off_options() -> Options {
 /// Palettes disabled because they use OS entropy (cosmetic, decoupled from seed).
 fn all_on_options() -> Options {
     Options {
-        fire_flower: FireFlowerMode::On,
+        suit_blocks: true,
         hints: crate::HintMode::default(),
         limit_hazards: HazardLimit::All,
         friendlier_levels: true,

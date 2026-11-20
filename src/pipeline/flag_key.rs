@@ -397,7 +397,10 @@ mod payload {
         pub(super) hb_encounters: EnemyMode,
 
         // --- Mode enums (2 bits each) ---
-        pub(super) fire_flower: FireFlowerMode,
+        /// Suit Blocks, 0 or 1. Two bits because they were Random Fire Flower's
+        /// Off/On/Wild, which Suit Blocks replaced: any non-zero value decodes
+        /// as on, so a key minted with Random Fire Flower asks for suits.
+        pub(super) suit_blocks: B2,
         pub(super) piranha_shuffle: PiranhaMode,
 
         // --- Wild-injection chaser set: one bit each, in WildChaser::ALL order ---
@@ -570,7 +573,7 @@ impl Options {
             ground, shell, flying, piranhas, ghosts, thwomps, rotodiscs,
             cannons, water, bros, hb_encounters, limit_hazards, friendlier_levels,
             bro_battle_timer, deja_vu, deja_vu_forts,
-            fire_flower, piranha_shuffle, wild_injections,
+            suit_blocks, piranha_shuffle, wild_injections,
             starting_lives, world_count, world_maze, maze_wands, maze_wands_min, maze_wands_max, hints, item_gates,
             mariomon, water_stomp, generated_overworld, uncapped_pad_jumps,
             hidden_worlds,
@@ -646,7 +649,7 @@ impl Options {
             .with_bro_battle_timer(*bro_battle_timer)
             .with_deja_vu(*deja_vu)
             .with_deja_vu_forts(*deja_vu_forts)
-            .with_fire_flower(*fire_flower)
+            .with_suit_blocks(u8::from(*suit_blocks))
             .with_piranha_shuffle(*piranha_shuffle)
             .with_wild_sun(has(WildChaser::Sun))
             .with_wild_lakitu(has(WildChaser::Lakitu))
@@ -785,7 +788,7 @@ impl Options {
             friendlier_levels: f.friendlier_levels(),
             deja_vu: f.deja_vu_or_err().unwrap_or_default(),
             deja_vu_forts: f.deja_vu_forts(),
-            fire_flower: f.fire_flower_or_err().unwrap_or_default(),
+            suit_blocks: f.suit_blocks() != 0,
             piranha_shuffle: f.piranha_shuffle_or_err().unwrap_or_default(),
             wild_injections: chasers,
             starting_lives: idx_to_lives(f.starting_lives()),

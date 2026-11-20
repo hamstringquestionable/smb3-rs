@@ -146,7 +146,7 @@ is the one to read:
 |------|-----------|-----------|--------------------|
 | PRG031 | `$E000–$FFFF`, always | 27 | **16** |
 | PRG030 | `$8000–$9FFF`, always | 18 | 18 |
-| PRG001 | swapped, in-level (object AI) | 54 | 38 |
+| PRG001 | swapped, in-level (object AI) | 90 | 38 |
 | PRG003 | swapped, in-level (object AI) | 5 | 5 |
 | PRG004 | swapped, in-level (object AI, group 3) | 426 | 426 |
 | PRG005 | swapped, in-level (object AI) | 58 | 58 |
