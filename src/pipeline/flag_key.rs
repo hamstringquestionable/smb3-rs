@@ -507,9 +507,11 @@ mod payload {
         pub(super) one_hit_ko: bool,
         /// Random Power Up locations. Appended and false by default.
         pub(super) powerup_locations: bool,
+        /// Boom-Boom Room. Appended and false by default.
+        pub(super) boom_boom_room: bool,
 
         // --- Reserve ---
-        // 120 bits. Adding an option is: declare it immediately above this
+        // 119 bits. Adding an option is: declare it immediately above this
         // block, then take the same number of bits off the reserve. An older key
         // simply has those bits zero, which is "off" for a bool and the default
         // for every enum here, so it stays a correct key for the settings it
@@ -520,7 +522,7 @@ mod payload {
         // satisfied` against the struct. It means the widths no longer add up to
         // `bytes * 8`, nothing more.
         #[skip]
-        __: B120,
+        __: B119,
     }
 }
 
@@ -573,6 +575,7 @@ impl Options {
             mariomon, water_stomp, generated_overworld, uncapped_pad_jumps,
             hidden_worlds,
             powerup_locations,
+            boom_boom_room,
             starting_items,
             // Not encoded — see NOT_ENCODED for the reason on each.
             palettes: _, palette_themed: _, player_color: _,
@@ -679,6 +682,7 @@ impl Options {
             .with_maze_wandom(wandom)
             .with_hidden_worlds(*hidden_worlds)
             .with_powerup_locations(*powerup_locations)
+            .with_boom_boom_room(*boom_boom_room)
             .with_hints(if *world_maze { *hints } else { HintMode::default() })
             .with_item_gates(*item_gates)
             .with_mariomon(*mariomon)
@@ -815,6 +819,7 @@ impl Options {
             item_gates: f.item_gates(),
             hidden_worlds: f.hidden_worlds(),
             powerup_locations: f.powerup_locations(),
+            boom_boom_room: f.boom_boom_room(),
             // Every pattern is a value now, 0 included — it is "start in Dark
             // Land", not "unset". A key minted before that meaning existed
             // cannot carry 0 (the encoder clamped to 1–7), so nothing older is

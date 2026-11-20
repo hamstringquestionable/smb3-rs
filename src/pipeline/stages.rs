@@ -231,6 +231,12 @@ pub(super) fn level_data(rom: &mut Rom, seed: u64, options: &Options, rng: &mut 
         rom.set_tag("powerups");
         randomize::items::powerups::randomize(rom, rng, options.hammer_vulnerable_koopalings);
     }
+    // Rewrites boss-room platform commands in place, so like the power-up
+    // passes it runs on the level data before anything copies an area.
+    if options.boom_boom_room {
+        rom.set_tag("levels/boom_boom_room");
+        randomize::levels::boom_boom_room::randomize(rom, seed);
+    }
     // Player colors and world colors are independent cosmetic layers:
     // `palettes` drives the character wardrobe (random or player-picked),
     // `palette_themed` drives level/enemy/map palettes.
