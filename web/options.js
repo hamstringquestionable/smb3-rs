@@ -88,9 +88,8 @@ const HINT_LEVELS = [
 	{ value: "full", label: "Full" },
 ];
 
-// Off / On / Wild pill for Random Fire Flower. "Wild" widens the pool to also
-// include the Small/Big downgrade outcomes. Values match the Rust
-// `FireFlowerMode` enum's serde representation.
+// Off / On / Wild pill (Piranha shuffle). Values match the Rust
+// `PiranhaMode` enum's serde representation.
 const OFF_ON_WILD = [
 	{ value: "off", label: "Off" },
 	{ value: "on", label: "On" },
@@ -723,11 +722,11 @@ export const SCHEMA = [
 		tip: "Randomize chest and Toad House reward items",
 		icon: CHEST,
 		group: "items", inFlagKey: true },
-	{ id: "fire_flower", type: "tri", options: OFF_ON_WILD, default: "off",
-		label: "Random Fire Flower",
-		tip: "Fire Flowers still look the same, but each one gives a different suit based on where it is. On: Fire, Frog, Tanooki, or Hammer. Wild: also lets it shrink you to Big or Small.",
-		credit: { name: "MaCobra52", url: "https://github.com/macobra52" },
-		icon: FIRE_FLOWER,
+	{ id: "suit_blocks", type: "bool", default: false,
+		label: "Suit Blocks",
+		tip: "Blocks can also give a Tanooki, Frog, or Hammer Suit. A suit comes out as an upside-down star in that suit's colors. From ? blocks, flower, leaf, star, and each suit come out about equally often; a star from a brick, note, or wood block may turn out to be a suit.",
+		icon: [FROG_SUIT, TANOOKI_SUIT, HAMMER_SUIT],
+		enabledWhen: { powerups: true },
 		group: "items", inFlagKey: true },
 	{ id: "big_q_blocks", type: "bool", default: false,
 		label: "Big ? Blocks",
@@ -1017,7 +1016,7 @@ export const PRESETS = [
 			world_order: true,
 		} },
 	{ id: "max_chaos", label: "Max Chaos", mode: "standard",
-		tip: "Everything wild: every enemy class, all three chasers, wild Fire Flowers, beta stages, and every maybe.",
+		tip: "Everything wild: every enemy class, all three chasers, suit blocks, beta stages, and every maybe.",
 		// decoded from SMB3R-3PHZZQVZ5JNANANAXBXQPKSG
 		overrides: {
 			antechamber_shuffle: "maybe",
@@ -1030,7 +1029,7 @@ export const PRESETS = [
 			eights_are_wild: "maybe",
 			faster_frog: true,
 			faster_tail_speed: true,
-			fire_flower: "wild",
+			suit_blocks: true,
 			flying: "wild",
 			ghosts: "wild",
 			ground: "wild",
@@ -1216,7 +1215,7 @@ export const PRESETS = [
 			eights_are_wild: "maybe",
 			faster_frog: true,
 			faster_tail_speed: true,
-			fire_flower: "wild",
+			suit_blocks: true,
 			flying: "wild",
 			generated_overworld: true,
 			ghosts: "wild",

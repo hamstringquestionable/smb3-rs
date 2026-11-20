@@ -4,9 +4,8 @@ use std::path::PathBuf;
 use std::process;
 
 use smb3_rs::{
-    DamageSystem, DejaVuMode, EnemyMode, FireFlowerMode, HazardLimit, HintMode, ITEMS,
-    MAZE_WANDS_WANDOM, Options, PiranhaMode, STARTING_LIVES_VALUES, Tri, WildChaser,
-    item_display_name, item_id,
+    DamageSystem, DejaVuMode, EnemyMode, HazardLimit, HintMode, ITEMS, MAZE_WANDS_WANDOM, Options,
+    PiranhaMode, STARTING_LIVES_VALUES, Tri, WildChaser, item_display_name, item_id,
 };
 
 /// Human-readable label for a tri-state flag in the run summary.
@@ -67,16 +66,6 @@ fn parse_enemy_mode(s: &str) -> Result<EnemyMode, String> {
         "shuffle" => Ok(EnemyMode::Shuffle),
         "wild" => Ok(EnemyMode::Wild),
         _ => Err("valid values: off, shuffle, wild".to_string()),
-    }
-}
-
-/// clap value parser for `--fire-flower` (off/on/wild).
-fn parse_fire_flower(s: &str) -> Result<FireFlowerMode, String> {
-    match s {
-        "off" => Ok(FireFlowerMode::Off),
-        "on" => Ok(FireFlowerMode::On),
-        "wild" => Ok(FireFlowerMode::Wild),
-        _ => Err("valid values: off, on, wild".to_string()),
     }
 }
 
@@ -435,11 +424,13 @@ struct Cli {
     #[arg(long)]
     modern_powerups: bool,
 
-    /// Random Fire Flower: in-level Fire Flowers grant a position-derived power
-    /// state instead of always Fire — off, on, or wild (default: off).
-    /// `on` = Fire/Frog/Tanooki/Hammer; `wild` also allows Small/Big.
-    #[arg(long, default_value = "off", value_parser = parse_fire_flower)]
-    fire_flower: FireFlowerMode,
+    /// Suit Blocks: blocks may also hand out a Tanooki,
+    /// Frog or Hammer Suit (an upside-down star in the suit's colours). From
+    /// ? blocks, flower, leaf, star and the three suits each come out about
+    /// 1 in 6; a brick, note or wood star may come out a suit.
+    /// Needs the power-up reroll (no effect with --no-powerups)
+    #[arg(long)]
+    suit_blocks: bool,
 
     /// Piranha shuffle: release the two W7 piranha plant levels into the level
     /// pool — off, on, or wild (default: off). `on` = their plant sprites follow
@@ -742,7 +733,7 @@ fn build_options(cli: &Cli) -> Options {
             shuffle_big_q_rooms: cli.shuffle_big_q_rooms,
             poison_mushrooms: cli.poison_mushrooms,
             modern_powerups: cli.modern_powerups,
-            fire_flower: cli.fire_flower,
+            suit_blocks: cli.suit_blocks,
             piranha_shuffle: cli.piranha_shuffle,
             shuffle_spade_games: !cli.no_shuffle_spade_games,
             shuffle_toad_houses: !cli.no_shuffle_toad_houses,
@@ -883,14 +874,7 @@ fn print_summary(options: &Options, seed: u64, output_path: &std::path::Path) {
     eprintln!("  More hammer rocks: {}", tri_str(options.more_hammer_rocks));
     eprintln!("  8s are Wild: {}", tri_str(options.eights_are_wild));
     eprintln!("  Antechamber shuffle: {}", tri_str(options.antechamber_shuffle));
-    eprintln!(
-        "  Random fire flower: {}",
-        match options.fire_flower {
-            FireFlowerMode::Off => "off",
-            FireFlowerMode::On => "on",
-            FireFlowerMode::Wild => "wild",
-        }
-    );
+    eprintln!("  Suit blocks: {}", options.suit_blocks);
     eprintln!(
         "  Piranha shuffle: {}",
         match options.piranha_shuffle {

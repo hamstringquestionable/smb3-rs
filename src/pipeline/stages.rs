@@ -229,7 +229,12 @@ pub(super) fn level_data(rom: &mut Rom, seed: u64, options: &Options, rng: &mut 
     }
     if options.powerups {
         rom.set_tag("powerups");
-        randomize::items::powerups::randomize(rom, rng, options.hammer_vulnerable_koopalings);
+        randomize::items::powerups::randomize(
+            rom,
+            rng,
+            options.hammer_vulnerable_koopalings,
+            options.suit_blocks,
+        );
     }
     // Rewrites boss-room platform commands in place, so like the power-up
     // passes it runs on the level data before anything copies an area.
@@ -1256,7 +1261,7 @@ pub(super) fn title_and_starting_items(
 }
 
 /// Stage 16: MaCobra's always-on patches, and the options that layer on them.
-pub(super) fn macobra_layer(rom: &mut Rom, options: &Options) {
+pub(super) fn macobra_layer(rom: &mut Rom, seed: u64, options: &Options) {
     // MaCobra patches — always-on bugfixes and fairness tweaks.
     rom.set_tag("qol/macobra");
     randomize::qol::apply_macobra_patches(rom);
@@ -1300,27 +1305,32 @@ pub(super) fn macobra_layer(rom: &mut Rom, options: &Options) {
         randomize::qol::apply_modern_powerups(rom);
     }
 
-    // Random Fire Flower — in-level Fire Flower grants a position-derived suit
-    // instead of always Fire. Pure static patch (no RNG): the substitution is a
-    // deterministic function of World_Num + the flower's level position.
-    if options.fire_flower != FireFlowerMode::Off {
-        rom.set_tag("fire_flower");
-        randomize::items::fire_flower::apply(rom, options.fire_flower);
-        // ...and with it, the two level spots a Frog Suit cannot get out of.
-        // Only reachable in a frog *because* of the line above, so the fix
-        // rides the same flag. No ordering requirement — see the module doc.
-        rom.set_tag("frog_softlocks");
-        randomize::items::frog_softlocks::apply(rom);
-    }
-
-    // Poison Mushroom — each 1-Up block hands out either a real 1-Up or a
-    // purple upside-down poison mushroom, chosen by a seed-salted position
-    // hash. Installs the $0A trap object + a hook on the block-spawn sites.
-    // Must run after world_order so the salt is final (mirrors fire_flower).
-    // Replaces MaCobra52's all-1UPs-poison recolor under the same flag.
+    // What a hit block hands out. Suit Blocks turn the reroll's suit blocks,
+    // and every brick, note and wood star, into a star, Tanooki, Frog or
+    // Hammer picked per block; Poison Mushroom swaps
+    // about half the 1-Ups for a trap. One shared spawn hook decides both from
+    // a seed-salted hash of the block's position and map entry, so it is
+    // generated from whichever flags are on. The salt is its own substream.
+    // Suit blocks only exist where the power-up reroll placed them, so the
+    // flag does nothing without it.
+    // Poison Mushroom replaces MaCobra52's all-1UPs-poison recolor.
     if options.poison_mushrooms {
         rom.set_tag("poison_mushrooms");
         randomize::items::poison_mushroom::apply(rom);
+    }
+    let suit_blocks = options.suit_blocks && options.powerups;
+    let spawn = randomize::items::block_spawn::SpawnFlags {
+        poison_mushrooms: options.poison_mushrooms,
+        suit_blocks,
+    };
+    rom.set_tag("block_spawn");
+    randomize::items::block_spawn::apply(rom, spawn, randomize::items::block_spawn::salt(seed));
+    if suit_blocks {
+        // The two level spots a Frog Suit cannot get out of. Only reachable in
+        // a frog *because* of the suit blocks above, so the fix rides that
+        // flag. No ordering requirement — see the module doc.
+        rom.set_tag("frog_softlocks");
+        randomize::items::frog_softlocks::apply(rom);
     }
 }
 

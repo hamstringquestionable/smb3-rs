@@ -14,10 +14,12 @@ pub(crate) mod powerups;
 pub(crate) mod powerup_locations;
 
 // --- Power-up behaviour patches ---
-pub(crate) mod fire_flower;
+// What a hit block hands out: Suit Blocks and Poison Mushroom share one
+// spawn hook.
+pub(crate) mod block_spawn;
 // The two level-geometry spots where an unwanted Frog Suit strands the
-// player. Applied only with Random Fire Flower on, since that is the only way
-// to arrive there in a frog. See [`fire_flower`].
+// player. Applied only with Suit Blocks on, since that is the only way to
+// arrive there in a frog. See [`block_spawn`].
 pub(crate) mod frog_softlocks;
 pub(crate) mod poison_mushroom;
 

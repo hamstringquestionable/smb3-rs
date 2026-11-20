@@ -19,9 +19,9 @@ use options::*;
 // Public API re-exported by the crate root (see lib.rs).
 pub use flag_key::{current_flag_key_version, flag_key_fields, flag_key_version_of};
 pub use options::{
-    DamageSystem, DejaVuMode, EnemyMode, FireFlowerMode, HazardLimit, HintMode, ITEM_RANDOM,
-    ITEM_RANDOM_NO_SUITS, ITEM_RANDOM_NO_WHISTLE, ITEM_RANDOM_SUIT_ONLY, ITEMS, MAZE_WANDS_WANDOM,
-    Options, PiranhaMode, STARTING_LIVES_VALUES, Tri, WildChaser, item_display_name, item_id,
+    DamageSystem, DejaVuMode, EnemyMode, HazardLimit, HintMode, ITEM_RANDOM, ITEM_RANDOM_NO_SUITS,
+    ITEM_RANDOM_NO_WHISTLE, ITEM_RANDOM_SUIT_ONLY, ITEMS, MAZE_WANDS_WANDOM, Options, PiranhaMode,
+    STARTING_LIVES_VALUES, Tri, WildChaser, item_display_name, item_id,
 };
 
 #[cfg(test)]
@@ -174,7 +174,7 @@ fn randomize_inner(
     );
     stages::engine_patches(rom, options, &run, &written, maze_out.canoe_gated, &mut rng);
     stages::title_and_starting_items(rom, seed, options, &run);
-    stages::macobra_layer(rom, options);
+    stages::macobra_layer(rom, seed, options);
     stages::level_music(rom, seed, options);
     stages::stamp(rom, seed, options);
 }

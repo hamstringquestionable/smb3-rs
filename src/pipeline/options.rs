@@ -163,31 +163,6 @@ pub enum DamageSystem {
     OneHitKo,
 }
 
-/// Random Fire Flower mode (issue #22). Collecting an in-level Fire Flower
-/// grants a power state derived deterministically from the world and the
-/// flower's level position, instead of always Fire. `On` substitutes among the
-/// four big-form suits (Fire/Frog/Tanooki/Hammer); `Wild` adds the Small/Big
-/// downgrade outcomes.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Default,
-    serde::Serialize,
-    serde::Deserialize,
-    modular_bitfield::Specifier,
-)]
-#[bits = 2]
-#[serde(rename_all = "snake_case")]
-pub enum FireFlowerMode {
-    #[default]
-    Off,
-    On,
-    Wild,
-}
-
 /// Piranha shuffle mode. The two W7 piranha plant levels (7-P1/7-P2) are
 /// normally pinned to their vanilla map spots. `On` releases them into the
 /// global level pool and their plant sprites follow them to wherever they
@@ -759,12 +734,16 @@ pub struct Options {
     /// (MaCobra52's "Easy Power-up System" patch.)
     #[serde(default)]
     pub modern_powerups: bool,
-    /// Random Fire Flower (issue #22): an in-level Fire Flower grants a power
-    /// state derived deterministically from the world + the flower's level
-    /// position, instead of always Fire. `Off`/`On`/`Wild` (see
-    /// [`FireFlowerMode`]). The flower sprite is unchanged.
+    /// Suit Blocks: the ? block reroll may also make a block a suit block,
+    /// and every brick, note and wood star is one. A suit block hands out a
+    /// star or a Tanooki, Frog or Hammer Suit (an upside-down star in the
+    /// suit's colours), picked per block by a seed-salted hash. ? blocks are
+    /// weighted so flower, leaf, star and the three suits each come out about
+    /// 1 in 6. Rides
+    /// on [`Options::powerups`]: with the reroll off there is nothing to place.
+    /// Replaced Random Fire Flower and inherits its flag-key bits.
     #[serde(default)]
-    pub fire_flower: FireFlowerMode,
+    pub suit_blocks: bool,
     /// When true, the 19 vanilla spade-game tiles are picked up by the overworld
     /// builder and re-placed at random HammerBro slots, freeing their original
     /// positions for level placement. When false, spade games stay at vanilla
@@ -987,7 +966,7 @@ impl Default for Options {
             shuffle_big_q_rooms: false,
             poison_mushrooms: false,
             modern_powerups: false,
-            fire_flower: FireFlowerMode::Off,
+            suit_blocks: false,
             shuffle_spade_games: true,
             shuffle_toad_houses: true,
             hands_levels: true,
