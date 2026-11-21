@@ -40,6 +40,9 @@ deploys.
 - The three ? blocks that gave a single coin through a duplicate coin block
   in 2-1 and 7-1 give a coin, or a star if you are already
   invincible, when Suit Blocks is on.
+- The faster arrow lifts in 7-6 are now an option, Faster Arrow Lifts, on by
+  default. Beginner Friendly turns it off. Flag keys made before the option
+  existed keep the faster lifts.
 
 ### Removed
 

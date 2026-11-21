@@ -1298,6 +1298,12 @@ pub(super) fn macobra_layer(rom: &mut Rom, seed: u64, options: &Options) {
         randomize::qol::apply_faster_frog(rom);
     }
 
+    // Faster arrow lifts (7-6). On by default; Beginner Friendly turns it off.
+    if options.faster_arrow_lifts {
+        rom.set_tag("qol/faster_arrow_lifts");
+        randomize::qol::apply_faster_arrow_lifts(rom);
+    }
+
     // MaCobra52's "Easy Power-up System" — Small Mario gets suits / Fire power
     // without first growing Big (modern Mario power-up behavior).
     if options.modern_powerups {

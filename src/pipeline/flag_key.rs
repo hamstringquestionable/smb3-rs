@@ -512,9 +512,13 @@ mod payload {
         pub(super) powerup_locations: bool,
         /// Boom-Boom Room. Appended and false by default.
         pub(super) boom_boom_room: bool,
+        /// Faster arrow lifts, **inverted**: set means the lifts keep their
+        /// vanilla speed. The speedup shipped always-on in 3.2.0, so every
+        /// key in circulation (this bit zero) must decode to fast lifts.
+        pub(super) slow_arrow_lifts: bool,
 
         // --- Reserve ---
-        // 119 bits. Adding an option is: declare it immediately above this
+        // 118 bits. Adding an option is: declare it immediately above this
         // block, then take the same number of bits off the reserve. An older key
         // simply has those bits zero, which is "off" for a bool and the default
         // for every enum here, so it stays a correct key for the settings it
@@ -525,7 +529,7 @@ mod payload {
         // satisfied` against the struct. It means the widths no longer add up to
         // `bytes * 8`, nothing more.
         #[skip]
-        __: B119,
+        __: B118,
     }
 }
 
@@ -579,6 +583,7 @@ impl Options {
             hidden_worlds,
             powerup_locations,
             boom_boom_room,
+            faster_arrow_lifts,
             starting_items,
             // Not encoded — see NOT_ENCODED for the reason on each.
             palettes: _, palette_themed: _, player_color: _,
@@ -686,6 +691,7 @@ impl Options {
             .with_hidden_worlds(*hidden_worlds)
             .with_powerup_locations(*powerup_locations)
             .with_boom_boom_room(*boom_boom_room)
+            .with_slow_arrow_lifts(!*faster_arrow_lifts)
             .with_hints(if *world_maze { *hints } else { HintMode::default() })
             .with_item_gates(*item_gates)
             .with_mariomon(*mariomon)
@@ -823,6 +829,7 @@ impl Options {
             hidden_worlds: f.hidden_worlds(),
             powerup_locations: f.powerup_locations(),
             boom_boom_room: f.boom_boom_room(),
+            faster_arrow_lifts: !f.slow_arrow_lifts(),
             // Every pattern is a value now, 0 included — it is "start in Dark
             // Land", not "unset". A key minted before that meaning existed
             // cannot carry 0 (the encoder clamped to 1–7), so nothing older is

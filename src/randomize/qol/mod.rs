@@ -35,10 +35,10 @@ pub(crate) use hammer_breaks::hammer_breaks_tiles;
 pub(crate) use lakitu::apply_lakitu_stays_down;
 pub(crate) use level_clock::apply_real_time_clock;
 pub(crate) use macobra::{
-    apply_damage_system, apply_early_sun, apply_fast_mushroom_house, apply_faster_frog,
-    apply_faster_tail_speed, apply_fireball_hearts, apply_infinite_mushroom_houses,
-    apply_limit_bro_movement, apply_macobra_patches, apply_mariomon, apply_modern_powerups,
-    apply_no_game_over_penalty, apply_remove_flashing,
+    apply_damage_system, apply_early_sun, apply_fast_mushroom_house, apply_faster_arrow_lifts,
+    apply_faster_frog, apply_faster_tail_speed, apply_fireball_hearts,
+    apply_infinite_mushroom_houses, apply_limit_bro_movement, apply_macobra_patches,
+    apply_mariomon, apply_modern_powerups, apply_no_game_over_penalty, apply_remove_flashing,
 };
 pub(crate) use map_warp::apply_map_warp;
 pub(crate) use overworld_map::{

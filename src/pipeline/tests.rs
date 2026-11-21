@@ -510,6 +510,7 @@ fn flag_key_per_option_round_trip() {
         ("powerups", Box::new(|o| o.powerups = !o.powerups)),
         ("powerup_locations", Box::new(|o| o.powerup_locations = !o.powerup_locations)),
         ("boom_boom_room", Box::new(|o| o.boom_boom_room = !o.boom_boom_room)),
+        ("faster_arrow_lifts", Box::new(|o| o.faster_arrow_lifts = !o.faster_arrow_lifts)),
         ("world_order", Box::new(|o| o.world_order = !o.world_order)),
         ("big_q_blocks", Box::new(|o| o.big_q_blocks = !o.big_q_blocks)),
         ("shuffle_airships", Box::new(|o| o.shuffle_airships = !o.shuffle_airships)),
@@ -891,9 +892,19 @@ fn flag_key_v29_golden() {
     // Everything off — the payload is nearly all zeros, so trailing-zero
     // stripping shows up here as a key that is no shorter than the default one
     // (the last non-zero byte is what sets the length, not the option count).
-    let all_off = "SMB3R-3Q2000000000000000W0";
+    // `faster_arrow_lifts` is stored inverted, so "off" sets a bit far out in
+    // the payload and lengthens the key.
+    let all_off = "SMB3R-3MR000000000000000W0000000004";
     assert_eq!(all_off_options().to_flag_key(), all_off);
     assert_eq!(Options::from_flag_key(all_off).unwrap(), normalized(all_off_options()));
+
+    // The all-off key from before Faster Arrow Lifts was an option: its
+    // inverted bit is zero, so it keeps the fast lifts 3.2.0 always had.
+    let pre_arrow_all_off = "SMB3R-3Q2000000000000000W0";
+    assert_eq!(
+        Options::from_flag_key(pre_arrow_all_off).unwrap(),
+        normalized(Options { faster_arrow_lifts: true, ..all_off_options() }),
+    );
 
     // A spread of non-default values across every field width: 5-bit item
     // slots, the 3-bit world count, 2-bit enums and the scattered chaser bits.
@@ -1197,6 +1208,7 @@ fn all_off_options() -> Options {
         no_game_over_penalty: false,
         mariomon: false,
         faster_frog: false,
+        faster_arrow_lifts: false,
         lakitu_stays_down: false,
         shuffle_big_q_rooms: false,
         poison_mushrooms: false,
@@ -1288,6 +1300,7 @@ fn all_on_options() -> Options {
         no_game_over_penalty: true,
         mariomon: true,
         faster_frog: true,
+        faster_arrow_lifts: true,
         lakitu_stays_down: true,
         shuffle_big_q_rooms: true,
         poison_mushrooms: true,
