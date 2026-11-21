@@ -681,6 +681,11 @@ pub(crate) fn apply_mariomon(rom: &mut Rom) {
     rom.write_range(MARIOMON_GUARD_OFFSET, &MARIOMON_GUARD_BYTES);
 }
 
+/// Arrow lifts (7-6) move a touch faster than MaCobra's famous 2x.
+pub(crate) fn apply_faster_arrow_lifts(rom: &mut Rom) {
+    rom.write_range(ARROW_LIFT_VEL_OFFSET, &ARROW_LIFT_VEL_BYTES);
+}
+
 /// Apply MaCobra's always-on bugfixes and fairness patches.
 pub(crate) fn apply_macobra_patches(rom: &mut Rom) {
     // Prevent forced hammer bro fights (4 NOPs)
@@ -721,9 +726,6 @@ pub(crate) fn apply_macobra_patches(rom: &mut Rom) {
     // Pipe screen-squish fix: exempt pipe travel from the "crushed against the
     // left edge" death check, so scrolling inside a pipe cannot fake a crush.
     rom.write_range(PIPE_SQUISH_FIX_OFFSET, &PIPE_SQUISH_FIX_BYTES);
-
-    // Arrow lifts (7-6) move a touch faster than MaCobra's famous 2x.
-    rom.write_range(ARROW_LIFT_VEL_OFFSET, &ARROW_LIFT_VEL_BYTES);
 
     // NOTE: MaCobra's "Bros don't stop on hands" (issue #14) used to live
     // here; it is subsumed by the overworld writer's march-veto trampoline
@@ -883,9 +885,9 @@ mod tests {
     }
 
     #[test]
-    fn test_macobra_arrow_lift_speed_writes() {
+    fn test_faster_arrow_lifts_writes() {
         let mut rom = make_test_rom();
-        apply_macobra_patches(&mut rom);
+        apply_faster_arrow_lifts(&mut rom);
         assert_eq!(rom.read_range(ARROW_LIFT_VEL_OFFSET, 8), &ARROW_LIFT_VEL_BYTES);
     }
 

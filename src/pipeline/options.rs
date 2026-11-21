@@ -707,6 +707,12 @@ pub struct Options {
     /// always-on tail-attack-while-swimming routine.)
     #[serde(default)]
     pub faster_frog: bool,
+    /// The arrow lifts (7-6's vertical sub-area) move a little over twice
+    /// their vanilla speed — a nod to MaCobra52's 2x. On by default; it
+    /// shipped always-on in 3.2.0, which is why the flag key stores it
+    /// inverted (`slow_arrow_lifts`).
+    #[serde(default = "default_true")]
+    pub faster_arrow_lifts: bool,
     /// A defeated Lakitu stays gone instead of returning two screens behind.
     /// Vanilla never lets one die: it falls off the bottom and `ObjNorm_Lakitu`
     /// re-seeds it. It is also exempt from off-screen deletion while alive, so
@@ -962,6 +968,7 @@ impl Default for Options {
             no_game_over_penalty: false,
             mariomon: false,
             faster_frog: false,
+            faster_arrow_lifts: true,
             lakitu_stays_down: false,
             shuffle_big_q_rooms: false,
             poison_mushrooms: false,

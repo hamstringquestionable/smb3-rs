@@ -408,6 +408,10 @@ struct Cli {
     #[arg(long)]
     faster_frog: bool,
 
+    /// Keep 7-6's arrow lifts at their vanilla speed (they move a little over 2x by default)
+    #[arg(long)]
+    slow_arrow_lifts: bool,
+
     /// Defeated Lakitus stay down instead of coming back
     #[arg(long)]
     lakitu_stays_down: bool,
@@ -729,6 +733,7 @@ fn build_options(cli: &Cli) -> Options {
             no_game_over_penalty: cli.no_game_over_penalty,
             mariomon: cli.mariomon,
             faster_frog: cli.faster_frog,
+            faster_arrow_lifts: !cli.slow_arrow_lifts,
             lakitu_stays_down: cli.lakitu_stays_down,
             shuffle_big_q_rooms: cli.shuffle_big_q_rooms,
             poison_mushrooms: cli.poison_mushrooms,

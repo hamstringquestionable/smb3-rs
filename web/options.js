@@ -799,6 +799,11 @@ export const SCHEMA = [
 		credit: { name: "MaCobra52", url: "https://github.com/macobra52" },
 		icon: FROG_SUIT,
 		group: "player", inFlagKey: true },
+	{ id: "faster_arrow_lifts", type: "bool", default: true,
+		label: "Faster Arrow Lifts",
+		tip: "The arrow lifts in 7-6 move a little more than twice as fast. Off keeps their original speed.",
+		credit: { name: "MaCobra52", url: "https://github.com/macobra52" },
+		group: "player", inFlagKey: true },
 	{ id: "modern_powerups", type: "bool", default: false,
 		label: "Modern Power-Ups",
 		tip: "Power-ups work like the newer Mario games — grab a Fire Flower or suit as Small Mario and get its power without turning Big first.",
@@ -935,6 +940,7 @@ export const PRESETS = [
 		overrides: {
 			big_q_blocks: true,
 			fast_mushroom_house: true,
+			faster_arrow_lifts: false,
 			faster_tail_speed: true,
 			friendlier_levels: true,
 			ground: "wild",
@@ -1135,6 +1141,7 @@ export const PRESETS = [
 		overrides: {
 			big_q_blocks: true,
 			fast_mushroom_house: true,
+			faster_arrow_lifts: false,
 			faster_tail_speed: true,
 			friendlier_levels: true,
 			generated_overworld: true,
