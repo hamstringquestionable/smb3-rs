@@ -122,7 +122,7 @@ type Arrival = ((i32, i32), String);
 
 /// What already keeps a Rotodisc out of this slot, if anything.
 fn cover(offset: usize, id: u8, objects_ptr: u16) -> Option<&'static str> {
-    match entry_protection_at(offset) {
+    match entry_protection_at(offset, false) {
         Some(EntryProtection::SkipSwap) => return Some("swap skipped"),
         Some(EntryProtection::ForceShell) => return Some("forced shell"),
         Some(EntryProtection::ForceStompable) => return Some("forced stompable"),

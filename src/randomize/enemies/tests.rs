@@ -1091,13 +1091,15 @@ struct PlacementStats {
 
 /// The deterministic set of enemy-data offsets (relative to ENEMY_DATA_START)
 /// that the wild-injection pass may overwrite: the first real entry of each
-/// `NodeKind::Level` whose first enemy is swappable and unprotected. Mirrors
-/// `collect_injection_sites` and `inject_first_enemy`. RNG decides *whether* a slot
-/// is injected, but the candidate set is fixed.
+/// `NodeKind::Level` whose first enemy is swappable and whose protection, if
+/// any, admits a chaser. Mirrors `collect_injection_sites` and
+/// `inject_first_enemy`. RNG decides *whether* a slot is injected, but the
+/// candidate set is fixed.
 fn injectable_offsets(
     base: &Rom,
     vanilla: &[u8],
     modes: &ClassModes,
+    keep_tricky: bool,
 ) -> std::collections::HashSet<usize> {
     use crate::randomize::overworld::node_catalog::{NodeCatalog, NodeKind};
     use crate::randomize::rom_data::enemy_ptr_to_file_offset;
@@ -1124,7 +1126,11 @@ fn injectable_offsets(
         if first >= vanilla.len() || vanilla[first] == 0xFF {
             continue;
         }
-        if entry_protection_at(ENEMY_DATA_START + first).is_some() {
+        // A protection narrows the chasers rather than blocking the slot; only
+        // one that leaves none (SkipSwap) keeps injection out.
+        if entry_protection_at(ENEMY_DATA_START + first, keep_tricky)
+            .is_some_and(|p| !WILD_INJECTION_IDS.iter().any(|&id| p.allows(id, vanilla[first])))
+        {
             continue;
         }
         if find_class_pool(vanilla[first], modes).is_none() {
@@ -1213,6 +1219,11 @@ fn check_invariants(
             // id. The class/giant-red/piranha guards key off the *injected*
             // id, not vanilla, so accept a broad set here.
             if injectable.contains(&off) {
+                // Both the walker and injection filter by the slot's rule, so
+                // whichever wrote it, the result must pass that filter.
+                if !entry_protection_at(fo, opts.tricky_spots).is_none_or(|p| p.allows(new, orig)) {
+                    bad("injectable slot: result breaks its protection".into());
+                }
                 let ok = WILD_INJECTION_IDS.contains(&new)
                     || normal_wild.contains(&new)
                     || find_class_pool(orig, &normal_modes)
@@ -1246,7 +1257,7 @@ fn check_invariants(
                 }
             }
 
-            let prot = entry_protection_at(fo);
+            let prot = entry_protection_at(fo, opts.tricky_spots);
 
             // --- Protection rules ---
             match prot {
@@ -1358,7 +1369,7 @@ fn run_preset(
     let mut violations = Vec::new();
     let modes = ClassModes::from_options(opts);
     let injectable = if !opts.wild_injections.is_empty() {
-        injectable_offsets(base, vanilla, &modes)
+        injectable_offsets(base, vanilla, &modes, opts.tricky_spots)
     } else {
         std::collections::HashSet::new()
     };

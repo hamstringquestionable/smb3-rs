@@ -26,6 +26,10 @@ deploys.
   three suits or still a star. Needs Power-ups on. Protected blocks (7-7's
   stars, 6-5's leaf, the blocks that must make you big) and Big ? blocks are
   unchanged.
+- Tricky Spots: three enemy placements players have found beatable but hard
+  to pass without getting hit (a dropping Thwomp at 8-B's Hot Foot, a Lakitu
+  in 7-9, a Nipper at the last Spiny in beta stage 1) are now kept out unless
+  this is on. The Challenging presets turn it on.
 
 ### Changed
 

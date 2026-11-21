@@ -247,6 +247,11 @@ const WATER_SPR3 = [0x0F, 0x0F, 0x30, 0x27];
 const SPIKE = { tiles: [640, 642, 641, 643], cols: 2, palette: PLAINS_SPR2 }; // $29
 const PATOOIE = { tiles: [5092, { t: 5092, flip: true }, 5093, { t: 5093, flip: true }, 5088, { t: 5088, flip: true }, 5089, { t: 5089, flip: true }], cols: 2, palette: PLAINS_SPR2 }; // $2A
 const NIPPER = { tiles: [672, 674, 673, 675], cols: 2, palette: PLAINS_SPR2 }; // $33
+// Head (pal 3) over its cloud (pal 1), both mirrored: `ObjNorm_Lakitu` draws
+// the cloud with GroundTroop_DrawMirrored, then sets $9D / attrs $03, $43 on top.
+const LAKITU = { tiles: [732, { t: 732, flip: true }, 733, { t: 733, flip: true },
+	{ t: 734, palette: PLAINS_SPR1 }, { t: 734, flip: true, palette: PLAINS_SPR1 },
+	{ t: 735, palette: PLAINS_SPR1 }, { t: 735, flip: true, palette: PLAINS_SPR1 }], cols: 2, palette: PLAINS_SPR3 }; // $83
 const BUSTER_BEETLE = { tiles: [688, 690, 689, 691], cols: 2, palette: PLAINS_SPR3 }; // $40
 const CHAIN_CHOMP = { tiles: [656, 658, 657, 659], cols: 2, palette: PLAINS_SPR1 }; // $4F
 const FIRE_CHOMP = { tiles: [920, 922, 921, 923], cols: 2, palette: PLAINS_SPR1 }; // $58
@@ -644,6 +649,11 @@ export const SCHEMA = [
 		label: "Limit Hazards",
 		tip: "Stops swaps from dropping nippers, Ptooies, thwomps, Hot Foots or Bros into levels that weren't built for them. Some allows the occasional one, All allows none. Hazards that were always there stay put.",
 		group: "enemies", inFlagKey: true },
+	{ id: "tricky_spots", type: "bool", default: false,
+		label: "Tricky Spots",
+		tip: "Allows a few enemy placements the community has found possible, but tricky to pass without getting hit.",
+		icon: [NIPPER, LAKITU],
+		group: "enemies", inFlagKey: true },
 	{ id: "wild_injections", type: "toggles", options: WILD_INJECTION_TOGGLES,
 		default: [],
 		label: "Wild Injections",
@@ -1016,6 +1026,7 @@ export const PRESETS = [
 			shuffle_big_q_rooms: true,
 			swap_start_airship: true,
 			thwomps: "wild",
+			tricky_spots: true,
 			troll_pipes: "maybe",
 			water: "wild",
 			wild_injections: ["sun","lakitu","bass"],
@@ -1202,6 +1213,7 @@ export const PRESETS = [
 			shuffle_big_q_rooms: true,
 			swap_start_airship: true,
 			thwomps: "wild",
+			tricky_spots: true,
 			troll_pipes: "maybe",
 			water: "wild",
 			wild_injections: ["sun","lakitu","bass"],

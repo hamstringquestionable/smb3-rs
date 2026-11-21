@@ -263,7 +263,7 @@ pub(super) fn other_cover(offset: usize, id: u8, objects_ptr: u16) -> Option<&'s
     let class = CLASSES.iter().find(|c| c.contains(&id)).copied().unwrap_or(&[]);
     let stompable_is_safe =
         !class.iter().any(|&c| STOMPABLE_ENEMIES.contains(&c) && HAZARDS.excludes(c, 0));
-    match entry_protection_at(offset) {
+    match entry_protection_at(offset, false) {
         Some(EntryProtection::SkipSwap) => return Some("swap skipped"),
         Some(EntryProtection::ForceShell) => return Some("forced shell"),
         Some(EntryProtection::ForceStompable) if stompable_is_safe => {

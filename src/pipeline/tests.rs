@@ -511,6 +511,7 @@ fn flag_key_per_option_round_trip() {
         ("powerup_locations", Box::new(|o| o.powerup_locations = !o.powerup_locations)),
         ("boom_boom_room", Box::new(|o| o.boom_boom_room = !o.boom_boom_room)),
         ("faster_arrow_lifts", Box::new(|o| o.faster_arrow_lifts = !o.faster_arrow_lifts)),
+        ("tricky_spots", Box::new(|o| o.tricky_spots = !o.tricky_spots)),
         ("world_order", Box::new(|o| o.world_order = !o.world_order)),
         ("big_q_blocks", Box::new(|o| o.big_q_blocks = !o.big_q_blocks)),
         ("shuffle_airships", Box::new(|o| o.shuffle_airships = !o.shuffle_airships)),
@@ -1147,6 +1148,7 @@ fn fnv1a(data: &[u8]) -> u64 {
 /// tests to be updated alongside the struct.
 fn all_off_options() -> Options {
     Options {
+        tricky_spots: false,
         suit_blocks: false,
         // Not "off": with the maze off this option is inert, and the key
         // normalizes it to the default the way it does maze_wands. Claiming
@@ -1243,6 +1245,7 @@ fn all_off_options() -> Options {
 /// Palettes disabled because they use OS entropy (cosmetic, decoupled from seed).
 fn all_on_options() -> Options {
     Options {
+        tricky_spots: true,
         suit_blocks: true,
         hints: crate::HintMode::default(),
         limit_hazards: HazardLimit::All,

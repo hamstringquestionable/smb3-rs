@@ -542,6 +542,12 @@ struct Cli {
     #[arg(long)]
     friendlier_levels: bool,
 
+    /// Tricky Spots: let the enemy shuffle use three placements players have
+    /// found hard to pass without getting hit (a dropping Thwomp at 8B's Hot
+    /// Foot, a Lakitu in 7-9, a Nipper by β1's last pipe)
+    #[arg(long)]
+    tricky_spots: bool,
+
     /// Deja Vu: let one level appear on more than one map tile — off, double,
     /// or wild (default: off). `double` puts two copies of every level in the
     /// deck; `wild` deals with replacement, so a level can appear any number of
@@ -762,6 +768,7 @@ fn build_options(cli: &Cli) -> Options {
             hb_encounters: cli.hb_encounters,
             limit_hazards: cli.limit_hazards,
             friendlier_levels: cli.friendlier_levels,
+            tricky_spots: cli.tricky_spots,
             deja_vu: cli.deja_vu,
             deja_vu_forts: cli.deja_vu_forts,
             hints: cli.hints,
