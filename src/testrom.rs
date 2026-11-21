@@ -1356,7 +1356,7 @@ pub fn build(vanilla: &[u8], spec: &TestRomSpec) -> Result<TestRom, String> {
 
     if let Some(seed) = spec.boom_boom_room {
         rom.set_tag("levels/boom_boom_room");
-        crate::randomize::levels::boom_boom_room::randomize(&mut rom, seed);
+        crate::randomize::levels::boom_boom_room::randomize(&mut rom, seed, false);
         report.push(format!("boom-boom rooms: platforms dealt (seed {seed})"));
     }
 
