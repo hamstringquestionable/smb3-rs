@@ -1661,15 +1661,17 @@ Object group 0 (IDs $00–$23, dispatched from PRG001, CPU $A000–$BFFF, file o
 >   the Starman ($0C) or one of three suit objects on the hash's low two bits.
 >
 > It covers brick-1up **and** invis-1up (both resolve to `Bouncer_PUp[7]=$0B`).
-> 90 of 106 bytes are used with both flags on (69 suits only, 43 poison only).
+> 79 of 106 bytes are used with both flags on (58 suits only, 43 poison only).
 >
 > **$01, $02 and $1A are now taken** by Suit Blocks: Tanooki, Frog and Hammer.
 > All three already had the Starman's PRG000 `Object_AttrFlags` (`BOUNDBOX01 |
 > FIREIMMUNITY | HITNOTKILL`), so only PRG001's tables change:
-> - **Norm:** `$A7E0`, the star's Norm past its colour cycle.
-> - **Init:** a stub that runs `ObjInit_StarOrSuit`, sets `SPR_VFLIP`, and tail-jumps to
->   `Object_SetPaletteFromAttr` ($D3BC). That re-applies ATTR1's palette (1/2/3,
->   the Big ? suits' colours) over the star's.
+> - **Norm:** `$A7D6`, the star's own, colour cycle included (the suit handler
+>   sets `PUp_StarManFlash = $80`).
+> - **Init:** `ObjInit_StarOrSuit`, the star's own.
+> - **PatStart:** the mushroom's (`$0D`), so they draw as a mushroom. Its
+>   tiles are in the same always-loaded page as the star's. Every other
+>   attribute byte is the star's.
 > - **Hit:** an entry that loads the suit index and jumps to `PRG001_A818`.
 > - **PatTableSel** (`$A144`, file `0x2154`; missing from the list below): this
 >   must be copied from the star (`OPTS_NOCHANGE`), because $01/$02 vanilla ask
@@ -2483,8 +2485,10 @@ page `$4C`, which only the Big ? box objects request), the palette at Init
 `PUp_StarOrSuitFrames` (`00 05 04 06`). The suit half of
 `ObjHit_StarOrSuit` starts at `PRG001_A818` (`TAY` / `LDA
 PUp_StarOrSuitFrames,Y` / …), entered with `A` = 1/2/3. `ObjNorm_StarOrSuit`
-(`$A7D6`) colour-cycles while `PUp_StarManFlash` is negative. Entering at
-`$A7E0` skips that.
+(`$A7D6`) colour-cycles while `PUp_StarManFlash` is negative; the suit
+objects enter it there, so they cycle too. (Until 2026-11 they entered at
+`$A7E0`, past the cycle, and drew an upside-down star in the suit's Big ?
+palette.)
 
 ### Other Block / Power-Up Offsets
 

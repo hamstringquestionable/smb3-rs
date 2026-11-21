@@ -724,7 +724,7 @@ export const SCHEMA = [
 		group: "items", inFlagKey: true },
 	{ id: "suit_blocks", type: "bool", default: false,
 		label: "Suit Blocks",
-		tip: "Blocks can also give a Tanooki, Frog, or Hammer Suit. A suit comes out as an upside-down star in that suit's colors. From ? blocks, flower, leaf, star, and each suit come out about equally often; a star from a brick, note, or wood block may turn out to be a suit.",
+		tip: "Blocks can also give a Tanooki, Frog, or Hammer Suit. A suit comes out as a color-cycling mushroom; you find out which suit when you grab it. From ? blocks, flower, leaf, star, and each suit come out about equally often; a star from a brick, note, or wood block may turn out to be a suit.",
 		icon: [FROG_SUIT, TANOOKI_SUIT, HAMMER_SUIT],
 		enabledWhen: { powerups: true },
 		group: "items", inFlagKey: true },
