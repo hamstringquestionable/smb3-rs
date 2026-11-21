@@ -16,7 +16,8 @@
 //!
 //! Guards: boss-type exclusion, one roll per segment however many levels share
 //! it, no doubling (a chaser the segment already has), first enemy must be a
-//! real swappable/unprotected enemy (don't clobber a critical object), and CHR
+//! real swappable enemy (don't clobber a critical object), the slot's
+//! protection (the walker's own filter, `EntryProtection::allows`), and CHR
 //! compatibility.
 
 use std::collections::HashSet;
@@ -68,23 +69,29 @@ pub(super) fn chaser_of(id: u8) -> Option<WildChaser> {
 /// Pick a CHR-compatible chaser this level doesn't already have, from the set
 /// the player allowed. Returns `None` if nothing fits — a level that can't take
 /// an allowed chaser gets none, rather than one the player didn't ask for.
+///
+/// `protection` is the rule on the entry being replaced, `entries[0]`.
 fn pick_injection<R: Rng>(
     entries: &[SegmentEntry],
     pinned: Pages,
     allowed: &[WildChaser],
     bertha_full: bool,
+    protection: Option<EntryProtection>,
     rng: &mut R,
 ) -> Option<u8> {
+    let vanilla = entries.first()?.obj_id;
     let eligible: Vec<u8> = WILD_INJECTION_IDS
         .iter()
         .copied()
         .filter(|&id| {
-            // Allowed by the player, CHR-compatible with the segment's pinned
-            // pages, not a chaser the level already has (no doubling — e.g.
-            // 2-Quicksand's sun), and within the segment's Bertha budget: a
-            // Boss Bass is sprite-heavy enough that stacking them starves other
-            // objects of slots (see MAX_BERTHA_PER_SEGMENT).
+            // Allowed by the player and by the slot's protection (the same
+            // filter the walker gives its pool), CHR-compatible with the
+            // segment's pinned pages, not a chaser the level already has (no
+            // doubling — e.g. 2-Quicksand's sun), and within the segment's
+            // Bertha budget: a Boss Bass is sprite-heavy enough that stacking
+            // them starves other objects of slots (see MAX_BERTHA_PER_SEGMENT).
             chaser_of(id).is_some_and(|c| allowed.contains(&c))
+                && protection.is_none_or(|p| p.allows(id, vanilla))
                 && !(bertha_full && BERTHA_IDS.contains(&id))
                 && pinned.fits(id)
                 && !entries.iter().any(|e| e.obj_id == id)
@@ -122,14 +129,12 @@ pub(super) fn inject_first_enemy<R: Rng>(
         return None;
     }
 
-    // The entry we'd replace must be a real, swappable, unprotected enemy —
-    // don't clobber a critical object. `find_class_pool` is the test for
-    // "the shuffle would have been allowed to touch this anyway".
-    if entry_protection_at(ENEMY_DATA_START + first_idx).is_some()
-        || find_class_pool(first.obj_id, modes).is_none()
-    {
-        return None;
-    }
+    // The entry we'd replace must be a real, swappable enemy — don't clobber a
+    // critical object. `find_class_pool` is the test for "the shuffle would
+    // have been allowed to touch this anyway". A protection on it narrows the
+    // chasers instead (`pick_injection`).
+    find_class_pool(first.obj_id, modes)?;
+    let protection = entry_protection_at(ENEMY_DATA_START + first_idx, opts.tricky_spots);
 
     // Pages the segment has already committed. Chasers are level-wide, so the
     // whole segment constrains the pick — and the entry being replaced is
@@ -143,7 +148,8 @@ pub(super) fn inject_first_enemy<R: Rng>(
         .filter(|e| e.data_index != first_idx && BERTHA_IDS.contains(&e.obj_id))
         .count() as u8
         >= MAX_BERTHA_PER_SEGMENT;
-    let chosen = pick_injection(entries, pinned, &opts.wild_injections, bertha_full, rng)?;
+    let chosen =
+        pick_injection(entries, pinned, &opts.wild_injections, bertha_full, protection, rng)?;
 
     swap_enemy(data, first_idx, chosen);
     entries[0].obj_id = chosen;

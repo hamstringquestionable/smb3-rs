@@ -225,7 +225,7 @@ const PATOOIE: Group = Group::Ids(&[
     0x2A, // OBJ_PATOOIE (spits a spike ball up)
     0x46, // OBJ_PIRANHASPIKEBALL (Ptooie-style spike-ball launcher)
 ]);
-const NIPPER: Group = Group::Ids(&[
+pub(super) const NIPPER: Group = Group::Ids(&[
     0x33, // OBJ_NIPPER
     0x39, // OBJ_NIPPERHOPPING
     0x3D, // OBJ_NIPPERFIREBREATHER

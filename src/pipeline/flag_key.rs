@@ -516,9 +516,11 @@ mod payload {
         /// vanilla speed. The speedup shipped always-on in 3.2.0, so every
         /// key in circulation (this bit zero) must decode to fast lifts.
         pub(super) slow_arrow_lifts: bool,
+        /// Tricky Spots. Appended and false by default.
+        pub(super) tricky_spots: bool,
 
         // --- Reserve ---
-        // 118 bits. Adding an option is: declare it immediately above this
+        // 117 bits. Adding an option is: declare it immediately above this
         // block, then take the same number of bits off the reserve. An older key
         // simply has those bits zero, which is "off" for a bool and the default
         // for every enum here, so it stays a correct key for the settings it
@@ -529,7 +531,7 @@ mod payload {
         // satisfied` against the struct. It means the widths no longer add up to
         // `bytes * 8`, nothing more.
         #[skip]
-        __: B118,
+        __: B117,
     }
 }
 
@@ -584,6 +586,7 @@ impl Options {
             powerup_locations,
             boom_boom_room,
             faster_arrow_lifts,
+            tricky_spots,
             starting_items,
             // Not encoded — see NOT_ENCODED for the reason on each.
             palettes: _, palette_themed: _, player_color: _,
@@ -692,6 +695,7 @@ impl Options {
             .with_powerup_locations(*powerup_locations)
             .with_boom_boom_room(*boom_boom_room)
             .with_slow_arrow_lifts(!*faster_arrow_lifts)
+            .with_tricky_spots(*tricky_spots)
             .with_hints(if *world_maze { *hints } else { HintMode::default() })
             .with_item_gates(*item_gates)
             .with_mariomon(*mariomon)
@@ -830,6 +834,7 @@ impl Options {
             powerup_locations: f.powerup_locations(),
             boom_boom_room: f.boom_boom_room(),
             faster_arrow_lifts: !f.slow_arrow_lifts(),
+            tricky_spots: f.tricky_spots(),
             // Every pattern is a value now, 0 included — it is "start in Dark
             // Land", not "unset". A key minted before that meaning existed
             // cannot carry 0 (the encoder clamped to 1–7), so nothing older is

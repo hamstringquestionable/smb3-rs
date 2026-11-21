@@ -1,7 +1,8 @@
 //! Per-level enemy protection registry.
 //!
-//! One table (`LEVEL_PROTECTIONS`) with a row per protected level area that
-//! the enemy randomization passes must treat specially. Each row names the
+//! Two tables with a row per protected level area that the enemy
+//! randomization passes must treat specially: `LEVEL_PROTECTIONS`, always in
+//! force, and `TRICKY_SPOTS`, lifted by the Tricky Spots option. Each row names the
 //! area the way `rominfo --level` does (a level name, then the area number it
 //! prints: 0 is the main area), gives the reason, and declares:
 //!   - `walker_segment`: how the walker pass treats the containing $FF segment
@@ -19,8 +20,10 @@
 //! through the derived helpers (`entry_protection_at`, `walker_segment_rule_at`)
 //! — never the table directly.
 
-use super::tables::{BEHIND_BG, Group, HAZARDS, ROTODISCS};
-use crate::randomize::rom_data::{HAMMER_BRO_OBJ_PTRS, enemy_ptr_to_file_offset};
+use super::tables::{BEHIND_BG, Group, HAZARDS, LAKITU_ID, NIPPER, ROTODISCS, SHELL_ENEMIES};
+use crate::randomize::rom_data::{
+    HAMMER_BRO_OBJ_PTRS, STOMPABLE_ENEMIES, enemy_ptr_to_file_offset,
+};
 
 /// One logical level or sub-area with protections that affect enemy
 /// randomization.
@@ -67,9 +70,10 @@ struct EntryRule {
     rule: EntryProtection,
 }
 
-/// Per-entry behavior. The walker applies these inline during its swap pass;
-/// `inject_first_enemy` also skips injection at any position carrying one
-/// of these (so wild injection can't bypass a per-entry safeguard).
+/// Per-entry behavior. Both ways an entry can change go through [`Self::allows`]:
+/// the walker filters its replacement pool with it, and `inject_first_enemy`
+/// filters its chaser list with it, so wild injection can't bypass a
+/// per-entry safeguard.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum EntryProtection {
     /// Walker skips this entry (pre-commits CHR page only).
@@ -82,6 +86,20 @@ pub(super) enum EntryProtection {
     /// one sharing an ID list with the vanilla enemy here is kept). See
     /// `Group` in `enemies/tables.rs`.
     Exclude(Group),
+}
+
+impl EntryProtection {
+    /// Whether `candidate` may replace `vanilla` at an entry carrying this
+    /// rule. `ForceShell` is a pool the walker swaps in only with shells on;
+    /// as a filter it keeps shells.
+    pub(super) fn allows(self, candidate: u8, vanilla: u8) -> bool {
+        match self {
+            EntryProtection::SkipSwap => false,
+            EntryProtection::ForceShell => SHELL_ENEMIES.contains(&candidate),
+            EntryProtection::ForceStompable => STOMPABLE_ENEMIES.contains(&candidate),
+            EntryProtection::Exclude(group) => !group.excludes(candidate, vanilla),
+        }
+    }
 }
 
 const LEVEL_PROTECTIONS: &[LevelProtection] = &[
@@ -544,6 +562,67 @@ const LEVEL_PROTECTIONS: &[LevelProtection] = &[
     },
 ];
 
+/// Tricky Spots: placements players have beaten but found hard to pass without
+/// getting hit. These rows hold only while the `tricky_spots` option is **off**
+/// (the default); with it on, the spots randomize like any other. Every rule
+/// here is an `Exclude` on a `Default` segment, so turning the option on frees
+/// one enemy each and never a whole area.
+///
+/// Kept apart from [`LEVEL_PROTECTIONS`] rather than flagged per row, because
+/// those are safety rules no option may lift and these are a matter of taste.
+/// An area may appear in both tables (8B's main area does).
+const TRICKY_SPOTS: &[LevelProtection] = &[
+    LevelProtection {
+        level: "8B",
+        area: 0,
+        why: "a dropping Thwomp at the Hot Foot lands on Mario as he crosses",
+        enemy_ptr: 0xD5CD,
+        walker_segment: WalkerSegmentRule::Default,
+        entries: &[
+            // The standard drop only; the five sliding/moving variants stay.
+            EntryRule {
+                offset: 0x0D5EA,
+                id: 0x30,
+                rule: EntryProtection::Exclude(Group::Ids(&[0x8A])),
+            }, // HotFootShy scr=4 col=14
+        ],
+    },
+    LevelProtection {
+        level: "7-9",
+        area: 0,
+        why: "a wild-injected Lakitu rains Spinies on the pipe maze",
+        enemy_ptr: 0xD15A,
+        walker_segment: WalkerSegmentRule::Default,
+        entries: &[
+            // Wild injection only ever replaces an area's first enemy, and
+            // this is 7-9's. Lakitu is never dealt by the walker, so the rule
+            // only ever bites on injection; the Sun and Boss Bass stay.
+            EntryRule {
+                offset: 0x0D16B,
+                id: 0x6E,
+                rule: EntryProtection::Exclude(Group::Ids(&[LAKITU_ID])),
+            }, // ParatroopaGreenHop scr=0 col=10
+        ],
+    },
+    LevelProtection {
+        level: "β1",
+        area: 0,
+        why: "a Nipper at the last Spiny blocks the way to the exit pipe",
+        enemy_ptr: 0xC1AB,
+        walker_segment: WalkerSegmentRule::Default,
+        entries: &[
+            EntryRule { offset: 0x0C1E6, id: 0x71, rule: EntryProtection::Exclude(NIPPER) }, // Spiny scr=6 col=12
+        ],
+    },
+];
+
+/// The rows in force: every [`LEVEL_PROTECTIONS`] row, plus [`TRICKY_SPOTS`]
+/// unless the player kept them (`tricky_spots` on).
+fn rows(keep_tricky: bool) -> impl Iterator<Item = &'static LevelProtection> {
+    let tricky: &'static [LevelProtection] = if keep_tricky { &[] } else { TRICKY_SPOTS };
+    LEVEL_PROTECTIONS.iter().chain(tricky)
+}
+
 /// Every `Exclude(HAZARDS)` rule: `(entry offset, level, area, why)`. Read by
 /// the hazard census, which scores a terrain-based detector against them.
 #[cfg(test)]
@@ -560,9 +639,13 @@ pub(super) fn hazard_rules() -> Vec<(usize, &'static str, usize, &'static str)> 
 }
 
 /// Per-entry rule for the entry at this absolute file offset, if any.
-pub(super) fn entry_protection_at(file_offset: usize) -> Option<EntryProtection> {
-    LEVEL_PROTECTIONS
-        .iter()
+/// `keep_tricky` is the `tricky_spots` option: on, the [`TRICKY_SPOTS`] rows
+/// are not in force.
+pub(super) fn entry_protection_at(
+    file_offset: usize,
+    keep_tricky: bool,
+) -> Option<EntryProtection> {
+    rows(keep_tricky)
         .flat_map(|l| l.entries)
         .find_map(|e| (e.offset == file_offset).then_some(e.rule))
 }
@@ -634,7 +717,7 @@ mod tests {
         // take whichever rule entry_protection_at returns first, so duplicates
         // silently change behavior.
         let mut seen: HashSet<usize> = HashSet::new();
-        for level in LEVEL_PROTECTIONS {
+        for level in rows(false) {
             for entry in level.entries {
                 assert!(
                     seen.insert(entry.offset),
@@ -657,7 +740,7 @@ mod tests {
         let vanilla = rom[0x0D3E7];
         assert_eq!(vanilla, 0x5B, "RotodiscCCW at 0x0D3E7");
 
-        let Some(EntryProtection::Exclude(group)) = entry_protection_at(0x0D3E7) else {
+        let Some(EntryProtection::Exclude(group)) = entry_protection_at(0x0D3E7, false) else {
             panic!("0x0D3E7 carries no exclusion");
         };
         assert!(group.excludes(0x8A, vanilla), "the drop Thwomp must be excluded");
@@ -680,7 +763,7 @@ mod tests {
         {
             let vanilla = rom[offset];
             assert_eq!(vanilla, expected, "piranha at {offset:#07X}");
-            let Some(EntryProtection::Exclude(group)) = entry_protection_at(offset) else {
+            let Some(EntryProtection::Exclude(group)) = entry_protection_at(offset, false) else {
                 panic!("{offset:#07X} carries no exclusion");
             };
             for id in [0x7D, 0x7F, 0xAD] {
@@ -707,6 +790,30 @@ mod tests {
         }
     }
 
+    /// Tricky Spots lifts its own rules and nothing else, and never a whole
+    /// area: `walker_segment_rule_at` reads only `LEVEL_PROTECTIONS`, so a
+    /// non-`Default` row here would be silently ignored.
+    #[test]
+    fn tricky_spots_lift_only_their_own_exclusions() {
+        for row in TRICKY_SPOTS {
+            assert_eq!(row.walker_segment, WalkerSegmentRule::Default, "{}", row.level);
+            for e in row.entries {
+                let (held, lifted) =
+                    (entry_protection_at(e.offset, false), entry_protection_at(e.offset, true));
+                let at = format!("{} 0x{:05X}", row.level, e.offset);
+                assert!(matches!(held, Some(EntryProtection::Exclude(_))), "{at}: not held");
+                assert_eq!(lifted, None, "{at}: not lifted");
+            }
+        }
+        for row in LEVEL_PROTECTIONS {
+            for e in row.entries {
+                let (held, lifted) =
+                    (entry_protection_at(e.offset, false), entry_protection_at(e.offset, true));
+                assert_eq!(held, lifted, "0x{:05X}: a safety rule moved", e.offset);
+            }
+        }
+    }
+
     /// Each row's `level` and `area` name the object list its `enemy_ptr`
     /// reads, and every entry offset lies in that list. Skips without the ROM.
     #[test]
@@ -723,7 +830,7 @@ mod tests {
             .filter_map(|v| v.level_entry.as_ref().map(|le| (v.name.as_str(), le)))
             .chain(UNLISTED_LEVELS.iter().map(|(name, le)| (*name, le)))
             .collect();
-        for row in LEVEL_PROTECTIONS {
+        for row in rows(false) {
             let (_, entry) = levels
                 .iter()
                 .find(|(name, _)| level_name_key(name) == level_name_key(row.level))

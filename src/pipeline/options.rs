@@ -865,6 +865,11 @@ pub struct Options {
     /// stayed.
     #[serde(default)]
     pub friendlier_levels: bool,
+    /// Tricky Spots: let the enemy shuffle use three placements players
+    /// have found hard to pass without getting hit (8B, 7-9, β1). Off — the
+    /// default — holds them out; see `TRICKY_SPOTS` in `enemies/protections.rs`.
+    #[serde(default)]
+    pub tricky_spots: bool,
     /// How many times one level may appear on the map. See [`DejaVuMode`].
     #[serde(default)]
     pub deja_vu: DejaVuMode,
@@ -994,6 +999,7 @@ impl Default for Options {
             hb_encounters: EnemyMode::Off,
             limit_hazards: HazardLimit::Off,
             friendlier_levels: false,
+            tricky_spots: false,
             deja_vu: DejaVuMode::Off,
             deja_vu_forts: false,
             hints: HintMode::Partial,

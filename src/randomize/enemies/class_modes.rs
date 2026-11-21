@@ -138,7 +138,8 @@ fn should_precommit(obj_id: u8, modes: &ClassModes) -> bool {
 /// self-swap). Pinned pages are pre-committed so picks route around them.
 pub(super) fn is_pinned(obj_id: u8, file_offset: usize, modes: &ClassModes) -> bool {
     should_precommit(obj_id, modes)
-        || entry_protection_at(file_offset) == Some(EntryProtection::SkipSwap)
+        // Tricky Spots rows are all `Exclude`, so the option cannot change this.
+        || entry_protection_at(file_offset, false) == Some(EntryProtection::SkipSwap)
 }
 
 /// Identify which class an enemy ID belongs to, and return the swap pool
