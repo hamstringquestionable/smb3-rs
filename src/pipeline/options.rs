@@ -742,8 +742,8 @@ pub struct Options {
     pub modern_powerups: bool,
     /// Suit Blocks: the ? block reroll may also make a block a suit block,
     /// and every brick, note and wood star is one. A suit block hands out a
-    /// star or a Tanooki, Frog or Hammer Suit (an upside-down star in the
-    /// suit's colours), picked per block by a seed-salted hash. ? blocks are
+    /// star or a Tanooki, Frog or Hammer Suit (a colour-cycling mushroom),
+    /// picked per block by a seed-salted hash. ? blocks are
     /// weighted so flower, leaf, star and the three suits each come out about
     /// 1 in 6. Rides
     /// on [`Options::powerups`]: with the reroll off there is nothing to place.

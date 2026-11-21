@@ -429,7 +429,8 @@ struct Cli {
     modern_powerups: bool,
 
     /// Suit Blocks: blocks may also hand out a Tanooki,
-    /// Frog or Hammer Suit (an upside-down star in the suit's colours). From
+    /// Frog or Hammer Suit (a colour-cycling mushroom; which suit shows when
+    /// you take it). From
     /// ? blocks, flower, leaf, star and the three suits each come out about
     /// 1 in 6; a brick, note or wood star may come out a suit.
     /// Needs the power-up reroll (no effect with --no-powerups)

@@ -19,7 +19,8 @@ deploys.
   Blocks on, 8-F1 gets one, so 8-F keeps the raised spike that lets a Frog
   Suit through the tunnel before Boom-Boom.
 - Suit Blocks: blocks can now hand out a Tanooki, Frog or Hammer Suit. A
-  suit comes out as an upside-down star in the suit's colours. With it on,
+  suit comes out as a colour-cycling mushroom, and which suit it is shows
+  only when you take it. With it on,
   flower, leaf, star and the three suits each come out of about 1 in 6 ?
   blocks, and a star from a brick, note or wood block can be any of the
   three suits or still a star. Needs Power-ups on. Protected blocks (7-7's

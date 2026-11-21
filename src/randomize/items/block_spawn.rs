@@ -33,12 +33,13 @@
 //!
 //! **Spawn → suit.** The hook hashes the block and swaps the `$03` for the
 //! Starman or one of three new objects on unused group-0 IDs ([`SUIT_IDS`]):
-//! Tanooki, Frog and Hammer. They are Starmen in everything but two stubs: they move with the
-//! star's own handler (entered past its colour-cycle check), draw the star tile
-//! upside-down in the suit's Big `?` palette (1, 2, 3), and on touch jump into
-//! the star's existing suit-granting code with that suit's index. The suit art
+//! Tanooki, Frog and Hammer. They are Starmen in everything but the picture
+//! and one stub: they start and move with the star's own handlers, colour
+//! cycle included, draw the mushroom's tiles, and on touch jump into the
+//! star's existing suit-granting code with that suit's index. The suit art
 //! itself lives only in sprite page `$4C`, which ordinary levels never load —
-//! hence a recoloured star rather than the real picture.
+//! hence a colour-cycling mushroom rather than the real picture. The three
+//! look alike on purpose: which suit it is shows only when it is taken.
 //!
 //! ## Poison mushrooms
 //!
@@ -113,21 +114,16 @@ const POWERUP_SLOT: u8 = 5;
 
 /// `ObjInit_StarOrSuit`.
 const STAR_INIT_CPU: u16 = 0xA7A9;
-/// `ObjNorm_StarOrSuit` ($A7D6) past its colour-cycle check (`LDA
-/// PUp_StarManFlash` / `BPL` / `LDA Counter_1` / `STA Objects_ColorCycle,X`):
-/// `PRG001_A7E0`. A real star from a block sets the flash, so without this
-/// skip a suit spawned soon after one would cycle its colours too.
-const STAR_NORM_NO_CYCLE_CPU: u16 = 0xA7E0;
+/// `ObjNorm_StarOrSuit`: colour-cycles while `PUp_StarManFlash` is negative,
+/// which the suit handler sets, then raises, moves, bounces and draws.
 const STAR_NORM_CPU: u16 = 0xA7D6;
-const STAR_NORM_CYCLE: [u8; 10] = [0xAD, 0x86, 0x05, 0x10, 0x05, 0xA5, 0x15, 0x9D, 0x68, 0x07];
 /// `ObjHit_StarOrSuit`, and its suit half `PRG001_A818`: `TAY` / `LDA
 /// PUp_StarOrSuitFrames,Y` — index 1/2/3 is Tanooki/Frog/Hammer — then the
 /// "already wearing it?" test, the queue, the poof and the collect.
 const STAR_HIT_CPU: u16 = 0xA7FE;
 const STAR_SUIT_HIT_CPU: u16 = 0xA818;
-/// `Object_SetPaletteFromAttr` (PRG000, `$D3BC`): `Objects_SprAttr,X` from
-/// the object's `ObjectGroup_Attributes` palette bits.
-const SET_PALETTE_FROM_ATTR: u16 = 0xD3BC;
+/// `OBJ_POWERUP_MUSHROOM`, whose tiles the suit objects draw.
+const MUSHROOM_ID: u8 = 0x0D;
 
 /// What a suit block spawns, by hash (`AND #3`): the Starman, then the suits.
 const SUIT_POOL: [u8; 4] = [STARMAN_ID, SUIT_IDS[0], SUIT_IDS[1], SUIT_IDS[2]];
@@ -147,10 +143,10 @@ const LATP_SUIT: u8 = 0x0B;
 /// it.
 const BRICK_ALT_CLEAR: [u8; 10] = [0x20, 0x40, 0xB8, 0xF0, 0x04, 0xA9, 0x0C, 0x85, 0x0B, 0x60];
 /// Code `B`'s handler for a suit block: `LATP_Star` with the marker index. The
-/// flash is set to `$80` the way `LATP_Star` sets it, so a suit block that
-/// comes out a star colour-cycles like any star (the suit objects skip the
-/// cycle check), and `$80 & 3` is frame 0, so a Big `?` box's leftover value
-/// can never reach `ObjInit_StarOrSuit`'s frame pick.
+/// flash is set to `$80` the way `LATP_Star` sets it, so whatever the block
+/// comes out as colour-cycles like any star, and `$80 & 3` is frame 0, so a
+/// Big `?` box's leftover value can never reach `ObjInit_StarOrSuit`'s frame
+/// pick.
 #[rustfmt::skip]
 const SUIT_HANDLER: [u8; 8] = [
     0xA9, 0x80,             // LDA #$80
@@ -206,20 +202,19 @@ fn install_suits(rom: &mut Rom, routine: &Routine) {
     debug_assert_eq!(rom.read_range(INIT_TABLE + star * 2, 2), STAR_INIT_CPU.to_le_bytes());
     debug_assert_eq!(rom.read_range(NORM_TABLE + star * 2, 2), STAR_NORM_CPU.to_le_bytes());
     debug_assert_eq!(rom.read_range(HIT_TABLE + star * 2, 2), STAR_HIT_CPU.to_le_bytes());
-    debug_assert_eq!(rom.read_range(cpu_to_file(STAR_NORM_CPU), 10), STAR_NORM_CYCLE);
 
     for (i, &id) in SUIT_IDS.iter().enumerate() {
         let id = usize::from(id);
         let hit = routine.hit_cpu + 3 * i as u16;
-        rom.write_range(INIT_TABLE + id * 2, &routine.init_cpu.to_le_bytes());
-        rom.write_range(NORM_TABLE + id * 2, &STAR_NORM_NO_CYCLE_CPU.to_le_bytes());
+        rom.write_range(INIT_TABLE + id * 2, &STAR_INIT_CPU.to_le_bytes());
+        rom.write_range(NORM_TABLE + id * 2, &STAR_NORM_CPU.to_le_bytes());
         rom.write_range(HIT_TABLE + id * 2, &hit.to_le_bytes());
-        // The star's size bits, with the suit's Big ? palette (1/2/3).
-        let attr1 = (rom.read_byte(ATTR1_TABLE + star) & !0x03) | (i as u8 + 1);
-        rom.write_byte(ATTR1_TABLE + id, attr1);
-        for table in [ATTR2_TABLE, ATTR3_TABLE, PATTABLE_SEL_TABLE, KILL_TABLE, PATSTART_TABLE] {
+        for table in [ATTR1_TABLE, ATTR2_TABLE, ATTR3_TABLE, PATTABLE_SEL_TABLE, KILL_TABLE] {
             rom.write_byte(table + id, rom.read_byte(table + star));
         }
+        // The picture: the mushroom's tiles, from the same always-loaded page.
+        let mushroom = usize::from(MUSHROOM_ID);
+        rom.write_byte(PATSTART_TABLE + id, rom.read_byte(PATSTART_TABLE + mushroom));
     }
 
     for (offset, vanilla) in LATP_SUIT_TILES {
@@ -231,6 +226,7 @@ fn install_suits(rom: &mut Rom, routine: &Routine) {
 }
 
 /// PRG001 CPU address to file offset.
+#[cfg(test)]
 fn cpu_to_file(cpu: u16) -> usize {
     0x02010 + usize::from(cpu - 0xA000)
 }
@@ -241,7 +237,6 @@ enum Label {
     Hash,
     Poison,
     Done,
-    Init,
     Hit,
     Pool,
 }
@@ -306,8 +301,6 @@ impl Asm {
 /// The assembled routine and the entry points the object tables need.
 struct Routine {
     code: Vec<u8>,
-    /// The suit objects' shared Init stub (0 when suit blocks are off).
-    init_cpu: u16,
     /// The Tanooki Hit entry; Frog and Hammer are 3 and 6 bytes on.
     hit_cpu: u16,
 }
@@ -369,16 +362,6 @@ fn assemble(flags: SpawnFlags, salt: u8) -> Routine {
     a.op(&[0x60]); //                          RTS
 
     if flags.suit_blocks {
-        // Suit objects' Init: the star's, then upside-down in the object's own
-        // palette (the star's Init set the star's).
-        let [init_lo, init_hi] = STAR_INIT_CPU.to_le_bytes();
-        let [pal_lo, pal_hi] = SET_PALETTE_FROM_ATTR.to_le_bytes();
-        a.label(Label::Init);
-        a.op(&[0x20, init_lo, init_hi]); //    JSR ObjInit_StarOrSuit
-        a.op(&[0xA9, 0x80]); //                LDA #SPR_VFLIP
-        a.op(&[0x9D, 0x79, 0x06]); //          STA Objects_FlipBits,X
-        a.op(&[0x4C, pal_lo, pal_hi]); //      JMP Object_SetPaletteFromAttr
-
         // Suit objects' Hit: three entries 3 bytes apart. Each `BIT abs`
         // swallows the next entry's `LDA #` as its operand, so every entry
         // falls through to the JMP holding its own suit index.
@@ -394,12 +377,8 @@ fn assemble(flags: SpawnFlags, salt: u8) -> Routine {
         a.label(Label::Pool);
         a.op(&SUIT_POOL);
     }
-    let (init_cpu, hit_cpu) = if flags.suit_blocks {
-        (a.cpu(BLOCK_SPAWN_CPU, Label::Init), a.cpu(BLOCK_SPAWN_CPU, Label::Hit))
-    } else {
-        (0, 0)
-    };
-    Routine { code: a.finish(BLOCK_SPAWN_CPU), init_cpu, hit_cpu }
+    let hit_cpu = if flags.suit_blocks { a.cpu(BLOCK_SPAWN_CPU, Label::Hit) } else { 0 };
+    Routine { code: a.finish(BLOCK_SPAWN_CPU), hit_cpu }
 }
 
 #[cfg(test)]
@@ -595,11 +574,13 @@ mod tests {
             let word = |t: usize| {
                 u16::from_le_bytes([rom.read_byte(t + id * 2), rom.read_byte(t + id * 2 + 1)])
             };
-            assert_eq!(word(INIT_TABLE), routine.init_cpu);
-            assert_eq!(word(NORM_TABLE), STAR_NORM_NO_CYCLE_CPU);
+            assert_eq!(word(INIT_TABLE), STAR_INIT_CPU);
+            assert_eq!(word(NORM_TABLE), STAR_NORM_CPU);
             assert_eq!(word(HIT_TABLE), routine.hit_cpu + 3 * i as u16);
-            assert_eq!(rom.read_byte(ATTR1_TABLE + id) & 0x03, i as u8 + 1, "palette");
             assert_eq!(rom.read_byte(PATTABLE_SEL_TABLE + id), 0x00, "no page request");
+            let mushroom = usize::from(MUSHROOM_ID);
+            let patstart = rom.read_byte(PATSTART_TABLE + mushroom);
+            assert_eq!(rom.read_byte(PATSTART_TABLE + id), patstart, "mushroom tiles");
         }
         for (offset, _) in LATP_SUIT_TILES {
             assert_eq!(rom.read_byte(offset), LATP_SUIT, "LATP 0x{offset:05X}");
@@ -607,7 +588,6 @@ mod tests {
         // The plain ? star keeps its code: 7-7's fixed stars depend on it.
         assert_eq!(rom.read_byte(0x1168F), 0x03, "TILEA_QBLOCKSTAR");
         assert_eq!(rom.read_range(FS_SUIT_HANDLER, SUIT_HANDLER.len()), SUIT_HANDLER);
-        assert_eq!(STAR_NORM_NO_CYCLE_CPU, STAR_NORM_CPU + STAR_NORM_CYCLE.len() as u16);
         assert_eq!(cpu_to_file(STAR_SUIT_HIT_CPU), 0x02828);
     }
 }

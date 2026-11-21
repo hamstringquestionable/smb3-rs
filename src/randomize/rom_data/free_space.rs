@@ -1100,9 +1100,9 @@ pub(crate) const FS_POISON_MUSHROOM: usize = 0x02713; // CPU $A703
 // block hands out. One routine, generated from the flags, serves Suit Blocks
 // and Poison Mushroom: it replays the store, hashes the block position + map
 // entry + seed salt, and swaps in a suit object or the poison 1-Up. The suit
-// objects' Init and Hit stubs and their ID table follow it. Takes the rest of
+// objects' Hit stubs and their ID table follow it. Takes the rest of
 // the dead vanilla Obj0A code after the poison stubs, $A714..$A77D (the last
-// byte is a stray RTS nothing reaches). 106 reserved, 90 used by the largest
+// byte is a stray RTS nothing reaches). 106 reserved, 79 used by the largest
 // shape (both flags).
 pub(crate) const FS_BLOCK_SPAWN: usize = 0x02724; // CPU $A714
 
