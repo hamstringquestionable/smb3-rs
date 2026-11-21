@@ -2887,22 +2887,41 @@ fn powerup_locations_bytes_are_its_own() {
     }
 }
 
+/// Suit Blocks' Frog Suit softlock fixes land with every other level edit on.
+/// The fix writes nothing unless its sites are vanilla, so a stage that
+/// takes one of them first (Boom-Boom Room did, in 8F) turns it off without
+/// a word.
+#[test]
+fn frog_softlocks_land_with_all_on() {
+    for seed in 1..=3 {
+        let Some(mut rom) = make_test_rom() else { return };
+        let o = all_on_options();
+        assert!(o.suit_blocks && o.powerups && o.boom_boom_room);
+        randomize(&mut rom, seed, &o);
+        assert!(
+            crate::randomize::items::frog_softlocks::all_applied(&rom),
+            "seed {seed}: a frog softlock fix did not land"
+        );
+    }
+}
+
 /// Boom-Boom Room rewrites its commands whole, by file offset, as the vanilla
 /// ROM has them. No other stage may write those bytes, before or after it, or
 /// a platform would be rewritten over something else, or another stage's
 /// edit lost.
 #[test]
 fn boom_boom_room_bytes_are_its_own() {
-    use crate::randomize::levels::boom_boom_room::ROOMS;
+    use crate::randomize::levels::boom_boom_room::{ROOMS, commands};
     use std::collections::BTreeSet;
-    let watched: BTreeSet<usize> =
-        ROOMS.iter().flat_map(|r| r.commands).flat_map(|&o| o..o + 4).collect();
     let mut beta = all_on_options();
     beta.include_beta_stages = true;
     let arms =
         [("defaults", Options { boom_boom_room: true, ..test_options() }), ("all_on+beta", beta)];
     for (name, o) in arms {
         assert!(o.boom_boom_room);
+        let frog_fix = o.suit_blocks && o.powerups;
+        let watched: BTreeSet<usize> =
+            ROOMS.iter().flat_map(|r| commands(r, frog_fix)).flat_map(|&o| o..o + 4).collect();
         for seed in 1..=3 {
             let Some(mut rom) = make_test_rom() else { return };
             randomize(&mut rom, seed, &o);

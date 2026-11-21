@@ -15,6 +15,10 @@
 //! drawn after it, so a platform there would be painted over. 2F, 3F1, 5F1,
 //! 7F1 and the three World 8 rooms have none, and are left alone.
 //!
+//! 8F1's backdrop command is also the one the Frog Suit softlock fix
+//! (`items::frog_softlocks`) repurposes, so with that fix on 8F1 deals only
+//! its other command: see [`commands`].
+//!
 //! Draws from its own substream ([`BOOM_BOOM_ROOM_SALT`]), so the option
 //! moves no other part of the seed.
 
@@ -103,10 +107,23 @@ pub(crate) const ROOMS: &[Room] = &[
            commands: &[0x2BA21, 0x2BA85], fixed: &[], covered: &[] },
 ];
 
+/// The commands `room` deals. With `frog_fix` (the Frog Suit softlock fix
+/// will run), 8F1 gives up its backdrop command, which that fix repurposes
+/// into 8F's row-7 brick, and deals one platform instead of two. Taking it
+/// here would leave 8F unfixed: the fix only lands on vanilla bytes.
+pub(crate) fn commands(room: &Room, frog_fix: bool) -> &'static [usize] {
+    let backdrop = &[crate::randomize::items::frog_softlocks::BACKDROP_8F];
+    match room.commands.strip_suffix(backdrop) {
+        Some(rest) if frog_fix => rest,
+        _ => room.commands,
+    }
+}
+
 /// Deal every room.
-pub(crate) fn randomize(rom: &mut Rom, seed: u64) {
+pub(crate) fn randomize(rom: &mut Rom, seed: u64, frog_fix: bool) {
     let mut rng = ChaCha8Rng::seed_from_u64(seed ^ BOOM_BOOM_ROOM_SALT);
     for room in ROOMS {
+        let room = &Room { commands: commands(room, frog_fix), ..*room };
         if let Some(platforms) = deal(room, &mut rng) {
             rom.push_tag(&format!("{}/{}", room.level, room.area));
             write(rom, room, &platforms);

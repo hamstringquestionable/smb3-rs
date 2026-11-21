@@ -15,7 +15,9 @@ deploys.
   blocks (? blocks, bricks, note blocks) can come out of any of them, so it
   stays near its original spot without being in the exact same block.
 - Boom-Boom Room: the floating blocks in fortress boss rooms are dealt new
-  places and widths, and the 1-F and 8-F1 boss rooms get some.
+  places and widths, and the 1-F and 8-F1 boss rooms get some. With Suit
+  Blocks on, 8-F1 gets one, so 8-F keeps the raised spike that lets a Frog
+  Suit through the tunnel before Boom-Boom.
 - Suit Blocks: blocks can now hand out a Tanooki, Frog or Hammer Suit. A
   suit comes out as an upside-down star in the suit's colours. With it on,
   flower, leaf, star and the three suits each come out of about 1 in 6 ?

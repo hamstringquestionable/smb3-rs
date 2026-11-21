@@ -54,6 +54,12 @@ struct Edit {
     patched: &'static [u8],
 }
 
+/// 8F's black backdrop command, which the 8F fix repurposes into its row-7
+/// brick. Boom-Boom Room deals the same command as an 8F1 platform, so it
+/// leaves this one alone whenever this fix runs: see
+/// [`crate::randomize::levels::boom_boom_room::commands`].
+pub(crate) const BACKDROP_8F: usize = 0x2BA85;
+
 /// A set of edits that is applied together or not at all.
 struct Fix {
     /// Write-log tag, so `--write-log` attributes each byte to its own fix
@@ -121,7 +127,7 @@ static FIXES: [Fix; 2] = [
         edits: &[
             Edit { offset: 0x2B93A, vanilla: &[0x32, 0x3A, 0x10], patched: &[0x17, 0xD1, 0xD0] },
             Edit {
-                offset: 0x2BA85,
+                offset: BACKDROP_8F,
                 vanilla: &[0x70, 0xCD, 0x3A, 0x22],
                 patched: &[0x17, 0xD2, 0xE0, 0x0D],
             },
@@ -153,6 +159,15 @@ pub(crate) fn apply(rom: &mut Rom) {
         }
         rom.pop_tag();
     }
+}
+
+/// Whether every fix is in place on `rom`.
+#[cfg(test)]
+pub(crate) fn all_applied(rom: &Rom) -> bool {
+    FIXES
+        .iter()
+        .flat_map(|f| f.edits)
+        .all(|e| rom.read_range(e.offset, e.patched.len()) == e.patched)
 }
 
 #[cfg(test)]
