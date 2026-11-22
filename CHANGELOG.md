@@ -9,6 +9,8 @@ deploys.
 
 ## [Unreleased]
 
+## [3.2.1] - 2026-11-21
+
 ### Fixed
 
 - Two-player games: Luigi now starts with the same lives as Mario. On about
