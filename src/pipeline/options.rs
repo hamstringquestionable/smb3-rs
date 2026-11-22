@@ -563,10 +563,13 @@ pub struct Options {
     pub item_gates: bool,
     /// **Power-up gates**, the second item gate. `?` blocks, bricks, note and
     /// wood blocks — and Big `[?]` boxes and suit blocks for the suits — give
-    /// nothing better than a coin (a 1-Up for a suit) until that power-up's
-    /// **key level**, drawn as the dancing flower, is beaten. The levels that
-    /// need a power-up to finish (6-5, 7-7, 7-F1, 8-F) go on required map
-    /// cells, and every key they need comes before them. See
+    /// nothing better than a coin until that power-up's **key level**, drawn
+    /// as the dancing flower, is beaten. A locked suit box becomes the 3-Up
+    /// box, and a suit block picks only from unlocked suits (a 1-Up when none
+    /// is). Without Modern Power-Ups a small player needs the Mushroom key
+    /// before flower and leaf blocks give anything. The levels that need a
+    /// power-up to finish (6-5, 7-7, 7-F1, 8-F) go on required map cells when
+    /// the maze allows, and every key they need comes before them. See
     /// `maze::powerup_gate` (the ROM side) and `maze::powerup_placement`.
     ///
     /// **Only read when `world_maze` is on**: the unlocks are maze SRAM, and a

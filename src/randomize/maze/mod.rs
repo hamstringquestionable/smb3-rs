@@ -276,7 +276,7 @@ pub(crate) enum GateTarget {
 /// Something the player cannot pass until they hold **every** key in `needs`.
 ///
 /// A set rather than one key because a demand can be compound — 7-F1 needs
-/// the Tanooki and, in Classic, the mushroom to break the bricks to it. The
+/// the Tanooki and, without Modern Power-ups, the mushroom to break the bricks to it. The
 /// canoe needs one.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub(crate) struct Gate {

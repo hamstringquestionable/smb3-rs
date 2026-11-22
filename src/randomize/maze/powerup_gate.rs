@@ -194,7 +194,8 @@ pub(crate) enum Need {
     Key(PowerUp),
     /// **To be big**, from these flower-or-leaf blocks
     /// ([`FLOWER_OR_LEAF_OFFSETS`](crate::randomize::items::powerups::FLOWER_OR_LEAF_OFFSETS)).
-    /// Classic: the Mushroom, which is what a small player gets from either.
+    /// Without Modern Power-ups: the Mushroom, which is what a small player
+    /// gets from either.
     /// Modern Power-ups: the key for what each block actually rolled, since a
     /// small player gets the block's own item there.
     Big(&'static [usize]),
@@ -274,7 +275,8 @@ pub(crate) fn keyed_powerups(modern: bool) -> Vec<PowerUp> {
 }
 
 /// The map tile a key level wears: the dancing flower (`$BD`), a special
-/// entry vanilla never places on its own, completable like a panel.
+/// entry completable like a panel. Vanilla also draws it as off-path scenery
+/// in Worlds 4 and 7, so a key level stands out by sitting on a path.
 pub(crate) const TILE_KEY_LEVEL: u8 = 0xBD;
 
 /// The on-clear row that makes `cell` the key level for `powerup`.
@@ -783,7 +785,7 @@ mod tests {
         }
     }
 
-    /// Classic resolves "be big" to the Mushroom; Modern to each block's roll,
+    /// Normal power-ups resolve "be big" to the Mushroom; Modern to each block's roll,
     /// and to both keys when a block's byte is not a roll at all.
     #[test]
     fn gate_keys_follow_the_arm_and_the_rolls() {

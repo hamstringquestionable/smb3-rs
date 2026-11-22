@@ -570,7 +570,7 @@ export const SCHEMA = [
 		mode: "maze" },
 	{ id: "powerup_gates", type: "bool", default: false,
 		label: "Power-up Gates",
-		tip: "Each power-up is locked until you beat its key level, the one with a dancing flower. Until then its blocks only give a coin, and Big ? boxes and suit blocks give a 1-up instead of a suit. The levels you can't finish without a power-up, like 6-5 and 7-7, are on your way, and their keys always come before them. Toad Houses, chests and Hammer Bros still hand out power-ups.",
+		tip: "Each power-up is locked until you beat its key level, a dancing flower on a path. Until then, blocks that would give it give a coin instead, a Big ? suit box gives 1-ups, and Suit Blocks only give suits you've unlocked. Find the Mushroom first: without it, flower and leaf blocks give a small player a coin (not with Modern Power-Ups). The levels you can't finish without a power-up (6-5, 7-7, 7-F1 and 8-F) are placed on your way whenever the maze allows, after their keys. Toad Houses, chests and Hammer Bros still hand out power-ups.",
 		group: "maze", inFlagKey: true,
 		mode: "maze" },
 	{ id: "uncapped_pad_jumps", type: "bool", default: false,
