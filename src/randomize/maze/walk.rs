@@ -64,7 +64,10 @@ fn teleport_lookup(pairs: &[TeleportEdge]) -> TeleportLookup {
 /// a `WorldState` — the walker has no business knowing about slots, locks or
 /// budgets.
 ///
-/// `blocked` is how a shut lock is expressed. The caller used to paint a lock
+/// `blocked` is how a shut lock is expressed, and a gated level or fortress.
+/// A **path** cell in it cannot be crossed (a lock). A **node** cell in it can
+/// be stood on but not walked past — an unbeaten level the player cannot beat
+/// yet. The two never collide: path cells sit between nodes. The caller used to paint a lock
 /// tile onto the grid instead, which worked but meant the *builder* had to know
 /// which byte renders a lock. Which byte that is depends on the path underneath
 /// and is purely cosmetic — see `map_walker::walk_reachable_blocked`.
@@ -195,6 +198,10 @@ fn expand(
     let (r, c) = pos;
     let tile_here = grid.get(r, c);
     if (tile_here == TILE_AIRSHIP || tile_here == TILE_BOWSER) && !is_start {
+        return;
+    }
+    // A gated node: reached, but nothing past it is reached through it.
+    if blocked.contains(&pos) && !is_start {
         return;
     }
 

@@ -146,17 +146,17 @@ is the one to read:
 |------|-----------|-----------|--------------------|
 | PRG031 | `$E000–$FFFF`, always | 27 | **16** |
 | PRG030 | `$8000–$9FFF`, always | 18 | 18 |
-| PRG001 | swapped, in-level (object AI) | 90 | 38 |
+| PRG001 | swapped, in-level (object AI) | 52 | 36 |
 | PRG003 | swapped, in-level (object AI) | 5 | 5 |
 | PRG004 | swapped, in-level (object AI, group 3) | 426 | 426 |
-| PRG005 | swapped, in-level (object AI) | 58 | 58 |
+| PRG005 | swapped, in-level (object AI) | 26 | 26 |
 | PRG006 | `$C000–$DFFF`, in-level (enemy data) | 1392 | 1392 |
 | PRG007 | swapped, in-level (object AI) | 27 | 27 |
 | PRG010 | `$C000–$DFFF`, map | 80 | 64 |
 | PRG011 | `$A000–$BFFF`, map | 46 | 14 |
 | PRG025 | `$C000–$DFFF`, title screen | 2707 | 2695 |
 | PRG012 | `$A000–$BFFF`, map reload | 620 | 240 |
-| PRG026 | `$A000–$BFFF`, map/inventory | 2061 | 2043 |
+| PRG026 | `$A000–$BFFF`, map/inventory | 1917 | 1899 |
 | PRG027 | `$A000–$BFFF`, letter cutscene | 657 | 657 |
 | PRG029 | `$C000–$DFFF`, Toad House | 2548 | 1528 |
 

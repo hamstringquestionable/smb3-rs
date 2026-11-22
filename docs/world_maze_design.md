@@ -1594,7 +1594,10 @@ reads `×` until a second obelisk is beaten (`maze::hidden_worlds`).
   one is tested, so both obelisks are optional *together*. Its own substream
   (`HIDDEN_WORLDS_SALT`), so turning it on moves nothing else. Same tile.
 - **The trigger is an `on_clear` row** setting `maze_state::WORLDS_REVEAL`
-  (`$7ADE`). After it, **one** maze SRAM byte is left (`$7ADF`).
+  (`$7ADE`). After it, **one** maze SRAM byte was left (`$7ADF`), and the
+  power-up gate's unlock bits (`maze_state::POWERUPS_FOUND`) took it in
+  2026-11. The maze's own run is full; `$7ADE` is a zero/non-zero flag that
+  could become a spare bit of `$7ADF` if a byte is ever needed.
 - **Two draw sites, three screens.** `world_order` already rewrote both
   "WORLD n" draws to read its display table: `Map_ConfigWorldIntro` (PRG010,
   the arrival banner) and `StatusBar_Fill_World` (PRG026, map *and* level

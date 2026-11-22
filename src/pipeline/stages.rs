@@ -23,6 +23,8 @@ pub(super) struct Resolved {
     whistles_removed: bool,
     /// Whether item gates were asked for — see [`resolve`].
     item_gates: bool,
+    /// Whether power-up gates were asked for: the option under the maze.
+    powerup_gates: bool,
     /// Starting items with the random sentinels resolved to concrete items.
     starting_items: Vec<u8>,
     hammer_breaks_locks: bool,
@@ -70,6 +72,9 @@ pub(super) struct MazeModel {
     /// The world-number obelisk, `(world, cell)`: `Some` exactly when the
     /// world numbers are hidden.
     world_obelisk: Option<(usize, (usize, usize))>,
+    /// Power-up key levels, each with the power-up it unlocks. Empty unless
+    /// power-up gates are on.
+    powerup_keys: Vec<randomize::maze::powerup_placement::KeyLevel>,
 }
 
 /// What [`maze_rom`] hands on to the stages after it.
@@ -103,6 +108,7 @@ pub(super) fn resolve(seed: u64, options: &Options, rng: &mut ChaCha8Rng) -> Res
     // asked for*; which ones got installed is `state.gates`, and which of those
     // the ROM side must honour is `canoe_gated`, both further down.
     let item_gates = options.world_maze && options.item_gates;
+    let powerup_gates = options.world_maze && options.powerup_gates;
     let starting_items: Vec<u8> = options
         .starting_items
         .iter()
@@ -154,6 +160,7 @@ pub(super) fn resolve(seed: u64, options: &Options, rng: &mut ChaCha8Rng) -> Res
     Resolved {
         whistles_removed,
         item_gates,
+        powerup_gates,
         starting_items,
         hammer_breaks_locks,
         hammer_breaks_bridges,
@@ -580,10 +587,15 @@ pub(super) fn overworld_build(
 }
 
 /// Stage 8: the world maze's model pass. `None` unless the mode is on.
+// Reason: each argument is a separate pipeline product this stage reads (the
+// catalog joined for power-up gates' level names); bundling them would invent
+// a struct with one user.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn maze_model(
     rom: &mut Rom,
     options: &Options,
     run: &Resolved,
+    catalog: &NodeCatalog,
     build: &mut BuildResult,
     credits_progression: Option<&[u8]>,
     seed: u64,
@@ -688,13 +700,18 @@ pub(super) fn maze_model(
             randomize::maze::key_placement::place(rom, build, &mut state, sites, rng);
         }
         // Per-target, because the ROM side cannot be generic — each target is a
-        // different patch. The irrefutable `let` is the enforcement: add a
+        // different patch. The exhaustive `match` is the enforcement: add a
         // `GateTarget` variant and this stops compiling until the new target's
         // patch is wired in alongside the canoe's.
         let mut gated = [false; 8];
         for g in &state.gates {
-            let randomize::maze::GateTarget::Canoe(w) = g.target;
-            gated[w] = true;
+            match g.target {
+                randomize::maze::GateTarget::Canoe(w) => gated[w] = true,
+                // A power-up gate is its level's identity, which the writer
+                // pins; its ROM side is the block gate in [`macobra_layer`]
+                // and the key rows in [`maze_rom`], not a per-cell patch.
+                randomize::maze::GateTarget::Cell(_) => {}
+            }
         }
         // Wandom's pyramid, last, so it sees the maze exactly as it will ship:
         // pads, relocated forts and any item gates. No eligible level anywhere
@@ -721,7 +738,27 @@ pub(super) fn maze_model(
         if let Some(cell) = world_obelisk {
             randomize::maze::wandom::mark_pyramid(build, cell);
         }
-        MazeModel { state, wands, gated, pyramid, world_obelisk }
+        // Power-up gates, after the obelisks, which they wall off so no key
+        // ever depends on beating one. The gate levels go on required cells
+        // with their keys before them; the writer pins the one and flowers the
+        // other. Its own substream, so turning it on moves nothing else.
+        let mut powerup_keys = Vec::new();
+        if run.powerup_gates {
+            use randomize::maze::{powerup_gate, powerup_placement};
+            let mut rng = ChaCha8Rng::seed_from_u64(seed ^ powerup_placement::POWERUP_GATES_SALT);
+            let requests = powerup_placement::gate_requests(
+                rom,
+                catalog,
+                options.modern_powerups,
+                options.friendlier_levels,
+            );
+            let avoid: Vec<_> = pyramid.into_iter().chain(world_obelisk).collect();
+            let keyed = powerup_gate::keyed_powerups(options.modern_powerups);
+            let plan = powerup_placement::place(&mut state, &requests, &keyed, &avoid, &mut rng);
+            powerup_placement::mark(build, &requests, &plan);
+            powerup_keys = plan.keys;
+        }
+        MazeModel { state, wands, gated, pyramid, world_obelisk, powerup_keys }
     })
 }
 
@@ -791,7 +828,7 @@ pub(super) fn maze_rom(
     let world_obelisk = maze.as_ref().and_then(|m| m.world_obelisk);
     let mut on_clear = false;
 
-    if let Some(MazeModel { state, wands, .. }) = maze {
+    if let Some(MazeModel { state, wands, powerup_keys, .. }) = maze {
         rom.set_tag("world_maze");
         randomize::maze::writer::install_pad_metatile(rom, &state);
         rom.set_tag("wand_gate");
@@ -808,7 +845,17 @@ pub(super) fn maze_rom(
             .map(|cell| randomize::maze::wandom::trigger(cell, wands))
             .into_iter()
             .chain(world_obelisk.map(randomize::maze::hidden_worlds::trigger))
+            .chain(
+                powerup_keys
+                    .iter()
+                    .map(|&(p, cell)| randomize::maze::powerup_gate::trigger(cell, p)),
+            )
             .collect();
+        if !powerup_keys.is_empty() {
+            // Before the table: a power-up row's clear draws the icon.
+            rom.set_tag("powerup_gate");
+            randomize::maze::powerup_gate::install_icon(rom);
+        }
         if !triggers.is_empty() {
             rom.set_tag("on_clear");
             randomize::maze::on_clear::apply(rom, &triggers);
@@ -1327,12 +1374,21 @@ pub(super) fn macobra_layer(rom: &mut Rom, seed: u64, options: &Options) {
         randomize::items::poison_mushroom::apply(rom);
     }
     let suit_blocks = options.suit_blocks && options.powerups;
+    let powerup_gates = options.world_maze && options.powerup_gates;
     let spawn = randomize::items::block_spawn::SpawnFlags {
         poison_mushrooms: options.poison_mushrooms,
         suit_blocks,
+        // A suit block picks only from the unlocked suits (and star).
+        powerup_gates,
     };
     rom.set_tag("block_spawn");
     randomize::items::block_spawn::apply(rom, spawn, randomize::items::block_spawn::salt(seed));
+    // Power-up gates' blocks and Big ? boxes. After Modern Power-ups, whose two
+    // operands sit inside the run the gate replaces.
+    if powerup_gates {
+        rom.set_tag("powerup_gate");
+        randomize::maze::powerup_gate::apply(rom, options.modern_powerups);
+    }
     if suit_blocks {
         // The two level spots a Frog Suit cannot get out of. Only reachable in
         // a frog *because* of the suit blocks above, so the fix rides that

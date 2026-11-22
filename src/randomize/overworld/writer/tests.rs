@@ -2016,3 +2016,105 @@ fn an_unsatisfiable_pin_is_reported() {
         "the slot should still have been dealt an ordinary level"
     );
 }
+
+// --- Withheld entries ------------------------------------------------------
+
+/// **A withheld entry is dealt only where a pin names it.** The power-up gates'
+/// rule: a gate level is withheld, pinned onto the cell the model gated, and
+/// must appear nowhere else — not as a Deja Vu copy, not as an ordinary draw.
+/// A withheld entry with no pin (a gate the model dropped) is not dealt at
+/// all. The level and fortress decks still fill every slot.
+/// `(world, cell, (world_idx, entry_idx))`: where an entry was dealt.
+type Dealt = (usize, (usize, usize), (usize, usize));
+
+#[test]
+fn withheld_entries_are_dealt_only_at_their_pins() {
+    let Some(rom) = load_rom() else { return };
+    let catalog = node_catalog::NodeCatalog::build(&rom, false);
+    let pickup = standard_pickup(&rom, &catalog);
+    let entry = |name: &str| {
+        let ce = catalog.entries.iter().find(|e| e.name == name).expect("a catalog name");
+        (ce.world_idx, ce.entry_idx)
+    };
+    let (seven7, six5, fort) = (entry("7-7"), entry("6-5"), entry("7F1"));
+
+    for mode in [DejaVuMode::Off, DejaVuMode::Double, DejaVuMode::Wild] {
+        for seed in 0u64..6 {
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            let mut build = overworld::build::build(
+                &rom,
+                &OverworldData { pickup: &pickup, catalog: &catalog },
+                &mut rng,
+                standard_build_flags(),
+            );
+            let (lw, lpos) = pin_last_world_level_slot(&mut build, seven7).expect("a level slot");
+            let (fw, fslot) = (0..8)
+                .rev()
+                .find_map(|wi| {
+                    let i = build.worlds[wi]
+                        .slots
+                        .iter()
+                        .position(|s| s.kind == overworld::build::SlotKind::Fortress)?;
+                    Some((wi, i))
+                })
+                .expect("a fortress slot");
+            build.worlds[fw].slots[fslot].pin = Some(fort);
+            let fpos = build.worlds[fw].slots[fslot].pos;
+            build.withheld = vec![seven7, six5, fort];
+
+            let assignments = assign_pool(
+                &build,
+                &OverworldData { pickup: &pickup, catalog: &catalog },
+                &mut rng,
+                WriteFlags { deja_vu: mode, deja_vu_forts: true, ..Default::default() },
+            );
+            let ident = |pi: usize| {
+                let ce = &catalog.entries[pickup.pool[pi].catalog_idx];
+                (ce.world_idx, ce.entry_idx)
+            };
+            let levels: Vec<Dealt> = assignments
+                .iter()
+                .enumerate()
+                .flat_map(|(wi, wa)| wa.level.iter().map(move |a| (wi, a.pos, a.pool_idx)))
+                .map(|(wi, pos, pi)| (wi, pos, ident(pi)))
+                .collect();
+            let forts: Vec<Dealt> = assignments
+                .iter()
+                .enumerate()
+                .flat_map(|(wi, wa)| wa.fortress.iter().map(move |a| (wi, a.pos, a.pool_idx)))
+                .map(|(wi, pos, pi)| (wi, pos, ident(pi)))
+                .collect();
+
+            let at = |e| levels.iter().filter(|l| l.2 == e).map(|l| (l.0, l.1)).collect::<Vec<_>>();
+            assert_eq!(at(seven7), [(lw, lpos)], "{mode:?} seed {seed}: 7-7 dealt off its pin");
+            assert!(at(six5).is_empty(), "{mode:?} seed {seed}: an unpinned withheld level dealt");
+            let fat: Vec<_> = forts.iter().filter(|f| f.2 == fort).map(|f| (f.0, f.1)).collect();
+            assert_eq!(fat, [(fw, fpos)], "{mode:?} seed {seed}: 7F1 dealt off its pin");
+
+            let level_slots: usize = build
+                .worlds
+                .iter()
+                .map(|w| {
+                    w.slots.iter().filter(|s| s.kind == overworld::build::SlotKind::Level).count()
+                })
+                .sum();
+            assert_eq!(levels.len(), level_slots, "{mode:?} seed {seed}: a level slot went empty");
+
+            // Every level holding a one-off item is still dealt: a pin served
+            // from the withheld list must not leave the deck a card over, or
+            // under Deja Vu that card can be a chest level's only copy.
+            for ce in pickup.pool.iter().map(|pe| &catalog.entries[pe.catalog_idx]) {
+                let (w, e) = (ce.world_idx, ce.entry_idx);
+                let unique = matches!(ce.kind, node_catalog::NodeKind::Level)
+                    && (rom_data::is_chest_level(w, e) || rom_data::is_hand_level(w, e));
+                if unique {
+                    assert!(
+                        levels.iter().any(|l| l.2 == (w, e)),
+                        "{mode:?} seed {seed}: {} was not dealt",
+                        ce.name
+                    );
+                }
+            }
+        }
+    }
+}

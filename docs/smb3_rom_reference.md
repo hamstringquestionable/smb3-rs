@@ -2478,6 +2478,35 @@ PUp_StarManFlash / LDY #8 / RTS` — `LATP_Star` with the marker index, so a
 suit block that comes out a star cycles like one. The spawn hook sees `$03`
 and swaps in the Starman or a suit object; see "Unused Group-0 Objects".
 
+**The power-up gate** (`maze::powerup_gate`, 2026-11-21, `testrom`-only) takes
+the 36 bytes of `LATP_Flower`, `LATP_Leaf` and `LATP_Star` (`$B7EC–$B80F`,
+file `0x117FC`). Each is reached only from its own `LATP_JumpTable` word, and
+the run ends exactly at `LATP_Coin` (`$B810`). Codes 1-3 are repointed at
+`$B7EE` and, with Suit Blocks on, code `B` at a `LDY #$0E` stub at `$B7EC`. The
+routine picks the vanilla product (a small player still gets the mushroom from
+a flower or leaf block, and star and suit ignore size), then shifts
+`maze_state::POWERUPS_FOUND` (`$7ADF`) right by the `Bouncer_PUp` index. Carry
+then holds bit `index - 1`, so the bits are flower `$02`, leaf `$04`, star
+`$08`, mushroom `$10` and suits `$80`. With carry clear the `BCC` lands on
+`LATP_Coin`. Things verified while writing it: the only caller
+(`prg008.asm:4985`) reads only `Y` on return, so `Temp_Var1` is free inside a
+handler, and `LATP_CoinCommon` overwrites both `Y` and `Temp_Var1`, so the coin
+path is indifferent to what it is entered with. Modern Power-ups' two operand
+writes (`0x11802`, `0x11810`) fall inside this run; the gate's Modern arm
+replaces `LDY Player_Suit` with `LDY #$01` instead.
+
+**The unlock icon** (file `0x35815`, CPU `$B805`, PRG026) is what the on-clear
+dispatcher calls instead of `StatusBar_Fill_World` when its table holds a
+power-up row. It rescans the table for that cell, and on a match queues two
+8-tile rows at `$2B36`/`$2B56` (`CardVStartU`/`L`'s first card): blank box,
+`$AA`, the item's `InvItem_Tile_Layout` tiles, `$AA`, blank box. Then it falls
+on to `StatusBar_Fill_World`. Nothing remembers the icon: on the map the card
+boxes are drawn only at map entry (before op 8) and when the item box closes,
+and both read the real `Inventory_Cards`, so the icon lasts until one of those
+or the next level. In 2P the turn hand-over redraws the bar for the other
+player. The map's own BG and sprite CHR (`$14`-`$17`, `$20`-`$23`) have no
+power-up art. The bar's pages `$5C`-`$5F` do, which is why it goes there.
+
 **The Starman is the suit object.** A Big ? box's suit is a Starman whose
 `Objects_Frame` is 1/2/3. The frame picks the picture (suit art lives only in
 page `$4C`, which only the Big ? box objects request), the palette at Init

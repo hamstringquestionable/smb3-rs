@@ -33,10 +33,15 @@ pub(super) fn pick_w8_sprite_positions<R: Rng>(
     let mut fort_positions: Vec<(usize, usize)> = wa_w8.fortress.iter().map(|a| a.pos).collect();
     fort_positions.as_mut_slice().shuffle(rng);
 
-    let is_pyramid =
-        |pos: (usize, usize)| built_w8.slots.iter().any(|s| s.pos == pos && s.is_pyramid);
+    // A marked or pinned cell (an obelisk, a power-up key or gate) must keep
+    // its tile and its level, so no army sprite lands on it.
+    let is_special = |pos: (usize, usize)| {
+        built_w8.slots.iter().any(|s| s.pos == pos && (s.marker_tile.is_some() || s.pin.is_some()))
+    };
+    let fort_positions: Vec<(usize, usize)> =
+        fort_positions.into_iter().filter(|&pos| !is_special(pos)).collect();
     let mut level_positions: Vec<(usize, usize)> =
-        wa_w8.level.iter().map(|a| a.pos).filter(|&pos| !is_pyramid(pos)).collect();
+        wa_w8.level.iter().map(|a| a.pos).filter(|&pos| !is_special(pos)).collect();
     level_positions.as_mut_slice().shuffle(rng);
 
     let mut fort_iter = fort_positions.into_iter();
@@ -67,7 +72,7 @@ fn is_special_level_slot(built: &BuiltWorld, wa: &WorldAssignments, pos: (usize,
     built.slots.iter().any(|s| {
         s.pos == pos
             && (s.is_hand_trap
-                || s.is_pyramid
+                || s.marker_tile.is_some()
                 || (s.is_troll_pipe && !wa.demoted_troll_pipes.contains(&pos)))
     })
 }

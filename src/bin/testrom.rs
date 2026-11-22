@@ -201,6 +201,20 @@ struct Cli {
     #[arg(long, value_parser = parse_obelisk_at)]
     world_obelisk_at: Option<(u8, (usize, usize))>,
 
+    /// Install the power-up gate: every ? block, brick, note and wood block
+    /// pays a coin until its power-up is unlocked. Needs --flags with World
+    /// Maze on (the unlock bits are maze SRAM, cleared on a new game). Use
+    /// --powerup-key to make levels unlock them.
+    #[arg(long)]
+    powerup_gates: bool,
+
+    /// Make the level at W:ROW,COL the key for a power-up, as ITEM@W:ROW,COL
+    /// (e.g. --powerup-key mushroom@1:2,4). Beating it plays the 1-up and
+    /// unlocks that power-up. ITEM is mushroom, flower, leaf, star, tanooki, frog or hammer.
+    /// Repeatable. Needs --powerup-gates.
+    #[arg(long, value_parser = parse_powerup_key)]
+    powerup_key: Vec<testrom::PowerUpKey>,
+
     /// Let the Hammer item break fortress lock tiles on the map.
     #[arg(long)]
     hammer_locks: bool,
@@ -428,6 +442,15 @@ fn parse_obelisk_at(s: &str) -> Result<(u8, (usize, usize)), String> {
     Ok((w.trim().parse().map_err(|_| bad())?, (n(r)?, n(c)?)))
 }
 
+/// `ITEM@W:ROW,COL` for --powerup-key.
+fn parse_powerup_key(s: &str) -> Result<testrom::PowerUpKey, String> {
+    let (item, cell) = s
+        .split_once('@')
+        .ok_or_else(|| format!("expected ITEM@W:ROW,COL (e.g. leaf@1:2,4), got {s:?}"))?;
+    let (world, cell) = parse_obelisk_at(cell)?;
+    Ok(testrom::PowerUpKey { item: item.trim().to_string(), world, cell })
+}
+
 fn main() {
     let cli = Cli::parse();
 
@@ -615,6 +638,8 @@ fn main() {
         canoe_gate: cli.canoe_gate,
         obelisk_at: cli.obelisk_at,
         world_obelisk_at: cli.world_obelisk_at,
+        powerup_gates: cli.powerup_gates,
+        powerup_keys: cli.powerup_key.clone(),
         hammer_breaks_locks: cli.hammer_locks,
         hammer_breaks_bridges: cli.hammer_bridges,
         water_stomp: cli.water_stomp,

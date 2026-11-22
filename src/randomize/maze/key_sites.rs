@@ -144,11 +144,13 @@ pub(crate) fn grant(rom: &mut Rom, build: &mut BuildResult, site: &KeySite, key:
                 .iter_mut()
                 .find(|w| w.world_idx == world)
                 .expect("a site names a world of this build");
-            w.hb_sprites[idx].reward = key.item_byte();
+            w.hb_sprites[idx].reward = key.item_byte().expect("an item key at a Hammer Bro");
         }
-        Sink::Letter { world } => {
-            crate::randomize::items::set_princess_reward(rom, world, key.item_byte())
-        }
+        Sink::Letter { world } => crate::randomize::items::set_princess_reward(
+            rom,
+            world,
+            key.item_byte().expect("an item key in a letter"),
+        ),
     }
 }
 
@@ -308,7 +310,7 @@ mod tests {
             grant(&mut rom, &mut result, &site, Key::Anchor);
             assert_eq!(
                 site.current_item(&rom, &result),
-                Key::Anchor.item_byte(),
+                Key::Anchor.item_byte().unwrap(),
                 "the granted site holds the key: {site:?}"
             );
             for (other, before) in others {

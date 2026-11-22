@@ -282,6 +282,18 @@ pub enum Base {
     Randomized { seed: u64, options: Box<Options> },
 }
 
+/// One `--powerup-key` request: the level at this cell unlocks this power-up.
+#[derive(Clone, Debug)]
+pub struct PowerUpKey {
+    /// The power-up, as `testrom` spells it: mushroom, flower, leaf, star,
+    /// tanooki, frog or hammer.
+    pub item: String,
+    /// 1-based world.
+    pub world: u8,
+    /// Map grid `(row, col)`.
+    pub cell: (usize, usize),
+}
+
 /// One `--place` request: a level name and where to park it.
 pub struct Placement {
     /// Level name as the catalog spells it, e.g. `6F1`, `8B`, `7A`, `1-4`.
@@ -433,6 +445,13 @@ pub struct TestRomSpec {
     /// The same for the world-number obelisk: beating the level at this cell
     /// reveals the world numbers. Needs a `--flags` base with hidden worlds on.
     pub world_obelisk_at: Option<(u8, (usize, usize))>,
+    /// Install the power-up gate: blocks pay a coin until their power-up is
+    /// unlocked. Needs a `--flags` base with World Maze on, whose new-game
+    /// signal clears the unlock bits.
+    pub powerup_gates: bool,
+    /// Key levels: beating the level at each one's cell unlocks its power-up.
+    /// Needs `powerup_gates`.
+    pub powerup_keys: Vec<PowerUpKey>,
     /// Let the Hammer item break fortress lock tiles on the map.
     pub hammer_breaks_locks: bool,
     /// Let the Hammer item break water-gap (bridge) tiles on the map.
@@ -1320,6 +1339,66 @@ pub fn build(vanilla: &[u8], spec: &TestRomSpec) -> Result<TestRom, String> {
         ));
     }
 
+    // 5e. The power-up gate and its key levels. After the seed's own patches,
+    //     because the gate installs over Modern Power-ups and Suit Blocks and
+    //     has to know which of them the base has. Maze only: the unlock bits
+    //     are maze SRAM, and only the maze's new-game signal clears them.
+    if spec.powerup_gates {
+        use crate::randomize::maze::{on_clear, powerup_gate};
+        let Base::Randomized { options, seed } = &spec.base else {
+            return Err("--powerup-gates needs --flags with World Maze on".to_string());
+        };
+        if !options.world_maze {
+            return Err("--powerup-gates needs --flags with World Maze on".to_string());
+        }
+        if options.powerup_gates {
+            return Err("--powerup-gates: the --flags already have Power-up Gates on, \
+                        which places the gates and keys itself"
+                .to_string());
+        }
+        let suit_blocks = options.suit_blocks && options.powerups;
+        powerup_gate::apply(&mut rom, options.modern_powerups);
+        powerup_gate::install_icon(&mut rom);
+        if suit_blocks {
+            use crate::randomize::items::block_spawn;
+            block_spawn::install_gate(&mut rom, options.poison_mushrooms, block_spawn::salt(*seed));
+        }
+        report.push(format!(
+            "power-up gate: blocks pay a coin until unlocked ({} arm{})",
+            if options.modern_powerups { "Modern Power-ups" } else { "classic" },
+            if suit_blocks { ", suit blocks gated" } else { "" }
+        ));
+
+        let existing = on_clear::installed(&rom);
+        let mut triggers = existing.clone().unwrap_or_default();
+        for PowerUpKey { item: name, world, cell: (row, col) } in &spec.powerup_keys {
+            let p = powerup_gate::PowerUp::from_name(name).ok_or_else(|| {
+                format!(
+                    "--powerup-key: unknown power-up {name:?} \
+                     (mushroom, flower, leaf, star, tanooki, frog, hammer)"
+                )
+            })?;
+            let w = usize::from(*world)
+                .checked_sub(1)
+                .filter(|&w| w < 8)
+                .ok_or_else(|| format!("--powerup-key world {world} is out of range (1-8)"))?;
+            triggers.push(powerup_gate::trigger((w, (*row, *col)), p));
+            let tile = rom.read_byte(crate::randomize::rom_data::map_tile_offset(w, *row, *col));
+            report.push(format!(
+                "power-up key: W{world} row {row} col {col} (tile {tile:#04X}) unlocks {p:?}"
+            ));
+        }
+        if !spec.powerup_keys.is_empty() {
+            on_clear::apply(&mut rom, &triggers);
+            // A seed with no trigger of its own never pointed op 8 at the table.
+            if existing.is_none() {
+                crate::randomize::overworld::lock_keys::install_on_clear(&mut rom);
+            }
+        }
+    } else if !spec.powerup_keys.is_empty() {
+        return Err("--powerup-key needs --powerup-gates".to_string());
+    }
+
     // 6. Hammer tile-breaking. Applied here rather than via `Options` so it
     //    works on a vanilla base too — testing what a hammer does to a lock
     //    shouldn't require randomizing the map first.
@@ -1558,6 +1637,8 @@ mod tests {
             canoe_gate: false,
             obelisk_at: None,
             world_obelisk_at: None,
+            powerup_gates: false,
+            powerup_keys: Vec::new(),
             hammer_breaks_locks: false,
             hammer_breaks_bridges: false,
             water_stomp: false,
@@ -1608,6 +1689,60 @@ mod tests {
             .map(|i| rom.read_byte(crate::randomize::rom_data::FS_COMPLETION_BASES + i))
             .collect();
         assert_eq!(got, want, "the emitted base table no longer matches the finished map grids");
+    }
+
+    /// `--powerup-key` lands in the on-clear table with the power-up's bit,
+    /// and op 8 is pointed at the table even though the seed had no trigger
+    /// of its own. Without the hook the rows are written and never read.
+    #[test]
+    fn powerup_keys_reach_the_on_clear_table() {
+        use crate::randomize::maze::{on_clear, powerup_gate};
+        let Some(v) = vanilla() else {
+            eprintln!("SKIP: requires the ROM");
+            return;
+        };
+        let options = Options { world_maze: true, ..Options::default() };
+        let built = build(
+            &v,
+            &TestRomSpec {
+                base: Base::Randomized { seed: 1, options: Box::new(options) },
+                powerup_gates: true,
+                powerup_keys: vec![
+                    PowerUpKey { item: "mushroom".into(), world: 1, cell: (4, 6) },
+                    PowerUpKey { item: "star".into(), world: 1, cell: (6, 8) },
+                ],
+                ..spec()
+            },
+        )
+        .expect("build");
+        let rom = Rom::from_bytes_lax(&built.bytes, true).expect("parse");
+        let rows = on_clear::installed(&rom).expect("the on-clear table was not installed");
+        let want = [
+            powerup_gate::trigger((0, (4, 6)), powerup_gate::PowerUp::Mushroom),
+            powerup_gate::trigger((0, (6, 8)), powerup_gate::PowerUp::Star),
+        ];
+        for w in &want {
+            assert!(rows.contains(w), "missing {w:?} in {rows:?}");
+        }
+        let fx = rom.read_range(rom_data::FS_FORTRESS_FX, 35);
+        let [lo, hi] = crate::randomize::overworld::lock_keys::ON_CLEAR_CPU.to_le_bytes();
+        assert!(
+            fx.windows(3).any(|w| w == [0x4C, lo, hi]),
+            "op 8 does not jump to the on-clear routine"
+        );
+    }
+
+    /// Without a maze base there is no new-game clear for the unlock bits, so
+    /// the gate refuses rather than building a ROM that starts with whatever
+    /// SRAM held.
+    #[test]
+    fn powerup_gates_refuse_a_non_maze_base() {
+        let Some(v) = vanilla() else {
+            eprintln!("SKIP: requires the ROM");
+            return;
+        };
+        let err = build(&v, &TestRomSpec { powerup_gates: true, ..spec() }).unwrap_err();
+        assert!(err.contains("World Maze"), "{err}");
     }
 
     #[test]

@@ -214,6 +214,12 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
         "world-maze: status-bar world digit, × until revealed (16 reserved, 14 used)",
     ),
     fs(
+        0x35815,
+        144,
+        &["powerup_gate"],
+        "world-maze: a key level's power-up icon in the middle card box (144 reserved, 126 used)",
+    ),
+    fs(
         0x355BD,
         224,
         &["big_q_blocks"],
@@ -458,6 +464,12 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
         &["koopalings"],
         "koopa_fire_preset: set stomp counter from threshold table for fireball defeat",
     ),
+    fs(
+        0x0386A,
+        38,
+        &["block_spawn"],
+        "world-maze: suit-block pick from the unlocked pool, for power-up gates (38 reserved, 38 used)",
+    ),
     fs(0x03FD0, 22, &["koopalings"], "koopa_x_clamp: keep the Koopaling's X on screen"),
     fs(0x0400A, 6, &["koopalings"], "koopa_jump_base: Koopaling_JumpYVelsBase for hit counts 0-5"),
     fs(
@@ -473,6 +485,17 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
         "block-spawn hook: suit-block pick + poison 1-up, suit object stubs (rest of the dead Obj0A code)",
     ),
     // PRG008 (file 0x10010, CPU $A000–$BFFF in levels)
+    //
+    // Two owners, **one at a time per byte**: Modern Power-ups writes two
+    // operands inside vanilla `LATP_Flower`/`LATP_Leaf` here (0x11802,
+    // 0x11810), and the power-up gate later replaces the whole run, carrying
+    // that option in its own Modern arm instead.
+    fs(
+        0x117FC,
+        36,
+        &["powerup_gate", "qol/modern_powerups"],
+        "world-maze: power-up gate over LATP_Flower/Leaf/Star (36 reserved, 36 used: 34 code, 2 filler)",
+    ),
     fs(
         0x1191D,
         10,
@@ -488,6 +511,13 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
     ),
     fs(0x07FCF, 16, &["boomboom"], "boomboom_hits: per-fortress threshold table"),
     fs(0x07FDF, 44, &["boomboom"], "boomboom_hits: decoupled stomp-count subroutine"),
+    // PRG005 (file 0x0A010, CPU $A000–$BFFF) — object AI bank (Big ? boxes)
+    fs(
+        0x0BFD6,
+        32,
+        &["powerup_gate"],
+        "world-maze: a locked Big ? suit box becomes the 3-Up box (32 reserved, 29 used)",
+    ),
     // PRG006 (file 0x0C010, CPU $C000–$DFFF) — level enemy data bank
     // `items` co-owns both clone blocks: the cloning module builds the stream,
     // then item randomization rewrites the OBJ_TREASURESET byte inside it
@@ -975,6 +1005,12 @@ pub(crate) const FS_ON_CLEAR_DISPATCH: usize = 0x35745; // 192 reserved, 50 code
 // bank's dead tail.
 pub(crate) const FS_WORLD_DIGIT_BAR: usize = 0x35805; // 16 reserved, 14 used (CPU $B7F5)
 
+// PRG026 - the power-up gate's unlock icon (`maze::powerup_gate`): after a key
+// level's clear, the on-clear dispatcher calls this instead of
+// StatusBar_Fill_World to draw the icon in the middle card box. Next after
+// FS_WORLD_DIGIT_BAR in the bank's dead tail.
+pub(crate) const FS_POWERUP_ICON: usize = 0x35815; // 144 reserved, 126 used (CPU $B805)
+
 /// The shared "do you already hold an Anchor" test, and the three hook bodies
 /// that call it.
 ///
@@ -1116,9 +1152,30 @@ pub(crate) const BLOCK_SPAWN_CPU: u16 = 0xA714; // $A000 + (0x02724 - 0x02010)
 // routine), 8 used.
 pub(crate) const FS_SUIT_HANDLER: usize = 0x1191D; // CPU $B90D
 
+// Power-up gate (`maze::powerup_gate`) — NOT `$FF` filler (PRG008 has none).
+// The bodies of `LATP_Flower` ($B7EC, 14), `LATP_Leaf` ($B7FA, 14) and
+// `LATP_Star` ($B808, 8), each reached only from its own `LATP_JumpTable`
+// word. Repointing the three words frees all 36 adjacent bytes, which end
+// exactly where `LATP_Coin` ($B810) begins — so the gate's locked path is a
+// branch onto it rather than a `JMP`. 36 reserved, 36 used: the run is fixed
+// by vanilla's layout, so there is no headroom to reserve.
+pub(crate) const FS_POWERUP_GATE: usize = 0x117FC; // CPU $B7EC
+
 // Fireball defeat preset — load per-world stomp threshold from table so the
 // fireball→stomp handoff always triggers defeat after INC.
 pub(crate) const FS_KOOPA_FIRE_PRESET: usize = 0x0385E; // 12 bytes
+
+// PRG001 - the suit-block pick under power-up gates (`items::block_spawn`):
+// choose from the unlocked ones among star, Tanooki, Frog and Hammer. The
+// last 38 bytes of the "Hmm, unused space?" $FF padding before ObjInit_Bowser
+// (prg001.asm), after the Koopaling rows above. Same bank as the spawn routine
+// that JSRs it.
+pub(crate) const FS_SUIT_PICK: usize = 0x0386A; // 38 reserved, 38 used (CPU $B85A)
+
+// PRG005 - the Big ? box gate (`maze::powerup_gate`): BigQBlock_Open JSRs it
+// before the prize emerges. prg005.asm ends "Rest of ROM bank was empty"
+// after its last RTS at $BFC5, so the tail is unreferenced filler.
+pub(crate) const FS_BIGQ_GATE: usize = 0x0BFD6; // 32 reserved, 29 used (CPU $BFC6)
 
 pub(crate) const KOOPA_FIRE_PRESET_CPU: u16 = 0xB84E; // $A000 + (0x0385E - 0x02010)
 
@@ -1602,6 +1659,7 @@ mod free_space_tests {
             (FS_ON_CLEAR_DISPATCH, "FS_ON_CLEAR_DISPATCH"),
             (FS_WORLD_DIGIT_MAP, "FS_WORLD_DIGIT_MAP"),
             (FS_WORLD_DIGIT_BAR, "FS_WORLD_DIGIT_BAR"),
+            (FS_POWERUP_ICON, "FS_POWERUP_ICON"),
             (FS_WAND_READOUT_FLIP, "FS_WAND_READOUT_FLIP"),
             (FS_MYSTERY_ANCHOR, "FS_MYSTERY_ANCHOR"),
             (FS_HAMMER_LOCKS, "FS_HAMMER_LOCKS"),
@@ -1641,10 +1699,13 @@ mod free_space_tests {
             (FS_BOWSER_DOOR_BUFFER_CLEAR, "FS_BOWSER_DOOR_BUFFER_CLEAR"),
             (FS_KOOPA_JUMP_BASE, "FS_KOOPA_JUMP_BASE"),
             (FS_KOOPA_FIRE_PRESET, "FS_KOOPA_FIRE_PRESET"),
+            (FS_SUIT_PICK, "FS_SUIT_PICK"),
+            (FS_BIGQ_GATE, "FS_BIGQ_GATE"),
             (FS_KOOPA_X_CLAMP, "FS_KOOPA_X_CLAMP"),
             (FS_POISON_MUSHROOM, "FS_POISON_MUSHROOM"),
             (FS_BLOCK_SPAWN, "FS_BLOCK_SPAWN"),
             (FS_SUIT_HANDLER, "FS_SUIT_HANDLER"),
+            (FS_POWERUP_GATE, "FS_POWERUP_GATE"),
             (FS_TAIL_STAY_DEAD, "FS_TAIL_STAY_DEAD"),
             (FS_BOOMBOOM_HITS_TABLE, "FS_BOOMBOOM_HITS_TABLE"),
             (FS_BOOMBOOM_HITS_SUB, "FS_BOOMBOOM_HITS_SUB"),

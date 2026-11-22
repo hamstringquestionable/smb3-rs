@@ -41,7 +41,7 @@ pub(crate) fn pin_plants_home<R: Rng>(build: &mut BuildResult, rng: &mut R) -> u
             s.kind == SlotKind::Level
                 && !s.is_hand_trap
                 && !s.is_troll_pipe
-                && !s.is_pyramid
+                && s.marker_tile.is_none()
                 && s.pin.is_none()
         })
         .map(|(i, _)| i)

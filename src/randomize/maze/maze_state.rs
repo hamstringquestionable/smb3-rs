@@ -129,9 +129,23 @@ pub(crate) const WANDOM_REVEAL: u16 = HANDOVER + 1;
 /// One byte for both players, like [`WANDOM_REVEAL`]: they share one screen.
 pub(crate) const WORLDS_REVEAL: u16 = WANDOM_REVEAL + 1;
 
+/// Which power-ups the player has unlocked: one bit per power-up, set by
+/// beating that power-up's key level and read by the `?` block gate. See
+/// [`crate::randomize::maze::powerup_gate`] for the bit layout.
+///
+/// **The last free byte of the run.** One byte is enough because five
+/// power-ups are gated and the bits are derived from the index the gate
+/// returns anyway, so no table maps one to the other. If a later feature needs
+/// a byte, [`WORLDS_REVEAL`] is only ever zero or non-zero and could become
+/// one of this byte's three spare bits.
+///
+/// One byte for both players, like the reveals: an unlock is the run's, not a
+/// player's.
+pub(crate) const POWERUPS_FOUND: u16 = WORLDS_REVEAL + 1;
+
 /// First byte after everything allocated above — where the next allocation
 /// starts.
-pub(crate) const MAZE_STATE_NEXT: u16 = WORLDS_REVEAL + 1;
+pub(crate) const MAZE_STATE_NEXT: u16 = POWERUPS_FOUND + 1;
 
 /// Every byte the maze owns, as one contiguous run.
 ///
@@ -169,4 +183,5 @@ const _: () = {
     );
     assert!(HANDOVER < WANDOM_REVEAL, "the Wandom reveal overlaps the hand-over flag");
     assert!(WANDOM_REVEAL < WORLDS_REVEAL, "the world reveal overlaps the Wandom reveal");
+    assert!(WORLDS_REVEAL < POWERUPS_FOUND, "the power-up bits overlap the world reveal");
 };

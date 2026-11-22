@@ -270,6 +270,13 @@ struct Cli {
     #[arg(long)]
     item_gates: bool,
 
+    /// Lock each power-up behind a key level, drawn as a dancing flower: its
+    /// blocks give a coin until that level is beaten. The levels that need a
+    /// power-up to finish sit on the way, after their keys. Requires
+    /// --world-maze; ignored without it.
+    #[arg(long)]
+    powerup_gates: bool,
+
     /// Let a telepad join any two depths of the maze rather than capping the
     /// jump. Allows big jumps, does not force them, but they become common:
     /// routes run about a level shorter. Requires --world-maze.
@@ -709,6 +716,7 @@ fn build_options(cli: &Cli) -> Options {
             maze_wands_min: cli.wandom_min,
             maze_wands_max: cli.wandom_max,
             item_gates: cli.item_gates,
+            powerup_gates: cli.powerup_gates,
             uncapped_pad_jumps: cli.uncapped_pad_jumps,
             hidden_worlds: cli.hidden_worlds,
             big_q_blocks: cli.big_q_blocks,
@@ -846,6 +854,10 @@ fn print_summary(options: &Options, seed: u64, output_path: &std::path::Path) {
         eprintln!(
             "  Item gates: {}",
             if options.item_gates { "on (boats need an Anchor)" } else { "off" }
+        );
+        eprintln!(
+            "  Power-up gates: {}",
+            if options.powerup_gates { "on (power-ups need their key level)" } else { "off" }
         );
         if options.uncapped_pad_jumps {
             eprintln!("  Pad jumps: uncapped");
