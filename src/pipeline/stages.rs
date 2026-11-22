@@ -1229,7 +1229,7 @@ pub(super) fn title_and_starting_items(
     run: &Resolved,
 ) {
     // Title screen seed hash icons (cosmetic verification).
-    // This hooks STA $0736 at 0x308E2 for intro skip.
+    // This hooks STA $0737 at 0x308E5 for intro skip.
     // Skipped when the user opted out of ROM validation, since the hooks
     // assume vanilla offsets in PRG031 that may have been changed by a mod.
     if !options.skip_rom_validation {
@@ -1239,7 +1239,7 @@ pub(super) fn title_and_starting_items(
 
     // Starting items trampoline — must run AFTER title_screen because both
     // write to the lives init region at 0x308E0: this one wins, overwriting
-    // title_screen's intro-skip hook at 0x308E2. The trampoline replays the
+    // title_screen's intro-skip hook at 0x308E5. The trampoline replays the
     // identical intro-skip + menu-music bytes (shared
     // `title_screen::intro_skip_music_bytes`), so behavior is unchanged;
     // title_screen's FS_INTRO_SKIP routine is left in ROM unreferenced.

@@ -34,7 +34,7 @@ pub(crate) fn set_starting_lives(rom: &mut Rom, lives: u8) {
 /// because it is the one the player may hold alone.
 ///
 /// Must run AFTER title_screen: both patch the lives-init region, and this
-/// JSR overwrites title_screen's intro-skip hook at 0x308E2. The trampoline
+/// JSR overwrites title_screen's intro-skip hook at 0x308E5. The trampoline
 /// replays the identical intro-skip + menu-music bytes (shared
 /// `title_screen::intro_skip_music_bytes`), so behavior is preserved;
 /// title_screen's FS_INTRO_SKIP routine is left in ROM unreferenced.
@@ -68,7 +68,7 @@ pub(crate) fn write_starting_items(
     rom.write_range(FS_STARTING_ITEMS, &buf);
 
     // Patch lives init: JSR $E250 + NOP×5 (overwrites the title_screen
-    // intro-skip hook at 0x308E2 — see the doc comment above).
+    // intro-skip hook at 0x308E5 — see the doc comment above).
     #[rustfmt::skip]
     rom.write_range(LIVES_INIT_BASE, &[
         0x20, cpu as u8, (cpu >> 8) as u8,   // JSR $E250
