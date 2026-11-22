@@ -5896,6 +5896,8 @@ Each entry represents a 16x16 metatile column on the world map.
 
 Vanilla SMB3 leaves the 1P/2P select menu silent (the only title-screen music is the brief intro cutscene snippet, which the seed-hash patch skips). To add menu music, the intro-skip routine in PRG031 free space appends `LDA #music / STA $04F5` after setting `Title_State = 6`. The music engine picks up the change on the next frame and loops the track for as long as the player stays on the menu; pressing Start advances to the world map, which queues its own music as normal.
 
+**The hook must sit on Luigi's lives store, not Mario's** (fixed in 3.2.1). The title init sets both players' lives at file `0x308E0`: `LDA #lives / STA $0736 / STA $0737 / LDA #$FF`. The routine returns with `A` = the music track. Hooked on `STA $0736` (as until 3.2.1), the vanilla `STA $0737` after it stored the track into `Player_Lives+1`. Tracks `$80`/`$90` are negative, which is game over: `PRG030_879B` skips a player whose lives are negative, so Luigi never got a turn. The hook is now `JSR $E955` over `STA $0737` (`0x308E5`), and the routine replays that store first. The `LDA #$FF` that follows reloads `A`.
+
 The track is chosen deterministically from the seed via a curated 16-entry table (world map themes 1–9, plus level themes 0x10/0x20/0x30/0x40/0x60/0x80/0x90). See `src/randomize/cosmetic/title_screen.rs::MENU_MUSIC_TRACKS` and `pick_menu_music`. When `starting_items` is active it overwrites the lives-init hook, so `qol::write_starting_items` mirrors the same `STA $04F5` inside its own trampoline.
 
 ### Title Menu Input Loop (PRG024) — and the B-to-mute hook

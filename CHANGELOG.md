@@ -56,6 +56,16 @@ deploys.
 - Random Fire Flower is replaced by Suit Blocks. Flag keys made with it on
   now turn Suit Blocks on.
 
+## [3.2.1] - 2026-11-21
+
+### Fixed
+
+- Two-player games: Luigi now starts with the same lives as Mario. On about
+  one seed in eight he started the game already out, so every turn went back
+  to Mario; on the others his lives were a number taken from the title
+  screen's music instead of the Starting Lives setting. Seeds with Starting
+  Items were not affected.
+
 ## [3.2.0] - 2026-11-14
 
 ### Added
