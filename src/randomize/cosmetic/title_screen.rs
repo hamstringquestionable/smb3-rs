@@ -64,8 +64,17 @@ const DATA_CPU: u16 = crate::randomize::rom_data::prg031_file_to_cpu(DATA_OFFSET
 
 /// Skip the title screen intro cutscene by setting Title_State = 6 (IntroSkip)
 /// during init, after the zero-page clear. Title_State is at zero-page $DE.
-/// We hook STA $0736 at file 0x308E2 → JSR $E955 (free space after sprite data).
-const INTRO_SKIP_HOOK_OFFSET: usize = 0x308E2;
+/// We hook `STA $0737` at file 0x308E5 → `JSR $E955` (free space after sprite
+/// data), and the routine replays that store first.
+///
+/// **It must be the second store, Luigi's.** Vanilla sets both lives with
+/// `LDA #lives / STA $0736 / STA $0737`, and the routine returns with `A` =
+/// the menu music track. Hooked on Mario's store (as it was until 3.2.1), the
+/// vanilla `STA $0737` that followed wrote the track number into Luigi's
+/// lives: `$80`/`$90` read as negative, so on 1 seed in 8 Luigi started the
+/// game over and every 2-player turn went back to Mario. After Luigi's store
+/// comes `LDA #$FF`, which reloads `A`.
+const INTRO_SKIP_HOOK_OFFSET: usize = 0x308E5;
 const INTRO_SKIP_ROUTINE_OFFSET: usize = crate::randomize::rom_data::FS_INTRO_SKIP;
 const INTRO_SKIP_CPU: u16 =
     crate::randomize::rom_data::prg031_file_to_cpu(INTRO_SKIP_ROUTINE_OFFSET); // $E955
@@ -359,13 +368,13 @@ pub(crate) fn write_seed_hash(rom: &mut Rom, seed: u64, options: &Options) {
     // Hook: replace JSR $B7D6 with JMP $E914 in the title screen sprite loop.
     rom.write_range(HOOK_OFFSET, &[0x4C, ROUTINE_CPU as u8, (ROUTINE_CPU >> 8) as u8]);
 
-    // Skip intro cutscene: hook STA $0736 in title screen init to also set
+    // Skip intro cutscene: hook STA $0737 in title screen init to also set
     // Title_State ($DE) = 6 (IntroSkip). This loads all graphics quickly and
     // jumps straight to the 1P/2P menu, ensuring consistent CHR banks for our
     // hash sprites. Also queue a randomized menu music track via $04F5.
     //
-    // Replace: 8D 36 07 (STA $0736) → 20 55 E9 (JSR $E955)
-    // At $E955: STA $0736 / LDA #$06 / STA $DE / LDA #music / STA $04F5 / RTS
+    // Replace: 8D 37 07 (STA $0737) → 20 55 E9 (JSR $E955)
+    // At $E955: STA $0737 / LDA #$06 / STA $DE / LDA #music / STA $04F5 / RTS
     //
     // NOTE: when starting items are enabled, `qol::write_starting_items` later
     // overwrites the whole lives-init block at 0x308E0 (including this hook)
@@ -375,7 +384,7 @@ pub(crate) fn write_seed_hash(rom: &mut Rom, seed: u64, options: &Options) {
         INTRO_SKIP_HOOK_OFFSET,
         &[0x20, INTRO_SKIP_CPU as u8, (INTRO_SKIP_CPU >> 8) as u8],
     );
-    let mut intro_routine = vec![0x8D, 0x36, 0x07]; // STA $0736 (original instruction)
+    let mut intro_routine = vec![0x8D, 0x37, 0x07]; // STA $0737 (original instruction)
     intro_routine.extend_from_slice(&intro_skip_music_bytes(seed));
     intro_routine.push(0x60); // RTS
     rom.write_range(INTRO_SKIP_ROUTINE_OFFSET, &intro_routine);
@@ -699,6 +708,62 @@ mod asm_checks {
         // SndCur_Music2, which is what the next press reads.
         assert_eq!(run_mute(B, MUSIC, MUSIC), (0x80, 0x00));
         assert_eq!(run_mute(B, 0x00, MUSIC), (0x00, MUSIC));
+    }
+
+    /// Vanilla's lives init at 0x308E0: `LDA #4 / STA $0736 / STA $0737`,
+    /// then the `LDA #$FF` that reloads `A`.
+    const LIVES_INIT: usize = 0x308E0;
+    const VANILLA_LIVES_INIT: [u8; 10] =
+        [0xA9, 0x04, 0x8D, 0x36, 0x07, 0x8D, 0x37, 0x07, 0xA9, 0xFF];
+
+    #[test]
+    fn the_lives_init_is_where_the_hook_assumes() {
+        let Ok(bytes) = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes") else {
+            eprintln!("SKIP: requires the ROM");
+            return;
+        };
+        let rom = Rom::from_bytes(&bytes).unwrap();
+        assert_eq!(rom.read_range(LIVES_INIT, 10), &VANILLA_LIVES_INIT);
+    }
+
+    /// Run the patched lives init for every menu track: Mario and Luigi both
+    /// start with the starting lives. Hooked on Mario's store, Luigi got the
+    /// track number, and `$80`/`$90` left him game over before he played.
+    #[test]
+    fn both_players_start_with_the_starting_lives() {
+        use mos6502::cpu::CPU;
+        use mos6502::instruction::Ricoh2a03;
+        use mos6502::memory::{Bus, Memory};
+
+        const ORIGIN: u16 = 0x8000;
+        let mut tracks = std::collections::BTreeSet::new();
+        for seed in 0..10_000u64 {
+            if !tracks.insert(pick_menu_music(seed)) {
+                continue;
+            }
+            let mut rom = crate::randomize::qol::test_support::make_test_rom();
+            rom.write_range(LIVES_INIT, &VANILLA_LIVES_INIT);
+            write_seed_hash(&mut rom, seed, &Options::default());
+
+            let mut mem = Memory::new();
+            mem.set_bytes(ORIGIN, rom.read_range(LIVES_INIT, 10));
+            mem.set_bytes(INTRO_SKIP_CPU, rom.read_range(INTRO_SKIP_ROUTINE_OFFSET, 13));
+            let mut cpu = CPU::new(mem, Ricoh2a03);
+            cpu.registers.program_counter = ORIGIN;
+            for _ in 0..20 {
+                if cpu.registers.program_counter == ORIGIN + 8 {
+                    break;
+                }
+                cpu.single_step();
+            }
+            assert_eq!(cpu.registers.program_counter, ORIGIN + 8, "never left the lives init");
+            let lives = (cpu.memory.get_byte(0x0736), cpu.memory.get_byte(0x0737));
+            let track = pick_menu_music(seed);
+            assert_eq!(lives, (4, 4), "menu track {track:#04X}: (Mario, Luigi) lives");
+            assert_eq!(cpu.memory.get_byte(0x04F5), track, "the track was not queued");
+            assert_eq!(cpu.memory.get_byte(0xDE), 6, "the intro was not skipped");
+        }
+        assert_eq!(tracks.len(), MENU_MUSIC_TRACKS.len(), "not every track was tried");
     }
 
     /// The seed-hash sprite copy routine and the intro-skip routine predate the
