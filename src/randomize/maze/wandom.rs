@@ -174,7 +174,7 @@ pub(crate) fn mark_pyramid(build: &mut BuildResult, cell: MazePos) {
         .iter_mut()
         .find(|s| s.pos == pos && s.kind == SlotKind::Level)
         .expect("the pyramid was picked from a level slot the build still has");
-    slot.is_pyramid = true;
+    slot.marker_tile = Some(TILE_PYRAMID);
 }
 
 /// The pyramid's on-clear row: beating its cell puts K's digit tile in

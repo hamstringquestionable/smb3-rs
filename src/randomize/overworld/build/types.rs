@@ -61,12 +61,13 @@ pub(crate) struct SlotAssignment {
     /// tile drops the player into the underlying level (uniform Map_Op = $10
     /// dispatch — no pipe-transit state).
     pub(crate) is_troll_pipe: bool,
-    /// When true, the writer stamps the pyramid (`$69`) here instead of a
-    /// level-number tile, and the numbering skips it. Only set on
-    /// `SlotKind::Level` slots, and only by the world maze's Wandom
-    /// (`maze::wandom::mark_pyramid`): beating this level reveals the wand
-    /// count. The level underneath is an ordinary draw.
-    pub(crate) is_pyramid: bool,
+    /// A tile the writer stamps here instead of a level number, which the
+    /// numbering skips and map sprites keep off: the world maze's obelisks
+    /// (the pyramid `$69`, `maze::wandom::mark_pyramid`) and power-up key
+    /// levels (`$BD`, `maze::powerup_placement::mark`). Beating the level is
+    /// what the tile announces. Only set on `SlotKind::Level` slots; the level
+    /// underneath is an ordinary draw.
+    pub(crate) marker_tile: Option<u8>,
     /// **Deal this exact pointer-table entry here.** The `(world_idx,
     /// entry_idx)` of a vanilla entry, set by a model pass before the writer
     /// runs; `None` on every slot in every mode that does not use it.
@@ -218,6 +219,13 @@ pub(crate) struct BuiltWorld {
 #[derive(Clone)]
 pub(crate) struct BuildResult {
     pub(crate) worlds: Vec<BuiltWorld>,
+    /// Pointer-table entries `(world_idx, entry_idx)` the writer deals **only
+    /// where a slot pins them**, and nowhere else: they leave the level and
+    /// fortress decks before any deck surgery, and the top-up refills the
+    /// gap. Power-up gate levels go here — any copy of one is a gate, so a
+    /// copy the model did not place would be a gate it does not know about.
+    /// Empty in every mode that does not set it.
+    pub(crate) withheld: Vec<(usize, usize)>,
     /// Fortress counts per world (decided in Step 0).
     #[allow(dead_code)] // read in tests
     pub(crate) fort_counts: [usize; 8],

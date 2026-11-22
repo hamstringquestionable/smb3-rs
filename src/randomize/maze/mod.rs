@@ -123,6 +123,11 @@ pub(crate) mod canoe_gate;
 mod item_keys;
 pub(crate) mod key_placement;
 pub(crate) mod key_sites;
+// The power-up gate: `?` blocks pay a coin until that power-up's key level is
+// beaten. Its unlock bits are [`maze_state`]'s last byte.
+pub(crate) mod powerup_gate;
+// Where power-up gates and their key levels go in a finished maze.
+pub(crate) mod powerup_placement;
 
 // --- Hints ---
 // Under some-hints, every other away fortress and the lock it opens share a
@@ -257,20 +262,22 @@ const MAX_DEALS: usize = 8;
 /// (`spheres_without_canoe`) and a bool on the state (`anchor_gated`), which
 /// is the one-gate special case wearing two hats.
 ///
-/// `Cell(MazePos)` — a level slot sealed until its power-up is found — is the
-/// next variant, and lands with MiMaze.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum GateTarget {
     /// This world's boat, beached until the key is held. The whole world is
     /// still walkable; only the water edges close.
     Canoe(usize),
+    /// A level or fortress the player cannot beat until the keys are held —
+    /// a power-up gate. Until then the cell is a wall to the walker: nothing
+    /// past it is reached through it, and a fortress on it is not beaten.
+    Cell(MazePos),
 }
 
 /// Something the player cannot pass until they hold **every** key in `needs`.
 ///
-/// A set rather than one key because a demand can be compound — MiMaze's suit
-/// gates imply the mushroom, since a small player is sent to the mushroom row
-/// whichever block they bump. The canoe needs one.
+/// A set rather than one key because a demand can be compound — 7-F1 needs
+/// the Tanooki and, in Classic, the mushroom to break the bricks to it. The
+/// canoe needs one.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub(crate) struct Gate {
     pub(crate) target: GateTarget,
@@ -557,6 +564,15 @@ impl GlobalState {
             .collect()
     }
 
+    /// The gated cells the player cannot beat yet: every `Cell` gate short of
+    /// at least one of its keys.
+    fn shut_cells<'a>(&'a self, found: &'a HashSet<Key>) -> impl Iterator<Item = MazePos> + 'a {
+        self.gates.iter().filter_map(move |g| match g.target {
+            GateTarget::Cell(pos) if !g.needs.iter().all(|k| found.contains(k)) => Some(pos),
+            _ => None,
+        })
+    }
+
     /// Is world `wi`'s boat still beached?
     ///
     /// True when some installed gate names this canoe and the player is short
@@ -624,7 +640,8 @@ impl GlobalState {
     /// `GateTarget` variant makes that derivation fail to compile until its
     /// patch is wired.
     ///
-    /// Today: every canoe, keyed on the Anchor. MiMaze's `Cell` gates are next.
+    /// Every canoe, keyed on the Anchor. The power-up gates' `Cell` gates are
+    /// added later, by [`powerup_placement`].
     pub(crate) fn install_item_gates(&mut self) {
         self.gate_every_canoe(Key::Anchor);
     }
@@ -648,20 +665,30 @@ impl GlobalState {
         let mut wands_at_goal = 0;
 
         let reach = loop {
-            let shut = self.shut_locks_sealed(&open, sealed);
+            let mut shut = self.shut_locks_sealed(&open, sealed);
+            // A gated cell is stood on, not beaten: it holds the walk at it,
+            // and counts as neither content reached, a fort beaten nor a key.
+            let gated: HashSet<MazePos> = self.shut_cells(&found).collect();
+            for &(wi, pos) in &gated {
+                shut[wi].insert(pos);
+            }
             let view = self.view(&bases, &shut, &found);
             let reach = walk_maze(&view, &links, self.start);
 
             let reached: Vec<MazePos> = content
                 .iter()
                 .copied()
-                .filter(|&p| !seen.contains(&p) && reach.contains(p))
+                .filter(|&p| !seen.contains(&p) && !gated.contains(&p) && reach.contains(p))
                 .collect();
             seen.extend(reached.iter().copied());
 
             let beaten: Vec<FortRef> = forts
                 .iter()
-                .filter(|(f, pos)| !open.contains(f) && reach.contains((f.world, *pos)))
+                .filter(|(f, pos)| {
+                    !open.contains(f)
+                        && !gated.contains(&(f.world, *pos))
+                        && reach.contains((f.world, *pos))
+                })
                 .map(|&(f, _)| f)
                 .collect();
             let opened: Vec<usize> = self
@@ -677,7 +704,9 @@ impl GlobalState {
             let collected: Vec<Key> = self
                 .sources
                 .iter()
-                .filter(|s| !found.contains(&s.key) && reach.contains(s.pos))
+                .filter(|s| {
+                    !found.contains(&s.key) && !gated.contains(&s.pos) && reach.contains(s.pos)
+                })
                 .map(|s| s.key)
                 .collect();
             found.extend(collected.iter().copied());

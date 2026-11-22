@@ -50,6 +50,8 @@
 //! `Y`, and seventeen vanilla map ops reach it with whatever they left in `X`.
 
 use crate::randomize::maze::MazePos;
+use crate::randomize::maze::maze_state::POWERUPS_FOUND;
+use crate::randomize::maze::powerup_gate;
 use crate::randomize::overworld::lock_keys::{ADVANCE_CPU, cell_key};
 use crate::randomize::rom_data::{
     FS_ON_CLEAR, FS_ON_CLEAR_DISPATCH, PAGE_A000, PRGROM_CHANGE_A000, SND_LEVEL1UP, SOUND_QLEVEL1,
@@ -88,9 +90,9 @@ const DISPATCH_RESERVED: usize = 192;
 const _: () = assert!(CODE_LEN + MAX_TRIGGERS * ROW_LEN <= DISPATCH_RESERVED);
 
 /// Where the dispatcher runs once PRG026 is mapped: `$B735`.
-const DISPATCH_CPU: u16 = prg_bank_file_to_cpu(26, FS_ON_CLEAR_DISPATCH);
+pub(crate) const DISPATCH_CPU: u16 = prg_bank_file_to_cpu(26, FS_ON_CLEAR_DISPATCH);
 /// The table, straight after the dispatcher's code.
-const TABLE_CPU: u16 = DISPATCH_CPU + CODE_LEN as u16;
+pub(crate) const TABLE_CPU: u16 = DISPATCH_CPU + CODE_LEN as u16;
 
 /// The page numbers the trampoline and the dispatcher latch.
 const PAGE_DISPATCH: u8 = 26;
@@ -117,7 +119,8 @@ fn trampoline() -> [u8; 14] {
 /// Walks the table from the last row down to row 0 (`X` = row offset), so
 /// the loop's exit test is the `BPL` that `DEX` already set up — no compare.
 ///
-/// On the way out it calls [`STATUS_BAR_FILL_WORLD`], after every clear and
+/// On the way out it calls `after` ([`after_clear`]): [`STATUS_BAR_FILL_WORLD`]
+/// directly, or through the power-up icon. That call comes after every clear and
 /// not only on a match. A flag can change what the status bar shows, and the
 /// world digit is the one cell vanilla never redraws per frame (the wand
 /// readout's cells are), so without this a revealed world number stays `×` on
@@ -125,7 +128,7 @@ fn trampoline() -> [u8; 14] {
 /// is harmless, and doing it after the loop rather than per match keeps the
 /// loop's `X` out of a routine that clobbers it.
 #[rustfmt::skip]
-fn dispatcher(rows: usize) -> [u8; CODE_LEN] {
+fn dispatcher(rows: usize, after: u16) -> [u8; CODE_LEN] {
     assert!((1..=MAX_TRIGGERS).contains(&rows), "the dispatcher needs 1-{MAX_TRIGGERS} rows");
     let last = ((rows - 1) * ROW_LEN) as u8;
     let [k0_lo, k0_hi] = TABLE_CPU.to_le_bytes();
@@ -134,7 +137,7 @@ fn dispatcher(rows: usize) -> [u8; CODE_LEN] {
     let [va_lo, va_hi] = (TABLE_CPU + 3).to_le_bytes();
     let [snd_lo, snd_hi] = SOUND_QLEVEL1.to_le_bytes();
     let [page_lo, page_hi] = PAGE_A000.to_le_bytes();
-    let [fw_lo, fw_hi] = STATUS_BAR_FILL_WORLD.to_le_bytes();
+    let [fw_lo, fw_hi] = after.to_le_bytes();
     let [chg_lo, chg_hi] = PRGROM_CHANGE_A000.to_le_bytes();
     [
         0xA2, last,                    //  0: LDX #last row's offset
@@ -155,12 +158,25 @@ fn dispatcher(rows: usize) -> [u8; CODE_LEN] {
         0xCA,                          // 35: DEX
         0xCA,                          // 36: DEX
         0x10, 0xDB,                    // 37: BPL loop       (-> 2)
-        0x20, fw_lo, fw_hi,            // 39: JSR StatusBar_Fill_World ; redraw the bar's digit
+        0x20, fw_lo, fw_hi,            // 39: JSR after       ; StatusBar_Fill_World, or the
+                                       //     power-up icon, which ends in it
         0xA9, PAGE_MAP,                // 42: LDA #11
         0x8D, page_lo, page_hi,        // 44: STA PAGE_A000
         0x4C, chg_lo, chg_hi,          // 47: JMP PRGROM_Change_A000   ; tail call: its RTS
                                        //     returns to the trampoline
     ]
+}
+
+/// What the dispatcher calls once the scan is done: the power-up icon when
+/// any row unlocks a power-up (it ends in `StatusBar_Fill_World`), otherwise
+/// `StatusBar_Fill_World` itself. Derived from the rows, so [`installed`] can
+/// rebuild it and a table without power-up rows keeps its old bytes.
+fn after_clear(triggers: &[Trigger]) -> u16 {
+    if triggers.iter().any(|t| t.flag == POWERUPS_FOUND) {
+        powerup_gate::ICON_CPU
+    } else {
+        STATUS_BAR_FILL_WORLD
+    }
 }
 
 /// One table row's bytes.
@@ -175,8 +191,13 @@ fn row(t: &Trigger) -> [u8; ROW_LEN] {
 /// the lock stage, after the effect it hangs off is written) is what makes op
 /// 8 reach the trampoline, and it must only run when this has.
 pub(crate) fn apply(rom: &mut Rom, triggers: &[Trigger]) {
+    let after = after_clear(triggers);
+    assert!(
+        after != powerup_gate::ICON_CPU || powerup_gate::icon_installed(rom),
+        "a power-up row needs powerup_gate::install_icon first"
+    );
     rom.write_range(FS_ON_CLEAR, &trampoline());
-    rom.write_range(FS_ON_CLEAR_DISPATCH, &dispatcher(triggers.len()));
+    rom.write_range(FS_ON_CLEAR_DISPATCH, &dispatcher(triggers.len(), after));
     let table: Vec<u8> = triggers.iter().flat_map(row).collect();
     rom.write_range(FS_ON_CLEAR_DISPATCH + CODE_LEN, &table);
 }
@@ -190,20 +211,20 @@ pub(crate) fn installed(rom: &Rom) -> Option<Vec<Trigger>> {
         return None;
     }
     let rows = usize::from(rom.read_byte(FS_ON_CLEAR_DISPATCH + 1)) / ROW_LEN + 1;
-    if rows > MAX_TRIGGERS || rom.read_range(FS_ON_CLEAR_DISPATCH, CODE_LEN) != dispatcher(rows) {
+    if rows > MAX_TRIGGERS {
         return None;
     }
     let table = rom.read_range(FS_ON_CLEAR_DISPATCH + CODE_LEN, rows * ROW_LEN);
-    Some(
-        table
-            .chunks(ROW_LEN)
-            .map(|r| Trigger {
-                cell: cell_from_key(r[0], r[1]),
-                flag: u16::from_le_bytes([r[2], FLAG_PAGE]),
-                value: r[3],
-            })
-            .collect(),
-    )
+    let triggers: Vec<Trigger> = table
+        .chunks(ROW_LEN)
+        .map(|r| Trigger {
+            cell: cell_from_key(r[0], r[1]),
+            flag: u16::from_le_bytes([r[2], FLAG_PAGE]),
+            value: r[3],
+        })
+        .collect();
+    let code = dispatcher(rows, after_clear(&triggers));
+    (rom.read_range(FS_ON_CLEAR_DISPATCH, CODE_LEN) == code).then_some(triggers)
 }
 
 /// [`cell_key`] inverted.
@@ -258,7 +279,7 @@ mod asm_checks {
             let triggers: Vec<Trigger> = (0..rows)
                 .map(|i| Trigger { cell: (i % 8, (2, i)), flag: 0x7AC1 + i as u16, value: 1 })
                 .collect();
-            let mut code = dispatcher(rows).to_vec();
+            let mut code = dispatcher(rows, STATUS_BAR_FILL_WORLD).to_vec();
             code.extend(triggers.iter().flat_map(row));
             asm::check(&code)
                 .allocation(FS_ON_CLEAR_DISPATCH)
@@ -276,9 +297,13 @@ mod asm_checks {
     fn run(triggers: &[Trigger], at: MazePos, sram: &[(u16, u8)]) -> Memory {
         let mut mem = Memory::new();
         mem.set_bytes(ON_CLEAR_CPU, &trampoline());
-        mem.set_bytes(DISPATCH_CPU, &dispatcher(triggers.len()));
+        mem.set_bytes(DISPATCH_CPU, &dispatcher(triggers.len(), after_clear(triggers)));
         let table: Vec<u8> = triggers.iter().flat_map(row).collect();
         mem.set_bytes(TABLE_CPU, &table);
+        mem.set_bytes(powerup_gate::ICON_CPU, &powerup_gate::icon_routine());
+        // InvItem_Tile_Layout, stubbed so each tile names its row and corner.
+        let layout: Vec<u8> = (0..56u8).map(|i| 0x80 | i).collect();
+        mem.set_bytes(INV_ITEM_TILE_LAYOUT, &layout);
         mem.set_byte(PRGROM_CHANGE_A000, 0x60);
         // StatusBar_Fill_World, stubbed to count its calls: INC FILL_CALLS / RTS.
         let [c_lo, c_hi] = FILL_CALLS.to_le_bytes();
@@ -353,16 +378,48 @@ mod asm_checks {
         let mut t: Vec<Trigger> = (0..MAX_TRIGGERS - 3)
             .map(|i| Trigger { cell: (7, (8, i)), flag: 0x7AC1, value: 0x80 })
             .collect();
-        t.insert(0, Trigger { cell: A, flag: 0x7ADF, value: 0x01 });
-        t.push(Trigger { cell: B, flag: 0x7ADF, value: 0x04 });
+        t.insert(0, Trigger { cell: A, flag: 0x7ADD, value: 0x01 });
+        t.push(Trigger { cell: B, flag: 0x7ADD, value: 0x04 });
         t.push(Trigger { cell: B, flag: 0x7ADE, value: 0x10 });
         assert_eq!(t.len(), MAX_TRIGGERS);
 
-        let mut mem = run(&t, A, &[(0x7ADF, 0x40)]);
-        assert_eq!(mem.get_byte(0x7ADF), 0x41, "row 0 must OR, not store");
-        let mut mem = run(&t, B, &[(0x7ADF, 0x01)]);
-        assert_eq!((mem.get_byte(0x7ADF), mem.get_byte(0x7ADE)), (0x05, 0x10));
+        let mut mem = run(&t, A, &[(0x7ADD, 0x40)]);
+        assert_eq!(mem.get_byte(0x7ADD), 0x41, "row 0 must OR, not store");
+        let mut mem = run(&t, B, &[(0x7ADD, 0x01)]);
+        assert_eq!((mem.get_byte(0x7ADD), mem.get_byte(0x7ADE)), (0x05, 0x10));
         assert_eq!(mem.get_byte(0x7AC1), 0, "a row for another cell fired");
+    }
+
+    /// `InvItem_Tile_Layout`, PRG026 `$A27C`.
+    const INV_ITEM_TILE_LAYOUT: u16 = 0xA27C;
+
+    /// A power-up row's clear queues the two card rows, blank / icon / blank,
+    /// with that power-up's four tiles in the middle box. Any other clear
+    /// queues nothing, and a table without power-up rows never calls the icon.
+    #[test]
+    fn a_key_clear_draws_its_icon_in_the_middle_box() {
+        let leaf = powerup_gate::trigger(B, powerup_gate::PowerUp::Leaf);
+        let t = [Trigger { cell: A, flag: 0x7ADE, value: 0x10 }, leaf];
+        assert_eq!(after_clear(&t), powerup_gate::ICON_CPU);
+        let mut mem = run(&t, B, &[]);
+        assert_eq!(mem.get_byte(POWERUPS_FOUND), leaf.value);
+        let buf = |m: &mut Memory, i: u16| m.get_byte(0x0301 + i);
+        let queued: Vec<u8> = (0..22).map(|i| buf(&mut mem, i)).collect();
+        // Leaf is item 3: tiles $8C-$8F under the stub.
+        #[rustfmt::skip]
+        let want = [
+            0x2B, 0x36, 8, 0xFE, 0xFE, 0xAA, 0x8C, 0x8D, 0xAA, 0xFE, 0xFE,
+            0x2B, 0x56, 8, 0xFE, 0xFE, 0xAA, 0x8E, 0x8F, 0xAA, 0xFE, 0xFE,
+        ];
+        assert_eq!(queued, want);
+        assert_eq!(mem.get_byte(0x0300), 22, "Graphics_BufCnt");
+
+        let mut mem = run(&t, A, &[]);
+        assert_eq!(mem.get_byte(0x0300), 0, "a non-key clear drew the icon");
+        assert_eq!(mem.get_byte(0x7ADE), 0x10);
+
+        let plain = [Trigger { cell: A, flag: 0x7ADE, value: 0x10 }];
+        assert_eq!(after_clear(&plain), STATUS_BAR_FILL_WORLD);
     }
 
     fn blank_rom() -> Rom {
@@ -381,12 +438,12 @@ mod asm_checks {
         assert_eq!(installed(&rom), None, "a blank ROM has no dispatcher");
         let t = vec![
             Trigger { cell: A, flag: 0x7ADE, value: 0xF3 },
-            Trigger { cell: (7, (8, 47)), flag: 0x7ADF, value: 0x02 },
+            Trigger { cell: (7, (8, 47)), flag: 0x7ADD, value: 0x02 },
         ];
         apply(&mut rom, &t);
         assert_eq!(installed(&rom), Some(t.clone()));
 
-        assert!(retarget(&mut rom, 0x7ADF, B));
+        assert!(retarget(&mut rom, 0x7ADD, B));
         assert_eq!(installed(&rom).unwrap()[1], Trigger { cell: B, ..t[1] });
         assert_eq!(installed(&rom).unwrap()[0], t[0], "a row for another flag moved");
         assert!(!retarget(&mut rom, 0x7AC1, B), "no row sets that flag");

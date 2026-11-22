@@ -67,6 +67,15 @@
 //! summed first and shifted down before the screen numbers and salt join.
 //! `salt` is a seed-derived byte baked in as an immediate.
 //!
+//! ## Under power-up gates
+//!
+//! With the maze's power-up gates ([`SpawnFlags::powerup_gates`]), a suit
+//! block picks only from what the player has unlocked: `JSR pick`
+//! ([`suit_pick`], [`FS_SUIT_PICK`]) replaces the `AND #3` table read. It walks
+//! the pool, counting down `hash & 15` over the unlocked entries only, so the
+//! pick is even across whatever is unlocked (within 1/16 when three are).
+//! With nothing unlocked it lands on the pool's fifth entry, a 1-up.
+//!
 //! ## Scope
 //!
 //! Only blocks are affected. Big `?` boxes spawn their suits from their own
@@ -81,7 +90,10 @@ use super::poison_mushroom::{
     ATTR1_TABLE, ATTR2_TABLE, ATTR3_TABLE, HIT_TABLE, INIT_TABLE, KILL_TABLE, NORM_TABLE,
     PATSTART_TABLE, PATTABLE_SEL_TABLE,
 };
-use crate::randomize::rom_data::{BLOCK_SPAWN_CPU, FS_BLOCK_SPAWN, FS_SUIT_HANDLER};
+use crate::randomize::maze::powerup_gate::{POWERUPS_FOUND, SUIT_POOL_BITS};
+use crate::randomize::rom_data::{
+    BLOCK_SPAWN_CPU, FS_BLOCK_SPAWN, FS_SUIT_HANDLER, FS_SUIT_PICK, prg_bank_file_to_cpu,
+};
 use crate::rom::Rom;
 
 /// Salt for the one byte this module draws from the seed.
@@ -126,7 +138,12 @@ const STAR_SUIT_HIT_CPU: u16 = 0xA818;
 const MUSHROOM_ID: u8 = 0x0D;
 
 /// What a suit block spawns, by hash (`AND #3`): the Starman, then the suits.
+/// Under power-up gates a fifth entry follows: the 1-up, for nothing unlocked.
 const SUIT_POOL: [u8; 4] = [STARMAN_ID, SUIT_IDS[0], SUIT_IDS[1], SUIT_IDS[2]];
+
+/// Where [`suit_pick`] runs: PRG001, the spawn routine's own bank.
+const SUIT_PICK_CPU: u16 = prg_bank_file_to_cpu(1, FS_SUIT_PICK);
+const SUIT_PICK_LEN: usize = 38;
 
 /// PRG008 `LATP_PowerUps` entries that become item code `B`, each with its
 /// vanilla code: `$65` (coin, 4), and the brick, note and wood stars (3).
@@ -160,11 +177,18 @@ const SUIT_HANDLER: [u8; 8] = [
 pub(crate) struct SpawnFlags {
     pub(crate) poison_mushrooms: bool,
     pub(crate) suit_blocks: bool,
+    /// The maze's power-up gates: a suit block picks only from the unlocked
+    /// pool. Only meaningful with `suit_blocks`.
+    pub(crate) powerup_gates: bool,
 }
 
 impl SpawnFlags {
     fn any(&self) -> bool {
         self.poison_mushrooms || self.suit_blocks
+    }
+
+    fn gated_suits(&self) -> bool {
+        self.suit_blocks && self.powerup_gates
     }
 }
 
@@ -193,6 +217,77 @@ pub(crate) fn apply(rom: &mut Rom, flags: SpawnFlags, salt: u8) {
     if flags.suit_blocks {
         install_suits(rom, &routine);
     }
+    if flags.gated_suits() {
+        rom.write_range(FS_SUIT_PICK, &suit_pick(&routine));
+    }
+}
+
+/// Re-install the spawn routine with suit blocks gated, over a ROM the
+/// pipeline built with Suit Blocks on. `testrom`'s way in until power-up
+/// gates are an option. The routine already there must be exactly the
+/// ungated one for `poison` and `salt`, which is what proves both right.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn install_gate(rom: &mut Rom, poison: bool, salt: u8) {
+    let plain = SpawnFlags { poison_mushrooms: poison, suit_blocks: true, powerup_gates: false };
+    let was = assemble(plain, salt).code;
+    assert_eq!(
+        rom.read_range(FS_BLOCK_SPAWN, was.len()),
+        &was[..],
+        "the spawn routine is not the one Suit Blocks wrote for this seed"
+    );
+    let routine = assemble(SpawnFlags { powerup_gates: true, ..plain }, salt);
+    rom.write_range(FS_BLOCK_SPAWN, &routine.code);
+    // The Hit stubs moved with the code.
+    for (i, &id) in SUIT_IDS.iter().enumerate() {
+        let hit = routine.hit_cpu + 3 * i as u16;
+        rom.write_range(HIT_TABLE + usize::from(id) * 2, &hit.to_le_bytes());
+    }
+    rom.write_range(FS_SUIT_PICK, &suit_pick(&routine));
+}
+
+/// The gated suit pick: `A` = the hash in, `A` = the object to spawn out.
+/// `X` is untouched; `Y` is clobbered (the spawn routine reloads it).
+/// `Temp_Var1` is scratch: both spawn sites rewrite it before reading it again.
+///
+/// ```text
+/// pick:  AND #$0F / STA <T1      ; countdown: which unlocked entry
+///        LDY #4                  ; the 1-up, if nothing is unlocked
+///        LDA POWERUPS_FOUND / AND #pool bits / BEQ found
+///        LDY #0
+/// walk:  LDA bits,Y / AND POWERUPS_FOUND / BEQ next
+///        DEC <T1 / BMI found     ; the (hash mod unlocked)-th unlocked one
+/// next:  INY / TYA / AND #3 / TAY / BPL walk
+/// found: LDA pool,Y / RTS
+/// ```
+fn suit_pick(routine: &Routine) -> [u8; SUIT_PICK_LEN] {
+    let lo = |a: u16| a.to_le_bytes()[0];
+    let hi = |a: u16| a.to_le_bytes()[1];
+    let found = POWERUPS_FOUND;
+    let mask = SUIT_POOL_BITS.iter().fold(0, |m, b| m | b);
+    let (pool, bits) = (routine.pool_cpu, routine.bits_cpu);
+    #[rustfmt::skip]
+    let code = [
+        0x29, 0x0F,                     //  0: AND #$0F
+        0x85, 0x00,                     //  2: STA <T1
+        0xA0, 0x04,                     //  4: LDY #4
+        0xAD, lo(found), hi(found),     //  6: LDA POWERUPS_FOUND
+        0x29, mask,                     //  9: AND #pool bits
+        0xF0, 0x15,                     // 11: BEQ found (-> 34)
+        0xA0, 0x00,                     // 13: LDY #0
+        0xB9, lo(bits), hi(bits),       // 15: walk: LDA bits,Y
+        0x2D, lo(found), hi(found),     // 18: AND POWERUPS_FOUND
+        0xF0, 0x04,                     // 21: BEQ next (-> 27)
+        0xC6, 0x00,                     // 23: DEC <T1
+        0x30, 0x07,                     // 25: BMI found (-> 34)
+        0xC8,                           // 27: next: INY
+        0x98,                           // 28: TYA
+        0x29, 0x03,                     // 29: AND #3
+        0xA8,                           // 31: TAY
+        0x10, 0xED,                     // 32: BPL walk (-> 15)
+        0xB9, lo(pool), hi(pool),       // 34: found: LDA pool,Y
+        0x60,                           // 37: RTS
+    ];
+    code
 }
 
 /// The three suit objects' table slots, and the suit tiles' item code.
@@ -239,6 +334,7 @@ enum Label {
     Done,
     Hit,
     Pool,
+    Bits,
 }
 
 /// A two-pass assembler just big enough for [`assemble`]: bytes, labels,
@@ -303,6 +399,9 @@ struct Routine {
     code: Vec<u8>,
     /// The Tanooki Hit entry; Frog and Hammer are 3 and 6 bytes on.
     hit_cpu: u16,
+    /// [`SUIT_POOL`] and, under power-up gates, the pool's unlock bits.
+    pool_cpu: u16,
+    bits_cpu: u16,
 }
 
 /// Build the spawn routine for `flags`. See the module doc for what it does;
@@ -342,9 +441,14 @@ fn assemble(flags: SpawnFlags, salt: u8) -> Routine {
         a.branch(0xF0, Label::Poison); //      BEQ poison
     }
     if flags.suit_blocks {
-        a.op(&[0x29, 0x03]); //                AND #3
-        a.op(&[0xA8]); //                      TAY
-        a.absolute_y(0xB9, Label::Pool); //    LDA SUIT_POOL,Y
+        if flags.gated_suits() {
+            let [lo, hi] = SUIT_PICK_CPU.to_le_bytes();
+            a.op(&[0x20, lo, hi]); //          JSR pick   (from the unlocked pool)
+        } else {
+            a.op(&[0x29, 0x03]); //            AND #3
+            a.op(&[0xA8]); //                  TAY
+            a.absolute_y(0xB9, Label::Pool); // LDA SUIT_POOL,Y
+        }
         a.op(&[0x8D, SLOT5_OBJECT_ID[0], SLOT5_OBJECT_ID[1]]); // STA Level_ObjectID+5
         if flags.poison_mushrooms {
             a.branch(0xD0, Label::Done); //    BNE done   (always: no ID is 0)
@@ -376,9 +480,16 @@ fn assemble(flags: SpawnFlags, salt: u8) -> Routine {
 
         a.label(Label::Pool);
         a.op(&SUIT_POOL);
+        if flags.gated_suits() {
+            a.op(&[ONE_UP_ID]); //             pool[4]: nothing unlocked
+            a.label(Label::Bits);
+            a.op(&SUIT_POOL_BITS);
+        }
     }
-    let hit_cpu = if flags.suit_blocks { a.cpu(BLOCK_SPAWN_CPU, Label::Hit) } else { 0 };
-    Routine { code: a.finish(BLOCK_SPAWN_CPU), hit_cpu }
+    let at = |l| if flags.suit_blocks { a.cpu(BLOCK_SPAWN_CPU, l) } else { 0 };
+    let (hit_cpu, pool_cpu) = (at(Label::Hit), at(Label::Pool));
+    let bits_cpu = if flags.gated_suits() { a.cpu(BLOCK_SPAWN_CPU, Label::Bits) } else { 0 };
+    Routine { code: a.finish(BLOCK_SPAWN_CPU), hit_cpu, pool_cpu, bits_cpu }
 }
 
 #[cfg(test)]
@@ -391,7 +502,7 @@ mod tests {
         let mut out = Vec::new();
         for poison_mushrooms in [false, true] {
             for suit_blocks in [false, true] {
-                let f = SpawnFlags { poison_mushrooms, suit_blocks };
+                let f = SpawnFlags { poison_mushrooms, suit_blocks, powerup_gates: false };
                 if f.any() {
                     out.push(f);
                 }
@@ -400,9 +511,27 @@ mod tests {
         out
     }
 
+    /// The shapes with suit blocks gated: with and without poison.
+    pub(super) fn gated_shapes() -> Vec<SpawnFlags> {
+        [false, true]
+            .map(|poison_mushrooms| SpawnFlags {
+                poison_mushrooms,
+                suit_blocks: true,
+                powerup_gates: true,
+            })
+            .to_vec()
+    }
+
     /// Where the code ends and [`SUIT_POOL`] begins, for the shapes that carry it.
     pub(super) fn code_len(flags: SpawnFlags, code: &[u8]) -> usize {
-        code.len() - if flags.suit_blocks { SUIT_POOL.len() } else { 0 }
+        let tables = if flags.gated_suits() {
+            SUIT_POOL.len() + 1 + SUIT_POOL_BITS.len()
+        } else if flags.suit_blocks {
+            SUIT_POOL.len()
+        } else {
+            0
+        };
+        code.len() - tables
     }
 
     fn cpu() -> mos6502::cpu::CPU<mos6502::memory::Memory, mos6502::instruction::Ricoh2a03> {
@@ -413,11 +542,26 @@ mod tests {
     /// about, the block's position and the player's map entry. Returns
     /// (`Level_ObjectID[5]`, `Y`, `X`).
     fn run(code: &[u8], id: u8, block: [u8; 4], entry: (u8, u8)) -> (u8, u8, u8) {
+        run_with(code, None, id, block, entry)
+    }
+
+    /// [`run`], with the gated pick installed and `POWERUPS_FOUND` set.
+    fn run_with(
+        code: &[u8],
+        pick: Option<(&[u8], u8)>,
+        id: u8,
+        block: [u8; 4],
+        entry: (u8, u8),
+    ) -> (u8, u8, u8) {
         use mos6502::memory::Bus;
 
         let mut cpu = cpu();
         let origin = BLOCK_SPAWN_CPU;
         cpu.memory.set_bytes(origin, code);
+        if let Some((pick, found)) = pick {
+            cpu.memory.set_bytes(SUIT_PICK_CPU, pick);
+            cpu.memory.set_byte(POWERUPS_FOUND, found);
+        }
         // JSR origin at $8000; we stop at the return.
         cpu.memory.set_bytes(0x8000, &[0x20, origin as u8, (origin >> 8) as u8]);
         let x = 2u8; // the bouncing block's slot
@@ -451,10 +595,86 @@ mod tests {
 
     #[test]
     fn every_shape_fits_its_reservation() {
-        let biggest = every_shape().iter().map(|&f| assemble(f, 0).code.len()).max().unwrap();
+        let shapes = every_shape().into_iter().chain(gated_shapes());
+        let biggest = shapes.map(|f| assemble(f, 0).code.len()).max().unwrap();
         let reserved = reservation(FS_BLOCK_SPAWN);
         assert!(biggest <= reserved, "{biggest} bytes > {reserved} reserved");
         assert!(SUIT_HANDLER.len() <= reservation(FS_SUIT_HANDLER));
+        assert!(SUIT_PICK_LEN <= reservation(FS_SUIT_PICK));
+    }
+
+    /// Under power-up gates a suit block gives only what is unlocked, for
+    /// every found byte: the star or a suit whose bit is set, a 1-up when none
+    /// is, and every unlocked one turns up across a screen of blocks, evenly.
+    #[test]
+    fn gated_suit_blocks_pick_only_what_is_unlocked() {
+        for flags in gated_shapes() {
+            let routine = assemble(flags, 0x5A);
+            let pick = suit_pick(&routine);
+            for found in 0..=255u8 {
+                let unlocked: Vec<u8> = SUIT_POOL
+                    .iter()
+                    .zip(SUIT_POOL_BITS)
+                    .filter(|&(_, bit)| found & bit != 0)
+                    .map(|(&id, _)| id)
+                    .collect();
+                let mut seen = std::collections::BTreeMap::<u8, usize>::new();
+                for col in 0..16u8 {
+                    for row in 0..4u8 {
+                        let block = [col * 16, 3, row * 16 + 0x40, 0];
+                        let (got, y, x) = run_with(
+                            &routine.code,
+                            Some((&pick, found)),
+                            SUIT_BLOCK_ID,
+                            block,
+                            (0x20, 0x30),
+                        );
+                        assert_eq!((y, x), (POWERUP_SLOT, 2), "{flags:?} found {found:#04X}");
+                        *seen.entry(got).or_default() += 1;
+                    }
+                }
+                let ids: Vec<u8> = seen.keys().copied().collect();
+                if unlocked.is_empty() {
+                    assert_eq!(ids, [ONE_UP_ID], "found {found:#04X}: nothing unlocked");
+                } else {
+                    let mut want = unlocked.clone();
+                    want.sort();
+                    assert_eq!(ids, want, "found {found:#04X}");
+                    let (lo, hi) = (seen.values().min().unwrap(), seen.values().max().unwrap());
+                    assert!(hi - lo <= 64 / 4, "found {found:#04X}: lopsided {seen:?}");
+                }
+            }
+        }
+    }
+
+    /// The other IDs still pass through the gated routine untouched, and the
+    /// 1-up still splits into poison.
+    #[test]
+    fn gating_leaves_other_ids_alone() {
+        for flags in gated_shapes() {
+            let routine = assemble(flags, 0x11);
+            let pick = suit_pick(&routine);
+            for id in [0x00, STARMAN_ID, 0x19, 0x20] {
+                let got = run_with(&routine.code, Some((&pick, 0)), id, [0x40, 1, 0x60, 0], (0, 0));
+                assert_eq!(got.0, id, "{flags:?} id {id:02X}");
+            }
+            if flags.poison_mushrooms {
+                let poisoned = (0..16u8)
+                    .filter(|&col| {
+                        let block = [col * 16, 2, 0x50, 0];
+                        let got = run_with(
+                            &routine.code,
+                            Some((&pick, 0)),
+                            ONE_UP_ID,
+                            block,
+                            (0x20, 0x30),
+                        );
+                        got.0 == POISON_ID
+                    })
+                    .count();
+                assert!((4..=12).contains(&poisoned), "{poisoned}/16 poisoned");
+            }
+        }
     }
 
     #[test]
@@ -502,7 +722,7 @@ mod tests {
     /// Deja Vu: the same block, entered from another map tile, can differ.
     #[test]
     fn the_map_entry_moves_the_pick() {
-        let flags = SpawnFlags { poison_mushrooms: false, suit_blocks: true };
+        let flags = SpawnFlags { poison_mushrooms: false, suit_blocks: true, powerup_gates: false };
         let code = assemble(flags, 0).code;
         let picks: std::collections::BTreeSet<u8> = (0..8u8)
             .map(|tile| run(&code, SUIT_BLOCK_ID, [0x40, 1, 0x60, 0], (tile * 16, 0x30)).0)
@@ -528,20 +748,24 @@ mod tests {
     #[test]
     fn each_hit_entry_carries_its_suit() {
         use mos6502::memory::Bus;
-        let flags = SpawnFlags { poison_mushrooms: true, suit_blocks: true };
-        let routine = assemble(flags, 0);
-        for i in 0..3u16 {
-            let mut cpu = cpu();
-            cpu.memory.set_bytes(BLOCK_SPAWN_CPU, &routine.code);
-            cpu.registers.program_counter = routine.hit_cpu + 3 * i;
-            for _ in 0..8 {
-                if cpu.registers.program_counter == STAR_SUIT_HIT_CPU {
-                    break;
+        for flags in [
+            SpawnFlags { poison_mushrooms: true, suit_blocks: true, powerup_gates: false },
+            SpawnFlags { poison_mushrooms: true, suit_blocks: true, powerup_gates: true },
+        ] {
+            let routine = assemble(flags, 0);
+            for i in 0..3u16 {
+                let mut cpu = cpu();
+                cpu.memory.set_bytes(BLOCK_SPAWN_CPU, &routine.code);
+                cpu.registers.program_counter = routine.hit_cpu + 3 * i;
+                for _ in 0..8 {
+                    if cpu.registers.program_counter == STAR_SUIT_HIT_CPU {
+                        break;
+                    }
+                    cpu.single_step();
                 }
-                cpu.single_step();
+                assert_eq!(cpu.registers.program_counter, STAR_SUIT_HIT_CPU, "entry {i}");
+                assert_eq!(cpu.registers.accumulator, i as u8 + 1, "entry {i}");
             }
-            assert_eq!(cpu.registers.program_counter, STAR_SUIT_HIT_CPU, "entry {i}");
-            assert_eq!(cpu.registers.accumulator, i as u8 + 1, "entry {i}");
         }
     }
 
@@ -554,7 +778,8 @@ mod tests {
         data[6] = 0x40;
         let mut rom = Rom::from_bytes_lax(&data, true).unwrap();
         let before = rom.read_range(0, 393232).to_vec();
-        apply(&mut rom, SpawnFlags { poison_mushrooms: false, suit_blocks: false }, 0x42);
+        let off = SpawnFlags { poison_mushrooms: false, suit_blocks: false, powerup_gates: false };
+        apply(&mut rom, off, 0x42);
         assert_eq!(rom.read_range(0, 393232), &before[..]);
     }
 
@@ -566,7 +791,7 @@ mod tests {
             return;
         };
         let mut rom = Rom::from_bytes(&data).unwrap();
-        let flags = SpawnFlags { poison_mushrooms: false, suit_blocks: true };
+        let flags = SpawnFlags { poison_mushrooms: false, suit_blocks: true, powerup_gates: false };
         apply(&mut rom, flags, 0x42);
         let routine = assemble(flags, 0x42);
         for (i, &id) in SUIT_IDS.iter().enumerate() {
@@ -589,12 +814,23 @@ mod tests {
         assert_eq!(rom.read_byte(0x1168F), 0x03, "TILEA_QBLOCKSTAR");
         assert_eq!(rom.read_range(FS_SUIT_HANDLER, SUIT_HANDLER.len()), SUIT_HANDLER);
         assert_eq!(cpu_to_file(STAR_SUIT_HIT_CPU), 0x02828);
+
+        // Gating it afterwards, as testrom does, rewires the Hit entries.
+        install_gate(&mut rom, false, 0x42);
+        let gated = assemble(SpawnFlags { powerup_gates: true, ..flags }, 0x42);
+        for (i, &id) in SUIT_IDS.iter().enumerate() {
+            let at = HIT_TABLE + usize::from(id) * 2;
+            let word = u16::from_le_bytes([rom.read_byte(at), rom.read_byte(at + 1)]);
+            assert_eq!(word, gated.hit_cpu + 3 * i as u16);
+        }
+        assert_eq!(rom.read_range(FS_BLOCK_SPAWN, gated.code.len()), &gated.code[..]);
+        assert_eq!(rom.read_range(FS_SUIT_PICK, SUIT_PICK_LEN), &suit_pick(&gated)[..]);
     }
 }
 
 #[cfg(test)]
 mod asm_checks {
-    use super::tests::{code_len, every_shape};
+    use super::tests::{code_len, every_shape, gated_shapes};
     use super::*;
     use crate::randomize::rom_data::asm;
 
@@ -602,7 +838,7 @@ mod asm_checks {
 
     #[test]
     fn every_spawn_routine_is_well_formed() {
-        for flags in every_shape() {
+        for flags in every_shape().into_iter().chain(gated_shapes()) {
             let code = assemble(flags, 0xA5).code;
             asm::check(&code)
                 .allocation(FS_BLOCK_SPAWN)
@@ -611,6 +847,18 @@ mod asm_checks {
                 .hook(&SPAWN_STORE, 0, &SPAWN_JSR)
                 // Temp_Var1, and the engine's own object variables.
                 .zero_page(0x02, &[0x76, 0x88, 0x91, 0xA3])
+                .assert_ok();
+        }
+    }
+
+    #[test]
+    fn the_suit_pick_is_well_formed() {
+        for flags in gated_shapes() {
+            let routine = assemble(flags, 0);
+            asm::check(&suit_pick(&routine))
+                .allocation(FS_SUIT_PICK)
+                .origin(SUIT_PICK_CPU)
+                .zero_page(0x02, &[])
                 .assert_ok();
         }
     }

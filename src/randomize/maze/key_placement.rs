@@ -129,7 +129,7 @@ pub(crate) fn place<R: Rng>(
     let mut i = 0;
     while i < sites.len() {
         let held = sites[i].current_item(rom, build);
-        match wanted.iter().copied().find(|k| k.item_byte() == held) {
+        match wanted.iter().copied().find(|k| k.item_byte() == Some(held)) {
             Some(key) => {
                 let site = sites.swap_remove(i);
                 state.sources.push(KeySource { pos: site.pos, key });
@@ -297,7 +297,7 @@ mod tests {
         let Some((mut rom, mut build, mut state)) = a_boat_required_seed() else { return };
         let (_, before) = state.spheres_and_reach();
 
-        let anchor = Key::Anchor.item_byte();
+        let anchor = Key::Anchor.item_byte().unwrap();
         let sites: Vec<KeySite> = crate::randomize::maze::key_sites::sites(&rom, &build, &state)
             .into_iter()
             .filter(|s| s.current_item(&rom, &build) != anchor)
@@ -348,7 +348,7 @@ mod tests {
 
         // A sink holding something other than an Anchor, so the decoy has to
         // be *drawn* to be used rather than merely credited.
-        let anchor = Key::Anchor.item_byte();
+        let anchor = Key::Anchor.item_byte().unwrap();
         let real = *crate::randomize::maze::key_sites::sites(&rom, &build, &state)
             .iter()
             .find(|s| s.current_item(&rom, &build) != anchor)
@@ -410,7 +410,7 @@ mod tests {
                 continue; // boat required — the stall tests' business
             }
 
-            let anchor = Key::Anchor.item_byte();
+            let anchor = Key::Anchor.item_byte().unwrap();
             let sites: Vec<KeySite> =
                 crate::randomize::maze::key_sites::sites(&rom, &build, &state)
                     .into_iter()
@@ -495,7 +495,7 @@ mod tests {
             }
             state.gate_every_canoe(Key::Anchor);
             let sites = crate::randomize::maze::key_sites::sites(&rom, &build, &state);
-            let anchor = Key::Anchor.item_byte();
+            let anchor = Key::Anchor.item_byte().unwrap();
             if !sites.iter().any(|s| s.current_item(&rom, &build) == anchor) {
                 continue; // this seed has nothing to inherit
             }

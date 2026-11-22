@@ -3316,7 +3316,7 @@ fn anchor_keyability_census() {
 fn anchor_softlock_census() {
     /// `PRINCESS_REWARDS_OFFSET` — one item byte per world, W1-W7.
     const LETTERS: usize = 0x360DE;
-    let anchor = Key::Anchor.item_byte();
+    let anchor = Key::Anchor.item_byte().unwrap();
 
     let Some(raw) = load_rom() else { return };
     let seeds = census_seeds(200);
@@ -3842,5 +3842,123 @@ fn pad_rule_census() {
             report.content,
             u8::from(opening == 7),
         );
+    }
+}
+
+/// Power-up gates in the model: a gated cell is a wall until every key in its
+/// `needs` is held, a key level is a source at its cell, and a key placed
+/// behind its own gate does not count.
+mod powerup_gate_model {
+    use super::super::{Gate, GateTarget, KeySource};
+    use super::*;
+    use crate::randomize::maze::key_sites::test_support::{load_rom, one_maze};
+    use crate::randomize::maze::powerup_gate::PowerUp;
+    use std::collections::HashSet;
+
+    const LEAF: Key = Key::PowerUp(PowerUp::Leaf);
+    const MUSHROOM: Key = Key::PowerUp(PowerUp::Mushroom);
+
+    /// Every level and fortress cell in the maze, and which of them the
+    /// castle cannot be reached without.
+    fn required(
+        state: &GlobalState,
+        kind: overworld::build::SlotKind,
+    ) -> (Vec<MazePos>, Vec<MazePos>) {
+        let kind = &kind;
+        let cells: Vec<MazePos> = state
+            .worlds
+            .iter()
+            .filter(|w| state.in_maze[w.world_idx])
+            .flat_map(|w| {
+                w.slots.iter().filter(move |s| s.kind == *kind).map(move |s| (w.world_idx, s.pos))
+            })
+            .collect();
+        let required = cells
+            .iter()
+            .copied()
+            .filter(|&c| !state.spheres_with_blocked(&HashSet::from([c])).solvable)
+            .collect();
+        (cells, required)
+    }
+
+    #[test]
+    fn a_gated_required_cell_needs_every_key_reached_before_it() {
+        let Some(raw) = load_rom() else {
+            eprintln!("SKIP: requires the ROM");
+            return;
+        };
+        let mut tried = 0;
+        for seed in 1..40u64 {
+            let (_, _, mut state) = one_maze(&raw, seed);
+            assert!(state.spheres().solvable, "seed {seed} is not solvable to begin with");
+            let (levels, req) = required(&state, overworld::build::SlotKind::Level);
+            // A required level with a level before it to hold the keys. The
+            // first required level is sometimes the first level of all, and
+            // then nothing is: the placement pass has to gate another one.
+            let mut chosen = None;
+            for &gate in &req {
+                state.gates =
+                    vec![Gate { target: GateTarget::Cell(gate), needs: vec![LEAF, MUSHROOM] }];
+                assert!(
+                    !state.spheres().solvable,
+                    "seed {seed}: a keyless gate on {gate:?} let the run through"
+                );
+                // Where the player gets to with the gate shut: keys go there.
+                let (_, reach) = state.spheres_and_reach();
+                let before: Vec<MazePos> =
+                    levels.iter().copied().filter(|&c| c != gate && reach.contains(c)).collect();
+                if !before.is_empty() {
+                    let behind: Vec<MazePos> =
+                        levels.iter().copied().filter(|&c| !reach.contains(c)).collect();
+                    chosen = Some((gate, before, behind));
+                    break;
+                }
+            }
+            let Some((gate, before, behind)) = chosen else { continue };
+            state.gates =
+                vec![Gate { target: GateTarget::Cell(gate), needs: vec![LEAF, MUSHROOM] }];
+            tried += 1;
+
+            // One key is not enough: the gate needs both.
+            state.sources = vec![KeySource { pos: before[0], key: LEAF }];
+            assert!(!state.spheres().solvable, "seed {seed}: half the keys opened the gate");
+
+            state.sources.push(KeySource { pos: *before.last().unwrap(), key: MUSHROOM });
+            assert!(
+                state.spheres().solvable,
+                "seed {seed}: both keys before the gate did not open it"
+            );
+
+            // A key behind its own gate is never collected.
+            if let Some(&b) = behind.first() {
+                state.sources = vec![
+                    KeySource { pos: before[0], key: LEAF },
+                    KeySource { pos: b, key: MUSHROOM },
+                ];
+                assert!(!state.spheres().solvable, "seed {seed}: a key behind its gate opened it");
+            }
+        }
+        assert!(tried >= 10, "only {tried} seeds had a required level");
+    }
+
+    #[test]
+    fn a_gated_fortress_is_not_beaten_until_its_keys_are_held() {
+        let Some(raw) = load_rom() else {
+            eprintln!("SKIP: requires the ROM");
+            return;
+        };
+        let (_, _, mut state) = one_maze(&raw, 7);
+        let (forts, _) = required(&state, overworld::build::SlotKind::Fortress);
+        let fort = forts[0];
+        state.gates = vec![Gate { target: GateTarget::Cell(fort), needs: vec![LEAF] }];
+        let s = state.spheres();
+        assert!(!s.solvable, "a gated fortress counted as beaten");
+        assert!(!s.unbeaten.is_empty());
+
+        let (_, reach) = state.spheres_and_reach();
+        let (levels, _) = required(&state, overworld::build::SlotKind::Level);
+        let key_at = levels.into_iter().find(|&c| reach.contains(c)).expect("a level before it");
+        state.sources = vec![KeySource { pos: key_at, key: LEAF }];
+        assert!(state.spheres().solvable, "its key did not let the fortress be beaten");
     }
 }

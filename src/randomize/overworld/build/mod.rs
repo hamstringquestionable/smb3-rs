@@ -344,7 +344,7 @@ pub(crate) fn build<R: Rng>(
         assign_hb_sprites(data.pickup, &mut worlds, flags.world_maze, rng);
     }
 
-    BuildResult { worlds, fort_counts }
+    BuildResult { worlds, fort_counts, withheld: Vec::new() }
 }
 
 /// Fort `section` values must be a dense `0..section_count`: the writer pairs

@@ -10,26 +10,33 @@
 //! SRAM, no completion bit and no per-world state — and why the solver can
 //! treat a found key as permanent.
 
+use crate::randomize::maze::powerup_gate::PowerUp;
+
 /// An item that opens something.
 ///
-/// The extension point for the next gate: add a variant, give it its inventory
-/// byte, and [`crate::randomize::maze::Gate`] can demand it without any other
-/// change. The power-up keys (Mushroom/Flower/Leaf/Star) live on
-/// `refactor/items-before-pickup` and land here when MiMaze does.
+/// The extension point for the next gate: add a variant and
+/// [`crate::randomize::maze::Gate`] can demand it without any other change.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub(crate) enum Key {
     /// The canoe key. **Not a `?` block key** — no block dispenses an Anchor.
     /// It is found on the map (a Hammer Bro reward, a Princess letter) and
     /// read by the canoe summon, which is why it needs no dispenser row.
     Anchor,
+    /// A power-up unlock: its blocks pay a coin until it is held
+    /// ([`powerup_gate`](crate::randomize::maze::powerup_gate)). Not an
+    /// inventory item — a bit set by beating its key level.
+    PowerUp(PowerUp),
 }
 
 impl Key {
     /// This key's **Global Item ID** — the byte the reward tables hold and the
-    /// inventory stores. `items.rs` writes exactly this value.
-    pub(crate) const fn item_byte(self) -> u8 {
+    /// inventory stores, which `items.rs` writes exactly. `None` for a key
+    /// that is not an item: a Hammer Bro holding a mushroom is not holding the
+    /// mushroom *unlock*.
+    pub(crate) const fn item_byte(self) -> Option<u8> {
         match self {
-            Key::Anchor => 0x0A,
+            Key::Anchor => Some(0x0A),
+            Key::PowerUp(_) => None,
         }
     }
 }

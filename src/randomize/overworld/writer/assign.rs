@@ -128,6 +128,38 @@ pub(super) fn assign_pool<R: Rng>(
     bonus_pool.as_mut_slice().shuffle(rng);
     let mut bonus_iter = bonus_pool.into_iter();
 
+    // Withheld entries (`BuildResult::withheld`) leave both decks now, before
+    // any surgery, so Deja Vu never copies them and the top-ups refill the
+    // gap. A pin naming one finds it in `withheld_pool` below. No RNG is drawn,
+    // so a build that withholds nothing deals exactly as before.
+    let entry_of = |pi: usize| {
+        let ce = &catalog.entries[pickup.pool[pi].catalog_idx];
+        (ce.world_idx, ce.entry_idx)
+    };
+    let withheld_pool: Vec<usize> = fort_pool
+        .iter()
+        .chain(level_pool.iter())
+        .copied()
+        .filter(|&pi| build.withheld.contains(&entry_of(pi)))
+        .collect();
+    fort_pool.retain(|&pi| !build.withheld.contains(&entry_of(pi)));
+    level_pool.retain(|&pi| !build.withheld.contains(&entry_of(pi)));
+    // The level slots those pins fill, which the deck must not also cover.
+    // The fort side needs no such count: `fort_slots` below already counts
+    // only the slots no pre-deal filled.
+    let withheld_level_pins = build
+        .worlds
+        .iter()
+        .flat_map(|b| b.slots.iter())
+        .filter(|s| s.kind == SlotKind::Level)
+        .filter(|s| s.pin.is_some_and(|p| build.withheld.contains(&p)))
+        .filter(|s| pool_entry_for_pin(&withheld_pool, data, s.pin.unwrap()).is_some())
+        .count();
+    // The cards the regular deal draws: every level slot, less the withheld
+    // pins. Sizing to all 62 would leave a card over, and under Deja Vu that
+    // card can be a chest level's only copy.
+    let level_cards = VANILLA_LEVEL_COUNT - withheld_level_pins;
+
     // Build cycling hammer bro level pool, interleaved by obj_ptr so each
     // unique enemy set appears once before any repeats.
     let hb_levels = interleave_hb_by_obj_ptr(catalog.unique_hammer_bro_levels(), rng);
@@ -227,6 +259,10 @@ pub(super) fn assign_pool<R: Rng>(
                 unmet_by_world[wi].push((slot.pos, pin));
                 continue;
             }
+            if let Some(at) = pool_entry_for_pin(&withheld_pool, data, pin) {
+                preassigned_forts.insert((wi, slot.section), withheld_pool[at]);
+                continue;
+            }
             match pool_entry_for_pin(&fort_pool, data, pin) {
                 Some(at) => {
                     preassigned_forts.insert((wi, slot.section), fort_pool.remove(at));
@@ -315,7 +351,7 @@ pub(super) fn assign_pool<R: Rng>(
     if deja_vu != DejaVuMode::Off {
         let (mut deck, sources): (Vec<usize>, Vec<usize>) =
             level_pool.iter().copied().partition(|&pi| holds_unique_item(pi));
-        let want = VANILLA_LEVEL_COUNT.saturating_sub(deck.len());
+        let want = level_cards.saturating_sub(deck.len());
         match deja_vu {
             // Double: two copies of every level in the bag, dealt without
             // replacement. A level lands on at most two tiles, and the levels
@@ -343,7 +379,7 @@ pub(super) fn assign_pool<R: Rng>(
     // appended without raising the number drawn) so they absorb the removals
     // first, and either Deja Vu mode refills it well past the line. That is why
     // `short` is a saturating subtraction rather than the blocklist length.
-    let short = VANILLA_LEVEL_COUNT.saturating_sub(level_pool.len());
+    let short = level_cards.saturating_sub(level_pool.len());
     if short > 0 {
         // Without replacement, so no level is dealt a third time. `sources` is
         // far larger than `short` for any sane blocklist; the deck-length
@@ -449,6 +485,10 @@ pub(super) fn assign_pool<R: Rng>(
     for (wi, built) in build.worlds.iter().enumerate() {
         for slot in built.slots.iter().filter(|s| s.kind == SlotKind::Level) {
             let Some(pin) = slot.pin else { continue };
+            if let Some(at) = pool_entry_for_pin(&withheld_pool, data, pin) {
+                preassigned_levels.insert((wi, slot.pos), withheld_pool[at]);
+                continue;
+            }
             let deck: Vec<usize> = level_pool.iter().copied().collect();
             match pool_entry_for_pin(&deck, data, pin) {
                 Some(at) => {

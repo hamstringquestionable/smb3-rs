@@ -11,6 +11,15 @@ deploys.
 
 ### Added
 
+- World Maze: Power-up Gates. Each power-up is locked until you beat its key
+  level, the one drawn as a dancing flower: until then its blocks give a coin,
+  and Big ? boxes and suit blocks give 1-ups instead of suits. Beating a key
+  level plays the 1-up sound and shows what you unlocked in the middle card
+  box. The levels you can't finish without a power-up (6-5, 7-7, 7-F1 and
+  8-F) sit on your way through the maze, and their keys always come before
+  them. Toad Houses, chests and Hammer Bros still hand out power-ups. The
+  old Item Gates option is now called Anchor Gate; flag keys keep their
+  meaning.
 - Random Power Up locations: a power-up in a row or small pattern of matching
   blocks (? blocks, bricks, note blocks) can come out of any of them, so it
   stays near its original spot without being in the exact same block.
