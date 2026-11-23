@@ -26,6 +26,13 @@ deploys.
   three suits or still a star. Needs Power-ups on. Protected blocks (7-7's
   stars, 6-5's leaf, the blocks that must make you big) and Big ? blocks are
   unchanged.
+  Suit Blocks Wild: every power-up block becomes a mystery mushroom that
+  can be a Fire Flower, Super Leaf, Tanooki, Frog or Hammer Suit (one of the
+  three suits, picked per seed, comes up a bit more often), or about 1 in 6
+  is a plain star instead. Small Mario gets a mushroom (with Modern Power-ups,
+  the mystery item itself), so the blocks that must make you big are mystery
+  blocks too; only 7-7's stars and 6-5's leaf stay fixed.
+  Both Max Chaos presets use Wild.
 - Tricky Spots: three enemy placements players have found beatable but hard
   to pass without getting hit (a dropping Thwomp at 8-B's Hot Foot, a Lakitu
   in 7-9, a Nipper at the last Spiny in beta stage 1) are now kept out unless

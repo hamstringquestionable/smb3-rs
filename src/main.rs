@@ -5,7 +5,7 @@ use std::process;
 
 use smb3_rs::{
     DamageSystem, DejaVuMode, EnemyMode, HazardLimit, HintMode, ITEMS, MAZE_WANDS_WANDOM, Options,
-    PiranhaMode, STARTING_LIVES_VALUES, Tri, WildChaser, item_display_name, item_id,
+    PiranhaMode, STARTING_LIVES_VALUES, SuitBlocks, Tri, WildChaser, item_display_name, item_id,
 };
 
 /// Human-readable label for a tri-state flag in the run summary.
@@ -107,6 +107,16 @@ fn parse_hints(s: &str) -> Result<HintMode, String> {
         "most" => Ok(HintMode::Most),
         "full" => Ok(HintMode::Full),
         _ => Err("valid values: off, some, most, full".to_string()),
+    }
+}
+
+/// clap value parser for `--suit-blocks` (off/on/wild).
+fn parse_suit_blocks(s: &str) -> Result<SuitBlocks, String> {
+    match s {
+        "off" => Ok(SuitBlocks::Off),
+        "on" => Ok(SuitBlocks::On),
+        "wild" => Ok(SuitBlocks::Wild),
+        _ => Err("valid values: off, on, wild".to_string()),
     }
 }
 
@@ -428,14 +438,16 @@ struct Cli {
     #[arg(long)]
     modern_powerups: bool,
 
-    /// Suit Blocks: blocks may also hand out a Tanooki,
-    /// Frog or Hammer Suit (a colour-cycling mushroom; which suit shows when
-    /// you take it). From
-    /// ? blocks, flower, leaf, star and the three suits each come out about
-    /// 1 in 6; a brick, note or wood star may come out a suit.
+    /// Suit Blocks: off, on or wild (bare `--suit-blocks` = on). Blocks hand
+    /// out a colour-cycling mushroom that shows what it is only when taken.
+    /// `on`: a star, Tanooki, Frog or Hammer Suit, from ? blocks alongside
+    /// flower and leaf, and from every brick, note and wood star. `wild`: every
+    /// power-up block is one (or, about 1 in 6, a plain star), giving Fire
+    /// Flower, Super Leaf or a suit; small Mario gets a mushroom.
     /// Needs the power-up reroll (no effect with --no-powerups)
-    #[arg(long)]
-    suit_blocks: bool,
+    #[arg(long, default_value = "off", num_args = 0..=1, default_missing_value = "on",
+          value_parser = parse_suit_blocks)]
+    suit_blocks: SuitBlocks,
 
     /// Piranha shuffle: release the two W7 piranha plant levels into the level
     /// pool — off, on, or wild (default: off). `on` = their plant sprites follow
@@ -887,7 +899,7 @@ fn print_summary(options: &Options, seed: u64, output_path: &std::path::Path) {
     eprintln!("  More hammer rocks: {}", tri_str(options.more_hammer_rocks));
     eprintln!("  8s are Wild: {}", tri_str(options.eights_are_wild));
     eprintln!("  Antechamber shuffle: {}", tri_str(options.antechamber_shuffle));
-    eprintln!("  Suit blocks: {}", options.suit_blocks);
+    eprintln!("  Suit blocks: {:?}", options.suit_blocks);
     eprintln!(
         "  Piranha shuffle: {}",
         match options.piranha_shuffle {

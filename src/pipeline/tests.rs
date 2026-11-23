@@ -297,7 +297,7 @@ fn flag_key_round_trip_defaults() {
 fn flag_key_round_trip_all_wild() {
     // Everything flipped away from the all-off baseline.
     let opts = Options {
-        suit_blocks: true,
+        suit_blocks: SuitBlocks::Wild,
         piranha_shuffle: PiranhaMode::Wild,
         powerups: true,
         palettes: true,
@@ -915,7 +915,7 @@ fn flag_key_v29_golden() {
         world_count: 3,
         wild_injections: WildChaser::ALL.to_vec(),
         eights_are_wild: Tri::Maybe,
-        suit_blocks: true,
+        suit_blocks: SuitBlocks::On,
         piranha_shuffle: PiranhaMode::Wild,
         hb_encounters: EnemyMode::Wild,
         ..Default::default()
@@ -924,10 +924,13 @@ fn flag_key_v29_golden() {
     assert_eq!(mixed.to_flag_key(), mixed_key);
     assert_eq!(Options::from_flag_key(mixed_key).unwrap(), normalized(mixed.clone()));
     // The same settings as minted when those two bits were Random Fire Flower,
-    // set to Wild (2). Suit Blocks inherited the bits and reads any non-zero
-    // value as on, so the old key still asks for suits.
+    // set to Wild (2). Suit Blocks inherited the bits with the same
+    // Off/On/Wild meaning, so the old Wild key asks for Wild suit blocks.
     let fire_flower_wild_key = "SMB3R-3PTFKHRF020525AGXAFJP40";
-    assert_eq!(Options::from_flag_key(fire_flower_wild_key).unwrap(), normalized(mixed));
+    assert_eq!(
+        Options::from_flag_key(fire_flower_wild_key).unwrap(),
+        normalized(Options { suit_blocks: SuitBlocks::Wild, ..mixed })
+    );
 }
 
 /// Reserve bits are the whole durability story: adding an option must not
@@ -1149,7 +1152,7 @@ fn fnv1a(data: &[u8]) -> u64 {
 fn all_off_options() -> Options {
     Options {
         tricky_spots: false,
-        suit_blocks: false,
+        suit_blocks: SuitBlocks::Off,
         // Not "off": with the maze off this option is inert, and the key
         // normalizes it to the default the way it does maze_wands. Claiming
         // Off here would fail the round trip against a decoder that
@@ -1246,7 +1249,7 @@ fn all_off_options() -> Options {
 fn all_on_options() -> Options {
     Options {
         tricky_spots: true,
-        suit_blocks: true,
+        suit_blocks: SuitBlocks::On,
         hints: crate::HintMode::default(),
         limit_hazards: HazardLimit::All,
         friendlier_levels: true,
@@ -2899,11 +2902,31 @@ fn frog_softlocks_land_with_all_on() {
     for seed in 1..=3 {
         let Some(mut rom) = make_test_rom() else { return };
         let o = all_on_options();
-        assert!(o.suit_blocks && o.powerups && o.boom_boom_room);
+        assert!(o.suit_blocks.any() && o.powerups && o.boom_boom_room);
         randomize(&mut rom, seed, &o);
         assert!(
             crate::randomize::items::frog_softlocks::all_applied(&rom),
             "seed {seed}: a frog softlock fix did not land"
+        );
+    }
+}
+
+/// Wild Suit Blocks through the whole pipeline, with and without Modern
+/// Power-ups and Poison Mushroom: it builds, and the frog fixes still land.
+#[test]
+fn wild_suit_blocks_build_with_their_neighbours() {
+    for modern_powerups in [false, true] {
+        let Some(mut rom) = make_test_rom() else { return };
+        let o = Options {
+            suit_blocks: SuitBlocks::Wild,
+            modern_powerups,
+            poison_mushrooms: true,
+            ..all_on_options()
+        };
+        randomize(&mut rom, 7, &o);
+        assert!(
+            crate::randomize::items::frog_softlocks::all_applied(&rom),
+            "modern {modern_powerups}: a frog softlock fix did not land"
         );
     }
 }
@@ -2922,7 +2945,7 @@ fn boom_boom_room_bytes_are_its_own() {
         [("defaults", Options { boom_boom_room: true, ..test_options() }), ("all_on+beta", beta)];
     for (name, o) in arms {
         assert!(o.boom_boom_room);
-        let frog_fix = o.suit_blocks && o.powerups;
+        let frog_fix = o.suit_blocks.any() && o.powerups;
         let watched: BTreeSet<usize> =
             ROOMS.iter().flat_map(|r| commands(r, frog_fix)).flat_map(|&o| o..o + 4).collect();
         for seed in 1..=3 {

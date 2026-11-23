@@ -189,6 +189,52 @@ pub enum PiranhaMode {
     Wild,
 }
 
+/// Suit Blocks mode. Both modes add a *suit block*, which hands out a
+/// colour-cycling mushroom that turns out to be something only when touched;
+/// they differ in what it can be and which blocks become one.
+///
+/// - `On`: a suit block is a star, Tanooki, Frog or Hammer Suit. ? blocks roll
+///   flower, leaf or suit block; every brick, note and wood *star* is a suit
+///   block. Flower and leaf stay visible.
+/// - `Wild`: a suit block is a Fire Flower, Super Leaf, Tanooki, Frog or
+///   Hammer Suit, and a plain mushroom for small Mario. Every rerollable block
+///   is a suit block or, about 1 in 6, a real (visible) star; bricks keep
+///   their 1-Up share. The star is not inside the suit block here, so the
+///   no-star rules are just "never roll the star tile".
+///
+/// The modes are not a ladder: `On`'s suit block can be a star and `Wild`'s
+/// cannot. See [`crate::randomize::items::block_spawn`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SuitBlocks {
+    #[default]
+    Off,
+    On,
+    Wild,
+}
+
+impl SuitBlocks {
+    /// The flag key's two bits: 0 off, 1 on, 2 wild.
+    pub(super) fn key_bits(self) -> u8 {
+        self as u8
+    }
+
+    /// The inverse of [`Self::key_bits`]. 3 was never written; it reads as on,
+    /// the way every non-zero value did before Wild existed.
+    pub(super) fn from_key_bits(bits: u8) -> Self {
+        match bits {
+            0 => Self::Off,
+            2 => Self::Wild,
+            _ => Self::On,
+        }
+    }
+
+    /// Whether any suit block exists at all.
+    pub(crate) fn any(self) -> bool {
+        self != Self::Off
+    }
+}
+
 /// How hard to stop the randomizer from *introducing* hazards.
 ///
 /// A "hazard" is a member of the `HAZARDS` group — thwomps, Lava Lotus,
@@ -740,16 +786,13 @@ pub struct Options {
     /// (MaCobra52's "Easy Power-up System" patch.)
     #[serde(default)]
     pub modern_powerups: bool,
-    /// Suit Blocks: the ? block reroll may also make a block a suit block,
-    /// and every brick, note and wood star is one. A suit block hands out a
-    /// star or a Tanooki, Frog or Hammer Suit (a colour-cycling mushroom),
-    /// picked per block by a seed-salted hash. ? blocks are
-    /// weighted so flower, leaf, star and the three suits each come out about
-    /// 1 in 6. Rides
-    /// on [`Options::powerups`]: with the reroll off there is nothing to place.
-    /// Replaced Random Fire Flower and inherits its flag-key bits.
+    /// Suit Blocks (Off / On / Wild, see [`SuitBlocks`]): blocks that hand out
+    /// a colour-cycling mushroom whose contents are picked per block by a
+    /// seed-salted hash. Rides on [`Options::powerups`]: with the reroll off
+    /// there is nothing to place. Replaced Random Fire Flower and inherits its
+    /// flag-key bits.
     #[serde(default)]
-    pub suit_blocks: bool,
+    pub suit_blocks: SuitBlocks,
     /// When true, the 19 vanilla spade-game tiles are picked up by the overworld
     /// builder and re-placed at random HammerBro slots, freeing their original
     /// positions for level placement. When false, spade games stay at vanilla
@@ -978,7 +1021,7 @@ impl Default for Options {
             shuffle_big_q_rooms: false,
             poison_mushrooms: false,
             modern_powerups: false,
-            suit_blocks: false,
+            suit_blocks: SuitBlocks::Off,
             shuffle_spade_games: true,
             shuffle_toad_houses: true,
             hands_levels: true,
