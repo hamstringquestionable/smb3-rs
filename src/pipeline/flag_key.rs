@@ -397,9 +397,10 @@ mod payload {
         pub(super) hb_encounters: EnemyMode,
 
         // --- Mode enums (2 bits each) ---
-        /// Suit Blocks, 0 or 1. Two bits because they were Random Fire Flower's
-        /// Off/On/Wild, which Suit Blocks replaced: any non-zero value decodes
-        /// as on, so a key minted with Random Fire Flower asks for suits.
+        /// Suit Blocks: 0 off, 1 on, 2 wild. Two bits because they were Random
+        /// Fire Flower's Off/On/Wild, which Suit Blocks replaced, so a key
+        /// minted with Random Fire Flower still asks for the matching mode
+        /// (3 was never written and decodes as on).
         pub(super) suit_blocks: B2,
         pub(super) piranha_shuffle: PiranhaMode,
 
@@ -657,7 +658,7 @@ impl Options {
             .with_bro_battle_timer(*bro_battle_timer)
             .with_deja_vu(*deja_vu)
             .with_deja_vu_forts(*deja_vu_forts)
-            .with_suit_blocks(u8::from(*suit_blocks))
+            .with_suit_blocks(suit_blocks.key_bits())
             .with_piranha_shuffle(*piranha_shuffle)
             .with_wild_sun(has(WildChaser::Sun))
             .with_wild_lakitu(has(WildChaser::Lakitu))
@@ -798,7 +799,7 @@ impl Options {
             friendlier_levels: f.friendlier_levels(),
             deja_vu: f.deja_vu_or_err().unwrap_or_default(),
             deja_vu_forts: f.deja_vu_forts(),
-            suit_blocks: f.suit_blocks() != 0,
+            suit_blocks: SuitBlocks::from_key_bits(f.suit_blocks()),
             piranha_shuffle: f.piranha_shuffle_or_err().unwrap_or_default(),
             wild_injections: chasers,
             starting_lives: idx_to_lives(f.starting_lives()),

@@ -470,7 +470,7 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
         0x02724,
         106,
         &["block_spawn"],
-        "block-spawn hook: suit-block pick + poison 1-up, suit object stubs (rest of the dead Obj0A code)",
+        "block-spawn hook: suit-block pick (On/Wild) + poison 1-up, mystery-object Hit stubs (rest of the dead Obj0A code; 106 reserved, 100 used at Wild + poison)",
     ),
     // PRG008 (file 0x10010, CPU $A000–$BFFF in levels)
     fs(

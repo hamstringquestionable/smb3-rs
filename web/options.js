@@ -88,8 +88,8 @@ const HINT_LEVELS = [
 	{ value: "full", label: "Full" },
 ];
 
-// Off / On / Wild pill (Piranha shuffle). Values match the Rust
-// `PiranhaMode` enum's serde representation.
+// Off / On / Wild pill (Piranha shuffle, Suit Blocks). Values match the
+// Rust `PiranhaMode` and `SuitBlocks` enums' serde representation.
 const OFF_ON_WILD = [
 	{ value: "off", label: "Off" },
 	{ value: "on", label: "On" },
@@ -732,9 +732,9 @@ export const SCHEMA = [
 		tip: "Randomize chest and Toad House reward items",
 		icon: CHEST,
 		group: "items", inFlagKey: true },
-	{ id: "suit_blocks", type: "bool", default: false,
+	{ id: "suit_blocks", type: "tri", options: OFF_ON_WILD, default: "off",
 		label: "Suit Blocks",
-		tip: "Blocks can also give a Tanooki, Frog, or Hammer Suit. A suit comes out as a color-cycling mushroom; you find out which suit when you grab it. From ? blocks, flower, leaf, star, and each suit come out about equally often; a star from a brick, note, or wood block may turn out to be a suit.",
+		tip: "Blocks can give a mystery mushroom: you find out what it is when you grab it. On: it holds a star or a Tanooki, Frog or Hammer Suit, and shows up alongside flowers and leaves. Wild: every power-up block holds one (now and then a star instead), and it can be a Fire Flower, Super Leaf or any suit. Small Mario just gets a mushroom.",
 		icon: [FROG_SUIT, TANOOKI_SUIT, HAMMER_SUIT],
 		enabledWhen: { powerups: true },
 		group: "items", inFlagKey: true },
@@ -1046,7 +1046,7 @@ export const PRESETS = [
 			eights_are_wild: "maybe",
 			faster_frog: true,
 			faster_tail_speed: true,
-			suit_blocks: true,
+			suit_blocks: "wild",
 			flying: "wild",
 			ghosts: "wild",
 			ground: "wild",
@@ -1234,7 +1234,7 @@ export const PRESETS = [
 			eights_are_wild: "maybe",
 			faster_frog: true,
 			faster_tail_speed: true,
-			suit_blocks: true,
+			suit_blocks: "wild",
 			flying: "wild",
 			generated_overworld: true,
 			ghosts: "wild",

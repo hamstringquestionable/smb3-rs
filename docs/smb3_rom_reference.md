@@ -1658,12 +1658,23 @@ Object group 0 (IDs $00–$23, dispatched from PRG001, CPU $A000–$BFFF, file o
 > `Player_Current` ($0726); the map entry makes Deja Vu copies differ. Then:
 > - a 1-Up ($0B) becomes poison ($0A) on bit 0;
 > - a suit-block marker ($03, see "From a hit tile to a spawned object") becomes
->   the Starman ($0C) or one of three suit objects on the hash's low two bits.
+>   the Starman ($0C) or one of three suit objects on the hash's low two bits
+>   (Suit Blocks On), or one of five mystery objects on its low three bits
+>   (Wild: Fire, Fire, Leaf, Leaf, Tanooki, Frog, Hammer, and a per-seed suit).
+>   In Wild, small Mario (`Player_Suit` = 0, zero page `$ED`) gets a plain
+>   mushroom ($0D) instead, before the hash — see "Suit Blocks Wild" below.
 >
 > It covers brick-1up **and** invis-1up (both resolve to `Bouncer_PUp[7]=$0B`).
-> 79 of 106 bytes are used with both flags on (58 suits only, 43 poison only).
+> 100 of 106 bytes are used at Wild + poison (89 with Modern Power-ups, which
+> skips the small check); On + poison is 79, suits only 58, poison only 43.
 >
 > **$01, $02 and $1A are now taken** by Suit Blocks: Tanooki, Frog and Hammer.
+> **$0F and $10 are taken in Wild** (Fire Flower, Super Leaf). They are
+> `ObjInit_DoNothing` slots like the three below, with PRG000 attribute `$00`,
+> so Wild also copies the Starman's `$C1` into `Object_AttrFlags` (file
+> `0x00304` + ID). Checked 2026-11-22: no loaded level object stream places any
+> group-0 ID but $07, $08, $09, $0E and $18 (`rominfo --level`, every name),
+> and the only raw-immediate `STA Level_ObjectID` stores are $00 and $04.
 > All three already had the Starman's PRG000 `Object_AttrFlags` (`BOUNDBOX01 |
 > FIREIMMUNITY | HITNOTKILL`), so only PRG001's tables change:
 > - **Norm:** `$A7D6`, the star's own, colour cycle included (the suit handler
@@ -1672,7 +1683,9 @@ Object group 0 (IDs $00–$23, dispatched from PRG001, CPU $A000–$BFFF, file o
 > - **PatStart:** the mushroom's (`$0D`), so they draw as a mushroom. Its
 >   tiles are in the same always-loaded page as the star's. Every other
 >   attribute byte is the star's.
-> - **Hit:** an entry that loads the suit index and jumps to `PRG001_A818`.
+> - **Hit:** an entry that loads the `Player_Suit` value (Tanooki 5, Frog 4,
+>   Hammer 6; Wild's Fire 2, Leaf 3) and jumps to `$A81C`, four bytes into
+>   `PRG001_A818`, past its table lookup.
 > - **PatTableSel** (`$A144`, file `0x2154`; missing from the list below): this
 >   must be copied from the star (`OPTS_NOCHANGE`), because $01/$02 vanilla ask
 >   for pages $48/$4C.
@@ -2489,6 +2502,33 @@ PUp_StarOrSuitFrames,Y` / …), entered with `A` = 1/2/3. `ObjNorm_StarOrSuit`
 objects enter it there, so they cycle too. (Until 2026-11 they entered at
 `$A7E0`, past the cycle, and drew an upside-down star in the suit's Big ?
 palette.)
+
+**Any suit, from `$A81C`.** `PRG001_A818` is `TAY` / `LDA
+PUp_StarOrSuitFrames,Y` / `CMP <Player_Suit` / `BEQ` (already wearing it:
+just the power-up sound) / `TAY` / `INY` / `STY Player_QueueSuit` / poof /
+collect. Entered at `$A81C` (`C5 ED`, the `CMP`) with a `Player_Suit` value
+already in `A`, it queues *any* power-up, not just the table's three: Fire
+(2) and Leaf (3) work, with the suit poof instead of the flower's flicker.
+
+#### Suit Blocks Wild (2026-11-22)
+
+Wild (`SuitBlocks::Wild`) takes the star out of the suit block. Its pool is
+Fire $0F ×2, Leaf $10 ×2, Tanooki, Frog, Hammer, and one of the three again,
+picked per seed (`AND #7` needs eight slots for five outcomes). The suit tiles
+are `$65` and the brick, note and wood **flowers** (`LATP_QBlocks` file
+`0x11695`, `LATP_Notes` `0x11686`, `LATP_Woodblocks` `0x1168A`, all vanilla
+code 1); the brick, note and wood stars keep code 3 and stay real stars. The
+reroll (`items::powerups`) rolls suit block 5 to 1 over the star tile in every
+family, and never the star where a block must make small Mario big or (with
+Hammer Vulnerable Koopalings) on an airship.
+
+**The mushroom reads `PUp_StarManFlash`.** `ObjInit_PUpMush` and
+the mushroom's draw path treat a non-zero flash as "came out of a Big ? box":
+it gets a sideways X velocity, pops up at `-$38` and skips the rise mask, so it
+appears over the block instead of rising out of it. The flower's Init and
+Norm read it the same way. The suit handler sets the flash to `$80` for the
+colour cycle, so Wild's small-Mario path clears it before spawning the
+mushroom — `ASL PUp_StarManFlash` turns `$80` into `$00` in three bytes.
 
 ### Other Block / Power-Up Offsets
 
@@ -5403,6 +5443,15 @@ world. Changing it to `$09` prevents the softlock.
 Koopalings are normally invulnerable to thrown hammers. The object attribute byte at
 file **0x00312** (CPU `$8302`, PRG000) has bit 7 set (`$89`), which flags them as
 hammer-immune. Clearing bit 7 (`$09`) makes hammers damage them like any other enemy.
+
+**Bit 7 is `OAT_HITNOTKILL`, so clearing it does more than let hammers in.**
+The invincibility check in PRG000 (`prg000.asm` ~5370: `LDA Player_StarInv` /
+`BEQ` / `LDA Object_AttrFlags,Y` / `AND #OAT_HITNOTKILL` / `BNE`) kills, on
+touch, every object *without* that bit. With the patch, a star-invincible
+Mario kills a Koopaling by touching it. That is why airship ? blocks never roll
+a star when the option is on (`items::powerups`, `no_airship_stars`), and why
+Wild Suit Blocks never roll the star tile there either. (The suits are fine:
+the Hammer Suit is the point of the option.)
 
 | Item | Value |
 |------|-------|

@@ -241,7 +241,7 @@ pub(super) fn level_data(rom: &mut Rom, seed: u64, options: &Options, rng: &mut 
     if options.boom_boom_room {
         rom.set_tag("levels/boom_boom_room");
         // 8F1 leaves the frog fix's command alone when that fix will run.
-        let frog_fix = options.suit_blocks && options.powerups;
+        let frog_fix = options.suit_blocks.any() && options.powerups;
         randomize::levels::boom_boom_room::randomize(rom, seed, frog_fix);
     }
     // Player colors and world colors are independent cosmetic layers:
@@ -1326,14 +1326,16 @@ pub(super) fn macobra_layer(rom: &mut Rom, seed: u64, options: &Options) {
         rom.set_tag("poison_mushrooms");
         randomize::items::poison_mushroom::apply(rom);
     }
-    let suit_blocks = options.suit_blocks && options.powerups;
+    let suits = if options.powerups { options.suit_blocks } else { crate::SuitBlocks::Off };
     let spawn = randomize::items::block_spawn::SpawnFlags {
         poison_mushrooms: options.poison_mushrooms,
-        suit_blocks,
+        suits,
+        modern_powerups: options.modern_powerups,
     };
     rom.set_tag("block_spawn");
-    randomize::items::block_spawn::apply(rom, spawn, randomize::items::block_spawn::salt(seed));
-    if suit_blocks {
+    let seeded = randomize::items::block_spawn::Seeded::from_seed(seed);
+    randomize::items::block_spawn::apply(rom, spawn, seeded);
+    if suits.any() {
         // The two level spots a Frog Suit cannot get out of. Only reachable in
         // a frog *because* of the suit blocks above, so the fix rides that
         // flag. No ordering requirement — see the module doc.
