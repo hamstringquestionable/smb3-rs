@@ -2530,6 +2530,98 @@ Norm read it the same way. The suit handler sets the flash to `$80` for the
 colour cycle, so Wild's small-Mario path clears it before spawning the
 mushroom — `ASL PUp_StarManFlash` turns `$80` into `$00` in three bytes.
 
+#### Kuribo's Shoe anywhere: tried and parked (2026-11-23)
+
+A sixth Wild outcome, Kuribo's Shoe, with Select to kick it off, was built and
+dropped because of its graphics (below). The code is on the local branch
+`feature/kuribo-shoe` (commit `91bfb3b`, never pushed): `items::shoe_drop`,
+its tests and `asm::check`, and the six-outcome pool in `block_spawn`. What
+it established:
+
+**Granting it is free.** `Player_QueueSuit` (`$0578`) = `$80` puts Mario in the
+shoe in any level (`Player_Update`, PRG008: `INC Player_Kuribo`, `$0577`). The
+star's suit grant at `$A81C` queues `A + 1` unless `A` equals `Player_Suit`, so
+`LDA #$7F` / `JMP $A81C` gives the shoe, with the suit poof and sound. It is
+the same 3-byte hit entry as Wild's other suits; object `$11` (an
+`ObjInit_DoNothing` slot) was the one it used, and is free again.
+
+**The shoe's graphics are the level's, not Mario's — this is what killed it.**
+The shoe frames (`PF18` big, `PF43` small, `prg029.asm`) draw Mario's top from
+his own page (`PatTable_BankSel+2`) but the shoe from tiles `$A9`/`$AB`, which
+sit in sprite bank 5 (`PatTable_BankSel+4`, `$071D`), the enemy page. Vanilla
+has the right page there only because the Goomba in a shoe requests it
+(`OPTS_SETPT5 | $0B`), so outside 5-3 the shoe draws as garbage. The flying
+shoe (`LostShoe_Pattern`, PRG007) uses the same tiles. This is probably why
+vanilla poofs the shoe away at the goal (`prg029.asm:1103`).
+
+- **How bank 5 is decided.** Every live object whose `ObjectGroup_PatTableSel`
+  entry is non-zero writes its page **every frame it runs**
+  (`Object_DoStateAction`, PRG000 `$CA7A`); only state 8 (poof dying) and
+  `Objects_DisPatChng` (set by an exploding Bob-omb) skip it. The page persists
+  until someone writes another. Objects run after the player each frame
+  (`Player_DoGameplay`, then `Objects_HandleScrollAndUpdate`, PRG030), and the
+  NMI uploads what was written last.
+- **So a one-time load at pickup does not stick:** with a page-requesting enemy
+  active it is overwritten in the same frame, before it is ever shown.
+- **A per-frame write from `Player_Draw` lets enemies win:** it is
+  overwritten whenever an enemy needs the bank, and shows the shoe otherwise.
+  Tried (5 bytes: `LDY #$0B` / `STY $071D`), unplaytested. The shoe is still
+  garbled whenever such an enemy is on screen. The open risk is an object that
+  draws from bank 5 *without* requesting it, which would get the shoe page.
+- **The only real fix is Mario's own pages:** two free 8x16 tile pairs at the
+  same index in every page the shoe frames use (frame page offset 0 of each
+  power-up root in `Player_PUpRootPage`, `$50 $54 $00 $40 $44`, plus `$53` for
+  small), with `PF18`/`PF43` repointed. Not checked; the flying shoe would
+  still need bank 5.
+
+**PRG029 is mapped for every draw of Mario.** `Player_Draw29`
+(`prg008.asm:422`) swaps PRG029 into `$C000`, calls `Player_Draw` (PRG029
+`$CE9F`, file `0x3AEAF`) and swaps PRG000 back. Every state that shows Mario
+(normal, vine, pipe, the grow/shrink transitions) goes through `Player_Draw`,
+so a hook there runs once a frame in a level, from a bank with kilobytes free.
+It is the natural home for any per-frame *player* feature: RAM, PRG008 (still
+at `$A000`) and PRG030/031 are reachable; PRG000's `$C000` code is **not** (it
+is switched out for the call), so anything from PRG000 has to be copied.
+PRG027 also calls `Player_Draw`, from a cutscene.
+
+**The hook site is shared.** `Player_Draw`+2, `LDA Player_FramePageOff,X`
+(`BD 37 CE`, file `0x3AEB1`), is already Faster Frog's hook (`JSR $C5F0`,
+applied in the MaCobra stage). A second feature hooking there should read the
+site first and end with a `JMP` to whatever `JSR` it finds (or the displaced
+load + `RTS` on a vanilla site), so both run. `X` (the frame) must survive;
+`Y` is free (the next instruction reloads it).
+
+**Dropping the shoe from PRG029** is a copy of vanilla's hit path:
+`Player_LoseKuribo` (PRG000 `$DAB5`, file `0x1AC5`) claims a special-object
+slot (`SpecialObj_ID` `$7FC6`, 6 slots, searched from 5 down) as
+`SOBJ_KURIBOSHOE` (`$09`) at Mario's position (`SpecialObj_YLo` `$05BF`, `YHi`
+`$7FD5`, `XLo` `$05C9`), `YVel` (`$05D3`) `-$30`, `XVel` (`$05DD`) `±16` away
+from his facing (`Player_FlipBits` `$EF`), `Data` (`$06C7`) 0; `$DA32` queues
+`SND_LEVELSHOE` (`$A0`) in `Sound_QLevel1` (`$04F2`). A hit also sets
+`Player_FlashInv` (`$0552`) = `$71`. Select is bit `$20` of `Pad_Input` (`$18`,
+new presses). The whole drop was 81 bytes plus a 3-4 byte tail.
+
+**P-Wing, for reference.** Vanilla's P-Wing is just `Player_Power` = `$7F` and
+`Player_FlyTime` = `$FF` at level init (`prg008.asm:502-512`); `$FF` is never
+counted down, so a P-Wing mystery outcome would need those two writes at grant
+time (about 5 bytes beside the hit entry in PRG001). Not built.
+
+**PRG029's big run is unreferenced.** `prg029.asm` brackets `$C5EA..$CBFF`
+with "BEGIN/END HUGE UNUSED SPACE". `FS_FASTER_FROG` (`$C5F0`, 24 bytes) sits
+at its start; everything after it is free.
+
+**PRG008 slack (not claimed).** `prg008.asm` marks `$A6AD..$A6BA` "Anybody
+want to claim this?": three stray bytes and an unreachable `ORA` / `JSR` /
+`JSR` / `JMP Player_Draw29`, about 14 bytes — PRG008's only known free run.
+
+**The 2P Vs Challenge's sprite pages are not Vs-only.** It loads `$04`-`$07`
+into the four sprite banks (`Do_2PVsChallenge`, PRG030), and each is also used
+in normal play: `$04` by the title screen, `$05` by Toad, the Toad House item
+and the treasure box (`OPTS_SETPT5 | $05`) and the letter scene, `$06` by the
+end card's twinkle and `$07` by its spin-away (PRG002). Tiles on them that only
+the Vs game draws could take new art, but only where those pages are loaded.
+Which tiles are Vs-only has not been checked.
+
 ### Other Block / Power-Up Offsets
 
 | File Offset | Size | Description |
