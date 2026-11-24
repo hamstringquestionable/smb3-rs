@@ -297,7 +297,7 @@ fn flag_key_round_trip_defaults() {
 fn flag_key_round_trip_all_wild() {
     // Everything flipped away from the all-off baseline.
     let opts = Options {
-        fire_flower: FireFlowerMode::Wild,
+        suit_blocks: SuitBlocks::Wild,
         piranha_shuffle: PiranhaMode::Wild,
         powerups: true,
         palettes: true,
@@ -326,7 +326,7 @@ fn flag_key_round_trip_all_wild() {
         early_sun: true,
         limit_bro_movement: true,
         bro_battle_timer: true,
-        japanese_damage: true,
+        damage: DamageSystem::OneHitKo,
         infinite_mushroom_houses: true,
         fast_mushroom_house: true,
         faster_tail_speed: true,
@@ -401,7 +401,7 @@ fn flag_key_round_trip_all_off() {
     assert_eq!(decoded.thwomps, EnemyMode::Off);
     assert_eq!(decoded.hb_encounters, EnemyMode::Off);
     assert!(decoded.wild_injections.is_empty());
-    assert_eq!(decoded.starting_lives, 1);
+    assert_eq!(decoded.starting_lives, 0);
 }
 
 #[test]
@@ -508,6 +508,10 @@ fn flag_key_per_option_round_trip() {
     // Encoded booleans: toggling must change the flag key.
     let bools: Vec<OptionTweak> = vec![
         ("powerups", Box::new(|o| o.powerups = !o.powerups)),
+        ("powerup_locations", Box::new(|o| o.powerup_locations = !o.powerup_locations)),
+        ("boom_boom_room", Box::new(|o| o.boom_boom_room = !o.boom_boom_room)),
+        ("faster_arrow_lifts", Box::new(|o| o.faster_arrow_lifts = !o.faster_arrow_lifts)),
+        ("tricky_spots", Box::new(|o| o.tricky_spots = !o.tricky_spots)),
         ("world_order", Box::new(|o| o.world_order = !o.world_order)),
         ("big_q_blocks", Box::new(|o| o.big_q_blocks = !o.big_q_blocks)),
         ("shuffle_airships", Box::new(|o| o.shuffle_airships = !o.shuffle_airships)),
@@ -889,9 +893,19 @@ fn flag_key_v29_golden() {
     // Everything off — the payload is nearly all zeros, so trailing-zero
     // stripping shows up here as a key that is no shorter than the default one
     // (the last non-zero byte is what sets the length, not the option count).
-    let all_off = "SMB3R-3Q2000000000000000W0";
+    // `faster_arrow_lifts` is stored inverted, so "off" sets a bit far out in
+    // the payload and lengthens the key.
+    let all_off = "SMB3R-3MR000000000000000W0000000004";
     assert_eq!(all_off_options().to_flag_key(), all_off);
     assert_eq!(Options::from_flag_key(all_off).unwrap(), normalized(all_off_options()));
+
+    // The all-off key from before Faster Arrow Lifts was an option: its
+    // inverted bit is zero, so it keeps the fast lifts 3.2.0 always had.
+    let pre_arrow_all_off = "SMB3R-3Q2000000000000000W0";
+    assert_eq!(
+        Options::from_flag_key(pre_arrow_all_off).unwrap(),
+        normalized(Options { faster_arrow_lifts: true, ..all_off_options() }),
+    );
 
     // A spread of non-default values across every field width: 5-bit item
     // slots, the 3-bit world count, 2-bit enums and the scattered chaser bits.
@@ -901,14 +915,22 @@ fn flag_key_v29_golden() {
         world_count: 3,
         wild_injections: WildChaser::ALL.to_vec(),
         eights_are_wild: Tri::Maybe,
-        fire_flower: FireFlowerMode::Wild,
+        suit_blocks: SuitBlocks::On,
         piranha_shuffle: PiranhaMode::Wild,
         hb_encounters: EnemyMode::Wild,
         ..Default::default()
     };
-    let mixed_key = "SMB3R-3PTFKHRF020525AGXAFJP40";
+    let mixed_key = "SMB3R-3NEFKHRF020525AGWTFJP40";
     assert_eq!(mixed.to_flag_key(), mixed_key);
-    assert_eq!(Options::from_flag_key(mixed_key).unwrap(), normalized(mixed));
+    assert_eq!(Options::from_flag_key(mixed_key).unwrap(), normalized(mixed.clone()));
+    // The same settings as minted when those two bits were Random Fire Flower,
+    // set to Wild (2). Suit Blocks inherited the bits with the same
+    // Off/On/Wild meaning, so the old Wild key asks for Wild suit blocks.
+    let fire_flower_wild_key = "SMB3R-3PTFKHRF020525AGXAFJP40";
+    assert_eq!(
+        Options::from_flag_key(fire_flower_wild_key).unwrap(),
+        normalized(Options { suit_blocks: SuitBlocks::Wild, ..mixed })
+    );
 }
 
 /// Reserve bits are the whole durability story: adding an option must not
@@ -1129,7 +1151,8 @@ fn fnv1a(data: &[u8]) -> u64 {
 /// tests to be updated alongside the struct.
 fn all_off_options() -> Options {
     Options {
-        fire_flower: FireFlowerMode::Off,
+        tricky_spots: false,
+        suit_blocks: SuitBlocks::Off,
         // Not "off": with the maze off this option is inert, and the key
         // normalizes it to the default the way it does maze_wands. Claiming
         // Off here would fail the round trip against a decoder that
@@ -1141,6 +1164,8 @@ fn all_off_options() -> Options {
         limit_hazards: HazardLimit::Off,
         piranha_shuffle: PiranhaMode::Off,
         powerups: false,
+        powerup_locations: false,
+        boom_boom_room: false,
         palettes: false,
         palette_themed: false,
         player_color: None,
@@ -1166,7 +1191,7 @@ fn all_off_options() -> Options {
         more_hammer_rocks: Tri::Off,
         eights_are_wild: Tri::Off,
         antechamber_shuffle: Tri::Off,
-        starting_lives: 1,
+        starting_lives: 0,
         card_speed_clear: false,
         remove_n_cards: false,
         skip_wand_cutscene: false,
@@ -1181,13 +1206,14 @@ fn all_off_options() -> Options {
         early_sun: false,
         limit_bro_movement: false,
         bro_battle_timer: false,
-        japanese_damage: false,
+        damage: DamageSystem::Standard,
         infinite_mushroom_houses: false,
         fast_mushroom_house: false,
         faster_tail_speed: false,
         no_game_over_penalty: false,
         mariomon: false,
         faster_frog: false,
+        faster_arrow_lifts: false,
         lakitu_stays_down: false,
         shuffle_big_q_rooms: false,
         poison_mushrooms: false,
@@ -1222,7 +1248,8 @@ fn all_off_options() -> Options {
 /// Palettes disabled because they use OS entropy (cosmetic, decoupled from seed).
 fn all_on_options() -> Options {
     Options {
-        fire_flower: FireFlowerMode::On,
+        tricky_spots: true,
+        suit_blocks: SuitBlocks::On,
         hints: crate::HintMode::default(),
         limit_hazards: HazardLimit::All,
         friendlier_levels: true,
@@ -1230,6 +1257,8 @@ fn all_on_options() -> Options {
         deja_vu_forts: true,
         piranha_shuffle: PiranhaMode::On,
         powerups: true,
+        powerup_locations: true,
+        boom_boom_room: true,
         palettes: false,
         palette_themed: false,
         player_color: None,
@@ -1270,13 +1299,14 @@ fn all_on_options() -> Options {
         early_sun: true,
         limit_bro_movement: true,
         bro_battle_timer: true,
-        japanese_damage: true,
+        damage: DamageSystem::Japanese,
         infinite_mushroom_houses: true,
         fast_mushroom_house: true,
         faster_tail_speed: true,
         no_game_over_penalty: true,
         mariomon: true,
         faster_frog: true,
+        faster_arrow_lifts: true,
         lakitu_stays_down: true,
         shuffle_big_q_rooms: true,
         poison_mushrooms: true,
@@ -2806,7 +2836,7 @@ fn every_loaded_object_stream_was_visible_to_the_enemy_pass() {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
             let run = super::stages::resolve(seed, &o, &mut rng);
             super::stages::map_fixes(&mut stage2, &run);
-            super::stages::level_data(&mut stage2, &o, &mut rng);
+            super::stages::level_data(&mut stage2, seed, &o, &mut rng);
             let visible = streams(&stage2);
 
             let mut rom = make_test_rom().unwrap();
@@ -2817,6 +2847,120 @@ fn every_loaded_object_stream_was_visible_to_the_enemy_pass() {
                 .map(|s| format!("0x{s:05X}"))
                 .collect();
             assert!(unseen.is_empty(), "{name}/seed {seed}: loaded but never visible: {unseen:?}");
+        }
+    }
+}
+
+/// Random Power Up locations' table names the commands it moves and the runs
+/// it lengthens by file offset, as the vanilla ROM has them. No other stage
+/// may rewrite a moved command's position (`b0`, `b1`) or a prep byte, before or after it, or an entry would move a
+/// command that is no longer there. What a block holds (`b2`) is free to change: the
+/// content reroll and the beta fixes both rewrite it.
+#[test]
+fn powerup_locations_bytes_are_its_own() {
+    use crate::randomize::items::powerup_locations::GROUPS;
+    use std::collections::BTreeSet;
+    let watched: BTreeSet<usize> = GROUPS
+        .iter()
+        .flat_map(|g| {
+            let commands = g.slots.iter().filter_map(|s| s.2).flat_map(|o| [o, o + 1]);
+            g.prep.iter().map(|p| p.0).chain(commands)
+        })
+        .collect();
+    let mut beta = all_on_options();
+    beta.include_beta_stages = true;
+    let arms = [
+        ("defaults", Options { powerup_locations: true, ..test_options() }),
+        ("all_on+beta", beta),
+    ];
+    for (name, o) in arms {
+        assert!(o.powerup_locations);
+        for seed in 1..=3 {
+            let Some(mut rom) = make_test_rom() else { return };
+            randomize(&mut rom, seed, &o);
+            for w in
+                rom.write_log().iter().filter(|w| !w.tag.starts_with("items/powerup_locations"))
+            {
+                for (offset, old, new) in w.changes() {
+                    assert!(
+                        !watched.contains(&offset),
+                        "{name}/seed {seed}: {} changed {offset:#X} ({old:02X} -> {new:02X})",
+                        w.tag
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// Suit Blocks' Frog Suit softlock fixes land with every other level edit on.
+/// The fix writes nothing unless its sites are vanilla, so a stage that
+/// takes one of them first (Boom-Boom Room did, in 8F) turns it off without
+/// a word.
+#[test]
+fn frog_softlocks_land_with_all_on() {
+    for seed in 1..=3 {
+        let Some(mut rom) = make_test_rom() else { return };
+        let o = all_on_options();
+        assert!(o.suit_blocks.any() && o.powerups && o.boom_boom_room);
+        randomize(&mut rom, seed, &o);
+        assert!(
+            crate::randomize::items::frog_softlocks::all_applied(&rom),
+            "seed {seed}: a frog softlock fix did not land"
+        );
+    }
+}
+
+/// Wild Suit Blocks through the whole pipeline, with and without Modern
+/// Power-ups and Poison Mushroom: it builds, and the frog fixes still land.
+#[test]
+fn wild_suit_blocks_build_with_their_neighbours() {
+    for modern_powerups in [false, true] {
+        let Some(mut rom) = make_test_rom() else { return };
+        let o = Options {
+            suit_blocks: SuitBlocks::Wild,
+            modern_powerups,
+            poison_mushrooms: true,
+            ..all_on_options()
+        };
+        randomize(&mut rom, 7, &o);
+        assert!(
+            crate::randomize::items::frog_softlocks::all_applied(&rom),
+            "modern {modern_powerups}: a frog softlock fix did not land"
+        );
+    }
+}
+
+/// Boom-Boom Room rewrites its commands whole, by file offset, as the vanilla
+/// ROM has them. No other stage may write those bytes, before or after it, or
+/// a platform would be rewritten over something else, or another stage's
+/// edit lost.
+#[test]
+fn boom_boom_room_bytes_are_its_own() {
+    use crate::randomize::levels::boom_boom_room::{ROOMS, commands};
+    use std::collections::BTreeSet;
+    let mut beta = all_on_options();
+    beta.include_beta_stages = true;
+    let arms =
+        [("defaults", Options { boom_boom_room: true, ..test_options() }), ("all_on+beta", beta)];
+    for (name, o) in arms {
+        assert!(o.boom_boom_room);
+        let frog_fix = o.suit_blocks.any() && o.powerups;
+        let watched: BTreeSet<usize> =
+            ROOMS.iter().flat_map(|r| commands(r, frog_fix)).flat_map(|&o| o..o + 4).collect();
+        for seed in 1..=3 {
+            let Some(mut rom) = make_test_rom() else { return };
+            randomize(&mut rom, seed, &o);
+            for w in rom.write_log().iter().filter(|w| !w.tag.starts_with("levels/boom_boom_room"))
+            {
+                for (offset, old, new) in w.changes() {
+                    assert!(
+                        !watched.contains(&offset),
+                        "{name}/seed {seed}: {} changed {offset:#X} ({old:02X} -> {new:02X})",
+                        w.tag
+                    );
+                }
+            }
         }
     }
 }

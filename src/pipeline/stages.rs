@@ -202,7 +202,7 @@ pub(super) fn map_fixes(rom: &mut Rom, run: &Resolved) {
 }
 
 /// Stage 2: level data — powerups, palettes, enemies, and the composed rooms.
-pub(super) fn level_data(rom: &mut Rom, options: &Options, rng: &mut ChaCha8Rng) {
+pub(super) fn level_data(rom: &mut Rom, seed: u64, options: &Options, rng: &mut ChaCha8Rng) {
     // Autoscroll must run BEFORE powerups and the overworld builder:
     // it writes pre-baked replacement level data for airship levels, and
     // powerups/enemies need to randomize on top of that patched data.
@@ -220,9 +220,29 @@ pub(super) fn level_data(rom: &mut Rom, options: &Options, rng: &mut ChaCha8Rng)
         rom.set_tag("qol/beta_stages");
         randomize::qol::fix_beta_stages(rom);
     }
+    // Positions only (each command's row and column), so it is independent of
+    // the content reroll below. After autoscroll and the beta fixes, which
+    // rewrite level data; before anything that copies an area elsewhere.
+    if options.powerup_locations {
+        rom.set_tag("items/powerup_locations");
+        randomize::items::powerup_locations::randomize(rom, seed);
+    }
     if options.powerups {
         rom.set_tag("powerups");
-        randomize::items::powerups::randomize(rom, rng, options.hammer_vulnerable_koopalings);
+        randomize::items::powerups::randomize(
+            rom,
+            rng,
+            options.hammer_vulnerable_koopalings,
+            options.suit_blocks,
+        );
+    }
+    // Rewrites boss-room platform commands in place, so like the power-up
+    // passes it runs on the level data before anything copies an area.
+    if options.boom_boom_room {
+        rom.set_tag("levels/boom_boom_room");
+        // 8F1 leaves the frog fix's command alone when that fix will run.
+        let frog_fix = options.suit_blocks.any() && options.powerups;
+        randomize::levels::boom_boom_room::randomize(rom, seed, frog_fix);
     }
     // Player colors and world colors are independent cosmetic layers:
     // `palettes` drives the character wardrobe (random or player-picked),
@@ -1147,11 +1167,11 @@ pub(super) fn engine_patches(
         randomize::qol::apply_limit_bro_movement(rom);
     }
 
-    // MaCobra52's "Japanese damage system" — damage drops straight to Small
-    // Mario (or kills from a suit) instead of tier-by-tier demotion.
-    if options.japanese_damage {
-        rom.set_tag("qol/japanese_damage");
-        randomize::qol::apply_japanese_damage(rom);
+    // Damage system: Japanese (any hit drops to Small) or one-hit KO. Both
+    // rewrite the same 3-byte jump in `Player_GetHurt`.
+    if options.damage != DamageSystem::Standard {
+        rom.set_tag("qol/damage_system");
+        randomize::qol::apply_damage_system(rom, options.damage);
     }
 
     // MaCobra52's "Infinite use Mushroom Houses" — toad houses don't get
@@ -1243,7 +1263,7 @@ pub(super) fn title_and_starting_items(
 }
 
 /// Stage 16: MaCobra's always-on patches, and the options that layer on them.
-pub(super) fn macobra_layer(rom: &mut Rom, options: &Options) {
+pub(super) fn macobra_layer(rom: &mut Rom, seed: u64, options: &Options) {
     // MaCobra patches — always-on bugfixes and fairness tweaks.
     rom.set_tag("qol/macobra");
     randomize::qol::apply_macobra_patches(rom);
@@ -1280,6 +1300,12 @@ pub(super) fn macobra_layer(rom: &mut Rom, options: &Options) {
         randomize::qol::apply_faster_frog(rom);
     }
 
+    // Faster arrow lifts (7-6). On by default; Beginner Friendly turns it off.
+    if options.faster_arrow_lifts {
+        rom.set_tag("qol/faster_arrow_lifts");
+        randomize::qol::apply_faster_arrow_lifts(rom);
+    }
+
     // MaCobra52's "Easy Power-up System" — Small Mario gets suits / Fire power
     // without first growing Big (modern Mario power-up behavior).
     if options.modern_powerups {
@@ -1287,27 +1313,34 @@ pub(super) fn macobra_layer(rom: &mut Rom, options: &Options) {
         randomize::qol::apply_modern_powerups(rom);
     }
 
-    // Random Fire Flower — in-level Fire Flower grants a position-derived suit
-    // instead of always Fire. Pure static patch (no RNG): the substitution is a
-    // deterministic function of World_Num + the flower's level position.
-    if options.fire_flower != FireFlowerMode::Off {
-        rom.set_tag("fire_flower");
-        randomize::items::fire_flower::apply(rom, options.fire_flower);
-        // ...and with it, the two level spots a Frog Suit cannot get out of.
-        // Only reachable in a frog *because* of the line above, so the fix
-        // rides the same flag. No ordering requirement — see the module doc.
-        rom.set_tag("frog_softlocks");
-        randomize::items::frog_softlocks::apply(rom);
-    }
-
-    // Poison Mushroom — each 1-Up block hands out either a real 1-Up or a
-    // purple upside-down poison mushroom, chosen by a seed-salted position
-    // hash. Installs the $0A trap object + a hook on the block-spawn sites.
-    // Must run after world_order so the salt is final (mirrors fire_flower).
-    // Replaces MaCobra52's all-1UPs-poison recolor under the same flag.
+    // What a hit block hands out. Suit Blocks turn the reroll's suit blocks,
+    // and every brick, note and wood star, into a star, Tanooki, Frog or
+    // Hammer picked per block; Poison Mushroom swaps
+    // about half the 1-Ups for a trap. One shared spawn hook decides both from
+    // a seed-salted hash of the block's position and map entry, so it is
+    // generated from whichever flags are on. The salt is its own substream.
+    // Suit blocks only exist where the power-up reroll placed them, so the
+    // flag does nothing without it.
+    // Poison Mushroom replaces MaCobra52's all-1UPs-poison recolor.
     if options.poison_mushrooms {
         rom.set_tag("poison_mushrooms");
         randomize::items::poison_mushroom::apply(rom);
+    }
+    let suits = if options.powerups { options.suit_blocks } else { crate::SuitBlocks::Off };
+    let spawn = randomize::items::block_spawn::SpawnFlags {
+        poison_mushrooms: options.poison_mushrooms,
+        suits,
+        modern_powerups: options.modern_powerups,
+    };
+    rom.set_tag("block_spawn");
+    let seeded = randomize::items::block_spawn::Seeded::from_seed(seed);
+    randomize::items::block_spawn::apply(rom, spawn, seeded);
+    if suits.any() {
+        // The two level spots a Frog Suit cannot get out of. Only reachable in
+        // a frog *because* of the suit blocks above, so the fix rides that
+        // flag. No ordering requirement — see the module doc.
+        rom.set_tag("frog_softlocks");
+        randomize::items::frog_softlocks::apply(rom);
     }
 }
 

@@ -14,7 +14,7 @@
 // drift in either direction via console.error.
 
 import { NES_PALETTE } from "./chr.js";
-import { W1_PAL0, W1_PAL1, W1_PAL2, W1_PAL3, HINT_TILES, MAZE_TILES, TELEPAD, W8_MILITARY, WORLD_TILES, WANDS } from "./icons.js";
+import { W1_PAL0, W1_PAL1, W1_PAL2, W1_PAL3, HINT_TILES, MAZE_TILES, Q_BLOCK, TELEPAD, W8_MILITARY, WORLD_TILES, WANDS } from "./icons.js";
 
 const ITEM_OPTIONS = [
 	{ value: 0, label: "None" },
@@ -40,7 +40,7 @@ const ITEM_OPTIONS = [
 // Starting-lives pill options — Mario power-up state names with the
 // actual life count in brackets. Encodes to 2 bits in the flag key.
 const STARTING_LIVES_OPTIONS = [
-	{ value: 1,  label: "Small [1]" },
+	{ value: 0,  label: "Small [0]" },
 	{ value: 5,  label: "Super [5]" },
 	{ value: 20, label: "Fire [20]" },
 	{ value: 99, label: "Hammer [99]" },
@@ -88,13 +88,20 @@ const HINT_LEVELS = [
 	{ value: "full", label: "Full" },
 ];
 
-// Off / On / Wild pill for Random Fire Flower. "Wild" widens the pool to also
-// include the Small/Big downgrade outcomes. Values match the Rust
-// `FireFlowerMode` enum's serde representation.
+// Off / On / Wild pill (Piranha shuffle, Suit Blocks). Values match the
+// Rust `PiranhaMode` and `SuitBlocks` enums' serde representation.
 const OFF_ON_WILD = [
 	{ value: "off", label: "Off" },
 	{ value: "on", label: "On" },
 	{ value: "wild", label: "Wild" },
+];
+
+// Damage System pill. Values match the Rust `DamageSystem` enum's serde
+// representation.
+const DAMAGE_SYSTEMS = [
+	{ value: "standard", label: "Standard" },
+	{ value: "japanese", label: "Japanese" },
+	{ value: "one_hit_ko", label: "One-Hit KO" },
 ];
 
 // Off / Double / Wild pill for Deja Vu. Values match the Rust `DejaVuMode`
@@ -240,6 +247,11 @@ const WATER_SPR3 = [0x0F, 0x0F, 0x30, 0x27];
 const SPIKE = { tiles: [640, 642, 641, 643], cols: 2, palette: PLAINS_SPR2 }; // $29
 const PATOOIE = { tiles: [5092, { t: 5092, flip: true }, 5093, { t: 5093, flip: true }, 5088, { t: 5088, flip: true }, 5089, { t: 5089, flip: true }], cols: 2, palette: PLAINS_SPR2 }; // $2A
 const NIPPER = { tiles: [672, 674, 673, 675], cols: 2, palette: PLAINS_SPR2 }; // $33
+// Head (pal 3) over its cloud (pal 1), both mirrored: `ObjNorm_Lakitu` draws
+// the cloud with GroundTroop_DrawMirrored, then sets $9D / attrs $03, $43 on top.
+const LAKITU = { tiles: [732, { t: 732, flip: true }, 733, { t: 733, flip: true },
+	{ t: 734, palette: PLAINS_SPR1 }, { t: 734, flip: true, palette: PLAINS_SPR1 },
+	{ t: 735, palette: PLAINS_SPR1 }, { t: 735, flip: true, palette: PLAINS_SPR1 }], cols: 2, palette: PLAINS_SPR3 }; // $83
 const BUSTER_BEETLE = { tiles: [688, 690, 689, 691], cols: 2, palette: PLAINS_SPR3 }; // $40
 const CHAIN_CHOMP = { tiles: [656, 658, 657, 659], cols: 2, palette: PLAINS_SPR1 }; // $4F
 const FIRE_CHOMP = { tiles: [920, 922, 921, 923], cols: 2, palette: PLAINS_SPR1 }; // $58
@@ -637,6 +649,11 @@ export const SCHEMA = [
 		label: "Limit Hazards",
 		tip: "Stops swaps from dropping nippers, Ptooies, thwomps, Hot Foots or Bros into levels that weren't built for them. Some allows the occasional one, All allows none. Hazards that were always there stay put.",
 		group: "enemies", inFlagKey: true },
+	{ id: "tricky_spots", type: "bool", default: false,
+		label: "Tricky Spots",
+		tip: "Allows a few enemy placements the community has found possible, but tricky to pass without getting hit.",
+		icon: [NIPPER, LAKITU],
+		group: "enemies", inFlagKey: true },
 	{ id: "wild_injections", type: "toggles", options: WILD_INJECTION_TOGGLES,
 		default: [],
 		label: "Wild Injections",
@@ -673,6 +690,11 @@ export const SCHEMA = [
 		tip: "Each fortress Boom-Boom takes a random number of stomps (1–5) instead of the usual 3",
 		icon: Q_ORB,
 		group: "bosses", inFlagKey: true },
+	{ id: "boom_boom_room", type: "bool", default: false,
+		label: "Boom-Boom Room",
+		tip: "The floating blocks in fortress boss rooms move around, and a few rooms that had none get some",
+		icon: Q_ORB,
+		group: "bosses", inFlagKey: true },
 	{ id: "hammer_vulnerable_koopalings", type: "bool", default: false,
 		label: "Hammer Vulnerable Koopalings",
 		tip: "Koopalings can be damaged by thrown hammers (normally hammers pass through them)",
@@ -700,16 +722,21 @@ export const SCHEMA = [
 		tip: "Randomize ? block and brick block contents, keeping each roughly the same tier",
 		icon: POWERUPS,
 		group: "items", inFlagKey: true },
+	{ id: "powerup_locations", type: "bool", default: false,
+		label: "Random Power Up locations", flavor: "It's in here somewhere…",
+		tip: "A power-up in a row of matching blocks can come out of any of them. It stays near where it was in the original game, not anywhere in the level.",
+		icon: Q_BLOCK,
+		group: "items", inFlagKey: true },
 	{ id: "chest_items", type: "bool", default: true,
 		label: "Chest Items",
 		tip: "Randomize chest and Toad House reward items",
 		icon: CHEST,
 		group: "items", inFlagKey: true },
-	{ id: "fire_flower", type: "tri", options: OFF_ON_WILD, default: "off",
-		label: "Random Fire Flower",
-		tip: "Fire Flowers still look the same, but each one gives a different suit based on where it is. On: Fire, Frog, Tanooki, or Hammer. Wild: also lets it shrink you to Big or Small.",
-		credit: { name: "MaCobra52", url: "https://github.com/macobra52" },
-		icon: FIRE_FLOWER,
+	{ id: "suit_blocks", type: "tri", options: OFF_ON_WILD, default: "off",
+		label: "Suit Blocks",
+		tip: "Blocks can give a mystery mushroom: you find out what it is when you grab it. On: it holds a star or a Tanooki, Frog or Hammer Suit, and shows up alongside flowers and leaves. Wild: every power-up block holds one (now and then a star instead), and it can be a Fire Flower, Super Leaf or any suit. Small Mario just gets a mushroom.",
+		icon: [FROG_SUIT, TANOOKI_SUIT, HAMMER_SUIT],
+		enabledWhen: { powerups: true },
 		group: "items", inFlagKey: true },
 	{ id: "big_q_blocks", type: "bool", default: false,
 		label: "Big ? Blocks",
@@ -753,9 +780,9 @@ export const SCHEMA = [
 		tip: "Number of lives you start with. The label is Mario's power-up state; the bracketed number is the actual count.",
 		icon: PLAYER_PANELS,
 		group: "player", inFlagKey: true },
-	{ id: "japanese_damage", type: "bool", default: false,
-		label: "Japanese Damage System",
-		tip: "Taking damage drops you straight to Small Mario instead of demoting one tier at a time.",
+	{ id: "damage", type: "tri", options: DAMAGE_SYSTEMS, default: "standard",
+		label: "Damage System",
+		tip: "What happens when you get hit. Standard: a suit drops you to Super Mario, Super Mario drops to Small. Japanese: any power-up drops you straight to Small Mario, as in the Famicom original. One-Hit KO: any hit kills you, whatever you're wearing — even Kuribo's Shoe.",
 		credit: { name: "MaCobra52", url: "https://github.com/macobra52" },
 		group: "player", inFlagKey: true },
 	{ id: "faster_tail_speed", type: "bool", default: false,
@@ -781,6 +808,11 @@ export const SCHEMA = [
 		tip: "Speeds up swimming and running while wearing the Frog Suit.",
 		credit: { name: "MaCobra52", url: "https://github.com/macobra52" },
 		icon: FROG_SUIT,
+		group: "player", inFlagKey: true },
+	{ id: "faster_arrow_lifts", type: "bool", default: true,
+		label: "Faster Arrow Lifts",
+		tip: "The arrow lifts in 7-6 move a little more than twice as fast. Off keeps their original speed.",
+		credit: { name: "MaCobra52", url: "https://github.com/macobra52" },
 		group: "player", inFlagKey: true },
 	{ id: "modern_powerups", type: "bool", default: false,
 		label: "Modern Power-Ups",
@@ -918,6 +950,7 @@ export const PRESETS = [
 		overrides: {
 			big_q_blocks: true,
 			fast_mushroom_house: true,
+			faster_arrow_lifts: false,
 			faster_tail_speed: true,
 			friendlier_levels: true,
 			ground: "wild",
@@ -973,6 +1006,7 @@ export const PRESETS = [
 			bro_battle_timer: true,
 			bros: "wild",
 			cannons: "wild",
+			damage: "japanese",
 			early_sun: true,
 			eights_are_wild: "maybe",
 			faster_frog: true,
@@ -982,7 +1016,6 @@ export const PRESETS = [
 			ground: "wild",
 			hb_encounters: "wild",
 			include_beta_stages: true,
-			japanese_damage: true,
 			limit_bro_movement: true,
 			piranha_shuffle: "wild",
 			piranhas: "wild",
@@ -993,13 +1026,14 @@ export const PRESETS = [
 			shuffle_big_q_rooms: true,
 			swap_start_airship: true,
 			thwomps: "wild",
+			tricky_spots: true,
 			troll_pipes: "maybe",
 			water: "wild",
 			wild_injections: ["sun","lakitu","bass"],
 			world_order: true,
 		} },
 	{ id: "max_chaos", label: "Max Chaos", mode: "standard",
-		tip: "Everything wild: every enemy class, all three chasers, wild Fire Flowers, beta stages, and every maybe.",
+		tip: "Everything wild: every enemy class, all three chasers, suit blocks, beta stages, and every maybe.",
 		// decoded from SMB3R-3PHZZQVZ5JNANANAXBXQPKSG
 		overrides: {
 			antechamber_shuffle: "maybe",
@@ -1012,7 +1046,7 @@ export const PRESETS = [
 			eights_are_wild: "maybe",
 			faster_frog: true,
 			faster_tail_speed: true,
-			fire_flower: "wild",
+			suit_blocks: "wild",
 			flying: "wild",
 			ghosts: "wild",
 			ground: "wild",
@@ -1118,6 +1152,7 @@ export const PRESETS = [
 		overrides: {
 			big_q_blocks: true,
 			fast_mushroom_house: true,
+			faster_arrow_lifts: false,
 			faster_tail_speed: true,
 			friendlier_levels: true,
 			generated_overworld: true,
@@ -1151,6 +1186,7 @@ export const PRESETS = [
 			bro_battle_timer: true,
 			bros: "wild",
 			cannons: "wild",
+			damage: "japanese",
 			early_sun: true,
 			eights_are_wild: "maybe",
 			faster_frog: true,
@@ -1163,7 +1199,6 @@ export const PRESETS = [
 			hidden_worlds: true,
 			hints: "most",
 			include_beta_stages: true,
-			japanese_damage: true,
 			limit_bro_movement: true,
 			maze_wands: 8,
 			maze_wands_max: 7,
@@ -1178,6 +1213,7 @@ export const PRESETS = [
 			shuffle_big_q_rooms: true,
 			swap_start_airship: true,
 			thwomps: "wild",
+			tricky_spots: true,
 			troll_pipes: "maybe",
 			water: "wild",
 			wild_injections: ["sun","lakitu","bass"],
@@ -1198,7 +1234,7 @@ export const PRESETS = [
 			eights_are_wild: "maybe",
 			faster_frog: true,
 			faster_tail_speed: true,
-			fire_flower: "wild",
+			suit_blocks: "wild",
 			flying: "wild",
 			generated_overworld: true,
 			ghosts: "wild",

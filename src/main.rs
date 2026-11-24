@@ -4,8 +4,8 @@ use std::path::PathBuf;
 use std::process;
 
 use smb3_rs::{
-    DejaVuMode, EnemyMode, FireFlowerMode, HazardLimit, HintMode, ITEMS, MAZE_WANDS_WANDOM,
-    Options, PiranhaMode, STARTING_LIVES_VALUES, Tri, WildChaser, item_display_name, item_id,
+    DamageSystem, DejaVuMode, EnemyMode, HazardLimit, HintMode, ITEMS, MAZE_WANDS_WANDOM, Options,
+    PiranhaMode, STARTING_LIVES_VALUES, SuitBlocks, Tri, WildChaser, item_display_name, item_id,
 };
 
 /// Human-readable label for a tri-state flag in the run summary.
@@ -69,13 +69,13 @@ fn parse_enemy_mode(s: &str) -> Result<EnemyMode, String> {
     }
 }
 
-/// clap value parser for `--fire-flower` (off/on/wild).
-fn parse_fire_flower(s: &str) -> Result<FireFlowerMode, String> {
+/// clap value parser for `--damage` (standard/japanese/ohko).
+fn parse_damage(s: &str) -> Result<DamageSystem, String> {
     match s {
-        "off" => Ok(FireFlowerMode::Off),
-        "on" => Ok(FireFlowerMode::On),
-        "wild" => Ok(FireFlowerMode::Wild),
-        _ => Err("valid values: off, on, wild".to_string()),
+        "standard" => Ok(DamageSystem::Standard),
+        "japanese" => Ok(DamageSystem::Japanese),
+        "ohko" => Ok(DamageSystem::OneHitKo),
+        _ => Err("valid values: standard, japanese, ohko".to_string()),
     }
 }
 
@@ -107,6 +107,16 @@ fn parse_hints(s: &str) -> Result<HintMode, String> {
         "most" => Ok(HintMode::Most),
         "full" => Ok(HintMode::Full),
         _ => Err("valid values: off, some, most, full".to_string()),
+    }
+}
+
+/// clap value parser for `--suit-blocks` (off/on/wild).
+fn parse_suit_blocks(s: &str) -> Result<SuitBlocks, String> {
+    match s {
+        "off" => Ok(SuitBlocks::Off),
+        "on" => Ok(SuitBlocks::On),
+        "wild" => Ok(SuitBlocks::Wild),
+        _ => Err("valid values: off, on, wild".to_string()),
     }
 }
 
@@ -185,6 +195,16 @@ struct Cli {
     /// Disable power-up randomization
     #[arg(long)]
     no_powerups: bool,
+
+    /// Random Power Up locations: a power-up in a row or pattern of look-alike
+    /// blocks trades places with the plain blocks around it
+    #[arg(long)]
+    powerup_locations: bool,
+
+    /// Boom-Boom Room: new places and widths for the floating platforms in
+    /// fortress boss rooms
+    #[arg(long)]
+    boom_boom_room: bool,
 
     /// Disable player color randomization (keep the brothers' vanilla outfits)
     #[arg(long)]
@@ -370,9 +390,9 @@ struct Cli {
     #[arg(long)]
     bro_battle_timer: bool,
 
-    /// Damage drops to Small Mario or kills outright instead of demoting tier-by-tier (MaCobra52's "Japanese damage system" patch)
-    #[arg(long)]
-    japanese_damage: bool,
+    /// What a hit does: standard (demote one tier), japanese (any power-up drops to Small; MaCobra52's patch) or ohko (any hit kills)
+    #[arg(long, default_value = "standard", value_parser = parse_damage)]
+    damage: DamageSystem,
 
     /// Toad / Mushroom Houses can be visited any number of times (MaCobra52's "Infinite use Mushroom Houses" patch)
     #[arg(long)]
@@ -398,6 +418,10 @@ struct Cli {
     #[arg(long)]
     faster_frog: bool,
 
+    /// Keep 7-6's arrow lifts at their vanilla speed (they move a little over 2x by default)
+    #[arg(long)]
+    slow_arrow_lifts: bool,
+
     /// Defeated Lakitus stay down instead of coming back
     #[arg(long)]
     lakitu_stays_down: bool,
@@ -414,11 +438,16 @@ struct Cli {
     #[arg(long)]
     modern_powerups: bool,
 
-    /// Random Fire Flower: in-level Fire Flowers grant a position-derived power
-    /// state instead of always Fire — off, on, or wild (default: off).
-    /// `on` = Fire/Frog/Tanooki/Hammer; `wild` also allows Small/Big.
-    #[arg(long, default_value = "off", value_parser = parse_fire_flower)]
-    fire_flower: FireFlowerMode,
+    /// Suit Blocks: off, on or wild (bare `--suit-blocks` = on). Blocks hand
+    /// out a colour-cycling mushroom that shows what it is only when taken.
+    /// `on`: a star, Tanooki, Frog or Hammer Suit, from ? blocks alongside
+    /// flower and leaf, and from every brick, note and wood star. `wild`: every
+    /// power-up block is one (or, about 1 in 6, a plain star), giving Fire
+    /// Flower, Super Leaf or a suit; small Mario gets a mushroom.
+    /// Needs the power-up reroll (no effect with --no-powerups)
+    #[arg(long, default_value = "off", num_args = 0..=1, default_missing_value = "on",
+          value_parser = parse_suit_blocks)]
+    suit_blocks: SuitBlocks,
 
     /// Piranha shuffle: release the two W7 piranha plant levels into the level
     /// pool — off, on, or wild (default: off). `on` = their plant sprites follow
@@ -525,6 +554,12 @@ struct Cli {
     #[arg(long)]
     friendlier_levels: bool,
 
+    /// Tricky Spots: let the enemy shuffle use three placements players have
+    /// found hard to pass without getting hit (a dropping Thwomp at 8B's Hot
+    /// Foot, a Lakitu in 7-9, a Nipper by β1's last pipe)
+    #[arg(long)]
+    tricky_spots: bool,
+
     /// Deja Vu: let one level appear on more than one map tile — off, double,
     /// or wild (default: off). `double` puts two copies of every level in the
     /// deck; `wild` deals with replacement, so a level can appear any number of
@@ -557,7 +592,7 @@ struct Cli {
     #[arg(long, default_value = "off", value_parser = parse_wild_injections)]
     wild_injections: ChaserSet,
 
-    /// Set starting lives. Must be one of 1, 5, 20, 99 (default: 5).
+    /// Set starting lives. Must be one of 0, 5, 20, 99 (default: 5). 0 means the first death is Game Over.
     #[arg(long, default_value_t = 5, value_parser = parse_starting_lives)]
     starting_lives: u8,
 
@@ -667,6 +702,8 @@ fn build_options(cli: &Cli) -> Options {
     } else {
         Options {
             powerups: !cli.no_powerups,
+            powerup_locations: cli.powerup_locations,
+            boom_boom_room: cli.boom_boom_room,
             palettes: !cli.no_palettes,
             palette_themed: cli.themed_palettes,
             player_color: cli.player_color,
@@ -708,18 +745,19 @@ fn build_options(cli: &Cli) -> Options {
             early_sun: cli.early_sun,
             limit_bro_movement: cli.limit_bro_movement,
             bro_battle_timer: cli.bro_battle_timer,
-            japanese_damage: cli.japanese_damage,
+            damage: cli.damage,
             infinite_mushroom_houses: cli.infinite_mushroom_houses,
             fast_mushroom_house: cli.fast_mushroom_house,
             faster_tail_speed: cli.faster_tail_speed,
             no_game_over_penalty: cli.no_game_over_penalty,
             mariomon: cli.mariomon,
             faster_frog: cli.faster_frog,
+            faster_arrow_lifts: !cli.slow_arrow_lifts,
             lakitu_stays_down: cli.lakitu_stays_down,
             shuffle_big_q_rooms: cli.shuffle_big_q_rooms,
             poison_mushrooms: cli.poison_mushrooms,
             modern_powerups: cli.modern_powerups,
-            fire_flower: cli.fire_flower,
+            suit_blocks: cli.suit_blocks,
             piranha_shuffle: cli.piranha_shuffle,
             shuffle_spade_games: !cli.no_shuffle_spade_games,
             shuffle_toad_houses: !cli.no_shuffle_toad_houses,
@@ -742,6 +780,7 @@ fn build_options(cli: &Cli) -> Options {
             hb_encounters: cli.hb_encounters,
             limit_hazards: cli.limit_hazards,
             friendlier_levels: cli.friendlier_levels,
+            tricky_spots: cli.tricky_spots,
             deja_vu: cli.deja_vu,
             deja_vu_forts: cli.deja_vu_forts,
             hints: cli.hints,
@@ -762,6 +801,11 @@ fn print_summary(options: &Options, seed: u64, output_path: &std::path::Path) {
     eprintln!("  Seed: {seed}");
     eprintln!("  Flags: {}", options.to_flag_key());
     eprintln!("  Powerups: {}", if options.powerups { "on" } else { "off" });
+    eprintln!(
+        "  Power-up locations: {}",
+        if options.powerup_locations { "shuffled" } else { "vanilla" }
+    );
+    eprintln!("  Boom-Boom rooms: {}", if options.boom_boom_room { "shuffled" } else { "vanilla" });
     eprintln!(
         "  Player colors: {}",
         match (options.palettes, options.player_color) {
@@ -855,14 +899,7 @@ fn print_summary(options: &Options, seed: u64, output_path: &std::path::Path) {
     eprintln!("  More hammer rocks: {}", tri_str(options.more_hammer_rocks));
     eprintln!("  8s are Wild: {}", tri_str(options.eights_are_wild));
     eprintln!("  Antechamber shuffle: {}", tri_str(options.antechamber_shuffle));
-    eprintln!(
-        "  Random fire flower: {}",
-        match options.fire_flower {
-            FireFlowerMode::Off => "off",
-            FireFlowerMode::On => "on",
-            FireFlowerMode::Wild => "wild",
-        }
-    );
+    eprintln!("  Suit blocks: {:?}", options.suit_blocks);
     eprintln!(
         "  Piranha shuffle: {}",
         match options.piranha_shuffle {

@@ -1,8 +1,8 @@
 //! Level-geometry fixes for the two spots where an unwanted Frog Suit strands
 //! the player.
 //!
-//! [`crate::randomize::items::fire_flower`] can hand out a Frog Suit from any in-level Fire
-//! Flower, so a player who grabbed what looked like a power-up can arrive at an
+//! [`crate::randomize::items::block_spawn`] can hand out a Frog Suit from a
+//! suit block, so a player who grabbed a suit at random can arrive at an
 //! obstacle wearing the one suit that cannot clear it. The Frog Suit cannot
 //! crouch, so a gap the vanilla level expects Big Mario to duck under stops
 //! being passable at all.
@@ -53,6 +53,12 @@ struct Edit {
     /// The replacement, same length.
     patched: &'static [u8],
 }
+
+/// 8F's black backdrop command, which the 8F fix repurposes into its row-7
+/// brick. Boom-Boom Room deals the same command as an 8F1 platform, so it
+/// leaves this one alone whenever this fix runs: see
+/// [`crate::randomize::levels::boom_boom_room::commands`].
+pub(crate) const BACKDROP_8F: usize = 0x2BA85;
 
 /// A set of edits that is applied together or not at all.
 struct Fix {
@@ -121,7 +127,7 @@ static FIXES: [Fix; 2] = [
         edits: &[
             Edit { offset: 0x2B93A, vanilla: &[0x32, 0x3A, 0x10], patched: &[0x17, 0xD1, 0xD0] },
             Edit {
-                offset: 0x2BA85,
+                offset: BACKDROP_8F,
                 vanilla: &[0x70, 0xCD, 0x3A, 0x22],
                 patched: &[0x17, 0xD2, 0xE0, 0x0D],
             },
@@ -135,8 +141,8 @@ static FIXES: [Fix; 2] = [
     },
 ];
 
-/// Apply both fixes. Gated by the caller on Random Fire Flower being enabled,
-/// which is what turns "a Fire Flower" into "a suit the player did not pick".
+/// Apply both fixes. Gated by the caller on Suit Blocks being enabled, which
+/// is what hands the player a suit they did not pick.
 ///
 /// A fix with any site that is not vanilla is left alone entirely, so this is
 /// a no-op on a ROM that already carries someone else's edit there.
@@ -153,6 +159,15 @@ pub(crate) fn apply(rom: &mut Rom) {
         }
         rom.pop_tag();
     }
+}
+
+/// Whether every fix is in place on `rom`.
+#[cfg(test)]
+pub(crate) fn all_applied(rom: &Rom) -> bool {
+    FIXES
+        .iter()
+        .flat_map(|f| f.edits)
+        .all(|e| rom.read_range(e.offset, e.patched.len()) == e.patched)
 }
 
 #[cfg(test)]

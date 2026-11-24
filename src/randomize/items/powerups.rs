@@ -6,6 +6,7 @@
 use rand::Rng;
 use rand::seq::IndexedRandom;
 
+use crate::SuitBlocks;
 use crate::randomize::rom_data::level_index::{self, PowerBlock};
 use crate::rom::Rom;
 
@@ -15,17 +16,59 @@ const QBLOCK_SHAPES: &[u8] = &[0x00, 0x01, 0x02];
 /// ? block powerup shapes without star (flower=0, leaf=1).
 const QBLOCK_SHAPES_NO_STAR: &[u8] = &[0x00, 0x01];
 
+/// ? block shape 4, tile `$65`: a duplicate coin block in vanilla, a suit
+/// block with Suit Blocks on (see [`super::block_spawn`]).
+const QBLOCK_SUIT: u8 = 0x04;
+
+/// ? block shape 3, coin-or-star: what vanilla's three shape-4 coin blocks
+/// become when shape 4 is a suit. Still a coin unless Mario is invincible.
+const QBLOCK_COIN_OR_STAR: u8 = 0x03;
+
+/// ? block shapes with Suit Blocks on. A suit block is four outcomes (the
+/// hash picks a star, Tanooki, Frog or Hammer), so it is weighted four and
+/// the plain star drops out: each of the six — flower, leaf, star and the
+/// three suits — comes out 1 in 6.
+const QBLOCK_SHAPES_WITH_SUITS: &[u8] =
+    &[0x00, 0x01, QBLOCK_SUIT, QBLOCK_SUIT, QBLOCK_SUIT, QBLOCK_SUIT];
+
+/// ? block shape 2, the plain ? star.
+const QBLOCK_STAR: u8 = 0x02;
+
+/// ? block shapes with Wild Suit Blocks: a suit block 5 to 1 over a star.
+/// Wild's suit block has no star inside it, so the star is its own, visible
+/// tile — which is what lets the no-star rules below simply leave it out.
+const QBLOCK_SHAPES_WILD: &[u8] =
+    &[QBLOCK_SUIT, QBLOCK_SUIT, QBLOCK_SUIT, QBLOCK_SUIT, QBLOCK_SUIT, QBLOCK_STAR];
+
+/// A Wild ? block that may not be a star: always a suit block, which makes
+/// small Mario big whatever it turns out to be.
+const QBLOCK_SHAPES_WILD_NO_STAR: &[u8] = &[QBLOCK_SUIT];
+
 /// Brick powerup shapes (flower=6, leaf=7, star=8, 1-up=11).
 const BRICK_SHAPES: &[u8] = &[0x06, 0x07, 0x08, 0x0B];
 
 /// Brick powerup shapes that make small Mario big (flower=6, leaf=7).
 const BRICK_SHAPES_FLOWER_OR_LEAF: &[u8] = &[0x06, 0x07];
 
+/// Brick shapes with Wild Suit Blocks. The brick *flower* tile is the suit
+/// block there ([`super::block_spawn`]), 5 to 1 over the star; the 1-Up keeps
+/// the quarter share it has in the plain reroll.
+const BRICK_SHAPES_WILD: &[u8] = &[0x06, 0x06, 0x06, 0x06, 0x06, 0x08, 0x0B, 0x0B];
+
+/// A Wild brick that must make small Mario big: the suit block alone.
+const BRICK_SHAPES_WILD_NO_STAR: &[u8] = &[0x06];
+
 /// Note block powerup shapes (flower=1, leaf=2, star=3).
 const NOTE_SHAPES: &[u8] = &[0x01, 0x02, 0x03];
 
+/// Note shapes with Wild Suit Blocks: the flower tile is the suit block.
+const NOTE_SHAPES_WILD: &[u8] = &[0x01, 0x01, 0x01, 0x01, 0x01, 0x03];
+
 /// Wood block powerup shapes (flower=4, leaf=5, star=6).
 const WOOD_SHAPES: &[u8] = &[0x04, 0x05, 0x06];
+
+/// Wood shapes with Wild Suit Blocks: the flower tile is the suit block.
+const WOOD_SHAPES_WILD: &[u8] = &[0x04, 0x04, 0x04, 0x04, 0x04, 0x06];
 
 /// File offsets of byte2 values that must not be randomized.
 ///
@@ -80,11 +123,20 @@ pub(crate) const AIRSHIP_QBLOCK_OFFSETS: &[usize] = &[
 /// Pick the shape pool for a ? block at `file_offset`. Blocks that gate
 /// progression on being big (`FLOWER_OR_LEAF_OFFSETS`) always
 /// exclude the star; airship blocks exclude it only when `no_airship_stars`
-/// is set. Everything else may become flower, leaf, or star.
-fn qblock_pool(file_offset: usize, no_airship_stars: bool) -> &'static [u8] {
+/// is set. Everything else may become flower, leaf, or star — or, with
+/// Suit Blocks on, a suit block. In On mode a block that may not be a star
+/// may not be a suit either: On's suit block can come out a star. Wild's
+/// cannot, so there a no-star block is simply always a suit block.
+fn qblock_pool(file_offset: usize, no_airship_stars: bool, suits: SuitBlocks) -> &'static [u8] {
     let exclude_star = FLOWER_OR_LEAF_OFFSETS.contains(&file_offset)
         || (no_airship_stars && AIRSHIP_QBLOCK_OFFSETS.contains(&file_offset));
-    if exclude_star { QBLOCK_SHAPES_NO_STAR } else { QBLOCK_SHAPES }
+    match (suits, exclude_star) {
+        (SuitBlocks::Wild, true) => QBLOCK_SHAPES_WILD_NO_STAR,
+        (SuitBlocks::Wild, false) => QBLOCK_SHAPES_WILD,
+        (_, true) => QBLOCK_SHAPES_NO_STAR,
+        (SuitBlocks::On, false) => QBLOCK_SHAPES_WITH_SUITS,
+        (SuitBlocks::Off, false) => QBLOCK_SHAPES,
+    }
 }
 
 /// Reroll every powerup block's contents within its class: ? blocks among
@@ -96,31 +148,74 @@ fn qblock_pool(file_offset: usize, no_airship_stars: bool) -> &'static [u8] {
 ///
 /// When `no_airship_stars` is true, airship ? blocks draw from {flower, leaf}
 /// only, so star power cannot trivialize a Koopaling fight.
-pub(crate) fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R, no_airship_stars: bool) {
-    for block in level_index::every_power_block(rom) {
+///
+/// With Suit Blocks on, vanilla's own shape-4 coin blocks are moved to
+/// coin-or-star first, so that every shape 4 left in the ROM is one this
+/// reroll placed.
+///
+/// - **On:** a ? block's star slot becomes a suit block (shape 4). Bricks,
+///   notes and wood keep their pools: their star *is* a suit block in the ROM
+///   ([`super::block_spawn`]).
+/// - **Wild:** every block is a suit block or a star, 5 to 1 (bricks keep
+///   their 1-Up quarter). A ? block's suit block is shape 4; a brick, note or
+///   wood block's is its *flower* tile, which [`super::block_spawn`] turns
+///   into the suit block. Their star tiles stay real stars.
+pub(crate) fn randomize<R: Rng>(
+    rom: &mut Rom,
+    rng: &mut R,
+    no_airship_stars: bool,
+    suits: SuitBlocks,
+) {
+    let blocks = level_index::every_power_block(rom);
+    if suits.any() {
+        for block in blocks.iter().filter(|b| !b.is_note_or_wood() && b.shape() == QBLOCK_SUIT) {
+            rom.write_byte(block.shape_offset(), QBLOCK_COIN_OR_STAR);
+        }
+    }
+    for block in blocks {
         let offset = block.shape_offset();
         if PROTECTED_OFFSETS.contains(&offset) {
             continue;
         }
-        if let Some(pool) = shape_pool(&block, no_airship_stars) {
+        if let Some(pool) = shape_pool(&block, no_airship_stars, suits) {
             rom.write_byte(offset, *pool.choose(rng).unwrap());
         }
     }
 }
 
+/// Whether `block` holds a power-up the reroll is free to change: what
+/// `powerup_locations` may move. Blocks pinned to a content (the protected
+/// list, the flower-or-leaf gates) stay where they are too.
+#[cfg(test)]
+pub(crate) fn holds_free_power_up(block: &PowerBlock) -> bool {
+    let offset = block.shape_offset();
+    !PROTECTED_OFFSETS.contains(&offset)
+        && !FLOWER_OR_LEAF_OFFSETS.contains(&offset)
+        && shape_pool(block, false, SuitBlocks::Off).is_some()
+}
+
 /// The shapes `block` may be rerolled to, or `None` if it holds something
 /// that is not rerolled (a coin, a vine, a P-switch...).
-fn shape_pool(block: &PowerBlock, no_airship_stars: bool) -> Option<&'static [u8]> {
+fn shape_pool(
+    block: &PowerBlock,
+    no_airship_stars: bool,
+    suits: SuitBlocks,
+) -> Option<&'static [u8]> {
     let shape = block.shape();
+    let wild = suits == SuitBlocks::Wild;
     let pool = if block.is_note_or_wood() {
-        [NOTE_SHAPES, WOOD_SHAPES].into_iter().find(|p| p.contains(&shape))?
+        let (pool, wild_pool) = [(NOTE_SHAPES, NOTE_SHAPES_WILD), (WOOD_SHAPES, WOOD_SHAPES_WILD)]
+            .into_iter()
+            .find(|(p, _)| p.contains(&shape))?;
+        if wild { wild_pool } else { pool }
     } else if QBLOCK_SHAPES.contains(&shape) {
-        qblock_pool(block.shape_offset(), no_airship_stars)
+        qblock_pool(block.shape_offset(), no_airship_stars, suits)
     } else if BRICK_SHAPES.contains(&shape) {
-        if FLOWER_OR_LEAF_OFFSETS.contains(&block.shape_offset()) {
-            BRICK_SHAPES_FLOWER_OR_LEAF
-        } else {
-            BRICK_SHAPES
+        match (wild, FLOWER_OR_LEAF_OFFSETS.contains(&block.shape_offset())) {
+            (true, true) => BRICK_SHAPES_WILD_NO_STAR,
+            (true, false) => BRICK_SHAPES_WILD,
+            (false, true) => BRICK_SHAPES_FLOWER_OR_LEAF,
+            (false, false) => BRICK_SHAPES,
         }
     } else {
         return None;
@@ -152,14 +247,15 @@ mod tests {
         let mut changed = 0;
         for seed in 0..20 {
             let mut rom = vanilla.clone();
-            randomize(&mut rom, &mut ChaCha8Rng::seed_from_u64(seed), false);
+            randomize(&mut rom, &mut ChaCha8Rng::seed_from_u64(seed), false, SuitBlocks::Off);
             for i in 0..vanilla.data.len() {
                 if vanilla.data[i] == rom.data[i] {
                     continue;
                 }
                 changed += 1;
                 let block = blocks.get(&i).unwrap_or_else(|| panic!("0x{i:05X} is not a block"));
-                let pool = shape_pool(block, false).expect("a rerolled block has a pool");
+                let pool =
+                    shape_pool(block, false, SuitBlocks::Off).expect("a rerolled block has a pool");
                 assert!(pool.contains(&rom.data[i]), "0x{i:05X} left its class");
             }
         }
@@ -174,7 +270,7 @@ mod tests {
         let Some(rom) = load_rom() else { return };
         let n = level_index::every_power_block(&rom)
             .iter()
-            .filter(|b| shape_pool(b, false).is_some())
+            .filter(|b| shape_pool(b, false, SuitBlocks::Off).is_some())
             .count();
         assert_eq!(n, 232);
     }
@@ -184,7 +280,7 @@ mod tests {
         let Some(vanilla) = load_rom() else { return };
         for seed in 0..50 {
             let mut rom = vanilla.clone();
-            randomize(&mut rom, &mut ChaCha8Rng::seed_from_u64(seed), false);
+            randomize(&mut rom, &mut ChaCha8Rng::seed_from_u64(seed), false, SuitBlocks::Off);
             for &o in PROTECTED_OFFSETS {
                 assert_eq!(rom.read_byte(o), vanilla.read_byte(o), "seed {seed}: 0x{o:05X}");
             }
@@ -197,7 +293,7 @@ mod tests {
         let Some(vanilla) = load_rom() else { return };
         for seed in 0..50 {
             let mut rom = vanilla.clone();
-            randomize(&mut rom, &mut ChaCha8Rng::seed_from_u64(seed), true);
+            randomize(&mut rom, &mut ChaCha8Rng::seed_from_u64(seed), true, SuitBlocks::Off);
             for &o in AIRSHIP_QBLOCK_OFFSETS {
                 assert_ne!(rom.read_byte(o), 0x02, "seed {seed}: star at 0x{o:05X}");
             }
@@ -211,7 +307,7 @@ mod tests {
         let Some(vanilla) = load_rom() else { return };
         for seed in 0..50 {
             let mut rom = vanilla.clone();
-            randomize(&mut rom, &mut ChaCha8Rng::seed_from_u64(seed), false);
+            randomize(&mut rom, &mut ChaCha8Rng::seed_from_u64(seed), false, SuitBlocks::Off);
             for &o in FLOWER_OR_LEAF_OFFSETS {
                 let shape = rom.read_byte(o);
                 assert!(
@@ -227,8 +323,8 @@ mod tests {
     fn same_seed_same_blocks() {
         let Some(vanilla) = load_rom() else { return };
         let (mut a, mut b) = (vanilla.clone(), vanilla);
-        randomize(&mut a, &mut ChaCha8Rng::seed_from_u64(123), false);
-        randomize(&mut b, &mut ChaCha8Rng::seed_from_u64(123), false);
+        randomize(&mut a, &mut ChaCha8Rng::seed_from_u64(123), false, SuitBlocks::Off);
+        randomize(&mut b, &mut ChaCha8Rng::seed_from_u64(123), false, SuitBlocks::Off);
         assert_eq!(a.data, b.data);
     }
 
@@ -237,7 +333,7 @@ mod tests {
         // 7-F1's Tanooki-gate block: flower or leaf, never star, regardless of
         // the airship no-star flag.
         for no_airship_stars in [false, true] {
-            let pool = qblock_pool(0x2B39E, no_airship_stars);
+            let pool = qblock_pool(0x2B39E, no_airship_stars, SuitBlocks::On);
             assert_eq!(pool, QBLOCK_SHAPES_NO_STAR);
             assert!(pool.contains(&0x00), "flower missing from pool");
             assert!(pool.contains(&0x01), "leaf missing from pool");
@@ -248,14 +344,121 @@ mod tests {
     #[test]
     fn qblock_pool_airship_star_gated_by_flag() {
         // An airship block keeps the star unless the no-star option is set.
-        assert_eq!(qblock_pool(0x2ED22, false), QBLOCK_SHAPES);
-        assert_eq!(qblock_pool(0x2ED22, true), QBLOCK_SHAPES_NO_STAR);
+        assert_eq!(qblock_pool(0x2ED22, false, SuitBlocks::Off), QBLOCK_SHAPES);
+        assert_eq!(qblock_pool(0x2ED22, true, SuitBlocks::On), QBLOCK_SHAPES_NO_STAR);
     }
 
     #[test]
     fn qblock_pool_ordinary_block_allows_star() {
         // A normal block (not in either special list) can still roll a star.
-        assert_eq!(qblock_pool(0x12345, false), QBLOCK_SHAPES);
-        assert_eq!(qblock_pool(0x12345, true), QBLOCK_SHAPES);
+        assert_eq!(qblock_pool(0x12345, false, SuitBlocks::Off), QBLOCK_SHAPES);
+        assert_eq!(qblock_pool(0x12345, true, SuitBlocks::Off), QBLOCK_SHAPES);
+        assert_eq!(qblock_pool(0x12345, false, SuitBlocks::On), QBLOCK_SHAPES_WITH_SUITS);
+    }
+
+    /// Every (group 1) ? block shape 4 on a finished ROM.
+    fn suit_blocks(rom: &Rom) -> Vec<usize> {
+        level_index::every_power_block(rom)
+            .iter()
+            .filter(|b| !b.is_note_or_wood() && b.shape() == QBLOCK_SUIT)
+            .map(|b| b.shape_offset())
+            .collect()
+    }
+
+    /// Vanilla's three shape-4 coin blocks become coin-or-star, and every
+    /// shape 4 afterwards is a block the reroll was free to make a suit.
+    #[test]
+    fn suit_blocks_are_only_ever_placed_by_the_reroll() {
+        let Some(vanilla) = load_rom() else { return };
+        let vanilla_coins = suit_blocks(&vanilla);
+        assert_eq!(vanilla_coins.len(), 3, "2-1, 7-1 and Unused5: {vanilla_coins:X?}");
+        let rerollable: std::collections::BTreeSet<usize> =
+            level_index::every_power_block(&vanilla)
+                .iter()
+                .filter(|b| !b.is_note_or_wood() && QBLOCK_SHAPES.contains(&b.shape()))
+                .map(|b| b.shape_offset())
+                .collect();
+        for seed in 0..20 {
+            let mut rom = vanilla.clone();
+            randomize(&mut rom, &mut ChaCha8Rng::seed_from_u64(seed), true, SuitBlocks::On);
+            for &o in &vanilla_coins {
+                assert_eq!(rom.read_byte(o), QBLOCK_COIN_OR_STAR, "seed {seed}: 0x{o:05X}");
+            }
+            for o in suit_blocks(&rom) {
+                assert!(rerollable.contains(&o), "seed {seed}: suit at 0x{o:05X}");
+                assert!(!PROTECTED_OFFSETS.contains(&o), "seed {seed}: protected 0x{o:05X}");
+                assert!(!FLOWER_OR_LEAF_OFFSETS.contains(&o), "seed {seed}: gate 0x{o:05X}");
+                assert!(!AIRSHIP_QBLOCK_OFFSETS.contains(&o), "seed {seed}: airship 0x{o:05X}");
+            }
+        }
+    }
+
+    /// About two thirds of the free ? blocks become suit blocks.
+    #[test]
+    fn suit_blocks_are_about_two_thirds_of_the_free_q_blocks() {
+        let Some(vanilla) = load_rom() else { return };
+        let (mut suits, mut free) = (0, 0);
+        for seed in 0..20 {
+            let mut rom = vanilla.clone();
+            randomize(&mut rom, &mut ChaCha8Rng::seed_from_u64(seed), false, SuitBlocks::On);
+            suits += suit_blocks(&rom).len();
+            free += level_index::every_power_block(&vanilla)
+                .iter()
+                .filter(|b| shape_pool(b, false, SuitBlocks::On) == Some(QBLOCK_SHAPES_WITH_SUITS))
+                .count();
+        }
+        let share = suits as f64 / free as f64;
+        assert!((0.58..0.75).contains(&share), "{suits}/{free} = {share:.2}");
+    }
+
+    /// With the flag off, the reroll is exactly what it always was.
+    #[test]
+    fn suit_blocks_off_changes_nothing() {
+        let Some(vanilla) = load_rom() else { return };
+        let mut rom = vanilla.clone();
+        randomize(&mut rom, &mut ChaCha8Rng::seed_from_u64(7), false, SuitBlocks::Off);
+        assert_eq!(suit_blocks(&rom), suit_blocks(&vanilla));
+    }
+
+    /// Wild: every rerolled block is a suit block or a star (bricks also a
+    /// 1-Up). No plain flower or leaf survives anywhere but 6-5's protected
+    /// leaf, and a block that may not be a star never is one.
+    #[test]
+    fn wild_leaves_only_suit_blocks_stars_and_one_ups() {
+        let Some(vanilla) = load_rom() else { return };
+        let blocks = level_index::every_power_block(&vanilla);
+        let (mut stars, mut rolled) = (0, 0);
+        for seed in 0..20 {
+            for no_airship_stars in [false, true] {
+                let mut rom = vanilla.clone();
+                let mut rng = ChaCha8Rng::seed_from_u64(seed);
+                randomize(&mut rom, &mut rng, no_airship_stars, SuitBlocks::Wild);
+                for b in &blocks {
+                    let o = b.shape_offset();
+                    if PROTECTED_OFFSETS.contains(&o) {
+                        assert_eq!(rom.read_byte(o), vanilla.read_byte(o), "protected 0x{o:05X}");
+                        continue;
+                    }
+                    let Some(pool) = shape_pool(b, no_airship_stars, SuitBlocks::Wild) else {
+                        continue;
+                    };
+                    let got = rom.read_byte(o);
+                    assert!(pool.contains(&got), "seed {seed}: 0x{o:05X} = {got:02X}");
+                    let star = [QBLOCK_STAR, 0x08, 0x03, 0x06];
+                    let star = if b.is_note_or_wood() {
+                        got == pool[pool.len() - 1]
+                    } else {
+                        star[..2].contains(&got)
+                    };
+                    let no_star = FLOWER_OR_LEAF_OFFSETS.contains(&o)
+                        || (no_airship_stars && AIRSHIP_QBLOCK_OFFSETS.contains(&o));
+                    assert!(!(star && no_star), "seed {seed}: star at gated 0x{o:05X}");
+                    rolled += 1;
+                    stars += usize::from(star);
+                }
+            }
+        }
+        let share = stars as f64 / rolled as f64;
+        assert!((0.10..0.22).contains(&share), "stars {stars}/{rolled} = {share:.2}");
     }
 }

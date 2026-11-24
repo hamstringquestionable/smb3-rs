@@ -98,25 +98,16 @@ pub(super) fn pick_replacement<R: Rng>(
         Some(EntryProtection::ForceShell) if modes.shell != EnemyMode::Off => {
             Some((pick_compatible(SHELL_ENEMIES, slot4, slot5, rng), Cow::Borrowed(SHELL_ENEMIES)))
         }
-        Some(EntryProtection::ForceStompable) => find_class_pool(entry.obj_id, modes).map(|pool| {
-            let sp: Vec<u8> = pool
-                .slice(wild_pool)
-                .iter()
-                .copied()
-                .filter(|id| STOMPABLE_ENEMIES.contains(id))
-                .collect();
-            let pick = pick_compatible(&sp, slot4, slot5, rng);
-            (pick, Cow::Owned(sp))
-        }),
-        Some(EntryProtection::Exclude(group)) => {
+        // The same filter wild injection applies to its chasers. For Exclude
+        // it is additive-only: an enemy sharing an ID list with the vanilla
+        // enemy here survives (see `Group::excludes`).
+        Some(p @ (EntryProtection::ForceStompable | EntryProtection::Exclude(_))) => {
             find_class_pool(entry.obj_id, modes).map(|pool| {
-                // Additive-only: an enemy sharing an ID list with the vanilla
-                // enemy here survives (see `Group::excludes`).
                 let fp: Vec<u8> = pool
                     .slice(wild_pool)
                     .iter()
                     .copied()
-                    .filter(|&id| !group.excludes(id, entry.obj_id))
+                    .filter(|&id| p.allows(id, entry.obj_id))
                     .collect();
                 let pick = pick_compatible(&fp, slot4, slot5, rng);
                 (pick, Cow::Owned(fp))

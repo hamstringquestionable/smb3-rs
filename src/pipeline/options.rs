@@ -70,7 +70,7 @@ fn default_starting_lives() -> u8 {
 
 /// The four valid starting-lives counts (matches the flag-key encoding
 /// and the WASM pill-toggle options).
-pub const STARTING_LIVES_VALUES: [u8; 4] = [1, 5, 20, 99];
+pub const STARTING_LIVES_VALUES: [u8; 4] = [0, 5, 20, 99];
 
 /// Map a 2-bit flag-key index to the corresponding lives count.
 pub(super) fn idx_to_lives(idx: u8) -> u8 {
@@ -82,7 +82,7 @@ pub(super) fn idx_to_lives(idx: u8) -> u8 {
 /// predate this layout still round-trip cleanly.
 pub(super) fn lives_to_idx(lives: u8) -> u8 {
     match lives {
-        n if n <= 2 => 0,  // → 1
+        n if n <= 2 => 0,  // → 0
         n if n <= 12 => 1, // → 5
         n if n <= 59 => 2, // → 20
         _ => 3,            // → 99
@@ -149,29 +149,18 @@ fn default_off() -> EnemyMode {
     EnemyMode::Off
 }
 
-/// Random Fire Flower mode (issue #22). Collecting an in-level Fire Flower
-/// grants a power state derived deterministically from the world and the
-/// flower's level position, instead of always Fire. `On` substitutes among the
-/// four big-form suits (Fire/Frog/Tanooki/Hammer); `Wild` adds the Small/Big
-/// downgrade outcomes.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Default,
-    serde::Serialize,
-    serde::Deserialize,
-    modular_bitfield::Specifier,
-)]
-#[bits = 2]
+/// What taking a hit does. `Standard` is vanilla US: a suit drops to Big, Big
+/// drops to Small. `Japanese` is the Famicom model (MaCobra52's "Japanese
+/// damage system (fixed)" patch): any power-up drops straight to Small.
+/// `OneHitKo` kills on any hit whatever the power-up, Kuribo's Shoe included.
+/// Star, statue and post-hit flashing still protect in every mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum FireFlowerMode {
+pub enum DamageSystem {
     #[default]
-    Off,
-    On,
-    Wild,
+    Standard,
+    Japanese,
+    OneHitKo,
 }
 
 /// Piranha shuffle mode. The two W7 piranha plant levels (7-P1/7-P2) are
@@ -198,6 +187,52 @@ pub enum PiranhaMode {
     Off,
     On,
     Wild,
+}
+
+/// Suit Blocks mode. Both modes add a *suit block*, which hands out a
+/// colour-cycling mushroom that turns out to be something only when touched;
+/// they differ in what it can be and which blocks become one.
+///
+/// - `On`: a suit block is a star, Tanooki, Frog or Hammer Suit. ? blocks roll
+///   flower, leaf or suit block; every brick, note and wood *star* is a suit
+///   block. Flower and leaf stay visible.
+/// - `Wild`: a suit block is a Fire Flower, Super Leaf, Tanooki, Frog or
+///   Hammer Suit, and a plain mushroom for small Mario. Every rerollable block
+///   is a suit block or, about 1 in 6, a real (visible) star; bricks keep
+///   their 1-Up share. The star is not inside the suit block here, so the
+///   no-star rules are just "never roll the star tile".
+///
+/// The modes are not a ladder: `On`'s suit block can be a star and `Wild`'s
+/// cannot. See [`crate::randomize::items::block_spawn`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SuitBlocks {
+    #[default]
+    Off,
+    On,
+    Wild,
+}
+
+impl SuitBlocks {
+    /// The flag key's two bits: 0 off, 1 on, 2 wild.
+    pub(super) fn key_bits(self) -> u8 {
+        self as u8
+    }
+
+    /// The inverse of [`Self::key_bits`]. 3 was never written; it reads as on,
+    /// the way every non-zero value did before Wild existed.
+    pub(super) fn from_key_bits(bits: u8) -> Self {
+        match bits {
+            0 => Self::Off,
+            2 => Self::Wild,
+            _ => Self::On,
+        }
+    }
+
+    /// Whether any suit block exists at all.
+    pub(crate) fn any(self) -> bool {
+        self != Self::Off
+    }
 }
 
 /// How hard to stop the randomizer from *introducing* hazards.
@@ -450,6 +485,16 @@ fn default_tri_on() -> Tri {
 pub struct Options {
     #[serde(default = "default_true")]
     pub powerups: bool,
+    /// Random Power Up locations: a power-up in a pattern of look-alike
+    /// blocks (a row of ? blocks, 1-2's note blocks) trades places with the
+    /// plain blocks around it. See `items::powerup_locations`.
+    #[serde(default)]
+    pub powerup_locations: bool,
+    /// Boom-Boom Room: the floating platforms in a fortress boss room get
+    /// new places and widths, and 1F and 8F1 get some. See
+    /// `levels::boom_boom_room`.
+    #[serde(default)]
+    pub boom_boom_room: bool,
     /// Player colors: recolor the character wardrobe (random or picked via
     /// `player_color`). Off = vanilla outfits. Cosmetic — not in the flag key.
     #[serde(default = "default_true")]
@@ -671,11 +716,9 @@ pub struct Options {
     /// ("SMB3 - Limit Bro Movement" patch.)
     #[serde(default)]
     pub limit_bro_movement: bool,
-    /// Damage drops the player straight to Small Mario regardless of
-    /// current power-up, instead of demoting tier-by-tier. (MaCobra52's
-    /// "Japanese damage system (fixed)" patch.)
+    /// What taking a hit does — see [`DamageSystem`].
     #[serde(default)]
-    pub japanese_damage: bool,
+    pub damage: DamageSystem,
     /// Toad / Mushroom Houses stay on the map after entering and can be
     /// visited any number of times. (MaCobra52's "Infinite use Mushroom
     /// Houses" patch.)
@@ -710,6 +753,12 @@ pub struct Options {
     /// always-on tail-attack-while-swimming routine.)
     #[serde(default)]
     pub faster_frog: bool,
+    /// The arrow lifts (7-6's vertical sub-area) move a little over twice
+    /// their vanilla speed — a nod to MaCobra52's 2x. On by default; it
+    /// shipped always-on in 3.2.0, which is why the flag key stores it
+    /// inverted (`slow_arrow_lifts`).
+    #[serde(default = "default_true")]
+    pub faster_arrow_lifts: bool,
     /// A defeated Lakitu stays gone instead of returning two screens behind.
     /// Vanilla never lets one die: it falls off the bottom and `ObjNorm_Lakitu`
     /// re-seeds it. It is also exempt from off-screen deletion while alive, so
@@ -737,12 +786,13 @@ pub struct Options {
     /// (MaCobra52's "Easy Power-up System" patch.)
     #[serde(default)]
     pub modern_powerups: bool,
-    /// Random Fire Flower (issue #22): an in-level Fire Flower grants a power
-    /// state derived deterministically from the world + the flower's level
-    /// position, instead of always Fire. `Off`/`On`/`Wild` (see
-    /// [`FireFlowerMode`]). The flower sprite is unchanged.
+    /// Suit Blocks (Off / On / Wild, see [`SuitBlocks`]): blocks that hand out
+    /// a colour-cycling mushroom whose contents are picked per block by a
+    /// seed-salted hash. Rides on [`Options::powerups`]: with the reroll off
+    /// there is nothing to place. Replaced Random Fire Flower and inherits its
+    /// flag-key bits.
     #[serde(default)]
-    pub fire_flower: FireFlowerMode,
+    pub suit_blocks: SuitBlocks,
     /// When true, the 19 vanilla spade-game tiles are picked up by the overworld
     /// builder and re-placed at random HammerBro slots, freeing their original
     /// positions for level placement. When false, spade games stay at vanilla
@@ -858,6 +908,11 @@ pub struct Options {
     /// stayed.
     #[serde(default)]
     pub friendlier_levels: bool,
+    /// Tricky Spots: let the enemy shuffle use three placements players
+    /// have found hard to pass without getting hit (8B, 7-9, β1). Off — the
+    /// default — holds them out; see `TRICKY_SPOTS` in `enemies/protections.rs`.
+    #[serde(default)]
+    pub tricky_spots: bool,
     /// How many times one level may appear on the map. See [`DejaVuMode`].
     #[serde(default)]
     pub deja_vu: DejaVuMode,
@@ -912,6 +967,8 @@ impl Default for Options {
     fn default() -> Self {
         Options {
             powerups: true,
+            powerup_locations: false,
+            boom_boom_room: false,
             palettes: true,
             palette_themed: false,
             player_color: None,
@@ -952,18 +1009,19 @@ impl Default for Options {
             early_sun: false,
             bro_battle_timer: false,
             limit_bro_movement: false,
-            japanese_damage: false,
+            damage: DamageSystem::Standard,
             infinite_mushroom_houses: false,
             fast_mushroom_house: false,
             faster_tail_speed: false,
             no_game_over_penalty: false,
             mariomon: false,
             faster_frog: false,
+            faster_arrow_lifts: true,
             lakitu_stays_down: false,
             shuffle_big_q_rooms: false,
             poison_mushrooms: false,
             modern_powerups: false,
-            fire_flower: FireFlowerMode::Off,
+            suit_blocks: SuitBlocks::Off,
             shuffle_spade_games: true,
             shuffle_toad_houses: true,
             hands_levels: true,
@@ -984,6 +1042,7 @@ impl Default for Options {
             hb_encounters: EnemyMode::Off,
             limit_hazards: HazardLimit::Off,
             friendlier_levels: false,
+            tricky_spots: false,
             deja_vu: DejaVuMode::Off,
             deja_vu_forts: false,
             hints: HintMode::Partial,

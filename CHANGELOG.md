@@ -9,6 +9,62 @@ deploys.
 
 ## [Unreleased]
 
+## [3.3.0] - 2026-11-24
+
+### Added
+
+- Random Power Up locations: a power-up in a row or small pattern of matching
+  blocks (? blocks, bricks, note blocks) can come out of any of them, so it
+  stays near its original spot without being in the exact same block.
+- Boom-Boom Room: the floating blocks in fortress boss rooms are dealt new
+  places and widths, and the 1-F and 8-F1 boss rooms get some. With Suit
+  Blocks on, 8-F1 gets one, so 8-F keeps the raised spike that lets a Frog
+  Suit through the tunnel before Boom-Boom.
+- Suit Blocks: blocks can now hand out a Tanooki, Frog or Hammer Suit. A
+  suit comes out as a colour-cycling mushroom, and which suit it is shows
+  only when you take it. With it on,
+  flower, leaf, star and the three suits each come out of about 1 in 6 ?
+  blocks, and a star from a brick, note or wood block can be any of the
+  three suits or still a star. Needs Power-ups on. Protected blocks (7-7's
+  stars, 6-5's leaf, the blocks that must make you big) and Big ? blocks are
+  unchanged.
+  Suit Blocks Wild: every power-up block becomes a mystery mushroom that
+  can be a Fire Flower, Super Leaf, Tanooki, Frog or Hammer Suit (one of the
+  three suits, picked per seed, comes up a bit more often), or about 1 in 6
+  is a plain star instead. Small Mario gets a mushroom (with Modern Power-ups,
+  the mystery item itself), so the blocks that must make you big are mystery
+  blocks too; only 7-7's stars and 6-5's leaf stay fixed.
+  Both Max Chaos presets use Wild.
+- Tricky Spots: three enemy placements players have found beatable but hard
+  to pass without getting hit (a dropping Thwomp at 8-B's Hot Foot, a Lakitu
+  in 7-9, a Nipper at the last Spiny in beta stage 1) are now kept out unless
+  this is on. The Challenging presets turn it on.
+
+### Changed
+
+- The Japanese Damage System checkbox is now a three-way Damage System
+  option: Standard, Japanese, or the new One-Hit KO, where any hit kills you
+  whatever you are wearing, Kuribo's Shoe included. Flag keys made with
+  Japanese damage on still load as Japanese.
+- Starting Lives: the Small setting now starts you on your last life (0
+  extra lives), so the first death is Game Over. It used to give one spare.
+  Flag keys that chose Small now mean 0.
+- Poison Mushrooms now decide each 1-Up block on its own. Before, every
+  1-Up on the same screen of a level gave the same result. Picks also change
+  between copies of a level when Deja Vu repeats it. Seeds give different
+  results from before.
+- The three ? blocks that gave a single coin through a duplicate coin block
+  in 2-1 and 7-1 give a coin, or a star if you are already
+  invincible, when Suit Blocks is on.
+- The faster arrow lifts in 7-6 are now an option, Faster Arrow Lifts, on by
+  default. Beginner Friendly turns it off. Flag keys made before the option
+  existed keep the faster lifts.
+
+### Removed
+
+- Random Fire Flower is replaced by Suit Blocks. Flag keys made with it on
+  now turn Suit Blocks on.
+
 ## [3.2.1] - 2026-11-21
 
 ### Fixed

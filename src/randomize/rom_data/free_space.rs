@@ -459,7 +459,6 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
         "koopa_fire_preset: set stomp counter from threshold table for fireball defeat",
     ),
     fs(0x03FD0, 22, &["koopalings"], "koopa_x_clamp: keep the Koopaling's X on screen"),
-    fs(0x03FE6, 36, &["fire_flower"], "position-hash suit routine + pool table"),
     fs(0x0400A, 6, &["koopalings"], "koopa_jump_base: Koopaling_JumpYVelsBase for hit counts 0-5"),
     fs(
         0x02713,
@@ -467,7 +466,19 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
         &["poison_mushrooms"],
         "object $0A init+hit stubs (Norm reuses 1-Up; reclaimed dead Obj0A code)",
     ),
-    fs(0x02724, 31, &["poison_mushrooms"], "1-up block-spawn hook (position-hash $0B->$0A)"),
+    fs(
+        0x02724,
+        106,
+        &["block_spawn"],
+        "block-spawn hook: suit-block pick (On/Wild) + poison 1-up, mystery-object Hit stubs (rest of the dead Obj0A code; 106 reserved, 100 used at Wild + poison)",
+    ),
+    // PRG008 (file 0x10010, CPU $A000–$BFFF in levels)
+    fs(
+        0x1191D,
+        10,
+        &["block_spawn"],
+        "suit-block item handler over LATP_BrickAltClear (code B; only the unused pipeworks tile reached it)",
+    ),
     // PRG003 (file 0x06010, CPU $A000–$BFFF) — object AI bank (Boom-Boom lives here)
     fs(
         0x06609,
@@ -1069,20 +1080,9 @@ pub(crate) const FS_KOOPA_X_CLAMP: usize = 0x03FD0; // 22 bytes
 
 pub(crate) const KOOPA_X_CLAMP_CPU: u16 = 0xBFC0; // $A000 + (0x03FD0 - 0x02010)
 
-// Random Fire Flower (issue #22) — injected routine that derives the granted
-// power state from a seed-derived salt (the shuffled starting world) + the
-// current World_Num + the level layout pointer + the flower's screen number,
-// instead of the vanilla hardcoded Fire. Sits in the PRG001 bank-end gap right
-// after koopa_x_clamp (which ends at 0x3FE6). Up to 36 bytes: 26-byte routine +
-// a 4- or 6-byte pool table. ObjHit_FireFlower runs with PRG001 banked at
-// $A000, so the JSR from the hook is bank-local.
-pub(crate) const FS_FIRE_FLOWER: usize = 0x03FE6;
-
-pub(crate) const FIRE_FLOWER_SUB_CPU: u16 = 0xBFD6; // $A000 + (0x03FE6 - 0x02010)
-
 // Koopaling jump-base table, extended from vanilla's 3 entries (hit counts
 // 0-2) to 6 so a Koopaling taking more than 3 stomps stays in bounds. Data
-// only; the last 6 bytes of PRG001, after FS_FIRE_FLOWER's reservation.
+// only; the last 6 bytes of PRG001.
 // `prg001.asm` ends "Rest of ROM bank was empty". 6 reserved, 6 used.
 pub(crate) const FS_KOOPA_JUMP_BASE: usize = 0x0400A;
 
@@ -1095,13 +1095,26 @@ pub(crate) const KOOPA_JUMP_BASE_CPU: u16 = 0xBFFA; // $A000 + (0x0400A - 0x0201
 // bytes used; the rest of the dead region stays free for future group-0 objects.
 pub(crate) const FS_POISON_MUSHROOM: usize = 0x02713; // CPU $A703
 
-// Poison Mushroom 1-up spawn hook — patched into both block-spawn sites
+// Block-spawn hook (`items::block_spawn`) — patched into both block-spawn sites
 // (PRG001 $A587 / $AADD) where `STA Level_ObjectID,Y` commits the object a hit
-// block hands out. The routine replicates that store, and if the object is a
-// 1-Up ($0B) position-hashes (World + LayPtr + block X/XHi/Y + seed salt) to
-// keep it or swap it to the poison object ($0A). Sits right after the $0A
-// stubs in the same reclaimed Obj0A region.
-pub(crate) const FS_POISON_HOOK: usize = 0x02724; // CPU $A714
+// block hands out. One routine, generated from the flags, serves Suit Blocks
+// and Poison Mushroom: it replays the store, hashes the block position + map
+// entry + seed salt, and swaps in a suit object or the poison 1-Up. The suit
+// objects' Hit stubs and their ID table follow it. Takes the rest of
+// the dead vanilla Obj0A code after the poison stubs, $A714..$A77D (the last
+// byte is a stray RTS nothing reaches). 106 reserved, 79 used by the largest
+// shape (both flags).
+pub(crate) const FS_BLOCK_SPAWN: usize = 0x02724; // CPU $A714
+
+pub(crate) const BLOCK_SPAWN_CPU: u16 = 0xA714; // $A000 + (0x02724 - 0x02010)
+
+// Suit-block item handler (`items::block_spawn`) — PRG008 item code B's jump
+// target, `LATP_BrickAltClear` ($B90D), rewritten in place. Vanilla only
+// reached it from the unused desert pipeworks junction tile; tile $65 and the
+// brick, note and wood stars now take code B and get "spawn Bouncer_PUp
+// index 8". 10 reserved (the old
+// routine), 8 used.
+pub(crate) const FS_SUIT_HANDLER: usize = 0x1191D; // CPU $B90D
 
 // Fireball defeat preset — load per-world stomp threshold from table so the
 // fireball→stomp handoff always triggers defeat after INC.
@@ -1629,9 +1642,9 @@ mod free_space_tests {
             (FS_KOOPA_JUMP_BASE, "FS_KOOPA_JUMP_BASE"),
             (FS_KOOPA_FIRE_PRESET, "FS_KOOPA_FIRE_PRESET"),
             (FS_KOOPA_X_CLAMP, "FS_KOOPA_X_CLAMP"),
-            (FS_FIRE_FLOWER, "FS_FIRE_FLOWER"),
             (FS_POISON_MUSHROOM, "FS_POISON_MUSHROOM"),
-            (FS_POISON_HOOK, "FS_POISON_HOOK"),
+            (FS_BLOCK_SPAWN, "FS_BLOCK_SPAWN"),
+            (FS_SUIT_HANDLER, "FS_SUIT_HANDLER"),
             (FS_TAIL_STAY_DEAD, "FS_TAIL_STAY_DEAD"),
             (FS_BOOMBOOM_HITS_TABLE, "FS_BOOMBOOM_HITS_TABLE"),
             (FS_BOOMBOOM_HITS_SUB, "FS_BOOMBOOM_HITS_SUB"),

@@ -146,7 +146,7 @@ is the one to read:
 |------|-----------|-----------|--------------------|
 | PRG031 | `$E000–$FFFF`, always | 27 | **16** |
 | PRG030 | `$8000–$9FFF`, always | 18 | 18 |
-| PRG001 | swapped, in-level (object AI) | 54 | 38 |
+| PRG001 | swapped, in-level (object AI) | 90 | 38 |
 | PRG003 | swapped, in-level (object AI) | 5 | 5 |
 | PRG004 | swapped, in-level (object AI, group 3) | 426 | 426 |
 | PRG005 | swapped, in-level (object AI) | 58 | 58 |
@@ -174,9 +174,14 @@ only option — and that costs bytes too. Guard what is left of the PRG030 run
 accordingly, and check first whether the hook really needs it: the router does,
 its sibling marker gate in PRG010 does not.
 
-PRG029's 1528-byte run is mid-bank and has **not** been through the
-unreferenced check; its 20-byte tail (`prg029.asm` ends "Rest of ROM bank was
-empty" after `PRG029_DFEB`) has been, and is what `FS_ANCHOR_HOUSE` claims.
+PRG029's 1528-byte mid-bank run has been through the unreferenced check
+(2026-11-23): `prg029.asm` brackets `$C5EA..$CBFF` with "BEGIN/END HUGE UNUSED
+SPACE", and only `FS_FASTER_FROG` sits at its start. Its 20-byte tail
+(`prg029.asm` ends "Rest of ROM bank was empty" after `PRG029_DFEB`) is what
+`FS_ANCHOR_HOUSE` claims. PRG029 is in `$C000` for every draw of Mario, so it
+is the roomy home for per-frame player code — see "Kuribo's Shoe anywhere:
+tried and parked" in `docs/smb3_rom_reference.md`, which also covers sharing
+Faster Frog's `Player_Draw` hook.
 
 **PRG010's 64-byte "largest gap" is not free — it is audio.** The run at file
 0x15B50 (CPU `$DB40`) sits *inside* a DPCM sample, with sample bytes either

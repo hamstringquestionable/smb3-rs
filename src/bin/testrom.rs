@@ -213,6 +213,16 @@ struct Cli {
     #[arg(long)]
     water_stomp: bool,
 
+    /// Shuffle where each power-up sits in its row or pattern of look-alike
+    /// blocks (Random Power Up locations), dealt from this seed.
+    #[arg(long, value_name = "SEED")]
+    powerup_locations: Option<u64>,
+
+    /// Deal new places and widths for the floating platforms in fortress boss
+    /// rooms (Boom-Boom Room), from this seed.
+    #[arg(long, value_name = "SEED")]
+    boom_boom_room: Option<u64>,
+
     /// Overwrite one enemy slot outright, as "PTR:SLOT:ID" in hex, e.g.
     /// "DA0F:1:66" to put a downward water current in the Coin Ship fight's
     /// second slot. Repeatable. Use to see what an object actually does in a
@@ -608,6 +618,8 @@ fn main() {
         hammer_breaks_locks: cli.hammer_locks,
         hammer_breaks_bridges: cli.hammer_bridges,
         water_stomp: cli.water_stomp,
+        powerup_locations: cli.powerup_locations,
+        boom_boom_room: cli.boom_boom_room,
         include_beta: cli.beta,
         big_q_unused5: cli.bigq_unused5,
         big_q_palette: Some(cli.bigq_palette),

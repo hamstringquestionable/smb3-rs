@@ -256,7 +256,7 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, opts: &Options, sta
                 for &idx in group {
                     let entry = &entries[idx];
                     let file_offset = ENEMY_DATA_START + entry.data_index;
-                    let protection = entry_protection_at(file_offset);
+                    let protection = entry_protection_at(file_offset, opts.tricky_spots);
 
                     // SkipSwap keeps its enemy; its CHR page was already pinned
                     // in Pass 1 (`is_fixed`, via `is_pinned`, covers SkipSwap). So was

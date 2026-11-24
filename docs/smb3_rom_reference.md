@@ -575,6 +575,25 @@ only), green note blocks `%1111`. A note block is the one to reach for when the
 player must land on it. Coins are the only entry that consults collected-coin
 memory (`LoadLevel_CheckBGHMem`), so retyping one away also drops that check.
 
+**How vanilla draws a power-up inside a row of blocks** (found 2026-11 for
+`items::powerup_locations`, checked by rendering every area): commands draw in
+stream order and a later one overwrites, so there are three shapes.
+
+- **Drawn over the run.** The run covers every cell and the power-up's fixed
+  command comes after it (1-3, 4-6, 5-1, most Hammer Bro arenas). Moving the
+  power-up is a new `b1`; the run's own block shows through where it was.
+- **Drawn beside the run.** At the end of a row the run often stops one short
+  and the power-up is the last block (2-5's `23 76 22` then `23 79 01`; 6F1,
+  6-10, 7-8, 5F2, 1HB5). Lengthening the run by one (`b2 + 1`, and `b1 - 1` when
+  it starts just after the power-up) turns this into the first shape.
+- **Separate one-block commands.** Scattered blocks are each their own
+  command: 1-2's plain note blocks are `LoadLevel_BlockRun` runs of one
+  (`b2 = $60`). Swapping two commands' `b0` row and `b1` trades the blocks.
+
+A few rows fit none of these without reordering the stream: 5-5's ? row and
+3-5's first row (the power-up is drawn *before* the run that would cover it),
+3-9's 18-brick row past its first 8-block run, and 8F1's 1-up brick row.
+
 **Group 1 power blocks found in 1-1 (verified by simulator):**
 
 | ROM Offset | Bytes | Tile | Screen | Row | Col |
@@ -1051,7 +1070,72 @@ W8[10] (ts=10), W8[36] (ts=10) — these 7 entries have no boss in their obj_ptr
 enemy data and would incorrectly appear in `collect_shuffleable()` as regular levels,
 causing tileset leakage when shuffled.
 
-#### Boom-Boom Detection: Approaches Tried and Lessons Learned
+#### Boom-Boom Boss Rooms: Floating Platforms (researched 2026-11-17)
+
+Every fortress boss room has the same shell. It is one screen wide, the
+screen Boom-Boom is placed on. Column 15 is a wall (generator `$E8`), the
+ceiling is row 15 and the floor is row 25, except in 3F2 and 8F1, where it
+is row 26 (Boom-Boom stands one row lower there too). Mario
+comes in from the left. A jumping Boom-Boom stands on the floor at column 12
+or 13. The floating platforms are ordinary layout commands
+`[row, screen<<4|col, $E0, width-1]`, a run of fortress blocks (TS2), at rows
+19-22. Moving one means rewriting `b0`'s low 5 bits and `b1`, in place, with
+no change to the stream's length. Found with `rominfo --level` plus the
+`terrain_render` instrument:
+
+| Fort | Boss area/screen | Platforms (row, col, width) |
+|------|------------------|-----------------------------|
+| 1F | 0 / 9 | none |
+| 2F | 0 / 10 | none (desert, TS9) |
+| 3F1 | 0 / 10 | none |
+| 3F2 | 1 / 5 | (20,4,1) (21,11,1) |
+| 4F1 | 0 / 8 | (21,6,3) |
+| 4F2 | 0 / 8 | (21,2,2) (21,11,2) (22,7,1) |
+| 5F1 | 1 / 3 | none |
+| 5F2 | 0 / 4 | none |
+| 6F1 | 0 / 7 | (22,4,1) (22,10,1) |
+| 6F2 | 1 / 1 | (21,4) (19,8) (22,11), TS12 group-3 shapes `$10`/`$13`, 3-byte |
+| 6F3 | 0 / 10 | (19,5,1) (19,10,1) (22,3,1) (22,8,1) (22,12,1) |
+| 7F1 | 0 / 6 | none |
+| 7F2 | 1 / 3 | (22,3,1) (22,7,1) (22,11,1) |
+| 8F1 | 0 / 14 | none |
+| 8-Navy, 8-Air, 8-STnk | 1 / 0 | none (TS10, one-screen sub-area, 13 three-byte commands) |
+
+The three World 8 rooms are byte-identical boxes. A fourth copy, 8-Tank's room
+(boss: Boomerang Bro), is laid out at the same place. The four streams sit back
+to back at 0x2FD1D..0x2FDE0, 49 bytes each. Every one of the 13 commands draws
+structure: the background fill, the ceiling, two walls, the seven 2-wide floor
+pieces (`[$19, col, $61]`) and two ceiling-hole edges. None can be removed.
+
+When Boom-Boom dies it turns into the `?` ball (`BoomBoom_Death`, PRG003
+`$AE95`) where it stands. The ball then falls under `Object_Move`, so it can
+land on a platform.
+
+`2F`'s room is the same shape (the render shows it open at rows 16-25), built
+with desert generators.
+
+**Commands that can be stolen for a platform.** A command must sit in the same
+area as the room, because its position is relative to that area's stream. The
+search: take each command out in turn, reload the area with the terrain
+loader, and compare the tile grid.
+
+- *Fully overdrawn* (no tile changes when removed), 4 bytes, in a
+  boss area: 1F `0x2A99E`, 5F2 `0x2A870`, 8F1 `0x2BA21` and `0x2BA85`.
+  5F2's is not usable as it stands: it comes before the command that fills the
+  room's background, so a platform written there is painted over. Swapping it
+  with a later command of the same size would fix that. Also,
+  outside an empty room: 4F2 `0x2B65B`, and 6F2 `0x22C4D`, `0x22C6E`, `0x22CD2`.
+- *Three-byte solid shapes in TS2*: group-0 fixed shape `$02` is the
+  Rotodisc pivot block. It draws one solid tile `$9E`, and every one sits
+  under a Rotodisc object, so the ones in place cannot be taken. Group-1
+  `$1n` is a run of `n+1` bricks (breakable). Group-1 `$8n` is a run of
+  coins (tile `$40`, not solid). Rewriting `b2` turns a coin run into a brick
+  run in place, at the same length. The group-1 shape list is the
+  `LoadLevel_Generator_TS2` jump table in `prg021.asm` (index 15 = bricks,
+  16 = `?` with coin, 22 = coins).
+- 5F1's boss area holds seven coin-run commands in its first screen, plus three
+  hidden 1-up blocks. 3F1 and 7F1 have only window decorations (fixed shape
+  `$00`, tile `$43`, not solid). 2F (TS9) was not decoded.
 
 Identifying the 17 fortress/boss entries was harder than expected. This section
 documents the approaches tried, why they failed, and what was ultimately chosen.
@@ -1560,17 +1644,53 @@ Object group 0 (IDs $00–$23, dispatched from PRG001, CPU $A000–$BFFF, file o
 > (upside-down 1-Up sprite, hurts on touch). It **reuses the 1-Up's Norm
 > handler** (`ObjNorm_PUp1UpMush` at $A77E) and adds only a 17-byte Init+Hit
 > stub pair at $A703, so it inherits the rise-out-of-block animation and
-> powerup-style hit-testing. The same module also adds a **1-Up spawn hook**:
-> both block-spawn sites that run `STA Level_ObjectID,Y` (`99 71 06` at file
-> `0x02597` / `0x02AED`, CPU $A587 / $AADD — where `LDA Bouncer_PUp,Y` has just
-> resolved the block's object) are patched to `JSR` a 31-byte routine at $A714.
-> That routine replays the store and, if the object is a 1-Up ($0B),
-> position-hashes (`salt + World_Num + Level_LayPtr_AddrL + Objects_XHi/X/Y,X`)
-> to keep $0B or swap in $0A — so each 1-Up block independently gives a real
-> 1-Up or poison, deterministically per seed (salt = `WORLD_INIT_OPERAND`, like
-> random fire flower). Covers brick-1up **and** invis-1up (both resolve to
-> `Bouncer_PUp[7]=$0B`). The stub + hook use ~48 bytes of the ~123-byte island;
-> the rest, and the other six unused IDs, remain open.
+> powerup-style hit-testing.
+>
+> **The block-spawn hook** (`src/randomize/items/block_spawn.rs`, shared by
+> Poison Mushroom and Suit Blocks) takes the rest of that island, $A714–$A77D.
+> Both block-spawn sites that run `STA Level_ObjectID,Y` (`99 71 06` at file
+> `0x02597` / `0x02AED`, CPU $A587 / $AADD, where `LDA Bouncer_PUp,Y` has just
+> resolved the block's object) are patched to `JSR` it. On entry `X` is the
+> bouncing block (its position is the block's) and `Y` = 5. The routine
+> replays the store, then for a watched ID hashes
+> `(Map_Entered_X + Map_Entered_Y + block X + block Y) >> 4 + XHi + YHi + salt`.
+> `Map_Entered_Y/XHi/X` are `$7976/$7978/$797A`, per player, indexed by
+> `Player_Current` ($0726); the map entry makes Deja Vu copies differ. Then:
+> - a 1-Up ($0B) becomes poison ($0A) on bit 0;
+> - a suit-block marker ($03, see "From a hit tile to a spawned object") becomes
+>   the Starman ($0C) or one of three suit objects on the hash's low two bits
+>   (Suit Blocks On), or one of five mystery objects on its low three bits
+>   (Wild: Fire, Fire, Leaf, Leaf, Tanooki, Frog, Hammer, and a per-seed suit).
+>   In Wild, small Mario (`Player_Suit` = 0, zero page `$ED`) gets a plain
+>   mushroom ($0D) instead, before the hash — see "Suit Blocks Wild" below.
+>
+> It covers brick-1up **and** invis-1up (both resolve to `Bouncer_PUp[7]=$0B`).
+> 100 of 106 bytes are used at Wild + poison (89 with Modern Power-ups, which
+> skips the small check); On + poison is 79, suits only 58, poison only 43.
+>
+> **$01, $02 and $1A are now taken** by Suit Blocks: Tanooki, Frog and Hammer.
+> **$0F and $10 are taken in Wild** (Fire Flower, Super Leaf). They are
+> `ObjInit_DoNothing` slots like the three below, with PRG000 attribute `$00`,
+> so Wild also copies the Starman's `$C1` into `Object_AttrFlags` (file
+> `0x00304` + ID). Checked 2026-11-22: no loaded level object stream places any
+> group-0 ID but $07, $08, $09, $0E and $18 (`rominfo --level`, every name),
+> and the only raw-immediate `STA Level_ObjectID` stores are $00 and $04.
+> All three already had the Starman's PRG000 `Object_AttrFlags` (`BOUNDBOX01 |
+> FIREIMMUNITY | HITNOTKILL`), so only PRG001's tables change:
+> - **Norm:** `$A7D6`, the star's own, colour cycle included (the suit handler
+>   sets `PUp_StarManFlash = $80`).
+> - **Init:** `ObjInit_StarOrSuit`, the star's own.
+> - **PatStart:** the mushroom's (`$0D`), so they draw as a mushroom. Its
+>   tiles are in the same always-loaded page as the star's. Every other
+>   attribute byte is the star's.
+> - **Hit:** an entry that loads the `Player_Suit` value (Tanooki 5, Frog 4,
+>   Hammer 6; Wild's Fire 2, Leaf 3) and jumps to `$A81C`, four bytes into
+>   `PRG001_A818`, past its table lookup.
+> - **PatTableSel** (`$A144`, file `0x2154`; missing from the list below): this
+>   must be copied from the star (`OPTS_NOCHANGE`), because $01/$02 vanilla ask
+>   for pages $48/$4C.
+>
+> $04, $05 and $1C remain open.
 
 - **No level data uses them** — zero hits across all 2077 enemy entries in `rom_map.json`.
 - **No code spawns them** — every `STA Level_ObjectID` site in the disassembly was audited; all use named `OBJ_` constants or table-driven spawn lists containing only named IDs. (Two raw-immediate near-misses are benign: PRG000 $D07E stores a *frame* of 3; PRG005 wooden-platform spawner stores $00 as a placeholder before setting the real ID.)
@@ -2325,6 +2445,182 @@ LATP item IDs (different from Global Item IDs and Player_Suit values):
 
 **Important:** Index 1 (leaf) must not be randomized — World 6-5 requires a
 leaf ? block to beat the level (flying needed).
+
+#### From a hit tile to a spawned object (verified 2026-11-19)
+
+1. **Tile → item code.** `LATP_PowerUps` (`prg008.asm:4830`; the ? range is
+   `LATP_QBlocks` above) gives every action tile an item code `0`–`B`.
+2. **Item code → handler.** `LATP_HandleSpecialBounceTiles` jumps through
+   `LATP_JumpTable` (file `0x117E1`, one word per code). Each handler sets
+   `PUp_StarManFlash` ($0586: `$00` flower/leaf, `$80` star and coin-or-star)
+   and returns `Y` = an index into PRG001's `Bouncer_PUp`. `Y` = 0 means no
+   bounce; `$80` means a brick broke.
+3. **Index → object.** `Player_Bounce` = restore-tile nibble | `Y` becomes the
+   bouncing block's `Objects_Var1`. At bump position 10, PRG001 (`$A56F` /
+   `$AAC5`) does `Var1 AND #$0F` → `LDA Bouncer_PUp,Y` (file `0x024FC`:
+   `00 00 19 1E 0C 0D 1F 0B` = none, none, flower, leaf, star, mushroom, vine,
+   1-Up). That object is stored into slot 5 at `$A587` / `$AADD`.
+
+The low nibble is never range-checked. **Index 8 reads `$03`**, the first byte
+of `Bounce_TileReplacements` (`CHNGTILE_TOGNOTEBLOCK`), which no vanilla block
+produces. That makes it a clean marker. Nothing else reads `Player_Bounce`
+except as zero/non-zero, and its high nibble (the restore tile) is untouched.
+
+**Spare pieces:**
+- **Tile `$65`** (`TILEA_QBLOCKCOIN2`, "? block with coin (again)") duplicates
+  `$63`. Three vanilla blocks use it, all via power-block shape 4: 2-1
+  (`0x294EC`), 7-1 (`0x24CEA`) and Unused5 (`0x2B85A`). Shape 3 (coin-or-star)
+  gives the same coin unless Mario is invincible. Its `LATP_QBlocks` byte is
+  at file `0x11692`.
+- **Every block family's star is item code 3** (`LATP_Star`): ? `$62` (file
+  `0x1168F`), brick `$6A` (`0x11697`), note `$31` (`0x11688`) and wood `$75`
+  (`0x1168C`). The coin-or-star blocks are code 5 (`LATP_CoinStar`), a
+  separate handler, so the star chains never pass through code 3.
+- **Code `B`** (`LATP_BrickAltClear`, `$B90D`, file `0x1191D`, 10 bytes) is
+  reached only by `TILE9_PIPEWORKS_JCT`, the unused desert pipeworks tile.
+- There are no spare brick, note or wood tiles. Brick coin-or-star (`$6C`) and
+  ? coin-or-star (`$64`) drive star chains in 3-2, 5-1, 5-7, 6-1, 7-3 and 8F1.
+- Undefined `TILEA_` numbers are not free. Tile numbers outside the shared
+  block ranges are per-tileset: `$76`–`$78` are Plains' Bullet Bill cannon,
+  for example.
+
+**Suit Blocks** (`items::block_spawn`) uses all of this. `$65` and the brick,
+note and wood stars → code `B`; the ? star `$62` keeps code 3, so 7-7's fixed
+stars stay stars. The handler at `$B90D` is rewritten to `LDA #$80 / STA
+PUp_StarManFlash / LDY #8 / RTS` — `LATP_Star` with the marker index, so a
+suit block that comes out a star cycles like one. The spawn hook sees `$03`
+and swaps in the Starman or a suit object; see "Unused Group-0 Objects".
+
+**The Starman is the suit object.** A Big ? box's suit is a Starman whose
+`Objects_Frame` is 1/2/3. The frame picks the picture (suit art lives only in
+page `$4C`, which only the Big ? box objects request), the palette at Init
+(`Star_Palettes`, `$A7xx`), and, at touch, the suit through
+`PUp_StarOrSuitFrames` (`00 05 04 06`). The suit half of
+`ObjHit_StarOrSuit` starts at `PRG001_A818` (`TAY` / `LDA
+PUp_StarOrSuitFrames,Y` / …), entered with `A` = 1/2/3. `ObjNorm_StarOrSuit`
+(`$A7D6`) colour-cycles while `PUp_StarManFlash` is negative; the suit
+objects enter it there, so they cycle too. (Until 2026-11 they entered at
+`$A7E0`, past the cycle, and drew an upside-down star in the suit's Big ?
+palette.)
+
+**Any suit, from `$A81C`.** `PRG001_A818` is `TAY` / `LDA
+PUp_StarOrSuitFrames,Y` / `CMP <Player_Suit` / `BEQ` (already wearing it:
+just the power-up sound) / `TAY` / `INY` / `STY Player_QueueSuit` / poof /
+collect. Entered at `$A81C` (`C5 ED`, the `CMP`) with a `Player_Suit` value
+already in `A`, it queues *any* power-up, not just the table's three: Fire
+(2) and Leaf (3) work, with the suit poof instead of the flower's flicker.
+
+#### Suit Blocks Wild (2026-11-22)
+
+Wild (`SuitBlocks::Wild`) takes the star out of the suit block. Its pool is
+Fire $0F ×2, Leaf $10 ×2, Tanooki, Frog, Hammer, and one of the three again,
+picked per seed (`AND #7` needs eight slots for five outcomes). The suit tiles
+are `$65` and the brick, note and wood **flowers** (`LATP_QBlocks` file
+`0x11695`, `LATP_Notes` `0x11686`, `LATP_Woodblocks` `0x1168A`, all vanilla
+code 1); the brick, note and wood stars keep code 3 and stay real stars. The
+reroll (`items::powerups`) rolls suit block 5 to 1 over the star tile in every
+family, and never the star where a block must make small Mario big or (with
+Hammer Vulnerable Koopalings) on an airship.
+
+**The mushroom reads `PUp_StarManFlash`.** `ObjInit_PUpMush` and
+the mushroom's draw path treat a non-zero flash as "came out of a Big ? box":
+it gets a sideways X velocity, pops up at `-$38` and skips the rise mask, so it
+appears over the block instead of rising out of it. The flower's Init and
+Norm read it the same way. The suit handler sets the flash to `$80` for the
+colour cycle, so Wild's small-Mario path clears it before spawning the
+mushroom — `ASL PUp_StarManFlash` turns `$80` into `$00` in three bytes.
+
+#### Kuribo's Shoe anywhere: tried and parked (2026-11-23)
+
+A sixth Wild outcome, Kuribo's Shoe, with Select to kick it off, was built and
+dropped because of its graphics (below). The code is on the local branch
+`feature/kuribo-shoe` (commit `91bfb3b`, never pushed): `items::shoe_drop`,
+its tests and `asm::check`, and the six-outcome pool in `block_spawn`. What
+it established:
+
+**Granting it is free.** `Player_QueueSuit` (`$0578`) = `$80` puts Mario in the
+shoe in any level (`Player_Update`, PRG008: `INC Player_Kuribo`, `$0577`). The
+star's suit grant at `$A81C` queues `A + 1` unless `A` equals `Player_Suit`, so
+`LDA #$7F` / `JMP $A81C` gives the shoe, with the suit poof and sound. It is
+the same 3-byte hit entry as Wild's other suits; object `$11` (an
+`ObjInit_DoNothing` slot) was the one it used, and is free again.
+
+**The shoe's graphics are the level's, not Mario's — this is what killed it.**
+The shoe frames (`PF18` big, `PF43` small, `prg029.asm`) draw Mario's top from
+his own page (`PatTable_BankSel+2`) but the shoe from tiles `$A9`/`$AB`, which
+sit in sprite bank 5 (`PatTable_BankSel+4`, `$071D`), the enemy page. Vanilla
+has the right page there only because the Goomba in a shoe requests it
+(`OPTS_SETPT5 | $0B`), so outside 5-3 the shoe draws as garbage. The flying
+shoe (`LostShoe_Pattern`, PRG007) uses the same tiles. This is probably why
+vanilla poofs the shoe away at the goal (`prg029.asm:1103`).
+
+- **How bank 5 is decided.** Every live object whose `ObjectGroup_PatTableSel`
+  entry is non-zero writes its page **every frame it runs**
+  (`Object_DoStateAction`, PRG000 `$CA7A`); only state 8 (poof dying) and
+  `Objects_DisPatChng` (set by an exploding Bob-omb) skip it. The page persists
+  until someone writes another. Objects run after the player each frame
+  (`Player_DoGameplay`, then `Objects_HandleScrollAndUpdate`, PRG030), and the
+  NMI uploads what was written last.
+- **So a one-time load at pickup does not stick:** with a page-requesting enemy
+  active it is overwritten in the same frame, before it is ever shown.
+- **A per-frame write from `Player_Draw` lets enemies win:** it is
+  overwritten whenever an enemy needs the bank, and shows the shoe otherwise.
+  Tried (5 bytes: `LDY #$0B` / `STY $071D`), unplaytested. The shoe is still
+  garbled whenever such an enemy is on screen. The open risk is an object that
+  draws from bank 5 *without* requesting it, which would get the shoe page.
+- **The only real fix is Mario's own pages:** two free 8x16 tile pairs at the
+  same index in every page the shoe frames use (frame page offset 0 of each
+  power-up root in `Player_PUpRootPage`, `$50 $54 $00 $40 $44`, plus `$53` for
+  small), with `PF18`/`PF43` repointed. Not checked; the flying shoe would
+  still need bank 5.
+
+**PRG029 is mapped for every draw of Mario.** `Player_Draw29`
+(`prg008.asm:422`) swaps PRG029 into `$C000`, calls `Player_Draw` (PRG029
+`$CE9F`, file `0x3AEAF`) and swaps PRG000 back. Every state that shows Mario
+(normal, vine, pipe, the grow/shrink transitions) goes through `Player_Draw`,
+so a hook there runs once a frame in a level, from a bank with kilobytes free.
+It is the natural home for any per-frame *player* feature: RAM, PRG008 (still
+at `$A000`) and PRG030/031 are reachable; PRG000's `$C000` code is **not** (it
+is switched out for the call), so anything from PRG000 has to be copied.
+PRG027 also calls `Player_Draw`, from a cutscene.
+
+**The hook site is shared.** `Player_Draw`+2, `LDA Player_FramePageOff,X`
+(`BD 37 CE`, file `0x3AEB1`), is already Faster Frog's hook (`JSR $C5F0`,
+applied in the MaCobra stage). A second feature hooking there should read the
+site first and end with a `JMP` to whatever `JSR` it finds (or the displaced
+load + `RTS` on a vanilla site), so both run. `X` (the frame) must survive;
+`Y` is free (the next instruction reloads it).
+
+**Dropping the shoe from PRG029** is a copy of vanilla's hit path:
+`Player_LoseKuribo` (PRG000 `$DAB5`, file `0x1AC5`) claims a special-object
+slot (`SpecialObj_ID` `$7FC6`, 6 slots, searched from 5 down) as
+`SOBJ_KURIBOSHOE` (`$09`) at Mario's position (`SpecialObj_YLo` `$05BF`, `YHi`
+`$7FD5`, `XLo` `$05C9`), `YVel` (`$05D3`) `-$30`, `XVel` (`$05DD`) `±16` away
+from his facing (`Player_FlipBits` `$EF`), `Data` (`$06C7`) 0; `$DA32` queues
+`SND_LEVELSHOE` (`$A0`) in `Sound_QLevel1` (`$04F2`). A hit also sets
+`Player_FlashInv` (`$0552`) = `$71`. Select is bit `$20` of `Pad_Input` (`$18`,
+new presses). The whole drop was 81 bytes plus a 3-4 byte tail.
+
+**P-Wing, for reference.** Vanilla's P-Wing is just `Player_Power` = `$7F` and
+`Player_FlyTime` = `$FF` at level init (`prg008.asm:502-512`); `$FF` is never
+counted down, so a P-Wing mystery outcome would need those two writes at grant
+time (about 5 bytes beside the hit entry in PRG001). Not built.
+
+**PRG029's big run is unreferenced.** `prg029.asm` brackets `$C5EA..$CBFF`
+with "BEGIN/END HUGE UNUSED SPACE". `FS_FASTER_FROG` (`$C5F0`, 24 bytes) sits
+at its start; everything after it is free.
+
+**PRG008 slack (not claimed).** `prg008.asm` marks `$A6AD..$A6BA` "Anybody
+want to claim this?": three stray bytes and an unreachable `ORA` / `JSR` /
+`JSR` / `JMP Player_Draw29`, about 14 bytes — PRG008's only known free run.
+
+**The 2P Vs Challenge's sprite pages are not Vs-only.** It loads `$04`-`$07`
+into the four sprite banks (`Do_2PVsChallenge`, PRG030), and each is also used
+in normal play: `$04` by the title screen, `$05` by Toad, the Toad House item
+and the treasure box (`OPTS_SETPT5 | $05`) and the letter scene, `$06` by the
+end card's twinkle and `$07` by its spin-away (PRG002). Tiles on them that only
+the Vs game draws could take new art, but only where those pages are loaded.
+Which tiles are Vs-only has not been checked.
 
 ### Other Block / Power-Up Offsets
 
@@ -5239,6 +5535,15 @@ world. Changing it to `$09` prevents the softlock.
 Koopalings are normally invulnerable to thrown hammers. The object attribute byte at
 file **0x00312** (CPU `$8302`, PRG000) has bit 7 set (`$89`), which flags them as
 hammer-immune. Clearing bit 7 (`$09`) makes hammers damage them like any other enemy.
+
+**Bit 7 is `OAT_HITNOTKILL`, so clearing it does more than let hammers in.**
+The invincibility check in PRG000 (`prg000.asm` ~5370: `LDA Player_StarInv` /
+`BEQ` / `LDA Object_AttrFlags,Y` / `AND #OAT_HITNOTKILL` / `BNE`) kills, on
+touch, every object *without* that bit. With the patch, a star-invincible
+Mario kills a Koopaling by touching it. That is why airship ? blocks never roll
+a star when the option is on (`items::powerups`, `no_airship_stars`), and why
+Wild Suit Blocks never roll the star tile there either. (The suits are fine:
+the Hammer Suit is the point of the option.)
 
 | Item | Value |
 |------|-------|
