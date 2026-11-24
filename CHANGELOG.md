@@ -9,6 +9,8 @@ deploys.
 
 ## [Unreleased]
 
+## [3.3.0] - 2026-11-24
+
 ### Added
 
 - Random Power Up locations: a power-up in a row or small pattern of matching
