@@ -748,7 +748,7 @@ export const SCHEMA = [
 		group: "items", inFlagKey: true },
 	{ id: "special_suits", type: "tri", options: SPECIAL_SUITS, default: "off",
 		label: "Special Suits",
-		tip: "New suits from Wild Suit Blocks and Big ? Blocks. Shell: a green Hammer Suit that stomps what you normally can't and walks on munchers, but throws no hammers. In a Big ? Block it comes out upside-down.",
+		tip: "New suits from Wild Suit Blocks and Big ? Blocks. Shell: a green Hammer Suit that stomps like a Kuribo's Shoe and walks on munchers, but throws no hammers. In a Big ? Block it comes out upside-down.",
 		icon: HAMMER_SUIT,
 		enabledWhen: [{ suit_blocks: "wild" }, { big_q_blocks: true }], indent: true,
 		group: "items", inFlagKey: true },

@@ -1,10 +1,16 @@
 //! The Shell Suit: a Special Suit Wild suit blocks and Big ? boxes hand out.
 //!
 //! It is the Hammer Suit with the black swapped for green, the duck that
-//! blocks fireballs, and the Kuribo's Shoe's stomp — it stomps what can't be
-//! stomped and walks on munchers — but no hammers. Only what Mario could not
-//! stomp dies the shoe's way: a Koopa or a Buzzy Beetle still drops its
-//! shell, and a Shell still kicks it.
+//! blocks fireballs, and the Kuribo's Shoe's stomp — and walks on munchers —
+//! but no hammers. Only what Mario could not stomp dies the shoe's way: a
+//! Koopa or a Buzzy Beetle still drops its shell, and a Shell still kicks it.
+//!
+//! "Like the shoe" is the whole promise, and the limit. The stomp lives in
+//! `Player_HitEnemy`; an enemy whose touch skips it hurts the shoe and the
+//! Shell alike. Boo, Hot Foot, Ptooie, the Nippers and the charging and
+//! pool-to-pool Cheep Cheeps (PRG002) touch with a bare `Player_GetHurt`;
+//! Thwomps, Rotodiscs, Podoboos and the bosses run their own collision. All
+//! of those were left as they are on purpose.
 //!
 //! ## Suit 6 plus a marker
 //!
@@ -30,7 +36,7 @@
 //!
 //! | Where | Site | Change |
 //! |---|---|---|
-//! | Stomp | PRG000 `$D267` | "shoe or statue" becomes "shoe, statue or Shell": stomp the unstompable |
+//! | Stomp | PRG000 `$D267` | "shoe or statue" becomes "shoe, statue or Shell": the shoe's stomp |
 //! | Stomp | PRG000 `$D27C` | the shoe's kill-on-stomp, for a Shell only on what can't be stomped |
 //! | Munchers | PRG008 `$BDA4` | "shoe" becomes "shoe or Shell" |
 //! | Hammers | PRG007 `$A247` | a Shell looks Big to the throw check |

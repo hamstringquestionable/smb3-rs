@@ -522,7 +522,7 @@ mod payload {
         /// Special Suits, one bit per suit: bit 0 the Shell Suit, the other
         /// three held for the suits to come. Appended and zero by default.
         /// Written verbatim, like `item_gates`: the pipeline is what ignores it
-        /// outside Wild Suit Blocks.
+        /// when neither Wild Suit Blocks nor Big ? Blocks is on.
         pub(super) special_suits: B4,
 
         // --- Reserve ---

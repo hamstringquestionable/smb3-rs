@@ -161,8 +161,8 @@ fn audit_options() -> Options {
         // Wandom, the setting that writes the most: the hidden readout and
         // the on-clear routine are its own allocations.
         maze_wands: crate::MAZE_WANDS_WANDOM,
-        // Wild, because the Shell Suit's six allocations need it; Wild writes
-        // every allocation On does.
+        // Wild, so the Shell Suit's allocations are written whatever Big ?
+        // Blocks says; Wild writes every allocation On does.
         suit_blocks: SuitBlocks::Wild,
         ..all_on_options()
     }

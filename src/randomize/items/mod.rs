@@ -22,8 +22,8 @@ pub(crate) mod block_spawn;
 // arrive there in a frog. See [`block_spawn`].
 pub(crate) mod frog_softlocks;
 pub(crate) mod poison_mushroom;
-// The Shell Suit, a Special Suit Wild's suit blocks can hand out. See
-// [`block_spawn`], which puts it in the pool.
+// The Shell Suit, a Special Suit Wild's suit blocks and Big ? boxes hand
+// out. See [`block_spawn`], which puts it in Wild's pool.
 pub(crate) mod shell_suit;
 
 const ANCHOR: u8 = 0x0A;
