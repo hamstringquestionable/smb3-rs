@@ -2534,7 +2534,15 @@ mushroom — `ASL PUp_StarManFlash` turns `$80` into `$00` in three bytes.
 #### The Shell Suit: a new suit as suit 6 plus a marker (2026-11-24)
 
 `SpecialSuits::Shell` (`items::shell_suit`) puts a Shell Suit in Wild's
-eighth slot, on object `$11`. A Shell **is** `Player_Suit` 6, so every per-suit
+eighth slot, on object `$11`, and in the Big ? Mushroom box (`$95`, never
+placed in vanilla; only the Big ? Blocks shuffle deals it). That box's
+`BigQBlock_Item` / `BigQBlock_StarManFlash` entries (PRG005 file `0x0B6E3` /
+`0x0B6EA`) become the Starman and `$07`: frame 3 (`PUp_StarManFlash AND #3`,
+the Hammer picture) plus bit 2, which no reader of `PUp_StarManFlash` looks at
+(the star/suit path uses `AND #3` and the sign; mushroom, flower and leaf only
+test non-zero). `ObjInit_StarOrSuit`'s last store (`$A7D2`) jumps to a stub
+that sets `Objects_FlipBits` (`$0679`) bit 7 when bit 2 is set, and the grant
+reads that bit: upside-down means Shell. A Shell **is** `Player_Suit` 6, so every per-suit
 table, the duck pose and the Hammer Suit's fireball block (`prg007.asm` ~5220,
 which fakes `Player_StarInv` around `SObj_PlayerCollide` while ducking) carry
 over. What tells it apart is a per-player byte at **`$7BD0`/`$7BD1`** (indexed

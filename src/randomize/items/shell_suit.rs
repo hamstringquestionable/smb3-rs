@@ -1,4 +1,4 @@
-//! The Shell Suit: a Special Suit only Wild suit blocks hand out.
+//! The Shell Suit: a Special Suit Wild suit blocks and Big ? boxes hand out.
 //!
 //! It is the Hammer Suit with the black swapped for green, the duck that
 //! blocks fireballs, and the Kuribo's Shoe's stomp — it stomps what can't be
@@ -37,8 +37,20 @@
 //! | Palette | PRG008 `$A550` | a Shell uses `PowerUp_Palettes` row 3 |
 //! | Map, after a move | PRG010 `$CE57` | green accent |
 //! | Map, first load | PRG027 `$B8DD` | green accent |
-//! | Suit grant | PRG001 `$A818` | keeps the marker, and swaps Hammer and Shell |
+//! | Suit grant | PRG001 `$A818` | keeps the marker, swaps Hammer and Shell, and makes an upside-down Big ? suit a Shell |
+//! | Big ? suit | PRG001 `$A7D2` | flips the suit when the box's flag says Shell |
 //! | Inventory | PRG026 `$A608` | clears the marker |
+//!
+//! ## The Big ? box
+//!
+//! `OBJ_BIGQBLOCK_MUSHROOM` (`$95`) is never placed in a vanilla level; only
+//! the Big ? Blocks shuffle deals it. With the Shell Suit on it becomes the
+//! Shell box: its entries in `BigQBlock_Item` / `BigQBlock_StarManFlash`
+//! (PRG005) become the Starman and `$07` — frame 3, the Hammer Suit's picture,
+//! plus bit 2, which no other code reads. The star's init flips a suit that
+//! carries bit 2 upside-down (`Objects_FlipBits` bit 7, which its draw never
+//! rewrites), and the grant hands out a Shell for an upside-down suit. So the
+//! art is the Hammer Suit's, the way the poison mushroom is the 1-Up's.
 //!
 //! Row 3 is the Super Leaf's, which vanilla never reads (a Leaf wears Mario's
 //! or Luigi's own colours, `Level_SetPlayerPUpPal`), so it is free for the
@@ -50,8 +62,8 @@
 //! one on touch because it cannot hold it, and a Shell can.
 
 use crate::randomize::rom_data::{
-    FS_SHELL_GRANT, FS_SHELL_INVENTORY, FS_SHELL_MAP_LOAD, FS_SHELL_MAP_MOVE, FS_SHELL_TEST,
-    FS_SHELL_THROW, prg_bank_file_to_cpu, prg010_file_to_cpu, prg030_file_to_cpu,
+    FS_SHELL_FLIP, FS_SHELL_GRANT, FS_SHELL_INVENTORY, FS_SHELL_MAP_LOAD, FS_SHELL_MAP_MOVE,
+    FS_SHELL_TEST, FS_SHELL_THROW, prg_bank_file_to_cpu, prg010_file_to_cpu, prg030_file_to_cpu,
 };
 use crate::rom::Rom;
 
@@ -227,7 +239,7 @@ const THROW_PATCH: [u8; 4] = [0x20, lo(THROW_CPU), hi(THROW_CPU), 0xEA];
 const GRANT_CPU: u16 = prg_bank_file_to_cpu(1, FS_SHELL_GRANT);
 /// Where the mystery objects' Hit entries go instead of `$A81C`, with the suit
 /// (bit 7 for a Shell) in `A`.
-pub(crate) const SUIT_GRANT_CPU: u16 = GRANT_CPU + 4;
+pub(crate) const SUIT_GRANT_CPU: u16 = GRANT_CPU + 11;
 /// `PUp_StarOrSuitFrames`.
 const STAR_OR_SUIT_FRAMES: u16 = 0xA7FA;
 /// `PRG001_A818` + 4: `CMP <Player_Suit / BEQ` — "already wearing it?".
@@ -236,17 +248,21 @@ const ALREADY_WEARING_CPU: u16 = 0xA81C;
 const QUEUE_SUIT_CPU: u16 = 0xA820;
 
 /// `FrameSuit` is the four bytes the hook displaces, so a Big `?` box's suit
-/// arrives at `SuitGrant` the way a mystery object's does.
+/// arrives at `SuitGrant` the way a mystery object's does — and an upside-down
+/// one, which only the Shell box makes, arrives as a Shell.
 ///
 /// `SuitGrant` stores the new suit as the player's marker, and compares bit 7
 /// with the old marker on the way: when it differs — Hammer to Shell, or
 /// Shell to anything — the grant skips "already wearing it?" and queues the
 /// suit, so the palette reloads and the poof plays even with suit 6 to suit 6.
 #[rustfmt::skip]
-const GRANT: [u8; 26] = [
+const GRANT: [u8; 33] = [
     // FrameSuit:
     0xA8,                                             // TAY
     0xB9, lo(STAR_OR_SUIT_FRAMES), hi(STAR_OR_SUIT_FRAMES), // LDA PUp_StarOrSuitFrames,Y
+    0xBC, OBJECTS_FLIP_BITS[0], OBJECTS_FLIP_BITS[1], // LDY Objects_FlipBits,X
+    0x10, 0x02,                                       // BPL grant (right way up)
+    0xA9, SHELL_GRANT,                                // LDA #Shell
     // SuitGrant:
     0xAC, PLAYER_CURRENT[0], PLAYER_CURRENT[1],       // LDY Player_Current
     0x48,                                             // PHA
@@ -267,6 +283,42 @@ const FRAME_SITE: usize = 0x02828;
 const FRAME_VANILLA: [u8; 4] = [0xA8, 0xB9, 0xFA, 0xA7];
 const FRAME_PATCH: [u8; 4] = [0x4C, lo(GRANT_CPU), hi(GRANT_CPU), 0xEA];
 
+// --- PRG005 / PRG001: the Big ? box -------------------------------------
+
+/// `Objects_FlipBits`: bit 7 draws the object upside-down. The Starman's draw
+/// (`Object_ShakeAndDrawMirrored`) rewrites only bit 6, so it stays put — the
+/// poison mushroom and the first Suit Blocks build both relied on it.
+const OBJECTS_FLIP_BITS: [u8; 2] = [0x79, 0x06];
+/// `BigQBlock_Item` and `BigQBlock_StarManFlash` (PRG005), entry 1:
+/// `OBJ_BIGQBLOCK_MUSHROOM` (`$95`), which no vanilla level places. With the
+/// Shell Suit on it is the Shell box: a Starman, frame 3 (the Hammer Suit's
+/// picture) with bit 2 set, which nothing else reads.
+const BIG_Q_MUSHROOM_ITEM: (usize, u8) = (0x0B6E3, 0x0D);
+const BIG_Q_MUSHROOM_FLASH: (usize, u8) = (0x0B6EA, 0x01);
+const STARMAN_ID: u8 = 0x0C;
+const SHELL_BOX_FLASH: u8 = 0x07;
+
+const FLIP_CPU: u16 = prg_bank_file_to_cpu(1, FS_SHELL_FLIP);
+/// The end of `ObjInit_StarOrSuit`: the store it displaced, then the flip when
+/// `PUp_StarManFlash` carries the Shell box's bit 2. Every other spawn of the
+/// star leaves that bit clear (`$00`, `$80`, or a Big ? box's 1-3).
+#[rustfmt::skip]
+const FLIP: [u8; 16] = [
+    0x9D, 0xE7, 0x7F,                         // STA Objects_SprAttr,X  (displaced)
+    0xAD, 0x86, 0x05,                         // LDA PUp_StarManFlash
+    0x29, 0x04,                               // AND #4
+    0xF0, 0x05,                               // BEQ done
+    0xA9, 0x80,                               // LDA #SPR_VFLIP
+    0x9D, OBJECTS_FLIP_BITS[0], OBJECTS_FLIP_BITS[1], // STA Objects_FlipBits,X
+    // done:
+    0x60,                                     // RTS
+];
+/// `ObjInit_StarOrSuit`'s last store, `STA Objects_SprAttr,X` (PRG001 `$A7D2`).
+/// Its `RTS` at `$A7D5` stays, unreached.
+const FLIP_SITE: usize = 0x027E2;
+const FLIP_VANILLA: [u8; 3] = [0x9D, 0xE7, 0x7F];
+const FLIP_PATCH: [u8; 3] = [0x4C, lo(FLIP_CPU), hi(FLIP_CPU)];
+
 // --- PRG026: the inventory -----------------------------------------------
 
 const INVENTORY_CPU: u16 = prg_bank_file_to_cpu(26, FS_SHELL_INVENTORY);
@@ -286,25 +338,18 @@ const INVENTORY_PATCH: [u8; 3] = [0x20, lo(INVENTORY_CPU), hi(INVENTORY_CPU)];
 
 /// The map power-up's accent load, or green for a Shell, with `X` the player
 /// and `Y` the index the load uses. `Y` survives: nothing here writes it.
+#[rustfmt::skip]
 const fn map_accent(hammer_index: u8, table: u16) -> [u8; 16] {
     [
-        0xC0,
-        hammer_index, //        CPY #hammer
-        0xD0,
-        0x08, //                BNE plain
-        0xBD,
-        MARKER_LO,
-        MARKER_HI, // LDA marker,X
-        0x10,
-        0x03, //                BPL plain
-        0xA9,
-        GREEN, //               LDA #green
-        0x60,  //                      RTS
+        0xC0, hammer_index,         // CPY #hammer
+        0xD0, 0x08,                 // BNE plain
+        0xBD, MARKER_LO, MARKER_HI, // LDA marker,X
+        0x10, 0x03,                 // BPL plain
+        0xA9, GREEN,                // LDA #green
+        0x60,                       // RTS
         // plain:
-        0xB9,
-        lo(table),
-        hi(table), // LDA table,Y  (the load we displaced)
-        0x60,      //                      RTS
+        0xB9, lo(table), hi(table), // LDA table,Y  (the load we displaced)
+        0x60,                       // RTS
     ]
 }
 
@@ -329,7 +374,8 @@ const MAP_LOAD_VANILLA: [u8; 3] = [0xB9, 0x1E, 0xB8];
 const MAP_LOAD_PATCH: [u8; 3] = [0x20, lo(MAP_LOAD_CPU), hi(MAP_LOAD_CPU)];
 
 /// Every in-place hook: file offset, vanilla bytes, patch.
-const HOOKS: [(usize, &[u8], &[u8]); 9] = [
+const HOOKS: [(usize, &[u8], &[u8]); 10] = [
+    (FLIP_SITE, &FLIP_VANILLA, &FLIP_PATCH),
     (STOMP_SITE, &STOMP_VANILLA, &STOMP_PATCH),
     (KILL_SITE, &KILL_VANILLA, &KILL_PATCH),
     (MUNCHER_SITE, &MUNCHER_VANILLA, &MUNCHER_PATCH),
@@ -352,6 +398,13 @@ pub(crate) fn apply(rom: &mut Rom) {
         rom.write_range(site, patch);
     }
     rom.write_range(FS_SHELL_TEST, &TEST);
+    rom.write_range(FS_SHELL_FLIP, &FLIP);
+    for ((at, vanilla), new) in
+        [(BIG_Q_MUSHROOM_ITEM, STARMAN_ID), (BIG_Q_MUSHROOM_FLASH, SHELL_BOX_FLASH)]
+    {
+        assert_eq!(rom.read_byte(at), vanilla, "shell_suit: Big ? table 0x{at:05X}");
+        rom.write_byte(at, new);
+    }
     rom.write_range(FS_SHELL_THROW, &THROW);
     rom.write_range(FS_SHELL_GRANT, &GRANT);
     rom.write_range(FS_SHELL_INVENTORY, &INVENTORY);
@@ -512,7 +565,19 @@ mod tests {
     /// Run `SuitGrant` with `granted` in `A`; returns where it jumped, the
     /// suit in `A` and the marker afterwards.
     fn grant(old_marker: u8, granted: u8, player: u8, entry: u16) -> (u16, u8, u8) {
+        grant_flipped(old_marker, granted, player, entry, 0x00)
+    }
+
+    /// [`grant`], with the object's `Objects_FlipBits`.
+    fn grant_flipped(
+        old_marker: u8,
+        granted: u8,
+        player: u8,
+        entry: u16,
+        flip: u8,
+    ) -> (u16, u8, u8) {
         let mut cpu = cpu_with(GRANT_CPU, &GRANT);
+        cpu.memory.set_byte(u16::from_le_bytes(OBJECTS_FLIP_BITS) + 0x04, flip);
         cpu.memory.set_bytes(STAR_OR_SUIT_FRAMES, &[0x00, 0x05, 0x04, 0x06]);
         cpu.memory.set_byte(0x0726, player);
         cpu.memory.set_byte(MARKER + u16::from(player), old_marker);
@@ -559,6 +624,39 @@ mod tests {
             let (to, a, marker) = grant(0x86, frame, 0, GRANT_CPU);
             assert_eq!((to, a, marker), (QUEUE_SUIT_CPU, suit, suit), "frame {frame}");
         }
+        // The Shell box's suit is upside-down: a Shell, from a Hammer or a
+        // Shell alike; only the flip bit (7) counts, not the H-flip (6).
+        for player in [0, 1] {
+            let (to, a, marker) = grant_flipped(0x06, 3, player, GRANT_CPU, 0x80);
+            assert_eq!((to, a, marker), (QUEUE_SUIT_CPU, 6, SHELL_GRANT));
+            let (to, _, marker) = grant_flipped(0x86, 3, player, GRANT_CPU, 0xC0);
+            assert_eq!((to, marker), (ALREADY_WEARING_CPU, SHELL_GRANT));
+            let (_, _, marker) = grant_flipped(0x86, 3, player, GRANT_CPU, 0x40);
+            assert_eq!(marker, 6, "H-flipped is still a Hammer Suit");
+        }
+    }
+
+    /// The star's init flips the suit exactly when the Shell box set bit 2,
+    /// keeps the store it displaced, and leaves `X` and `Y` alone.
+    #[test]
+    fn only_the_shell_box_comes_out_upside_down() {
+        let flip_bits = u16::from_le_bytes(OBJECTS_FLIP_BITS) + 0x03;
+        for flash in [0x00, 0x01, 0x02, 0x03, 0x80, SHELL_BOX_FLASH] {
+            let mut cpu = cpu_with(FLIP_CPU, &FLIP);
+            cpu.memory.set_byte(0x0586, flash);
+            cpu.memory.set_byte(flip_bits, 0x40);
+            cpu.registers.accumulator = 0x02; // the palette ObjInit picked
+            cpu.registers.index_x = 0x03;
+            cpu.registers.index_y = 0x03;
+            let mut cpu = call(cpu, FLIP_CPU);
+            assert_eq!(cpu.memory.get_byte(0x7FE7 + 3), 0x02, "{flash:02X}: SprAttr");
+            let want = if flash == SHELL_BOX_FLASH { 0x80 } else { 0x40 };
+            assert_eq!(cpu.memory.get_byte(flip_bits), want, "{flash:02X}: FlipBits");
+            assert_eq!((cpu.registers.index_x, cpu.registers.index_y), (3, 3));
+        }
+        // Frame 3 is the Hammer Suit's picture; bit 7 would colour-cycle it.
+        assert_eq!(SHELL_BOX_FLASH & 3, 3);
+        assert_eq!(SHELL_BOX_FLASH & 0x80, 0);
     }
 
     /// The map's accent: green only for a Shell's suit 6, by player, with `Y`
@@ -607,6 +705,9 @@ mod tests {
         }
         assert_eq!(rom.read_range(LEAF_ROW, 4), [hammer[0], hammer[1], hammer[2], GREEN]);
         assert_eq!(hammer, [0x00, 0x30, 0x27, 0x0F], "vanilla Hammer row");
+        // The Mushroom box is now the Shell box.
+        assert_eq!(rom.read_byte(BIG_Q_MUSHROOM_ITEM.0), STARMAN_ID);
+        assert_eq!(rom.read_byte(BIG_Q_MUSHROOM_FLASH.0), SHELL_BOX_FLASH);
         // The frames table the grant reads is where the hook says.
         let frames = crate::randomize::rom_data::prg_bank_cpu_to_file(1, STAR_OR_SUIT_FRAMES);
         assert_eq!(rom.read_range(frames, 4), [0x00, 0x05, 0x04, 0x06]);
@@ -651,6 +752,16 @@ mod asm_checks {
             .allocation(FS_SHELL_GRANT)
             .origin(GRANT_CPU)
             .hook(&FRAME_VANILLA, 0, &FRAME_PATCH)
+            .zero_page(0x02, &[])
+            .assert_ok();
+    }
+
+    #[test]
+    fn the_flip_is_well_formed() {
+        asm::check(&FLIP)
+            .allocation(FS_SHELL_FLIP)
+            .origin(FLIP_CPU)
+            .hook(&FLIP_VANILLA, 0, &FLIP_PATCH)
             .zero_page(0x02, &[])
             .assert_ok();
     }

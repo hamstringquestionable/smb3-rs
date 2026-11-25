@@ -235,10 +235,11 @@ impl SuitBlocks {
     }
 }
 
-/// Special Suits: new suits Wild's suit blocks can hand out, in the slot that
-/// otherwise repeats one suit. Only the Shell Suit exists so far — the Hammer
-/// Suit's look in green, ducking under fireballs, stomping like Kuribo's Shoe
-/// and safe on munchers, with no hammers. See
+/// Special Suits: new suits Wild's suit blocks and Big ? boxes can hand out —
+/// in Wild's slot that otherwise repeats one suit, and in place of the Big ?
+/// Mushroom box. Only the Shell Suit exists so far — the Hammer Suit's look in
+/// green, ducking under fireballs, stomping like Kuribo's Shoe and safe on
+/// munchers, with no hammers; from a Big ? box it comes out upside-down. See
 /// [`crate::randomize::items::shell_suit`].
 ///
 /// The flag key gives this four bits, one per suit, so up to three can later
@@ -824,8 +825,8 @@ pub struct Options {
     /// flag-key bits.
     #[serde(default)]
     pub suit_blocks: SuitBlocks,
-    /// Special Suits (see [`SpecialSuits`]). Rides on Wild Suit Blocks: with
-    /// any other mode there is no slot to put them in, and it does nothing.
+    /// Special Suits (see [`SpecialSuits`]). Rides on Wild Suit Blocks or Big ?
+    /// Blocks: with neither, nothing hands them out and it does nothing.
     #[serde(default)]
     pub special_suits: SpecialSuits,
     /// When true, the 19 vanilla spade-game tiles are picked up by the overworld
