@@ -2593,6 +2593,18 @@ instead of shelling. Under water (`$D267` is reached from the "in water" test
 too) a Shell can stomp: the unstompable die the shoe's way, the rest take the
 ordinary stomp.
 
+**"Stomps like a Kuribo's Shoe" is the limit as well as the promise.** The
+stomp lives in `Player_HitEnemy`, so an enemy whose touch never calls it hurts
+the shoe and the Shell alike. Thirteen PRG002 enemies touch with a bare
+`.word Player_GetHurt` in `ObjectGroup01_CollideJumpTable` — Ptooie and its
+spike ball, Boo and both Boo Stretches, both Hot Foots, the three Nippers, the
+charging Cheep Cheep and both pool-to-pool Cheep Cheeps — and Thwomps,
+Rotodiscs, Podoboos and the bosses run collision of their own. A playtest
+found Boo and Hot Foot; the user chose to leave all of them as they are.
+Reaching the thirteen would be an 11-byte "Shell? `Player_HitEnemy` :
+`Player_GetHurt`" stub, plus `OA3_NOTSTOMPABLE` on the nine that lack it
+(only the stomp code reads that bit).
+
 #### Kuribo's Shoe anywhere: tried and parked (2026-11-23)
 
 A sixth Wild outcome, Kuribo's Shoe, with Select to kick it off, was built and

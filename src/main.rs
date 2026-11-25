@@ -460,8 +460,8 @@ struct Cli {
     suit_blocks: SuitBlocks,
 
     /// Special Suits: off or shell (default: off). `shell` adds the Shell Suit —
-    /// a green Hammer Suit that ducks under fireballs, stomps what can't be
-    /// stomped and walks on munchers, but throws no hammers — to Wild suit
+    /// a green Hammer Suit that ducks under fireballs, stomps like a Kuribo's
+    /// Shoe and walks on munchers, but throws no hammers — to Wild suit
     /// blocks, and to Big ? blocks in place of the Mushroom box (upside-down).
     /// Needs `--suit-blocks wild` or `--big-q-blocks`
     #[arg(long, default_value = "off", value_parser = parse_special_suits)]
