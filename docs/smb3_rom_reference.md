@@ -1669,7 +1669,8 @@ Object group 0 (IDs $00–$23, dispatched from PRG001, CPU $A000–$BFFF, file o
 > skips the small check); On + poison is 79, suits only 58, poison only 43.
 >
 > **$01, $02 and $1A are now taken** by Suit Blocks: Tanooki, Frog and Hammer.
-> **$0F and $10 are taken in Wild** (Fire Flower, Super Leaf). They are
+> **$0F and $10 are taken in Wild** (Fire Flower, Super Leaf), and **$11 by
+> the Shell Suit** (Special Suits, Wild only; same install, attribute `$00`). They are
 > `ObjInit_DoNothing` slots like the three below, with PRG000 attribute `$00`,
 > so Wild also copies the Starman's `$C1` into `Object_AttrFlags` (file
 > `0x00304` + ID). Checked 2026-11-22: no loaded level object stream places any
@@ -2530,6 +2531,60 @@ Norm read it the same way. The suit handler sets the flash to `$80` for the
 colour cycle, so Wild's small-Mario path clears it before spawning the
 mushroom — `ASL PUp_StarManFlash` turns `$80` into `$00` in three bytes.
 
+#### The Shell Suit: a new suit as suit 6 plus a marker (2026-11-24)
+
+`SpecialSuits::Shell` (`items::shell_suit`) puts a Shell Suit in Wild's
+eighth slot, on object `$11`. A Shell **is** `Player_Suit` 6, so every per-suit
+table, the duck pose and the Hammer Suit's fireball block (`prg007.asm` ~5220,
+which fakes `Player_StarInv` around `SObj_PlayerCollide` while ducking) carry
+over. What tells it apart is a per-player byte at **`$7BD0`/`$7BD1`** (indexed
+by `Player_Current`), in the unused SRAM run `$7BD0-$7C1F`: the suit last
+granted, bit 7 set for a Shell. It only counts while `Player_Suit` is 6, so a
+Shell hurt down to Big leaves it stale and harmless.
+
+**Every way to suit 6 rewrites it.** In a level that is the star's suit grant
+(`PRG001_A818`), reached by Big `?` boxes (frame index through
+`PUp_StarOrSuitFrames` at `$A7FA`) and every mystery object (straight to
+`$A81C` with the suit in `A`). The hook takes `$A818`'s `TAY / LDA
+frames,Y` and the mystery entries' target, stores the marker, and when bit 7
+changes jumps to `$A820` (`TAY / INY / STY Player_QueueSuit`) instead of the
+"already wearing it?" compare — otherwise Hammer → Shell, suit 6 to suit 6,
+would only play a sound. A queued suit always re-runs
+`Level_SetPlayerPUpPal` (`Player_Update`, PRG008 `$A3F2`), even the same one.
+On the map the only way is an inventory suit (`PRG026_A608`, `STA
+World_Map_Power,X`), which now stores the new power-up into the marker too.
+
+**The sites**, all whole-instruction swaps for a `JSR`:
+
+| Site | Vanilla | Becomes |
+|---|---|---|
+| PRG000 `$D267` | `LDA Player_Kuribo / ORA Player_Statue / BNE D272` | shoe, statue or Shell: stomp the unstompable |
+| PRG000 `$D27C` | `LDA Player_Statue / ORA Player_Kuribo / BEQ D29B` | the shoe's kill-on-stomp — for a Shell only when `ObjectGroup_Attributes3,Y` (`$A120`, `Y` = group index) has `OA3_NOTSTOMPABLE` |
+| PRG008 `$BDA4` | `LDA Player_Kuribo / BEQ BDAE` (muncher) | shoe or Shell |
+| PRG007 `$A247` | `LDA <Player_Suit / CMP #6` (throw gate) | a Shell reads as Big |
+| PRG008 `$A550` | `LDA <Player_Suit / TAY` (`Level_SetPlayerPUpPal`) | `Y` = 3 for a Shell |
+| PRG010 `$CE57` | `LDA Map_PostJC_PUpPP2,Y` (accent after a map move) | green for a Shell |
+| PRG027 `$B8DD` | `LDA InitPals_Per_MapPUp+3,Y` (accent on map load) | green for a Shell |
+
+The shared test lives in PRG030 (`FS_SHELL_TEST`, `$934C`) because PRG000 and
+PRG008 have no free bytes; it answers in carry and keeps `X` and `Y`, which the
+stomp code (object, group index) and the muncher loop both hold live.
+
+**`PowerUp_Palettes` row 3 is free.** The Leaf row (file `0x10545`) is
+`00 00 00 00` and never read: `Level_SetPlayerPUpPal` gives suit 3 Mario's or
+Luigi's own row. The Shell's palette goes there — the Hammer row after the
+palette randomizer, accent (`$0F`, the black) made `$1A`.
+
+Left alone on purpose: the spike check (`PRG008_BD89`, same shape as the
+muncher's; munchers only, by the user's call), the shell-kick site
+(`PRG000_D343` — a Shell still kicks shells), and the Bob-omb sites in PRG003
+(the shoe kills a Bob-omb on touch because it can't hold one; a Shell can).
+The kill site is gated on `OA3_NOTSTOMPABLE` because the shoe's path kills
+everything it lands on: the first playtest's Koopas and Buzzy Beetles died
+instead of shelling. Under water (`$D267` is reached from the "in water" test
+too) a Shell can stomp: the unstompable die the shoe's way, the rest take the
+ordinary stomp.
+
 #### Kuribo's Shoe anywhere: tried and parked (2026-11-23)
 
 A sixth Wild outcome, Kuribo's Shoe, with Select to kick it off, was built and
@@ -2543,7 +2598,7 @@ shoe in any level (`Player_Update`, PRG008: `INC Player_Kuribo`, `$0577`). The
 star's suit grant at `$A81C` queues `A + 1` unless `A` equals `Player_Suit`, so
 `LDA #$7F` / `JMP $A81C` gives the shoe, with the suit poof and sound. It is
 the same 3-byte hit entry as Wild's other suits; object `$11` (an
-`ObjInit_DoNothing` slot) was the one it used, and is free again.
+`ObjInit_DoNothing` slot) was the one it used; the Shell Suit has it now.
 
 **The shoe's graphics are the level's, not Mario's — this is what killed it.**
 The shoe frames (`PF18` big, `PF43` small, `prg029.asm`) draw Mario's top from
@@ -4308,7 +4363,7 @@ declares **384 bytes** as bare anonymous `.ds` runs. Largest first:
 |---|---|
 | `$7A73-$7ADF` | 109 |
 | `$7997-$79FF` | 105 |
-| `$7BD0-$7C1F` | 80 |
+| `$7BD0-$7C1F` | 80 (the Shell Suit's marker takes `$7BD0-$7BD1`) |
 | `$7E9E-$7EB5` | 24 |
 | *(15 smaller runs)* | 66 |
 
@@ -4763,8 +4818,9 @@ Tanooki/Mushroom/Leaf.
 ### The 2-Player Vs Challenge — 339 bytes RECLAIMED in PRG030
 
 **Retired 2026-09-27 by `randomize/qol/two_player_vs.rs`, unconditionally on every
-seed.** Both runs below are now free and **unclaimed** — the first feature that
-needs them adds its own `FS_*` row, exactly the way `FS_FORTRESS_FX` works,
+seed.** Both runs below are free. The Shell Suit's `FS_SHELL_TEST` took the
+first 72 bytes of the 301 (2026-11-24); the rest, from `$9394`, and the 38 are
+**unclaimed** — the next feature that needs them adds its own `FS_*` row, exactly the way `FS_FORTRESS_FX` works,
 because neither run is `$FF` and `--free-space` cannot see either of them. Check
 `FREE_SPACE_ALLOCATIONS` alongside the scan, never instead of it.
 
@@ -4773,8 +4829,10 @@ because neither run is `$FF` and `--free-space` cannot see either of them. Check
 | `$88F4..$8919` | 0x3C904 | 38 | `LDA Map_Enter2PFlag` at `$88F0` became `LDA #$00`, so the `BEQ` past it is always taken |
 | `$934C..$9478` | 0x3D35C | **301** | `JMP Do_2PVsChallenge` at `$8AE4` became three `NOP`s, removing the block's only reference |
 
-About 23 further bytes are dead in PRG010 (`$CE8A..$CEA6` — the compares and the
-flag store the new jump skips). Too small to be worth a row.
+29 further bytes are dead in PRG010 (`$CE8A..$CEA6` — the compares and the
+flag store the new jump skips). The Shell Suit's map-move accent
+(`FS_SHELL_MAP_MOVE`) takes the first 16; it sits right beside the site it
+serves at `$CE57`.
 
 **Why it was retired rather than fixed.** Its trigger compares three coordinate
 bytes and nothing else, which is unsound once the two players can be in

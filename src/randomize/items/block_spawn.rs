@@ -109,6 +109,7 @@ use super::poison_mushroom::{
     ATTR1_TABLE, ATTR2_TABLE, ATTR3_TABLE, HIT_TABLE, INIT_TABLE, KILL_TABLE, NORM_TABLE,
     PATSTART_TABLE, PATTABLE_SEL_TABLE,
 };
+use super::shell_suit;
 use crate::SuitBlocks;
 use crate::randomize::rom_data::{BLOCK_SPAWN_CPU, FS_BLOCK_SPAWN, FS_SUIT_HANDLER};
 use crate::rom::Rom;
@@ -152,6 +153,8 @@ const SUIT_IDS: [Mystery; 3] =
 /// slots no level places and no engine code spawns; their PRG000 attribute
 /// byte is `$00`, so the install copies the Starman's over it.
 const WILD_IDS: [Mystery; 2] = [Mystery { id: 0x0F, suit: 2 }, Mystery { id: 0x10, suit: 3 }];
+/// The Shell Suit: suit 6 with bit 7 set, which the Shell's grant reads.
+const SHELL: Mystery = Mystery { id: shell_suit::SHELL_ID, suit: shell_suit::SHELL_GRANT };
 
 /// PRG000 `Object_AttrFlags` (`$82F4`), a byte per object ID.
 const ATTR_FLAGS_TABLE: usize = 0x00304;
@@ -186,7 +189,8 @@ const MUSHROOM_ID: u8 = 0x0D;
 const SUIT_POOL: [u8; 4] = [STARMAN_ID, SUIT_IDS[0].id, SUIT_IDS[1].id, SUIT_IDS[2].id];
 
 /// Wild's suit block, by hash (`AND #7`): Fire and Leaf twice, each suit once,
-/// and the last slot a suit again — which one is the seed's pick.
+/// and the last slot a suit again — which one is the seed's pick — or, with
+/// Special Suits on, the Shell Suit ([`SpawnFlags::bonus`]).
 fn wild_pool(bonus: u8) -> [u8; 8] {
     let [fire, leaf] = WILD_IDS.map(|m| m.id);
     let [tanooki, frog, hammer] = SUIT_IDS.map(|m| m.id);
@@ -234,6 +238,9 @@ pub(crate) struct SpawnFlags {
     pub(crate) suits: SuitBlocks,
     /// Modern Power-ups: small Mario skips the mushroom. Only Wild asks.
     pub(crate) modern_powerups: bool,
+    /// The Shell Suit takes Wild's eighth slot. Only Wild asks; the caller
+    /// installs [`super::shell_suit`] alongside.
+    pub(crate) shell: bool,
 }
 
 impl SpawnFlags {
@@ -243,6 +250,22 @@ impl SpawnFlags {
 
     fn wild(&self) -> bool {
         self.suits == SuitBlocks::Wild
+    }
+
+    /// Whether the Shell Suit is in the pool.
+    fn shell(&self) -> bool {
+        self.wild() && self.shell
+    }
+
+    /// Wild's eighth slot: the Shell, or the seed's extra suit.
+    fn bonus(&self, seeded: Seeded) -> u8 {
+        if self.shell() { SHELL.id } else { seeded.bonus_suit }
+    }
+
+    /// Where the Hit entries go: the star's own suit grant, or the Shell
+    /// Suit's, which keeps the marker first.
+    fn grant_cpu(&self) -> u16 {
+        if self.shell() { shell_suit::SUIT_GRANT_CPU } else { STAR_SUIT_GRANT_CPU }
     }
 
     /// Whether small Mario gets a plain mushroom before the hash.
@@ -258,6 +281,9 @@ impl SpawnFlags {
         }
         if self.wild() {
             out.extend(WILD_IDS);
+        }
+        if self.shell() {
+            out.push(SHELL);
         }
         out
     }
@@ -501,12 +527,12 @@ fn assemble(flags: SpawnFlags, seeded: Seeded) -> Routine {
                 a.op(&[0x2C]); //              BIT $..A9  (skip the next LDA)
             }
         }
-        let [lo, hi] = STAR_SUIT_GRANT_CPU.to_le_bytes();
-        a.op(&[0x4C, lo, hi]); //              JMP PRG001_A818+4 (the star's suit grant)
+        let [lo, hi] = flags.grant_cpu().to_le_bytes();
+        a.op(&[0x4C, lo, hi]); //              JMP PRG001_A818+4 (the star's suit grant), or the Shell's
 
         a.label(Label::Pool);
         if flags.wild() {
-            a.op(&wild_pool(seeded.bonus_suit));
+            a.op(&wild_pool(flags.bonus(seeded)));
         } else {
             a.op(&SUIT_POOL);
         }
@@ -528,9 +554,12 @@ mod tests {
         for poison_mushrooms in [false, true] {
             for suits in [SuitBlocks::Off, SuitBlocks::On, SuitBlocks::Wild] {
                 for modern_powerups in [false, true] {
-                    let f = SpawnFlags { poison_mushrooms, suits, modern_powerups };
-                    if f.any() {
-                        out.push(f);
+                    for shell in [false, true] {
+                        let f = SpawnFlags { poison_mushrooms, suits, modern_powerups, shell };
+                        // `shell` means nothing outside Wild: one shape each.
+                        if f.any() && (!shell || f.wild()) {
+                            out.push(f);
+                        }
                     }
                 }
             }
@@ -623,7 +652,7 @@ mod tests {
 
     /// What a suit block may spawn in `flags`' mode.
     fn suit_pool(flags: SpawnFlags) -> Vec<u8> {
-        if flags.wild() { wild_pool(SEEDED.bonus_suit).to_vec() } else { SUIT_POOL.to_vec() }
+        if flags.wild() { wild_pool(flags.bonus(SEEDED)).to_vec() } else { SUIT_POOL.to_vec() }
     }
 
     #[test]
@@ -704,7 +733,9 @@ mod tests {
                 }
             }
             let ids: Vec<u8> = seen.keys().copied().collect();
-            let (expect, floor): (&[u8], usize) = if flags.wild() {
+            let (expect, floor): (&[u8], usize) = if flags.shell() {
+                (&[0x01, 0x02, 0x0F, 0x10, SHELL.id, 0x1A], 4)
+            } else if flags.wild() {
                 (&[0x01, 0x02, 0x0F, 0x10, 0x1A], 4)
             } else {
                 (&[0x01, 0x02, STARMAN_ID, 0x1A], 8)
@@ -718,8 +749,12 @@ mod tests {
     /// suit last — and over seeds, each of the three is that extra.
     #[test]
     fn wild_pool_doubles_fire_and_leaf_and_one_suit_per_seed() {
-        let flags =
-            SpawnFlags { poison_mushrooms: false, suits: SuitBlocks::Wild, modern_powerups: false };
+        let flags = SpawnFlags {
+            poison_mushrooms: false,
+            suits: SuitBlocks::Wild,
+            modern_powerups: false,
+            shell: false,
+        };
         let mut extras = std::collections::BTreeSet::new();
         for seed in 0..64 {
             let seeded = Seeded::from_seed(seed);
@@ -746,7 +781,8 @@ mod tests {
     #[test]
     fn the_map_entry_moves_the_pick() {
         for suits in [SuitBlocks::On, SuitBlocks::Wild] {
-            let flags = SpawnFlags { poison_mushrooms: false, suits, modern_powerups: false };
+            let flags =
+                SpawnFlags { poison_mushrooms: false, suits, modern_powerups: false, shell: false };
             let code = assemble(flags, Seeded { salt: 0, bonus_suit: 0x01 }).code;
             let picks: std::collections::BTreeSet<u8> = (0..8u8)
                 .map(|tile| {
@@ -780,18 +816,25 @@ mod tests {
         for flags in every_shape().into_iter().filter(|f| f.suits.any()) {
             let routine = assemble(flags, SEEDED);
             let mysteries = flags.mysteries();
-            assert_eq!(mysteries.len(), if flags.wild() { 5 } else { 3 });
+            let count = if flags.shell() {
+                6
+            } else if flags.wild() {
+                5
+            } else {
+                3
+            };
+            assert_eq!(mysteries.len(), count);
             for (i, m) in mysteries.iter().enumerate() {
                 let mut cpu = cpu();
                 cpu.memory.set_bytes(BLOCK_SPAWN_CPU, &routine.code);
                 cpu.registers.program_counter = routine.hit_cpu + 3 * i as u16;
                 for _ in 0..8 {
-                    if cpu.registers.program_counter == STAR_SUIT_GRANT_CPU {
+                    if cpu.registers.program_counter == flags.grant_cpu() {
                         break;
                     }
                     cpu.single_step();
                 }
-                assert_eq!(cpu.registers.program_counter, STAR_SUIT_GRANT_CPU, "entry {i}");
+                assert_eq!(cpu.registers.program_counter, flags.grant_cpu(), "entry {i}");
                 assert_eq!(cpu.registers.accumulator, m.suit, "{flags:?} entry {i}");
             }
         }
@@ -806,8 +849,12 @@ mod tests {
         data[6] = 0x40;
         let mut rom = Rom::from_bytes_lax(&data, true).unwrap();
         let before = rom.read_range(0, 393232).to_vec();
-        let off =
-            SpawnFlags { poison_mushrooms: false, suits: SuitBlocks::Off, modern_powerups: false };
+        let off = SpawnFlags {
+            poison_mushrooms: false,
+            suits: SuitBlocks::Off,
+            modern_powerups: false,
+            shell: false,
+        };
         apply(&mut rom, off, SEEDED);
         assert_eq!(rom.read_range(0, 393232), &before[..]);
     }
@@ -821,9 +868,12 @@ mod tests {
             return;
         };
         let vanilla = Rom::from_bytes(&data).unwrap();
-        for suits in [SuitBlocks::On, SuitBlocks::Wild] {
+        for (suits, shell) in
+            [(SuitBlocks::On, false), (SuitBlocks::Wild, false), (SuitBlocks::Wild, true)]
+        {
             let mut rom = vanilla.clone();
-            let flags = SpawnFlags { poison_mushrooms: false, suits, modern_powerups: false };
+            let flags =
+                SpawnFlags { poison_mushrooms: false, suits, modern_powerups: false, shell };
             apply(&mut rom, flags, SEEDED);
             let routine = assemble(flags, SEEDED);
             let star_attr = rom.read_byte(ATTR_FLAGS_TABLE + usize::from(STARMAN_ID));
@@ -843,7 +893,7 @@ mod tests {
                 assert_eq!(rom.read_byte(ATTR_FLAGS_TABLE + id), star_attr, "{id:02X} attr");
             }
             // Wild's two IDs are unused in vanilla: no init, no attributes.
-            for m in WILD_IDS {
+            for m in WILD_IDS.iter().chain([&SHELL]) {
                 assert_eq!(vanilla.read_byte(ATTR_FLAGS_TABLE + usize::from(m.id)), 0x00);
             }
             let (mine, other) = match suits {

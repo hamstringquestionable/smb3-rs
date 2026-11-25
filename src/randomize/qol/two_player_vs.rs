@@ -78,15 +78,17 @@
 //! referenced only from inside it; its one outward branch is the closing
 //! `JMP PRG030_8FB2`.
 //!
-//! **Nothing claims the space yet.** It is recorded in
+//! **The Shell Suit's `FS_SHELL_TEST` claims the first 72 of the 301; nothing
+//! else claims the rest yet.** It is recorded in
 //! `docs/smb3_rom_reference.md` and `CLAUDE.md` so the first feature that needs
 //! it can add its own `FS_*` row, exactly the way `FS_FORTRESS_FX` works —
 //! neither run is `$FF`, so `--free-space` cannot see either of them. Moving a
 //! working allocation into them now would be risk for no present benefit.
 //!
-//! About 23 further bytes go dead in PRG010 (`$CE8A..$CEA6`, the compares and
-//! the flag store the jump skips). Too small to be worth a row, noted so nobody
-//! puzzles over them.
+//! 29 further bytes go dead in PRG010 (`$CE8A..$CEA6`, the compares and the
+//! flag store the jump skips). The Shell Suit's map-move accent
+//! (`FS_SHELL_MAP_MOVE`) sits on the first 16, which is why it asserts this
+//! module ran first.
 //!
 //! The rest of the subsystem sits in banks under no pressure and is left alone:
 //! PRG009 (`Vs_2PVsInit`/`Run`/`PauseHandler`), PRG014 (`Vs_Battlefields` and

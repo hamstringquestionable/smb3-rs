@@ -5,7 +5,8 @@ use std::process;
 
 use smb3_rs::{
     DamageSystem, DejaVuMode, EnemyMode, HazardLimit, HintMode, ITEMS, MAZE_WANDS_WANDOM, Options,
-    PiranhaMode, STARTING_LIVES_VALUES, SuitBlocks, Tri, WildChaser, item_display_name, item_id,
+    PiranhaMode, STARTING_LIVES_VALUES, SpecialSuits, SuitBlocks, Tri, WildChaser,
+    item_display_name, item_id,
 };
 
 /// Human-readable label for a tri-state flag in the run summary.
@@ -117,6 +118,15 @@ fn parse_suit_blocks(s: &str) -> Result<SuitBlocks, String> {
         "on" => Ok(SuitBlocks::On),
         "wild" => Ok(SuitBlocks::Wild),
         _ => Err("valid values: off, on, wild".to_string()),
+    }
+}
+
+/// clap value parser for `--special-suits` (off/shell).
+fn parse_special_suits(s: &str) -> Result<SpecialSuits, String> {
+    match s {
+        "off" => Ok(SpecialSuits::Off),
+        "shell" => Ok(SpecialSuits::Shell),
+        _ => Err("valid values: off, shell".to_string()),
     }
 }
 
@@ -449,6 +459,13 @@ struct Cli {
           value_parser = parse_suit_blocks)]
     suit_blocks: SuitBlocks,
 
+    /// Special Suits for Wild suit blocks: off or shell (default: off). `shell`
+    /// adds the Shell Suit — a green Hammer Suit that ducks under fireballs,
+    /// stomps anything and walks on munchers, but throws no hammers. Needs
+    /// `--suit-blocks wild`
+    #[arg(long, default_value = "off", value_parser = parse_special_suits)]
+    special_suits: SpecialSuits,
+
     /// Piranha shuffle: release the two W7 piranha plant levels into the level
     /// pool — off, on, or wild (default: off). `on` = their plant sprites follow
     /// them; `wild` = plants scatter onto ~1 random level slot per world instead.
@@ -758,6 +775,7 @@ fn build_options(cli: &Cli) -> Options {
             poison_mushrooms: cli.poison_mushrooms,
             modern_powerups: cli.modern_powerups,
             suit_blocks: cli.suit_blocks,
+            special_suits: cli.special_suits,
             piranha_shuffle: cli.piranha_shuffle,
             shuffle_spade_games: !cli.no_shuffle_spade_games,
             shuffle_toad_houses: !cli.no_shuffle_toad_houses,
@@ -900,6 +918,7 @@ fn print_summary(options: &Options, seed: u64, output_path: &std::path::Path) {
     eprintln!("  8s are Wild: {}", tri_str(options.eights_are_wild));
     eprintln!("  Antechamber shuffle: {}", tri_str(options.antechamber_shuffle));
     eprintln!("  Suit blocks: {:?}", options.suit_blocks);
+    eprintln!("  Special suits: {:?}", options.special_suits);
     eprintln!(
         "  Piranha shuffle: {}",
         match options.piranha_shuffle {

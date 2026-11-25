@@ -44,8 +44,8 @@ pub use ips::apply_ips_patch;
 pub use pipeline::{
     DamageSystem, DejaVuMode, EnemyMode, HazardLimit, HintMode, ITEM_RANDOM,
     ITEM_RANDOM_NO_WHISTLE, ITEM_RANDOM_SUIT_ONLY, ITEMS, MAZE_WANDS_WANDOM, Options, PiranhaMode,
-    STARTING_LIVES_VALUES, SuitBlocks, Tri, WildChaser, current_flag_key_version, flag_key_fields,
-    flag_key_version_of, item_display_name, item_id,
+    STARTING_LIVES_VALUES, SpecialSuits, SuitBlocks, Tri, WildChaser, current_flag_key_version,
+    flag_key_fields, flag_key_version_of, item_display_name, item_id,
 };
 
 /// Which SMB3 (USA) revision a ROM blob turned out to be.

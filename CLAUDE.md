@@ -146,18 +146,18 @@ is the one to read:
 |------|-----------|-----------|--------------------|
 | PRG031 | `$E000–$FFFF`, always | 27 | **16** |
 | PRG030 | `$8000–$9FFF`, always | 18 | 18 |
-| PRG001 | swapped, in-level (object AI) | 90 | 38 |
+| PRG001 | swapped, in-level (object AI) | 58 | 36 |
 | PRG003 | swapped, in-level (object AI) | 5 | 5 |
 | PRG004 | swapped, in-level (object AI, group 3) | 426 | 426 |
 | PRG005 | swapped, in-level (object AI) | 58 | 58 |
 | PRG006 | `$C000–$DFFF`, in-level (enemy data) | 1392 | 1392 |
-| PRG007 | swapped, in-level (object AI) | 27 | 27 |
+| PRG007 | swapped, in-level (object AI) | 11 | 11 |
 | PRG010 | `$C000–$DFFF`, map | 80 | 64 |
 | PRG011 | `$A000–$BFFF`, map | 46 | 14 |
 | PRG025 | `$C000–$DFFF`, title screen | 2707 | 2695 |
 | PRG012 | `$A000–$BFFF`, map reload | 620 | 240 |
-| PRG026 | `$A000–$BFFF`, map/inventory | 2061 | 2043 |
-| PRG027 | `$A000–$BFFF`, letter cutscene | 657 | 657 |
+| PRG026 | `$A000–$BFFF`, map/inventory | 2053 | 2035 |
+| PRG027 | `$A000–$BFFF`, letter cutscene | 637 | 637 |
 | PRG029 | `$C000–$DFFF`, Toad House | 2548 | 1528 |
 
 PRG000 and PRG002 have no `$FF` filler left at all.
@@ -246,10 +246,11 @@ routine you are working around is reached from exactly one vector.
 **PRG030's largest run is reclaimed vanilla code, not `$FF`: the retired
 2-player Vs Challenge.** `two_player_vs.rs` disabled it on every seed in
 2026-09, which freed **301 bytes** at `$934C..$9478` (file 0x3D35C..0x3D489) and
-**38** at `$88F4..$8919`. Both are **unclaimed** — the first feature that needs
-always-mapped space adds its own `FS_*` row over them, the way `FS_FORTRESS_FX`
-works in PRG010. The `--free-space` scan cannot see either run, so the table
-above understates PRG030 by 339 bytes; read
+**38** at `$88F4..$8919`. The Shell Suit's `FS_SHELL_TEST` took the first 72 of
+the 301 (2026-11); the other **229, from `$9394`, and all 38 are unclaimed** —
+the next feature that needs always-mapped space adds its own `FS_*` row over
+them, the way `FS_FORTRESS_FX` works in PRG010. The `--free-space` scan cannot
+see either run, so the table above understates PRG030 by 267 bytes; read
 `docs/smb3_rom_reference.md` → "The 2-Player Vs Challenge" before concluding
 that an always-mapped patch will not fit.
 

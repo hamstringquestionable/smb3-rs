@@ -1327,14 +1327,24 @@ pub(super) fn macobra_layer(rom: &mut Rom, seed: u64, options: &Options) {
         randomize::items::poison_mushroom::apply(rom);
     }
     let suits = if options.powerups { options.suit_blocks } else { crate::SuitBlocks::Off };
+    // The Shell Suit lives in Wild's eighth slot, so it needs Wild. Its own
+    // patches copy the Hammer palette, which the palette randomizer has long
+    // since written, and sit on bytes `two_player_vs` freed in `locks`.
+    let shell =
+        suits == crate::SuitBlocks::Wild && options.special_suits == crate::SpecialSuits::Shell;
     let spawn = randomize::items::block_spawn::SpawnFlags {
         poison_mushrooms: options.poison_mushrooms,
         suits,
         modern_powerups: options.modern_powerups,
+        shell,
     };
     rom.set_tag("block_spawn");
     let seeded = randomize::items::block_spawn::Seeded::from_seed(seed);
     randomize::items::block_spawn::apply(rom, spawn, seeded);
+    if shell {
+        rom.set_tag("shell_suit");
+        randomize::items::shell_suit::apply(rom);
+    }
     if suits.any() {
         // The two level spots a Frog Suit cannot get out of. Only reachable in
         // a frog *because* of the suit blocks above, so the fix rides that
