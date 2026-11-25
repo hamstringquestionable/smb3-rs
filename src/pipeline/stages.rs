@@ -1327,11 +1327,13 @@ pub(super) fn macobra_layer(rom: &mut Rom, seed: u64, options: &Options) {
         randomize::items::poison_mushroom::apply(rom);
     }
     let suits = if options.powerups { options.suit_blocks } else { crate::SuitBlocks::Off };
-    // The Shell Suit lives in Wild's eighth slot, so it needs Wild. Its own
-    // patches copy the Hammer palette, which the palette randomizer has long
-    // since written, and sit on bytes `two_player_vs` freed in `locks`.
-    let shell =
-        suits == crate::SuitBlocks::Wild && options.special_suits == crate::SpecialSuits::Shell;
+    // The Shell Suit comes from Wild's eighth slot and from the Big ? box that
+    // was the Mushroom's, so it needs Wild or Big ? Blocks — without either
+    // nothing could hand it out. Its own patches copy the Hammer palette,
+    // which the palette randomizer has long since written, and sit on bytes
+    // `two_player_vs` freed in `locks`.
+    let shell = options.special_suits == crate::SpecialSuits::Shell
+        && (suits == crate::SuitBlocks::Wild || options.big_q_blocks);
     let spawn = randomize::items::block_spawn::SpawnFlags {
         poison_mushrooms: options.poison_mushrooms,
         suits,

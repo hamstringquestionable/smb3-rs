@@ -12,7 +12,8 @@ deploys.
 ### Added
 
 - Special Suits: new suits for Wild Suit Blocks, in the slot that otherwise
-  repeats a suit. The first is the Shell Suit: the Hammer Suit in green that
+  repeats a suit, and for Big ? Blocks, in place of the Mushroom box (it
+  comes out upside-down). Needs either of the two. The first is the Shell Suit: the Hammer Suit in green that
   still ducks under fireballs, stomps what normally can't be stomped (spinies,
   piranha plants and all) and walks on munchers, but throws no hammers. Koopas
   and Buzzy Beetles still drop their shells, and it still kicks them.

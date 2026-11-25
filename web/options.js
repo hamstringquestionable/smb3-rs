@@ -4,7 +4,8 @@
 //   - Flag-key apply (writing options back to the DOM)
 //   - Settings persistence (localStorage)
 //   - Live flag-key updates (universal change listener)
-//   - Sub-option visibility (enabledWhen — a value, or a list meaning "any of")
+//   - Sub-option visibility (enabledWhen — a value, or a list meaning "any of";
+//     a list of such objects means "any of these conditions")
 //   - Pills that ride on another entry's group (pillOf)
 //   - Mode-specific applicability (mode / forcedInMaze — see below)
 //
@@ -747,9 +748,9 @@ export const SCHEMA = [
 		group: "items", inFlagKey: true },
 	{ id: "special_suits", type: "tri", options: SPECIAL_SUITS, default: "off",
 		label: "Special Suits",
-		tip: "New suits for Wild Suit Blocks. Shell: a green Hammer Suit that stomps anything and walks on munchers, but throws no hammers.",
+		tip: "New suits from Wild Suit Blocks and Big ? Blocks. Shell: a green Hammer Suit that stomps what you normally can't and walks on munchers, but throws no hammers. In a Big ? Block it comes out upside-down.",
 		icon: HAMMER_SUIT,
-		enabledWhen: { suit_blocks: "wild" }, indent: true,
+		enabledWhen: [{ suit_blocks: "wild" }, { big_q_blocks: true }], indent: true,
 		group: "items", inFlagKey: true },
 	{ id: "big_q_blocks", type: "bool", default: false,
 		label: "Big ? Blocks",
@@ -2210,7 +2211,11 @@ export function applyEnabledWhen() {
 	applyForcedValues();
 	for (const entry of SCHEMA) {
 		if (!entry.enabledWhen) continue;
-		const enabled = Object.entries(entry.enabledWhen).every(
+		// A list of conditions means "any of them" — Special Suits has two
+		// hosts, Wild Suit Blocks and Big ? Blocks, and either one will do.
+		const conditions = Array.isArray(entry.enabledWhen)
+			? entry.enabledWhen : [entry.enabledWhen];
+		const enabled = conditions.some(condition => Object.entries(condition).every(
 			([id, want]) => {
 				const e = SCHEMA.find(s => s.id === id);
 				if (!e) return false;
@@ -2219,7 +2224,7 @@ export function applyEnabledWhen() {
 				// its host's three states, not one.
 				return Array.isArray(want) ? want.includes(v) : v === want;
 			},
-		);
+		));
 		// A pill that cannot be lit is not lit: turning its host off clears it,
 		// so the row never shows a flag that changes nothing.
 		if (!enabled && entry.pillOf) writeValue(entry, false);

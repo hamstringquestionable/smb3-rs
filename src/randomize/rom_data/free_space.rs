@@ -486,9 +486,16 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
     ),
     fs(
         0x0386A,
-        32,
+        38,
         &["shell_suit"],
-        "Shell Suit: the suit grant that keeps a Shell apart from a Hammer Suit (32 reserved, 26 used)",
+        "Shell Suit: the suit grant that keeps a Shell apart from a Hammer Suit, Big ? box \
+         included (38 reserved, 33 used — the whole gap)",
+    ),
+    fs(
+        0x03FE6,
+        20,
+        &["shell_suit"],
+        "Shell Suit: the Big ? Shell box's suit comes out upside-down (20 reserved, 16 used)",
     ),
     fs(0x03FD0, 22, &["koopalings"], "koopa_x_clamp: keep the Koopaling's X on screen"),
     fs(0x0400A, 6, &["koopalings"], "koopa_jump_base: Koopaling_JumpYVelsBase for hit counts 0-5"),
@@ -1209,7 +1216,8 @@ pub(crate) const FS_HOLD_LEFT_HELPER: usize = 0x00928; // 7 bytes (CPU $C918)
 // PRG030 holds the shared "is this a Shell?" test, since its callers sit in
 // PRG000 and PRG008, which have no free bytes at all.
 pub(crate) const FS_SHELL_TEST: usize = 0x3D35C; // CPU $934C, 72 reserved, 61 used
-pub(crate) const FS_SHELL_GRANT: usize = 0x0386A; // CPU $B85A, 32 reserved, 26 used
+pub(crate) const FS_SHELL_GRANT: usize = 0x0386A; // CPU $B85A, 38 reserved, 33 used
+pub(crate) const FS_SHELL_FLIP: usize = 0x03FE6; // CPU $BFD6, 20 reserved, 16 used
 pub(crate) const FS_SHELL_THROW: usize = 0x0FFF5; // CPU $BFE5, 16 reserved, 12 used
 pub(crate) const FS_SHELL_INVENTORY: usize = 0x35815; // CPU $B805, 8 reserved, 7 used
 pub(crate) const FS_SHELL_MAP_MOVE: usize = 0x14E9A; // CPU $CE8A, 29 reserved, 16 used
@@ -1699,6 +1707,7 @@ mod free_space_tests {
             (FS_HOLD_LEFT_HELPER, "FS_HOLD_LEFT_HELPER"),
             (FS_SHELL_TEST, "FS_SHELL_TEST"),
             (FS_SHELL_GRANT, "FS_SHELL_GRANT"),
+            (FS_SHELL_FLIP, "FS_SHELL_FLIP"),
             (FS_SHELL_THROW, "FS_SHELL_THROW"),
             (FS_SHELL_INVENTORY, "FS_SHELL_INVENTORY"),
             (FS_SHELL_MAP_MOVE, "FS_SHELL_MAP_MOVE"),

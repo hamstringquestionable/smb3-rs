@@ -52,10 +52,17 @@ fn normalized(mut o: Options) -> Options {
 fn w7f1_block_is_always_a_flight_suit() {
     let Some(base) = make_test_rom() else { return };
 
-    for shuffle_rooms in [false, true] {
+    // And with the Shell Suit on, which turns the Big ? Mushroom box into the
+    // Shell box: it must never be the one 7-F1's room ends up holding.
+    for (shuffle_rooms, special_suits) in [
+        (false, crate::SpecialSuits::Off),
+        (true, crate::SpecialSuits::Off),
+        (true, crate::SpecialSuits::Shell),
+    ] {
         let mut opts = test_options();
         opts.big_q_blocks = true;
         opts.shuffle_big_q_rooms = shuffle_rooms;
+        opts.special_suits = special_suits;
 
         for seed in 1..=40u64 {
             let mut rom = base.clone();
@@ -2942,15 +2949,19 @@ fn wild_suit_blocks_build_with_their_neighbours() {
     }
 }
 
-/// Special Suits does nothing without Wild: all-on runs Suit Blocks On with
-/// the Shell asked for.
+/// Special Suits needs something to hand the Shell out: Wild Suit Blocks or
+/// Big ? Blocks. All-on asks for the Shell with Suit Blocks On, so Big ?
+/// Blocks alone decides it.
 #[test]
-fn the_shell_suit_needs_wild() {
-    let Some(mut rom) = make_test_rom() else { return };
-    let o = all_on_options();
-    assert_eq!((o.suit_blocks, o.special_suits), (SuitBlocks::On, crate::SpecialSuits::Shell));
-    randomize(&mut rom, 3, &o);
-    assert!(!crate::randomize::items::shell_suit::installed(&rom));
+fn the_shell_suit_needs_wild_or_big_q_blocks() {
+    for big_q_blocks in [false, true] {
+        let Some(mut rom) = make_test_rom() else { return };
+        let o = Options { big_q_blocks, ..all_on_options() };
+        assert_eq!((o.suit_blocks, o.special_suits), (SuitBlocks::On, crate::SpecialSuits::Shell));
+        randomize(&mut rom, 3, &o);
+        let installed = crate::randomize::items::shell_suit::installed(&rom);
+        assert_eq!(installed, big_q_blocks, "big_q_blocks {big_q_blocks}");
+    }
 }
 
 /// Boom-Boom Room rewrites its commands whole, by file offset, as the vanilla
