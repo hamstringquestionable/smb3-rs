@@ -135,6 +135,13 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
         "world-maze: turn hand-over router, per-player worlds (24 reserved, 22 used — the \
          bottom of PRG030's last run, leaving the $9FF4 question at its top untouched)",
     ),
+    fs(
+        0x3D35C,
+        72,
+        &["shell_suit"],
+        "Shell Suit: the is-it-a-Shell test behind the stomp, muncher, throw and palette \
+         hooks (72 reserved, 61 used — the head of the retired 2P Vs Challenge's 301)",
+    ),
     // PRG031 (always mapped $E000–$FFFF, file 0x3E010)
     fs(0x3E924, 25, &["title_screen"], "sprite copy routine"),
     fs(0x3E93D, 40, &["title_screen"], "sprite data table"),
@@ -214,6 +221,12 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
         "world-maze: status-bar world digit, × until revealed (16 reserved, 14 used)",
     ),
     fs(
+        0x35815,
+        8,
+        &["shell_suit"],
+        "Shell Suit: a suit used from the inventory clears the Shell marker (8 reserved, 7 used)",
+    ),
+    fs(
         0x355BD,
         224,
         &["big_q_blocks"],
@@ -234,6 +247,12 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
         "world-maze: keep the partner's map camera across the wand-return cutscene \
          (16 reserved, 12 used)",
     ),
+    fs(
+        0x37D7F,
+        20,
+        &["shell_suit"],
+        "Shell Suit: the map's first palette load gives a Shell its green (20 reserved, 16 used)",
+    ),
     // PRG029 (file 0x3A010, CPU $C000-$DFFF)
     fs(
         0x3BFFC,
@@ -242,6 +261,13 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
         "world-maze: Toad House Anchor suppression (20 reserved, 14 used)",
     ),
     // PRG010 (file 0x14010, CPU $C000–$DFFF during map)
+    fs(
+        0x14E9A,
+        29,
+        &["shell_suit"],
+        "Shell Suit: a Shell's green after each map move, on the 2P Vs collision compares \
+         `two_player_vs` jumps over (29 reserved, 16 used)",
+    ),
     fs(
         0x147CD,
         496,
@@ -458,6 +484,12 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
         &["koopalings"],
         "koopa_fire_preset: set stomp counter from threshold table for fireball defeat",
     ),
+    fs(
+        0x0386A,
+        32,
+        &["shell_suit"],
+        "Shell Suit: the suit grant that keeps a Shell apart from a Hammer Suit (32 reserved, 26 used)",
+    ),
     fs(0x03FD0, 22, &["koopalings"], "koopa_x_clamp: keep the Koopaling's X on screen"),
     fs(0x0400A, 6, &["koopalings"], "koopa_jump_base: Koopaling_JumpYVelsBase for hit counts 0-5"),
     fs(
@@ -479,6 +511,9 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
         &["block_spawn"],
         "suit-block item handler over LATP_BrickAltClear (code B; only the unused pipeworks tile reached it)",
     ),
+    // PRG007 (file 0x0E010, CPU $A000–$BFFF in levels) — the tail after
+    // `PRG007_BFDC`'s RTS ("Rest of ROM bank was empty")
+    fs(0x0FFF5, 16, &["shell_suit"], "Shell Suit: no hammers (16 reserved, 12 used)"),
     // PRG003 (file 0x06010, CPU $A000–$BFFF) — object AI bank (Boom-Boom lives here)
     fs(
         0x06609,
@@ -1170,6 +1205,16 @@ pub(crate) const FS_FASTER_FROG: usize = 0x3A600; // CPU $C5F0
 // PRG008 in-level scroll tail.
 pub(crate) const FS_HOLD_LEFT_HELPER: usize = 0x00928; // 7 bytes (CPU $C918)
 
+// Shell Suit (`items::shell_suit`): one routine per bank it has to run from.
+// PRG030 holds the shared "is this a Shell?" test, since its callers sit in
+// PRG000 and PRG008, which have no free bytes at all.
+pub(crate) const FS_SHELL_TEST: usize = 0x3D35C; // CPU $934C, 72 reserved, 61 used
+pub(crate) const FS_SHELL_GRANT: usize = 0x0386A; // CPU $B85A, 32 reserved, 26 used
+pub(crate) const FS_SHELL_THROW: usize = 0x0FFF5; // CPU $BFE5, 16 reserved, 12 used
+pub(crate) const FS_SHELL_INVENTORY: usize = 0x35815; // CPU $B805, 8 reserved, 7 used
+pub(crate) const FS_SHELL_MAP_MOVE: usize = 0x14E9A; // CPU $CE8A, 29 reserved, 16 used
+pub(crate) const FS_SHELL_MAP_LOAD: usize = 0x37D7F; // CPU $BD6F, 20 reserved, 16 used
+
 // ---------------------------------------------------------------------------
 // Auditor — the registry checked against what a run actually wrote
 // ---------------------------------------------------------------------------
@@ -1652,6 +1697,12 @@ mod free_space_tests {
             (FS_PIRANHA_ROOMS, "FS_PIRANHA_ROOMS"),
             (FS_FASTER_FROG, "FS_FASTER_FROG"),
             (FS_HOLD_LEFT_HELPER, "FS_HOLD_LEFT_HELPER"),
+            (FS_SHELL_TEST, "FS_SHELL_TEST"),
+            (FS_SHELL_GRANT, "FS_SHELL_GRANT"),
+            (FS_SHELL_THROW, "FS_SHELL_THROW"),
+            (FS_SHELL_INVENTORY, "FS_SHELL_INVENTORY"),
+            (FS_SHELL_MAP_MOVE, "FS_SHELL_MAP_MOVE"),
+            (FS_SHELL_MAP_LOAD, "FS_SHELL_MAP_LOAD"),
         ] {
             assert!(
                 offsets.contains(&off),

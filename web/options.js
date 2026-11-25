@@ -96,6 +96,13 @@ const OFF_ON_WILD = [
 	{ value: "wild", label: "Wild" },
 ];
 
+// Special Suits pill. Values match the Rust `SpecialSuits` enum's serde
+// representation. More suits join the list as they are made.
+const SPECIAL_SUITS = [
+	{ value: "off", label: "Off" },
+	{ value: "shell", label: "Shell" },
+];
+
 // Damage System pill. Values match the Rust `DamageSystem` enum's serde
 // representation.
 const DAMAGE_SYSTEMS = [
@@ -737,6 +744,12 @@ export const SCHEMA = [
 		tip: "Blocks can give a mystery mushroom: you find out what it is when you grab it. On: it holds a star or a Tanooki, Frog or Hammer Suit, and shows up alongside flowers and leaves. Wild: every power-up block holds one (now and then a star instead), and it can be a Fire Flower, Super Leaf or any suit. Small Mario just gets a mushroom.",
 		icon: [FROG_SUIT, TANOOKI_SUIT, HAMMER_SUIT],
 		enabledWhen: { powerups: true },
+		group: "items", inFlagKey: true },
+	{ id: "special_suits", type: "tri", options: SPECIAL_SUITS, default: "off",
+		label: "Special Suits",
+		tip: "New suits for Wild Suit Blocks. Shell: a green Hammer Suit that stomps anything and walks on munchers, but throws no hammers.",
+		icon: HAMMER_SUIT,
+		enabledWhen: { suit_blocks: "wild" }, indent: true,
 		group: "items", inFlagKey: true },
 	{ id: "big_q_blocks", type: "bool", default: false,
 		label: "Big ? Blocks",

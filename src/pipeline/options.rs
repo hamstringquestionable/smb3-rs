@@ -235,6 +235,37 @@ impl SuitBlocks {
     }
 }
 
+/// Special Suits: new suits Wild's suit blocks can hand out, in the slot that
+/// otherwise repeats one suit. Only the Shell Suit exists so far — the Hammer
+/// Suit's look in green, ducking under fireballs, stomping like Kuribo's Shoe
+/// and safe on munchers, with no hammers. See
+/// [`crate::randomize::items::shell_suit`].
+///
+/// The flag key gives this four bits, one per suit, so up to three can later
+/// share Wild's three spare slots; today only the Shell's bit is written.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SpecialSuits {
+    #[default]
+    Off,
+    Shell,
+}
+
+impl SpecialSuits {
+    /// The flag key's four bits: bit 0 is the Shell Suit.
+    pub(super) fn key_bits(self) -> u8 {
+        match self {
+            Self::Off => 0,
+            Self::Shell => 1,
+        }
+    }
+
+    /// The inverse of [`Self::key_bits`]. Bits no suit uses yet are ignored.
+    pub(super) fn from_key_bits(bits: u8) -> Self {
+        if bits & 1 != 0 { Self::Shell } else { Self::Off }
+    }
+}
+
 /// How hard to stop the randomizer from *introducing* hazards.
 ///
 /// A "hazard" is a member of the `HAZARDS` group — thwomps, Lava Lotus,
@@ -793,6 +824,10 @@ pub struct Options {
     /// flag-key bits.
     #[serde(default)]
     pub suit_blocks: SuitBlocks,
+    /// Special Suits (see [`SpecialSuits`]). Rides on Wild Suit Blocks: with
+    /// any other mode there is no slot to put them in, and it does nothing.
+    #[serde(default)]
+    pub special_suits: SpecialSuits,
     /// When true, the 19 vanilla spade-game tiles are picked up by the overworld
     /// builder and re-placed at random HammerBro slots, freeing their original
     /// positions for level placement. When false, spade games stay at vanilla
@@ -1022,6 +1057,7 @@ impl Default for Options {
             poison_mushrooms: false,
             modern_powerups: false,
             suit_blocks: SuitBlocks::Off,
+            special_suits: SpecialSuits::Off,
             shuffle_spade_games: true,
             shuffle_toad_houses: true,
             hands_levels: true,

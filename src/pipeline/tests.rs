@@ -154,6 +154,9 @@ fn audit_options() -> Options {
         // Wandom, the setting that writes the most: the hidden readout and
         // the on-clear routine are its own allocations.
         maze_wands: crate::MAZE_WANDS_WANDOM,
+        // Wild, because the Shell Suit's six allocations need it; Wild writes
+        // every allocation On does.
+        suit_blocks: SuitBlocks::Wild,
         ..all_on_options()
     }
 }
@@ -1153,6 +1156,7 @@ fn all_off_options() -> Options {
     Options {
         tricky_spots: false,
         suit_blocks: SuitBlocks::Off,
+        special_suits: crate::SpecialSuits::Off,
         // Not "off": with the maze off this option is inert, and the key
         // normalizes it to the default the way it does maze_wands. Claiming
         // Off here would fail the round trip against a decoder that
@@ -1250,6 +1254,7 @@ fn all_on_options() -> Options {
     Options {
         tricky_spots: true,
         suit_blocks: SuitBlocks::On,
+        special_suits: crate::SpecialSuits::Shell,
         hints: crate::HintMode::default(),
         limit_hazards: HazardLimit::All,
         friendlier_levels: true,
@@ -2912,23 +2917,40 @@ fn frog_softlocks_land_with_all_on() {
 }
 
 /// Wild Suit Blocks through the whole pipeline, with and without Modern
-/// Power-ups and Poison Mushroom: it builds, and the frog fixes still land.
+/// Power-ups, Poison Mushroom and the Shell Suit: it builds, the frog fixes
+/// still land, and the Shell Suit's hooks land exactly when it is on.
 #[test]
 fn wild_suit_blocks_build_with_their_neighbours() {
     for modern_powerups in [false, true] {
-        let Some(mut rom) = make_test_rom() else { return };
-        let o = Options {
-            suit_blocks: SuitBlocks::Wild,
-            modern_powerups,
-            poison_mushrooms: true,
-            ..all_on_options()
-        };
-        randomize(&mut rom, 7, &o);
-        assert!(
-            crate::randomize::items::frog_softlocks::all_applied(&rom),
-            "modern {modern_powerups}: a frog softlock fix did not land"
-        );
+        for special_suits in [crate::SpecialSuits::Off, crate::SpecialSuits::Shell] {
+            let Some(mut rom) = make_test_rom() else { return };
+            let o = Options {
+                suit_blocks: SuitBlocks::Wild,
+                special_suits,
+                modern_powerups,
+                poison_mushrooms: true,
+                ..all_on_options()
+            };
+            randomize(&mut rom, 7, &o);
+            assert!(
+                crate::randomize::items::frog_softlocks::all_applied(&rom),
+                "modern {modern_powerups}: a frog softlock fix did not land"
+            );
+            let shell = crate::randomize::items::shell_suit::installed(&rom);
+            assert_eq!(shell, special_suits == crate::SpecialSuits::Shell, "{special_suits:?}");
+        }
     }
+}
+
+/// Special Suits does nothing without Wild: all-on runs Suit Blocks On with
+/// the Shell asked for.
+#[test]
+fn the_shell_suit_needs_wild() {
+    let Some(mut rom) = make_test_rom() else { return };
+    let o = all_on_options();
+    assert_eq!((o.suit_blocks, o.special_suits), (SuitBlocks::On, crate::SpecialSuits::Shell));
+    randomize(&mut rom, 3, &o);
+    assert!(!crate::randomize::items::shell_suit::installed(&rom));
 }
 
 /// Boom-Boom Room rewrites its commands whole, by file offset, as the vanilla

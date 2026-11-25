@@ -21,7 +21,7 @@ pub use flag_key::{current_flag_key_version, flag_key_fields, flag_key_version_o
 pub use options::{
     DamageSystem, DejaVuMode, EnemyMode, HazardLimit, HintMode, ITEM_RANDOM, ITEM_RANDOM_NO_SUITS,
     ITEM_RANDOM_NO_WHISTLE, ITEM_RANDOM_SUIT_ONLY, ITEMS, MAZE_WANDS_WANDOM, Options, PiranhaMode,
-    STARTING_LIVES_VALUES, SuitBlocks, Tri, WildChaser, item_display_name, item_id,
+    STARTING_LIVES_VALUES, SpecialSuits, SuitBlocks, Tri, WildChaser, item_display_name, item_id,
 };
 
 #[cfg(test)]
